@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P&L Calendar - Login</title>
+  <link rel="stylesheet" href="static/style.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <div class="login-container">
+    <h1>P&L Calendar</h1>
+    <section class="card">
+      <h2>Login</h2>
+      <label>Username</label>
+      <input id="login-username" autocomplete="username">
+      <label>Password</label>
+      <input id="login-password" type="password" autocomplete="current-password">
+      <button id="login-btn" class="primary">Login</button>
+      <div id="login-error" class="error"></div>
+    </section>
+
+    <section class="card">
+      <h2>Sign Up</h2>
+      <label>Username</label>
+      <input id="signup-username" autocomplete="username">
+      <label>Password</label>
+      <input id="signup-password" type="password" autocomplete="new-password">
+      <button id="signup-btn" class="primary outline">Sign Up</button>
+      <div id="signup-error" class="error"></div>
+    </section>
+  </div>
+  <script src="static/login.js"></script>
+</body>
+</html>
