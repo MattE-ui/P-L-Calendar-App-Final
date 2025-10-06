@@ -56,20 +56,30 @@ function normalizePortfolioHistory(user) {
         continue;
       }
       if (typeof record === 'number') {
-        days[dateKey] = { end: record };
+        days[dateKey] = { end: record, cashIn: 0, cashOut: 0 };
         mutated = true;
         continue;
       }
       if (typeof record === 'object') {
         if (record.end === undefined && typeof record.value === 'number') {
-          days[dateKey] = { end: record.value };
+          days[dateKey] = { end: record.value, cashIn: 0, cashOut: 0 };
           mutated = true;
           continue;
         }
-        if (typeof record.end !== 'number') {
+        const end = Number(record.end);
+        if (!Number.isFinite(end) || end < 0) {
           delete days[dateKey];
           mutated = true;
+          continue;
         }
+        const cashInRaw = Number(record.cashIn ?? 0);
+        const cashOutRaw = Number(record.cashOut ?? 0);
+        const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
+        const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
+        if (cashIn !== cashInRaw || cashOut !== cashOutRaw || record.start !== undefined) {
+          mutated = true;
+        }
+        days[dateKey] = { end, cashIn, cashOut };
         continue;
       }
       delete days[dateKey];
@@ -87,10 +97,17 @@ function listChronologicalEntries(history) {
   const entries = [];
   for (const days of Object.values(history || {})) {
     for (const [dateKey, record] of Object.entries(days || {})) {
-      const end = typeof record === 'object' && record !== null ? record.end : record;
-      const num = Number(end);
-      if (!Number.isFinite(num) || num < 0) continue;
-      entries.push({ date: dateKey, end: num });
+      if (!record || typeof record !== 'object') continue;
+      const end = Number(record.end);
+      if (!Number.isFinite(end) || end < 0) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      entries.push({
+        date: dateKey,
+        end,
+        cashIn: Number.isFinite(cashIn) && cashIn >= 0 ? cashIn : 0,
+        cashOut: Number.isFinite(cashOut) && cashOut >= 0 ? cashOut : 0
+      });
     }
   }
   entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -105,7 +122,12 @@ function buildSnapshots(history, initial) {
     const monthKey = entry.date.slice(0, 7);
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
     const start = baseline !== null ? baseline : entry.end;
-    snapshots[monthKey][entry.date] = { start, end: entry.end };
+    snapshots[monthKey][entry.date] = {
+      start,
+      end: entry.end,
+      cashIn: entry.cashIn,
+      cashOut: entry.cashOut
+    };
     baseline = entry.end;
   }
   return snapshots;
@@ -222,7 +244,7 @@ app.get('/api/pl', auth, (req,res)=>{
 });
 
 app.post('/api/pl', auth, (req,res)=>{
-  const { date, value } = req.body || {};
+  const { date, value, cashIn, cashOut } = req.body || {};
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
@@ -243,7 +265,19 @@ app.post('/api/pl', auth, (req,res)=>{
     if (!Number.isFinite(num) || num < 0) {
       return res.status(400).json({ error: 'Invalid portfolio value' });
     }
-    history[ym][date] = { end: num };
+    const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
+    const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
+    if (!Number.isFinite(deposit) || deposit < 0) {
+      return res.status(400).json({ error: 'Invalid deposit value' });
+    }
+    if (!Number.isFinite(withdrawal) || withdrawal < 0) {
+      return res.status(400).json({ error: 'Invalid withdrawal value' });
+    }
+    history[ym][date] = {
+      end: num,
+      cashIn: deposit,
+      cashOut: withdrawal
+    };
   }
   const latest = getLatestClosing(history);
   if (latest !== null) {

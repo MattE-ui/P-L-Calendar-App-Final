@@ -113,10 +113,24 @@ function getDailyEntry(date) {
   const opening = Number(record.start);
   const closing = Number(record.end);
   if (!Number.isFinite(closing)) return null;
+  const cashInRaw = Number(record.cashIn ?? 0);
+  const cashOutRaw = Number(record.cashOut ?? 0);
+  const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
+  const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const hasOpening = Number.isFinite(opening);
-  const change = hasOpening ? closing - opening : null;
+  const netCash = cashIn - cashOut;
+  const change = hasOpening ? closing - opening - netCash : null;
   const pct = hasOpening && opening !== 0 ? (change / opening) * 100 : null;
-  return { date, opening: hasOpening ? opening : null, closing, change, pct };
+  return {
+    date,
+    opening: hasOpening ? opening : null,
+    closing,
+    change,
+    pct,
+    cashIn,
+    cashOut,
+    cashFlow: netCash
+  };
 }
 
 function getDaysInMonth(date) {
@@ -148,18 +162,19 @@ function getWeeksInMonth(date) {
       const entry = getDailyEntry(day);
       if (entry) days.push(entry);
     }
-    const changeEntries = days.filter(entry => entry.change !== null);
+    const changeEntries = days.filter(entry => entry?.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
+    const totalCashFlow = days.reduce((sum, entry) => sum + (entry?.cashFlow ?? 0), 0);
     const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing) : null;
-    const ending = days.length ? days[days.length - 1].closing : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
+    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing ?? null) : null;
+    const pct = !changeEntries.length || baseline === null || baseline === 0
       ? null
-      : ((ending - baseline) / baseline) * 100;
+      : (totalChange / baseline) * 100;
     weeks.push({
       totalChange,
       pct,
       hasChange: changeEntries.length > 0,
+      totalCashFlow,
       recordedDays: days.length,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -179,16 +194,17 @@ function getYearMonths(date) {
       .filter(Boolean);
     const changeEntries = days.filter(entry => entry.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
+    const totalCashFlow = days.reduce((sum, entry) => sum + (entry.cashFlow ?? 0), 0);
     const firstEntry = changeEntries[0] || days[0];
     const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing) : null;
-    const ending = days.length ? days[days.length - 1].closing : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
+    const pct = !changeEntries.length || baseline === null || baseline === 0
       ? null
-      : ((ending - baseline) / baseline) * 100;
+      : (totalChange / baseline) * 100;
     months.push({
       monthDate,
       totalChange,
       pct,
+      totalCashFlow,
       recordedDays: days.length,
       hasChange: changeEntries.length > 0
     });
@@ -359,6 +375,7 @@ function renderDay() {
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
+    const cashFlow = entry?.cashFlow ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
     if (change > 0) row.classList.add('profit');
@@ -366,6 +383,9 @@ function renderDay() {
     const changeText = change === null
       ? 'Δ —'
       : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+    const cashHtml = cashFlow === 0
+      ? ''
+      : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
     row.innerHTML = `
       <div class="row-main">
         <div class="row-title">${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
@@ -374,9 +394,10 @@ function renderDay() {
       <div class="row-value">
         <strong>${closing === null ? '—' : formatCurrency(closing)}</strong>
         <span>${changeText}</span>
+        ${cashHtml}
       </div>
     `;
-    row.addEventListener('click', () => openEntryModal(key, closing));
+    row.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(row);
   });
 }
@@ -395,6 +416,10 @@ function renderWeek() {
     const hasChange = week.hasChange;
     const changeText = hasChange ? `Δ ${formatSignedCurrency(week.totalChange)}` : 'Δ —';
     const pctText = hasChange ? formatPercent(week.pct) : '—';
+    const cashFlow = week.totalCashFlow ?? 0;
+    const cashHtml = cashFlow === 0
+      ? ''
+      : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
     const rangeLabel = week.displayStart === week.displayEnd
       ? week.displayStart
       : `${week.displayStart} – ${week.displayEnd}`;
@@ -409,6 +434,7 @@ function renderWeek() {
       <div class="row-value">
         <strong>${changeText}</strong>
         <span>${pctText}</span>
+        ${cashHtml}
       </div>
     `;
     grid.appendChild(row);
@@ -445,6 +471,7 @@ function renderMonth() {
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
+    const cashFlow = entry?.cashFlow ?? 0;
     const cell = document.createElement('div');
     cell.className = 'cell';
     if (change > 0) cell.classList.add('profit');
@@ -452,12 +479,16 @@ function renderMonth() {
     const changeText = change === null
       ? 'Δ —'
       : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+    const cashHtml = cashFlow === 0
+      ? ''
+      : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
     cell.innerHTML = `
       <div class="date">${day}</div>
       <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
       <div class="pct">${changeText}</div>
+      ${cashHtml}
     `;
-    cell.addEventListener('click', () => openEntryModal(key, closing));
+    cell.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(cell);
   }
 }
@@ -475,6 +506,10 @@ function renderYear() {
     const hasData = item.recordedDays > 0;
     const hasChange = item.hasChange;
     const pctText = hasChange ? formatPercent(item.pct) : '—';
+    const cashFlow = item.totalCashFlow ?? 0;
+    const cashHtml = cashFlow === 0
+      ? ''
+      : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
     const metaText = hasData
       ? `${item.recordedDays} recorded day${item.recordedDays === 1 ? '' : 's'}`
       : 'No entries yet';
@@ -482,6 +517,7 @@ function renderYear() {
       <div class="date">${item.monthDate.toLocaleDateString('en-GB', { month: 'short' })}</div>
       <div class="val">${hasChange ? `Δ ${formatSignedCurrency(item.totalChange)}` : 'Δ —'}</div>
       <div class="pct">${pctText}</div>
+      ${cashHtml}
       <div class="meta">${metaText}</div>
     `;
     cell.addEventListener('click', () => {
@@ -541,7 +577,7 @@ async function loadData() {
   }
 }
 
-function openEntryModal(dateStr, currentValGBP = null) {
+function openEntryModal(dateStr, existingEntry = null) {
   const modal = $('#profit-modal');
   if (!modal) return;
   const title = $('#modal-date');
@@ -553,8 +589,16 @@ function openEntryModal(dateStr, currentValGBP = null) {
       year: 'numeric'
     });
   }
+  const entry = existingEntry ?? getDailyEntry(new Date(dateStr));
+  const currentValGBP = entry?.closing ?? null;
+  const depositGBP = entry?.cashIn ?? 0;
+  const withdrawalGBP = entry?.cashOut ?? 0;
   const label = $('#profit-modal-label');
-  if (label) label.textContent = `Portfolio value (${state.currency})`;
+  if (label) label.textContent = `Closing portfolio value (${state.currency})`;
+  const depositLabel = $('#cash-in-label');
+  if (depositLabel) depositLabel.textContent = `Deposits (${state.currency})`;
+  const withdrawalLabel = $('#cash-out-label');
+  if (withdrawalLabel) withdrawalLabel.textContent = `Withdrawals (${state.currency})`;
   const input = $('#edit-profit-input');
   if (input) {
     if (currentValGBP === null || currentValGBP === undefined) {
@@ -566,6 +610,28 @@ function openEntryModal(dateStr, currentValGBP = null) {
       input.value = Number.isFinite(value) ? value.toFixed(2) : '';
     }
   }
+  const depositInput = $('#cash-in-input');
+  if (depositInput) {
+    if (depositGBP > 0) {
+      const amount = currencyAmount(depositGBP, state.currency);
+      const fallback = currencyAmount(depositGBP, 'GBP');
+      const value = amount === null ? fallback : amount;
+      depositInput.value = Number.isFinite(value) ? value.toFixed(2) : '';
+    } else {
+      depositInput.value = '';
+    }
+  }
+  const withdrawalInput = $('#cash-out-input');
+  if (withdrawalInput) {
+    if (withdrawalGBP > 0) {
+      const amount = currencyAmount(withdrawalGBP, state.currency);
+      const fallback = currencyAmount(withdrawalGBP, 'GBP');
+      const value = amount === null ? fallback : amount;
+      withdrawalInput.value = Number.isFinite(value) ? value.toFixed(2) : '';
+    } else {
+      withdrawalInput.value = '';
+    }
+  }
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
@@ -574,11 +640,22 @@ function openEntryModal(dateStr, currentValGBP = null) {
       if (rawStr === '') return;
       const raw = Number(rawStr);
       if (Number.isNaN(raw) || raw < 0) return;
+      const depositStr = depositInput ? depositInput.value.trim() : '';
+      const withdrawalStr = withdrawalInput ? withdrawalInput.value.trim() : '';
+      const depositVal = depositStr === '' ? 0 : Number(depositStr);
+      const withdrawalVal = withdrawalStr === '' ? 0 : Number(withdrawalStr);
+      if (Number.isNaN(depositVal) || depositVal < 0) return;
+      if (Number.isNaN(withdrawalVal) || withdrawalVal < 0) return;
       try {
         await api('/api/pl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: dateStr, value: toGBP(raw) })
+          body: JSON.stringify({
+            date: dateStr,
+            value: toGBP(raw),
+            cashIn: toGBP(depositVal),
+            cashOut: toGBP(withdrawalVal)
+          })
         });
         modal.classList.add('hidden');
         await loadData();
