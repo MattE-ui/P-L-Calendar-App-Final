@@ -153,6 +153,31 @@ select {
 
 .grid.view-week .list-row { cursor: default; }
 
+.list-row {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid transparent;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+.list-row .row-main { display:flex; flex-direction: column; gap:4px; }
+.list-row .row-title { font-weight: 600; }
+.list-row .row-sub { color: var(--muted); font-size: 13px; }
+.list-row .row-value { text-align: right; }
+.list-row .row-value strong { display:block; font-size: 15px; }
+.list-row .row-value span { color: var(--muted); font-size: 13px; }
+.list-row.profit { border-left-color: rgba(29,185,84,.6); }
+.list-row.loss { border-left-color: rgba(255,59,92,.6); }
+.list-row.profit .row-value strong { color: var(--positive); }
+.list-row.loss .row-value strong { color: var(--negative); }
+
+.grid.view-week .list-row { cursor: default; }
+
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
 .modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); }
