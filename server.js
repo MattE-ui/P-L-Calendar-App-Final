@@ -96,6 +96,17 @@ function ensureTrading212Config(user) {
     cfg.apiSecret = '';
     mutated = true;
   }
+  if (typeof cfg.baseUrl !== 'string') {
+    cfg.baseUrl = '';
+    mutated = true;
+  }
+  if (typeof cfg.endpoint !== 'string' || !cfg.endpoint.trim()) {
+    cfg.endpoint = '/api/v0/equity/portfolio/summary';
+    mutated = true;
+  } else if (!cfg.endpoint.startsWith('/')) {
+    cfg.endpoint = `/${cfg.endpoint.replace(/^\/+/, '')}`;
+    mutated = true;
+  }
   if (typeof cfg.snapshotTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.snapshotTime)) {
     cfg.snapshotTime = '21:00';
     mutated = true;
@@ -114,6 +125,14 @@ function ensureTrading212Config(user) {
       delete cfg.cooldownUntil;
       mutated = true;
     }
+  }
+  if (cfg.lastBaseUrl !== undefined && typeof cfg.lastBaseUrl !== 'string') {
+    delete cfg.lastBaseUrl;
+    mutated = true;
+  }
+  if (cfg.lastEndpoint !== undefined && typeof cfg.lastEndpoint !== 'string') {
+    delete cfg.lastEndpoint;
+    mutated = true;
   }
   if (cfg.lastNetDeposits !== undefined && !Number.isFinite(Number(cfg.lastNetDeposits))) {
     delete cfg.lastNetDeposits;
@@ -360,12 +379,21 @@ async function requestTrading212Endpoint(url, headers) {
       data?.totalValue?.value ??
       data?.totalValue ??
       data?.total?.portfolioValue ??
-      data?.portfolioValue
+      data?.portfolioValue ??
+      data?.summary?.totalValue ??
+      data?.overall?.portfolioValue ??
+      data?.overall?.totalValue ??
+      data?.accountValue ??
+      data?.netLiq
     );
     const netDeposits = Number(
       data?.totalNetDeposits ??
       data?.netDeposits ??
-      data?.total?.netDeposits
+      data?.total?.netDeposits ??
+      data?.summary?.netDeposits ??
+      data?.overall?.netDeposits ??
+      data?.cashFlows?.net ??
+      data?.netCash
     );
     if (!Number.isFinite(portfolioValue)) {
       throw new Trading212Error('Trading 212 payload was missing a portfolio value.', {
@@ -386,31 +414,85 @@ async function fetchTrading212Snapshot(config) {
   if (!config.apiKey || !config.apiSecret) {
     throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
   }
-  const baseUrl = config.mode === 'practice'
-    ? (process.env.T212_PRACTICE_BASE || 'https://demo.trading212.com')
-    : (process.env.T212_LIVE_BASE || 'https://live.trading212.com');
+  const baseCandidates = [];
+  const seenBases = new Set();
+  const appendBase = (value) => {
+    if (!value || typeof value !== 'string') return;
+    let normalized = value.trim();
+    if (!normalized) return;
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized.replace(/^\/+/, '')}`;
+    }
+    normalized = normalized.replace(/\/+$/, '');
+    if (seenBases.has(normalized)) return;
+    seenBases.add(normalized);
+    baseCandidates.push(normalized);
+  };
+  appendBase(config.baseUrl);
+  if (config.mode === 'practice') {
+    appendBase(process.env.T212_PRACTICE_BASE);
+    appendBase('https://demo.trading212.com');
+    appendBase('https://api-demo.trading212.com');
+    appendBase('https://api.trading212.com');
+  } else {
+    appendBase(process.env.T212_LIVE_BASE);
+    appendBase('https://api.trading212.com');
+    appendBase('https://live.trading212.com');
+  }
+  if (!baseCandidates.length) {
+    throw new Trading212Error('Trading 212 base URL could not be determined.');
+  }
   const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
   const headers = {
     'Authorization': `Basic ${encodedCredentials}`,
     'Accept': 'application/json',
     'User-Agent': 'PL-Calendar-App/1.0'
   };
-  const candidates = [
-    '/api/v0/equity/portfolio/summary',
-    '/api/v0/equity/portfolio-summary',
-    '/api/v0/equities/portfolio-summary'
-  ];
+  const endpointCandidates = [];
+  const seenEndpoints = new Set();
+  const appendEndpoint = (value) => {
+    if (!value || typeof value !== 'string') return;
+    let normalized = value.trim();
+    if (!normalized) return;
+    if (!normalized.startsWith('/')) {
+      normalized = `/${normalized.replace(/^\/+/, '')}`;
+    }
+    if (seenEndpoints.has(normalized)) return;
+    seenEndpoints.add(normalized);
+    endpointCandidates.push(normalized);
+  };
+  appendEndpoint(config.endpoint || '/api/v0/equity/portfolio/summary');
+  appendEndpoint('/api/v0/equity/portfolio-summary');
+  appendEndpoint('/api/v0/equities/portfolio-summary');
+  appendEndpoint('/api/v0/equity/portfolio/summary');
+  appendEndpoint('/api/v0/equity/account/info');
+  appendEndpoint('/api/v0/equity/account-info');
+  appendEndpoint('/api/v0/account/summary');
+  appendEndpoint('/api/v0/portfolio/summary');
   let lastError = null;
-  for (const pathSuffix of candidates) {
-    const endpoint = `${baseUrl}${pathSuffix}`;
-    try {
-      return await requestTrading212Endpoint(endpoint, headers);
-    } catch (error) {
-      if (error instanceof Trading212Error && error.status === 404) {
-        lastError = error;
-        continue;
+  for (const base of baseCandidates) {
+    for (const pathSuffix of endpointCandidates) {
+      const endpoint = `${base}${pathSuffix}`;
+      try {
+        const snapshot = await requestTrading212Endpoint(endpoint, headers);
+        return { ...snapshot, baseUrl: base, endpoint: pathSuffix };
+      } catch (error) {
+        if (error instanceof Trading212Error && error.status === 404) {
+          const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
+            status: 404,
+            code: 'not_found'
+          });
+          notFoundError.baseUrl = base;
+          notFoundError.endpoint = pathSuffix;
+          lastError = notFoundError;
+          continue;
+        }
+        if (error instanceof Trading212Error) {
+          error.baseUrl = base;
+          error.endpoint = pathSuffix;
+        }
+        throw error;
       }
-      throw error;
     }
   }
   throw lastError || new Trading212Error('Trading 212 portfolio summary endpoint not found.', { status: 404 });
@@ -473,6 +555,18 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     refreshAnchors(user, history);
     cfg.lastSyncAt = new Date().toISOString();
     cfg.lastStatus = { ok: true, status: 200 };
+    if (snapshot.baseUrl) {
+      cfg.lastBaseUrl = snapshot.baseUrl;
+      if (!cfg.baseUrl) {
+        cfg.baseUrl = snapshot.baseUrl;
+      }
+    }
+    if (snapshot.endpoint) {
+      cfg.lastEndpoint = snapshot.endpoint;
+      if (!cfg.endpoint) {
+        cfg.endpoint = snapshot.endpoint;
+      }
+    }
     delete cfg.cooldownUntil;
     saveDB(db);
   } catch (e) {
@@ -480,6 +574,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const retryAfter = e instanceof Trading212Error ? e.retryAfter : null;
     if (retryAfter !== null && retryAfter !== undefined) {
       cfg.cooldownUntil = new Date(now + retryAfter * 1000).toISOString();
+    }
+    if (e instanceof Trading212Error && e.baseUrl) {
+      cfg.lastBaseUrl = e.baseUrl;
+    }
+    if (e instanceof Trading212Error && e.endpoint) {
+      cfg.lastEndpoint = e.endpoint;
     }
     cfg.lastStatus = {
       ok: false,
@@ -689,6 +789,10 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     timezone: cfg.timezone || 'Europe/London',
     hasApiKey: !!cfg.apiKey,
     hasApiSecret: !!cfg.apiSecret,
+    baseUrl: cfg.baseUrl || '',
+    endpoint: cfg.endpoint || '/api/v0/equity/portfolio/summary',
+    lastBaseUrl: cfg.lastBaseUrl || null,
+    lastEndpoint: cfg.lastEndpoint || null,
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
     cooldownUntil: cfg.cooldownUntil || null
@@ -696,7 +800,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
 });
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
-  const { enabled, apiKey, apiSecret, snapshotTime, mode, timezone, runNow } = req.body || {};
+  const { enabled, apiKey, apiSecret, snapshotTime, mode, timezone, baseUrl, endpoint, runNow } = req.body || {};
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -710,6 +814,22 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   }
   if (typeof timezone === 'string' && timezone.trim()) {
     cfg.timezone = timezone.trim();
+  }
+  if (baseUrl !== undefined) {
+    if (typeof baseUrl === 'string' && baseUrl.trim()) {
+      cfg.baseUrl = baseUrl.trim();
+    } else if (baseUrl === '' || baseUrl === null) {
+      cfg.baseUrl = '';
+    }
+  }
+  if (endpoint !== undefined) {
+    if (typeof endpoint === 'string' && endpoint.trim()) {
+      cfg.endpoint = endpoint.startsWith('/')
+        ? endpoint.trim()
+        : `/${endpoint.trim().replace(/^\/+/, '')}`;
+    } else if (endpoint === '' || endpoint === null) {
+      cfg.endpoint = '/api/v0/equity/portfolio/summary';
+    }
   }
   if (snapshotTime !== undefined) {
     const parsed = parseSnapshotTime(String(snapshotTime));
@@ -756,6 +876,10 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     timezone: responseCfg.timezone,
     hasApiKey: !!responseCfg.apiKey,
     hasApiSecret: !!responseCfg.apiSecret,
+    baseUrl: responseCfg.baseUrl || '',
+    endpoint: responseCfg.endpoint || '/api/v0/equity/portfolio/summary',
+    lastBaseUrl: responseCfg.lastBaseUrl || null,
+    lastEndpoint: responseCfg.lastEndpoint || null,
     lastSyncAt: responseCfg.lastSyncAt || null,
     lastStatus: responseCfg.lastStatus || null,
     cooldownUntil: responseCfg.cooldownUntil || null

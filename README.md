@@ -28,12 +28,13 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 ## Trading 212 automation
 1. Visit the profile page (link in the header) and scroll to the **Trading 212 automation** card.
 2. Enable the toggle, paste your Trading 212 API key **and API secret**, pick whether you’re syncing a live or practice account, and choose the time of day (Europe/London) to record the snapshot.
-3. When creating the API key inside Trading 212, enable the toggles for **Portfolio value**, **Balance & cash**, and **Transactions** so the integration can fetch balances and cash movements. The Trading 212 UI will show both a key and secret—copy both.
-4. Save your settings. The server will call Trading 212 at the scheduled time each day, record the closing portfolio value, and apply any deposits or withdrawals as cash adjustments on your calendar. Use **Run sync now** to trigger an immediate test pull.
+3. When creating the API key inside Trading 212, enable the toggles for **Portfolio value**, **Balance & cash**, and **Transactions** so the integration can fetch balances and cash movements. The Trading 212 UI will show both a key (username) and secret (password)—copy both.
+4. Optional: provide a custom API base URL or endpoint path if Trading 212 instructs you to use a different hostname/path (the defaults cover the documented live and practice hosts). The integration remembers the last successful combination and surfaces it on the profile page.
+5. Save your settings. The server will call Trading 212 at the scheduled time each day, record the closing portfolio value, and apply any deposits or withdrawals as cash adjustments on your calendar. Use **Run sync now** to trigger an immediate test pull.
 
 The backend authenticates with Trading 212 using HTTP Basic auth, sending your API key as the username and the API secret as the password exactly as required by their documentation. Credentials are stored encrypted-at-rest in `data.json` on the server and never returned to the browser after the initial save.
 
-If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted; the integration will automatically try both documented portfolio summary endpoints before surfacing the error. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
+If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted. The integration now walks through the documented hosts and several portfolio-summary endpoints (plus any custom URL/path you provide) before surfacing the error, and shows which combination failed in the profile status. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
 
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in `data.json`. Back up this file if you need to preserve your records across deployments.

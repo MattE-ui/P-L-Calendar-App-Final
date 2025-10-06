@@ -53,6 +53,16 @@
           <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
         </div>
         <div class="profile-field">
+          <label for="t212-host">API base URL (optional)</label>
+          <input id="t212-host" type="text" placeholder="https://api.trading212.com" autocomplete="off">
+          <p class="helper">Trading 212 usually works with <code>https://api.trading212.com</code> (live) or <code>https://demo.trading212.com</code> (practice). Override this only if their docs instruct otherwise.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-endpoint">Portfolio endpoint path</label>
+          <input id="t212-endpoint" type="text" value="/api/v0/equity/portfolio/summary" autocomplete="off">
+          <p class="helper">Keep <code>/api/v0/equity/portfolio/summary</code> unless Trading 212 specifies a different path for your account type.</p>
+        </div>
+        <div class="profile-field">
           <label for="t212-mode">Account</label>
           <select id="t212-mode">
             <option value="live">Live account</option>
@@ -70,8 +80,8 @@
         <p>This integration records your Trading 212 closing balance at the scheduled time and applies any new deposits or withdrawals to your calendar automatically.</p>
         <ol>
           <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
-          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key and API secret &mdash; copy both.</li>
-          <li>Paste the key and secret above, pick your snapshot time, then save.</li>
+          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key (username) and API secret (password) &mdash; copy both.</li>
+          <li>Paste the key and secret above, pick your snapshot time, then save. Update the base URL or endpoint only if Trading 212 provides alternate values.</li>
           <li>Leave your browser or device off &mdash; we will call the API at the chosen time each day and backfill your calendar.</li>
         </ol>
       </section>

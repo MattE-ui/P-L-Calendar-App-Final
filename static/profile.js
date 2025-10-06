@@ -58,6 +58,10 @@ const integrationState = {
   snapshotTime: '21:00',
   mode: 'live',
   timezone: 'Europe/London',
+  baseUrl: '',
+  endpoint: '/api/v0/equity/portfolio/summary',
+  lastBaseUrl: null,
+  lastEndpoint: null,
   cooldownUntil: null
 };
 
@@ -67,12 +71,16 @@ function setIntegrationFieldsDisabled(disabled) {
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const timeInput = document.getElementById('t212-time');
+  const hostInput = document.getElementById('t212-host');
+  const endpointInput = document.getElementById('t212-endpoint');
   const runBtn = document.getElementById('t212-run-now');
   if (container) container.classList.toggle('is-hidden', disabled);
   if (apiInput) apiInput.disabled = disabled;
   if (secretInput) secretInput.disabled = disabled;
   if (modeSelect) modeSelect.disabled = disabled;
   if (timeInput) timeInput.disabled = disabled;
+  if (hostInput) hostInput.disabled = disabled;
+  if (endpointInput) endpointInput.disabled = disabled;
   if (runBtn) runBtn.disabled = disabled;
 }
 
@@ -91,8 +99,9 @@ function renderIntegrationStatus(data) {
     const formatted = Number.isNaN(date.getTime())
       ? data.lastSyncAt
       : date.toLocaleString('en-GB', { timeZone: timezone });
+    const hostDetail = data.lastBaseUrl ? ` via ${data.lastBaseUrl}${data.lastEndpoint || ''}` : '';
     if (data.lastStatus && data.lastStatus.ok) {
-      statusEl.textContent = `Last synced ${formatted}.`;
+      statusEl.textContent = `Last synced ${formatted}${hostDetail ? ` ${hostDetail}` : ''}.`;
     } else if (data.lastStatus && data.lastStatus.message) {
       statusEl.classList.add('is-error');
       const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
@@ -107,14 +116,16 @@ function renderIntegrationStatus(data) {
         });
         message += ` Next attempt after ${cooldownLabel} (${seconds}s).`;
       }
-      statusEl.textContent = `Last sync failed${statusCode}: ${message}`;
+      const endpointInfo = hostDetail ? ` Endpoint tried:${hostDetail}` : '';
+      statusEl.textContent = `Last sync failed${statusCode}: ${message}${endpointInfo}`;
     } else {
-      statusEl.textContent = `Last sync attempted ${formatted}.`;
+      statusEl.textContent = `Last sync attempted ${formatted}${hostDetail ? ` ${hostDetail}` : ''}.`;
     }
   } else if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
     statusEl.classList.add('is-error');
     const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
-    statusEl.textContent = `Sync pending${statusCode}: ${data.lastStatus.message}`;
+    const hostDetail = data.lastBaseUrl ? ` via ${data.lastBaseUrl}${data.lastEndpoint || ''}` : '';
+    statusEl.textContent = `Sync pending${statusCode}: ${data.lastStatus.message}${hostDetail}`;
   } else {
     statusEl.textContent = 'No automated Trading 212 sync has run yet.';
   }
@@ -129,12 +140,18 @@ async function loadIntegration() {
     integrationState.snapshotTime = data.snapshotTime || '21:00';
     integrationState.mode = data.mode || 'live';
     integrationState.timezone = data.timezone || 'Europe/London';
+    integrationState.baseUrl = data.baseUrl || '';
+    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+    integrationState.lastBaseUrl = data.lastBaseUrl || null;
+    integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
     const toggle = document.getElementById('t212-enabled');
     const apiInput = document.getElementById('t212-api-key');
     const secretInput = document.getElementById('t212-api-secret');
     const modeSelect = document.getElementById('t212-mode');
     const timeInput = document.getElementById('t212-time');
+    const hostInput = document.getElementById('t212-host');
+    const endpointInput = document.getElementById('t212-endpoint');
     if (toggle) toggle.checked = integrationState.enabled;
     if (apiInput) {
       apiInput.value = '';
@@ -150,13 +167,17 @@ async function loadIntegration() {
     }
     if (modeSelect) modeSelect.value = integrationState.mode;
     if (timeInput) timeInput.value = integrationState.snapshotTime;
+    if (hostInput) hostInput.value = integrationState.baseUrl || '';
+    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
       lastSyncAt: data.lastSyncAt,
       lastStatus: data.lastStatus,
       timezone: integrationState.timezone,
-      cooldownUntil: integrationState.cooldownUntil
+      cooldownUntil: integrationState.cooldownUntil,
+      lastBaseUrl: integrationState.lastBaseUrl,
+      lastEndpoint: integrationState.lastEndpoint
     });
   } catch (e) {
     console.error('Unable to load Trading 212 settings', e);
@@ -173,6 +194,8 @@ async function saveIntegration({ runNow = false } = {}) {
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const timeInput = document.getElementById('t212-time');
+  const hostInput = document.getElementById('t212-host');
+  const endpointInput = document.getElementById('t212-endpoint');
   const enabled = !!toggle?.checked;
   const payload = {
     enabled,
@@ -191,6 +214,12 @@ async function saveIntegration({ runNow = false } = {}) {
   } else if (!enabled && integrationState.hasApiSecret) {
     payload.apiSecret = '';
   }
+  if (hostInput) {
+    payload.baseUrl = hostInput.value.trim();
+  }
+  if (endpointInput) {
+    payload.endpoint = endpointInput.value.trim();
+  }
   if (runNow) payload.runNow = true;
   try {
     const data = await api('/api/integrations/trading212', {
@@ -204,6 +233,10 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.snapshotTime = data.snapshotTime || integrationState.snapshotTime;
     integrationState.mode = data.mode || integrationState.mode;
     integrationState.timezone = data.timezone || integrationState.timezone;
+    integrationState.baseUrl = data.baseUrl || '';
+    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+    integrationState.lastBaseUrl = data.lastBaseUrl || null;
+    integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
     if (apiInput) {
       apiInput.value = '';
@@ -217,6 +250,8 @@ async function saveIntegration({ runNow = false } = {}) {
         ? 'Secret saved — paste a new secret to replace'
         : 'Paste your API secret';
     }
+    if (hostInput) hostInput.value = integrationState.baseUrl || '';
+    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     if (toggle) toggle.checked = integrationState.enabled;
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
@@ -224,7 +259,9 @@ async function saveIntegration({ runNow = false } = {}) {
       lastSyncAt: data.lastSyncAt,
       lastStatus: data.lastStatus,
       timezone: integrationState.timezone,
-      cooldownUntil: integrationState.cooldownUntil
+      cooldownUntil: integrationState.cooldownUntil,
+      lastBaseUrl: integrationState.lastBaseUrl,
+      lastEndpoint: integrationState.lastEndpoint
     });
     if (errorEl) {
       if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
