@@ -6,6 +6,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Secure sign-up/login with bcrypt-hashed passwords and HTTP-only cookies.
 - Capture the initial portfolio value during sign-up and edit it later from the dashboard.
 - Record daily portfolio values while separately tracking net deposits/withdrawals so both the evolving balance and cash-adjusted performance remain visible at a glance.
+- Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
 - Log same-day deposits or withdrawals alongside each portfolio value so cash movements adjust the balance without inflating profit/loss figures.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
