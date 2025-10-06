@@ -4,6 +4,7 @@ const state = {
   data: {},
   portfolioGBP: 0,
   initialNetDepositsGBP: 0,
+  firstEntryKey: null,
   currency: 'GBP',
   rates: { GBP: 1 },
   metrics: {
@@ -267,26 +268,31 @@ function computeLifetimeMetrics() {
   const initialDeposits = Number.isFinite(state.initialNetDepositsGBP)
     ? state.initialNetDepositsGBP
     : 0;
+  state.firstEntryKey = entries.length ? formatDate(entries[0].date) : null;
   if (!entries.length) {
     const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+    const netPerformance = fallback - initialDeposits;
+    const pct = fallback !== 0 ? (netPerformance / fallback) * 100 : null;
     state.metrics = {
       baselineGBP: fallback,
       latestGBP: fallback,
       netDepositsGBP: initialDeposits,
-      netPerformanceGBP: 0,
-      netPerformancePct: null
+      netPerformanceGBP: netPerformance,
+      netPerformancePct: Number.isFinite(pct) ? pct : null
     };
     return;
   }
   let baseline = null;
-  let latest = entries[entries.length - 1]?.closing ?? null;
-  let netDeposits = initialDeposits;
+  let latest = Number.isFinite(entries[entries.length - 1]?.closing)
+    ? entries[entries.length - 1].closing
+    : Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : null;
+  let totalNetDeposits = initialDeposits;
   entries.forEach(entry => {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
     }
     if (entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
-      netDeposits += entry.cashFlow;
+      totalNetDeposits += entry.cashFlow;
     }
     if (entry?.closing !== null && entry?.closing !== undefined) {
       latest = entry.closing;
@@ -300,12 +306,12 @@ function computeLifetimeMetrics() {
   }
   const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
   const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
-  const netPerformance = safeLatest - safeBaseline - netDeposits;
+  const netPerformance = safeLatest - totalNetDeposits;
   const pct = safeBaseline !== 0 ? (netPerformance / safeBaseline) * 100 : null;
   state.metrics = {
     baselineGBP: safeBaseline,
     latestGBP: safeLatest,
-    netDepositsGBP: netDeposits,
+    netDepositsGBP: totalNetDeposits,
     netPerformanceGBP: netPerformance,
     netPerformancePct: Number.isFinite(pct) ? pct : null
   };
@@ -624,6 +630,7 @@ function renderMonth() {
   const first = startOfMonth(state.selected);
   const startDay = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const firstEntryKey = state.firstEntryKey;
 
   for (let i = 0; i < startDay; i++) {
     const placeholder = document.createElement('div');
@@ -642,8 +649,14 @@ function renderMonth() {
     const cashFlow = entry?.cashFlow ?? 0;
     const cell = document.createElement('div');
     cell.className = 'cell';
-    if (change > 0) cell.classList.add('profit');
-    if (change < 0) cell.classList.add('loss');
+    const isFirstEntry = firstEntryKey && key === firstEntryKey;
+    if (isFirstEntry) {
+      cell.classList.add('first-entry');
+      cell.title = 'First recorded portfolio day';
+    } else {
+      if (change > 0) cell.classList.add('profit');
+      if (change < 0) cell.classList.add('loss');
+    }
     const changeText = change === null
       ? 'Δ —'
       : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;

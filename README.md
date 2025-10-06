@@ -21,8 +21,8 @@ This project provides a profit & loss tracking calendar with multi-scale views a
    ```bash
    npm start
    ```
-4. Visit [http://localhost:3000](http://localhost:3000) and create an account.
-5. After logging in for the first time, enter your current portfolio value and lifetime net deposits so the calendar can separate performance from cash movements.
+4. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account, then log in with the same credentials.
+5. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
 
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in `data.json`. Back up this file if you need to preserve your records across deployments.

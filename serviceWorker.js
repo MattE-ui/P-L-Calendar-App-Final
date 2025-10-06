@@ -1,14 +1,16 @@
 // Bump version when you change cached assets
-const CACHE_NAME = 'pl-calendar-cache-v5';
+const CACHE_NAME = 'pl-calendar-cache-v6';
 const ASSETS = [
   '/',
   '/index.html',
   '/login.html',
+  '/signup.html',
   '/profile.html',
   '/manifest.json',
   '/static/style.css',
   '/static/script.js',
   '/static/login.js',
+  '/static/signup.js',
   '/static/profile.js'
 ];
 

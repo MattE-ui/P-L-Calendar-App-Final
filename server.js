@@ -206,6 +206,7 @@ app.get('/serviceWorker.js', (req,res)=>{
 // pages
 app.get('/', (req,res)=>{ res.sendFile(path.join(__dirname,'index.html')); });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
+app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 
@@ -313,6 +314,12 @@ app.get('/api/profile', auth, (req,res)=>{
 
 app.post('/api/profile', auth, (req,res)=>{
   const { portfolio, netDeposits, date } = req.body || {};
+  if (portfolio === '' || portfolio === null || portfolio === undefined) {
+    return res.status(400).json({ error: 'Portfolio value is required' });
+  }
+  if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+    return res.status(400).json({ error: 'Net deposits value is required' });
+  }
   const portfolioNumber = Number(portfolio);
   const netDepositsNumber = Number(netDeposits);
   if (!Number.isFinite(portfolioNumber) || portfolioNumber < 0) {
