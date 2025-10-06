@@ -754,33 +754,55 @@ app.post('/api/profile', auth, (req,res)=>{
   if (portfolio === '' || portfolio === null || portfolio === undefined) {
     return res.status(400).json({ error: 'Portfolio value is required' });
   }
-  if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
-    return res.status(400).json({ error: 'Net deposits value is required' });
-  }
   const portfolioNumber = Number(portfolio);
-  const netDepositsNumber = Number(netDeposits);
   if (!Number.isFinite(portfolioNumber) || portfolioNumber < 0) {
     return res.status(400).json({ error: 'Invalid portfolio value' });
   }
-  if (!Number.isFinite(netDepositsNumber)) {
-    return res.status(400).json({ error: 'Invalid net deposits value' });
-  }
-  const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
-    ? date
-    : currentDateKey();
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user);
+  const wasComplete = !!user.profileComplete;
+  const previousNet = Number.isFinite(user.initialNetDeposits) ? Number(user.initialNetDeposits) : 0;
+  let netDepositsNumber;
+  if (!wasComplete) {
+    if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+      return res.status(400).json({ error: 'Net deposits value is required' });
+    }
+    netDepositsNumber = Number(netDeposits);
+    if (!Number.isFinite(netDepositsNumber)) {
+      return res.status(400).json({ error: 'Invalid net deposits value' });
+    }
+  } else if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+    netDepositsNumber = previousNet;
+  } else {
+    netDepositsNumber = Number(netDeposits);
+    if (!Number.isFinite(netDepositsNumber)) {
+      return res.status(400).json({ error: 'Invalid net deposits value' });
+    }
+  }
+  const netDelta = netDepositsNumber - previousNet;
+  const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
+    ? date
+    : currentDateKey();
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
   const ym = targetDate.slice(0, 7);
   history[ym] ||= {};
   const existing = history[ym][targetDate] || {};
+  let cashIn = Number.isFinite(existing.cashIn) ? Number(existing.cashIn) : 0;
+  let cashOut = Number.isFinite(existing.cashOut) ? Number(existing.cashOut) : 0;
+  if (wasComplete && netDelta !== 0) {
+    if (netDelta > 0) {
+      cashIn += netDelta;
+    } else {
+      cashOut += Math.abs(netDelta);
+    }
+  }
   history[ym][targetDate] = {
     end: portfolioNumber,
-    cashIn: Number.isFinite(existing.cashIn) ? Number(existing.cashIn) : 0,
-    cashOut: Number.isFinite(existing.cashOut) ? Number(existing.cashOut) : 0
+    cashIn,
+    cashOut
   };
   user.initialNetDeposits = netDepositsNumber;
   user.profileComplete = true;
@@ -788,7 +810,7 @@ app.post('/api/profile', auth, (req,res)=>{
   tradingCfg.lastNetDeposits = netDepositsNumber;
   refreshAnchors(user, history);
   saveDB(db);
-  res.json({ ok: true });
+  res.json({ ok: true, netDeposits: netDepositsNumber });
 });
 
 app.get('/api/integrations/trading212', auth, (req, res) => {

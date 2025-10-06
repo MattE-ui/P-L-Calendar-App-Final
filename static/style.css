@@ -18,6 +18,8 @@ body {
   line-height: 1.5;
 }
 
+.is-hidden { display: none !important; }
+
 .topbar {
   display: flex; align-items: center;
   gap: 12px; padding: 14px 18px;
@@ -232,6 +234,15 @@ button.danger { color:#ffd8de; border-color:#ff8aa0; }
 .profile-field { display: flex; flex-direction: column; gap: 8px; }
 .profile-field label { margin-top: 0; }
 .profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
+.profile-field.readonly input,
+.profile-card input.readonly {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: default;
+}
+.profile-card input.readonly:focus {
+  outline: none;
+}
 .profile-field .helper code { padding: 0 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); color: inherit; font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; }
 .profile-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .profile-actions button { flex: 1; min-width: 160px; }

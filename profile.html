@@ -19,10 +19,16 @@
         <label for="profile-portfolio">Current portfolio value (£)</label>
         <input id="profile-portfolio" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal" required>
       </div>
-      <div class="profile-field">
+      <div class="profile-field" id="profile-net-total-field">
         <label for="profile-net-deposits">Net deposits to date (£)</label>
         <input id="profile-net-deposits" type="number" step="0.01" placeholder="0.00" inputmode="decimal" required>
-        <p class="helper">Include lifetime deposits minus withdrawals up to today so we can separate performance from cash movements.</p>
+        <p class="helper" id="net-deposits-helper-initial">Include lifetime deposits minus withdrawals up to today so we can separate performance from cash movements.</p>
+        <p class="helper is-hidden" id="net-deposits-helper-existing">This running total updates automatically when you add or withdraw cash below.</p>
+      </div>
+      <div class="profile-field is-hidden" id="profile-net-delta-field">
+        <label for="profile-net-deposits-delta">Add cash adjustments (£)</label>
+        <input id="profile-net-deposits-delta" type="number" step="0.01" placeholder="0.00" inputmode="decimal">
+        <p class="helper">Enter additional deposits (positive) or withdrawals (negative) to update your total net deposits.</p>
       </div>
       <div class="profile-actions">
         <button id="profile-save" class="primary">Save and continue</button>

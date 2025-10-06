@@ -366,7 +366,10 @@ function renderMetrics() {
       netDepositsSub.textContent = '';
     }
   }
-  setMetricTrend($('#metric-net-deposits'), netDepositsGBP);
+  const netCard = $('#metric-net-deposits');
+  if (netCard) {
+    netCard.classList.remove('positive', 'negative');
+  }
 
   const netPerfEl = $('#metric-net-performance-value');
   if (netPerfEl) {

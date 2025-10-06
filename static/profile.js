@@ -18,13 +18,25 @@ async function api(path, opts = {}) {
   return data;
 }
 
+const profileState = {
+  complete: false,
+  netDeposits: 0
+};
+
 async function loadProfile() {
   try {
     const data = await api('/api/profile');
     const portfolio = Number(data.portfolio);
     const netDeposits = Number(data.initialNetDeposits);
+    profileState.complete = !!data.profileComplete;
+    profileState.netDeposits = Number.isFinite(netDeposits) ? netDeposits : 0;
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
+    const deltaField = document.getElementById('profile-net-delta-field');
+    const deltaInput = document.getElementById('profile-net-deposits-delta');
+    const totalField = document.getElementById('profile-net-total-field');
+    const helperInitial = document.getElementById('net-deposits-helper-initial');
+    const helperExisting = document.getElementById('net-deposits-helper-existing');
     const dateEl = document.getElementById('profile-date');
     if (dateEl && typeof data.today === 'string') {
       const parsed = new Date(`${data.today}T00:00:00`);
@@ -42,9 +54,28 @@ async function loadProfile() {
       if (portfolioInput && Number.isFinite(portfolio)) {
         portfolioInput.value = portfolio.toFixed(2);
       }
-      if (netInput && Number.isFinite(netDeposits)) {
-        netInput.value = netDeposits.toFixed(2);
-      }
+    }
+    if (netInput) {
+      const hasNet = Number.isFinite(profileState.netDeposits);
+      netInput.value = hasNet ? profileState.netDeposits.toFixed(2) : '';
+      netInput.readOnly = profileState.complete;
+      netInput.classList.toggle('readonly', profileState.complete);
+      netInput.required = !profileState.complete;
+    }
+    if (totalField) {
+      totalField.classList.toggle('readonly', profileState.complete);
+    }
+    if (deltaField) {
+      deltaField.classList.toggle('is-hidden', !profileState.complete);
+    }
+    if (deltaInput) {
+      deltaInput.value = '';
+    }
+    if (helperInitial) {
+      helperInitial.classList.toggle('is-hidden', profileState.complete);
+    }
+    if (helperExisting) {
+      helperExisting.classList.toggle('is-hidden', !profileState.complete);
     }
   } catch (e) {
     console.error('Unable to load profile details', e);
@@ -282,23 +313,42 @@ async function saveProfile() {
   if (errEl) errEl.textContent = '';
   const portfolioInput = document.getElementById('profile-portfolio');
   const netInput = document.getElementById('profile-net-deposits');
+  const deltaInput = document.getElementById('profile-net-deposits-delta');
   const portfolioRaw = portfolioInput?.value.trim() ?? '';
   const netRaw = netInput?.value.trim() ?? '';
   const portfolio = Number(portfolioRaw);
-  const netDeposits = Number(netRaw);
   if (!portfolioRaw || Number.isNaN(portfolio) || portfolio < 0) {
     if (errEl) errEl.textContent = 'Enter a non-negative portfolio value to continue.';
     return;
   }
-  if (!netRaw || Number.isNaN(netDeposits)) {
-    if (errEl) errEl.textContent = 'Enter your cumulative net deposits (can be negative).';
+  let netDepositsTotal = Number(netRaw);
+  if (!profileState.complete) {
+    if (!netRaw || Number.isNaN(netDepositsTotal)) {
+      if (errEl) errEl.textContent = 'Enter your cumulative net deposits (can be negative).';
+      return;
+    }
+  } else {
+    const deltaRaw = deltaInput?.value.trim() ?? '';
+    if (deltaRaw) {
+      const delta = Number(deltaRaw);
+      if (Number.isNaN(delta)) {
+        if (errEl) errEl.textContent = 'Additional deposits must be a number (use negative values for withdrawals).';
+        return;
+      }
+      netDepositsTotal = profileState.netDeposits + delta;
+    } else {
+      netDepositsTotal = profileState.netDeposits;
+    }
+  }
+  if (!Number.isFinite(netDepositsTotal)) {
+    if (errEl) errEl.textContent = 'Net deposits value is invalid.';
     return;
   }
   try {
     await api('/api/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portfolio, netDeposits })
+      body: JSON.stringify({ portfolio, netDeposits: netDepositsTotal })
     });
     window.location.href = '/';
   } catch (e) {
@@ -321,6 +371,26 @@ window.addEventListener('DOMContentLoaded', () => {
   loadIntegration();
   document.getElementById('profile-save')?.addEventListener('click', saveProfile);
   document.getElementById('profile-logout')?.addEventListener('click', logout);
+  document.getElementById('profile-net-deposits-delta')?.addEventListener('input', (ev) => {
+    const netInput = document.getElementById('profile-net-deposits');
+    if (!netInput) return;
+    const raw = ev.target.value.trim();
+    if (!raw) {
+      netInput.value = Number.isFinite(profileState.netDeposits)
+        ? profileState.netDeposits.toFixed(2)
+        : '';
+      return;
+    }
+    const parsed = Number(raw);
+    if (Number.isNaN(parsed)) {
+      netInput.value = Number.isFinite(profileState.netDeposits)
+        ? profileState.netDeposits.toFixed(2)
+        : '';
+      return;
+    }
+    const updated = profileState.netDeposits + parsed;
+    netInput.value = Number.isFinite(updated) ? updated.toFixed(2) : netInput.value;
+  });
   document.getElementById('t212-enabled')?.addEventListener('change', (ev) => {
     const checked = ev.target.checked;
     setIntegrationFieldsDisabled(!checked);
