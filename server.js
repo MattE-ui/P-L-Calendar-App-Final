@@ -37,6 +37,86 @@ function auth(req, res, next) {
   next();
 }
 
+function ensurePortfolioHistory(user) {
+  if (!user.portfolioHistory) {
+    user.portfolioHistory = user.profits || {};
+    delete user.profits;
+  }
+  return user.portfolioHistory;
+}
+
+function normalizePortfolioHistory(user) {
+  const history = ensurePortfolioHistory(user);
+  let mutated = false;
+  for (const [monthKey, days] of Object.entries(history)) {
+    for (const [dateKey, record] of Object.entries(days)) {
+      if (record === null || record === undefined) {
+        delete days[dateKey];
+        mutated = true;
+        continue;
+      }
+      if (typeof record === 'number') {
+        days[dateKey] = { end: record };
+        mutated = true;
+        continue;
+      }
+      if (typeof record === 'object') {
+        if (record.end === undefined && typeof record.value === 'number') {
+          days[dateKey] = { end: record.value };
+          mutated = true;
+          continue;
+        }
+        if (typeof record.end !== 'number') {
+          delete days[dateKey];
+          mutated = true;
+        }
+        continue;
+      }
+      delete days[dateKey];
+      mutated = true;
+    }
+    if (!Object.keys(days).length) {
+      delete history[monthKey];
+      mutated = true;
+    }
+  }
+  return mutated;
+}
+
+function listChronologicalEntries(history) {
+  const entries = [];
+  for (const days of Object.values(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      const end = typeof record === 'object' && record !== null ? record.end : record;
+      const num = Number(end);
+      if (!Number.isFinite(num) || num < 0) continue;
+      entries.push({ date: dateKey, end: num });
+    }
+  }
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  return entries;
+}
+
+function buildSnapshots(history, initial) {
+  const entries = listChronologicalEntries(history);
+  const snapshots = {};
+  let baseline = Number.isFinite(initial) ? initial : null;
+  for (const entry of entries) {
+    const monthKey = entry.date.slice(0, 7);
+    if (!snapshots[monthKey]) snapshots[monthKey] = {};
+    const start = baseline !== null ? baseline : entry.end;
+    snapshots[monthKey][entry.date] = { start, end: entry.end };
+    baseline = entry.end;
+  }
+  return snapshots;
+}
+
+function getLatestClosing(history) {
+  const entries = listChronologicalEntries(history);
+  if (!entries.length) return null;
+  return entries[entries.length - 1].end;
+}
+
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -54,12 +134,21 @@ app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifes
 
 // --- auth api ---
 app.post('/api/signup', async (req,res)=>{
-  const { username, password } = req.body || {};
+  const { username, password, portfolio } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const initialPortfolio = Number(portfolio);
+  if (portfolio !== undefined && (isNaN(initialPortfolio) || initialPortfolio < 0)) {
+    return res.status(400).json({ error: 'Invalid portfolio value' });
+  }
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
-  db.users[username] = { passwordHash, portfolio: 0, profits: {} };
+  db.users[username] = {
+    passwordHash,
+    portfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio,
+    initialPortfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio,
+    portfolioHistory: {}
+  };
   saveDB(db);
   res.json({ ok: true });
 });
@@ -116,13 +205,20 @@ app.post('/api/portfolio', auth, (req,res)=>{
 app.get('/api/pl', auth, (req,res)=>{
   const { year, month } = req.query;
   const db = loadDB();
-  const profits = db.users[req.username].profits || {};
+  const user = db.users[req.username];
+  const history = ensurePortfolioHistory(user);
+  let mutated = normalizePortfolioHistory(user);
+  if (user.initialPortfolio === undefined) {
+    user.initialPortfolio = Number.isFinite(user.portfolio) ? user.portfolio : 0;
+    mutated = true;
+  }
+  const snapshots = buildSnapshots(history, user.initialPortfolio);
+  if (mutated) saveDB(db);
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
-    res.json(profits[key] || {});
-  } else {
-    res.json(profits);
+    return res.json(snapshots[key] || {});
   }
+  res.json(snapshots);
 });
 
 app.post('/api/pl', auth, (req,res)=>{
@@ -130,17 +226,67 @@ app.post('/api/pl', auth, (req,res)=>{
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
-  user.profits ||= {};
+  const history = ensurePortfolioHistory(user);
+  normalizePortfolioHistory(user);
+  if (user.initialPortfolio === undefined) {
+    user.initialPortfolio = Number.isFinite(user.portfolio) ? user.portfolio : 0;
+  }
   const ym = date.slice(0,7);
-  user.profits[ym] ||= {};
-  // If value is null or empty string, delete the entry
-  if (value === null || value === '' || Number(value) === 0) {
-    delete user.profits[ym][date];
+  history[ym] ||= {};
+  if (value === null || value === '') {
+    delete history[ym][date];
+    if (!Object.keys(history[ym]).length) {
+      delete history[ym];
+    }
   } else {
-    user.profits[ym][date] = Number(value);
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) {
+      return res.status(400).json({ error: 'Invalid portfolio value' });
+    }
+    history[ym][date] = { end: num };
+  }
+  const latest = getLatestClosing(history);
+  if (latest !== null) {
+    user.portfolio = latest;
+  } else if (Number.isFinite(user.initialPortfolio)) {
+    user.portfolio = user.initialPortfolio;
+  } else {
+    user.portfolio = 0;
   }
   saveDB(db);
   res.json({ ok: true });
+});
+
+// --- exchange rates ---
+let cachedRates = { GBP: 1 };
+let cachedRatesAt = 0;
+async function fetchRates() {
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
+  const now = Date.now();
+  if (cachedRatesAt && (now - cachedRatesAt) < SIX_HOURS && cachedRates.USD) {
+    return cachedRates;
+  }
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/GBP');
+    if (!res.ok) throw new Error(`Rate fetch failed: ${res.status}`);
+    const data = await res.json();
+    const usd = data?.rates?.USD;
+    if (usd && typeof usd === 'number') {
+      cachedRates = { GBP: 1, USD: usd };
+      cachedRatesAt = now;
+    }
+  } catch (e) {
+    console.warn('Unable to refresh exchange rates', e.message || e);
+    if (!cachedRates.USD) {
+      cachedRates = { GBP: 1 };
+    }
+  }
+  return cachedRates;
+}
+
+app.get('/api/rates', auth, async (req,res)=>{
+  const rates = await fetchRates();
+  res.json({ rates, cachedAt: cachedRatesAt || Date.now() });
 });
 
 // --- optional daily sync with Trading 212 at 21:00 Europe/London ---
