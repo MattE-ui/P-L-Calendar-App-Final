@@ -428,16 +428,23 @@ async function fetchTrading212Snapshot(config) {
     seenBases.add(normalized);
     baseCandidates.push(normalized);
   };
-  appendBase(config.baseUrl);
-  if (config.mode === 'practice') {
-    appendBase(process.env.T212_PRACTICE_BASE);
-    appendBase('https://demo.trading212.com');
-    appendBase('https://api-demo.trading212.com');
-    appendBase('https://api.trading212.com');
-  } else {
-    appendBase(process.env.T212_LIVE_BASE);
-    appendBase('https://api.trading212.com');
-    appendBase('https://live.trading212.com');
+  const practiceBases = [
+    config.baseUrl,
+    process.env.T212_PRACTICE_BASE,
+    'https://demo.trading212.com',
+    'https://api-demo.trading212.com'
+  ];
+  const liveBases = [
+    config.baseUrl,
+    process.env.T212_LIVE_BASE,
+    'https://api.trading212.com',
+    'https://live.trading212.com'
+  ];
+  const orderedBases = config.mode === 'practice'
+    ? [...practiceBases, ...liveBases]
+    : [...liveBases, ...practiceBases];
+  for (const candidate of orderedBases) {
+    appendBase(candidate);
   }
   if (!baseCandidates.length) {
     throw new Trading212Error('Trading 212 base URL could not be determined.');
@@ -465,8 +472,11 @@ async function fetchTrading212Snapshot(config) {
   appendEndpoint('/api/v0/equity/portfolio-summary');
   appendEndpoint('/api/v0/equities/portfolio-summary');
   appendEndpoint('/api/v0/equity/portfolio/summary');
+  appendEndpoint('/api/v0/equity/portfolio');
+  appendEndpoint('/api/v0/equity/portfolios/summary');
   appendEndpoint('/api/v0/equity/account/info');
   appendEndpoint('/api/v0/equity/account-info');
+  appendEndpoint('/api/v0/equity/account/summary');
   appendEndpoint('/api/v0/account/summary');
   appendEndpoint('/api/v0/portfolio/summary');
   let lastError = null;
@@ -559,6 +569,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       cfg.lastBaseUrl = snapshot.baseUrl;
       if (!cfg.baseUrl) {
         cfg.baseUrl = snapshot.baseUrl;
+      }
+      const lowerBase = snapshot.baseUrl.toLowerCase();
+      if (lowerBase.includes('demo.trading212.com') || lowerBase.includes('api-demo.trading212.com')) {
+        cfg.mode = 'practice';
+      } else if (lowerBase.includes('api.trading212.com') || lowerBase.includes('live.trading212.com')) {
+        cfg.mode = 'live';
       }
     }
     if (snapshot.endpoint) {
