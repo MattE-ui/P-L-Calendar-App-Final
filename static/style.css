@@ -234,12 +234,31 @@ button.danger { color:#ffd8de; border-color:#ff8aa0; }
 .profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
 .profile-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .profile-actions button { flex: 1; min-width: 160px; }
+.automation-card { gap: 16px; }
+.profile-automation-header h2 { margin: 0; font-size: 20px; }
+.toggle-field { align-items: center; }
+.toggle { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; font-size: 15px; }
+.toggle input[type="checkbox"] { width: 48px; height: 24px; accent-color: var(--accent); }
+.integration-fields { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.integration-fields.is-hidden { display: none; }
+.integration-instructions { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.integration-instructions h3 { margin: 0; font-size: 18px; }
+.integration-instructions p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.integration-instructions ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
+.integration-instructions strong { color: var(--text); font-weight: 600; }
+.integration-instructions li::marker { color: var(--accent); font-weight: 600; }
+.integration-actions { margin-top: 4px; }
+.status-line { margin: 0; font-size: 13px; color: var(--muted); }
+.status-line strong { color: var(--text); }
+.automation-card .error { margin-top: -4px; }
 label { display:block; margin-top:10px; color: var(--muted); }
 input { width:100%; padding:10px; border-radius: 10px; border:1px solid var(--border); background:#10131a; color:var(--text); margin-top:6px; }
 
 @media (max-width: 540px) {
   .profile-container { margin-top: 36px; padding-inline: 16px; }
   .profile-header h1 { font-size: 22px; }
+  .profile-actions button { flex: 1 1 100%; }
+  .integration-instructions ol { gap: 6px; }
 }
 
 @media (max-width: 960px) {

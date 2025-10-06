@@ -48,10 +48,43 @@ function ensurePortfolioHistory(user) {
   return user.portfolioHistory;
 }
 
+function ensureTrading212Config(user) {
+  if (!user) return { mutated: false, config: {} };
+  let mutated = false;
+  if (!user.trading212 || typeof user.trading212 !== 'object') {
+    user.trading212 = {};
+    mutated = true;
+  }
+  const cfg = user.trading212;
+  if (typeof cfg.enabled !== 'boolean') {
+    cfg.enabled = false;
+    mutated = true;
+  }
+  if (typeof cfg.snapshotTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.snapshotTime)) {
+    cfg.snapshotTime = '21:00';
+    mutated = true;
+  }
+  if (typeof cfg.mode !== 'string' || !['live', 'practice'].includes(cfg.mode)) {
+    cfg.mode = 'live';
+    mutated = true;
+  }
+  if (typeof cfg.timezone !== 'string' || !cfg.timezone) {
+    cfg.timezone = 'Europe/London';
+    mutated = true;
+  }
+  if (cfg.lastNetDeposits !== undefined && !Number.isFinite(Number(cfg.lastNetDeposits))) {
+    delete cfg.lastNetDeposits;
+    mutated = true;
+  }
+  return { mutated, config: cfg };
+}
+
 function ensureUserShape(user) {
   if (!user) return false;
   let mutated = false;
   ensurePortfolioHistory(user);
+  const { mutated: tradingMutated } = ensureTrading212Config(user);
+  if (tradingMutated) mutated = true;
   if (user.initialNetDeposits === undefined) {
     user.initialNetDeposits = 0;
     mutated = true;
@@ -191,6 +224,138 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
     mutated = true;
   }
   return { baseline: normalized, mutated };
+}
+
+function dateKeyInTimezone(timezone, date = new Date()) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone || 'Europe/London',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find(p => p.type === 'year')?.value;
+    const month = parts.find(p => p.type === 'month')?.value;
+    const day = parts.find(p => p.type === 'day')?.value;
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch (e) {
+    console.warn('Unable to derive timezone-specific date', e);
+  }
+  return currentDateKey();
+}
+
+function parseSnapshotTime(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) return null;
+  return { hour: match[1], minute: match[2] };
+}
+
+async function fetchTrading212Snapshot(config) {
+  const baseUrl = config.mode === 'practice'
+    ? (process.env.T212_PRACTICE_BASE || 'https://demo.trading212.com')
+    : (process.env.T212_LIVE_BASE || 'https://live.trading212.com');
+  const endpoint = `${baseUrl}/api/v0/equity/portfolio/summary`;
+  try {
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Apikey ${config.apiKey}`,
+        'Accept': 'application/json'
+      }
+    });
+    if (!res.ok) {
+      throw new Error(`Trading 212 responded with ${res.status}`);
+    }
+    const data = await res.json();
+    const portfolioValue = Number(data?.totalValue?.value ?? data?.total?.portfolioValue ?? data?.portfolioValue);
+    const netDeposits = Number(data?.totalNetDeposits ?? data?.netDeposits);
+    if (!Number.isFinite(portfolioValue)) {
+      throw new Error('Trading 212 payload missing portfolio value');
+    }
+    return {
+      portfolioValue,
+      netDeposits: Number.isFinite(netDeposits) ? netDeposits : null,
+      raw: data
+    };
+  } catch (e) {
+    throw new Error(e.message || 'Unable to reach Trading 212');
+  }
+}
+
+const trading212Jobs = new Map();
+
+async function syncTrading212ForUser(username, runDate = new Date()) {
+  const db = loadDB();
+  const user = db.users[username];
+  if (!user) return;
+  ensureUserShape(user);
+  const cfg = user.trading212;
+  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  try {
+    const snapshot = await fetchTrading212Snapshot(cfg);
+    const history = ensurePortfolioHistory(user);
+    normalizePortfolioHistory(user);
+    const timezone = cfg.timezone || 'Europe/London';
+    const dateKey = dateKeyInTimezone(timezone, runDate);
+    const ym = dateKey.slice(0, 7);
+    history[ym] ||= {};
+    const existing = history[ym][dateKey] || {};
+    const previousNet = Number.isFinite(Number(cfg.lastNetDeposits))
+      ? Number(cfg.lastNetDeposits)
+      : (Number.isFinite(user.initialNetDeposits) ? Number(user.initialNetDeposits) : 0);
+    let cashIn = Number(existing.cashIn ?? 0);
+    let cashOut = Number(existing.cashOut ?? 0);
+    if (snapshot.netDeposits !== null) {
+      const delta = snapshot.netDeposits - previousNet;
+      if (delta > 0) {
+        cashIn += delta;
+      } else if (delta < 0) {
+        cashOut += Math.abs(delta);
+      }
+      cfg.lastNetDeposits = snapshot.netDeposits;
+    }
+    history[ym][dateKey] = {
+      end: snapshot.portfolioValue,
+      cashIn,
+      cashOut
+    };
+    user.profileComplete = true;
+    refreshAnchors(user, history);
+    cfg.lastSyncAt = new Date().toISOString();
+    cfg.lastStatus = { ok: true };
+    saveDB(db);
+  } catch (e) {
+    cfg.lastSyncAt = new Date().toISOString();
+    cfg.lastStatus = { ok: false, message: e.message || 'Unknown Trading 212 error' };
+    saveDB(db);
+    console.error(`Trading 212 sync failed for ${username}`, e);
+  }
+}
+
+function stopTrading212Job(username) {
+  const job = trading212Jobs.get(username);
+  if (job) {
+    job.stop();
+    trading212Jobs.delete(username);
+  }
+}
+
+function scheduleTrading212Job(username, user) {
+  stopTrading212Job(username);
+  const cfg = user?.trading212;
+  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  const parsed = parseSnapshotTime(cfg.snapshotTime);
+  if (!parsed) return;
+  const expression = `${parsed.minute} ${parsed.hour} * * *`;
+  const timezone = cfg.timezone || 'Europe/London';
+  const job = cron.schedule(expression, async () => {
+    await syncTrading212ForUser(username, new Date());
+  }, { timezone });
+  trading212Jobs.set(username, job);
 }
 
 app.use(bodyParser.json());
@@ -347,9 +512,84 @@ app.post('/api/profile', auth, (req,res)=>{
   };
   user.initialNetDeposits = netDepositsNumber;
   user.profileComplete = true;
+  const { config: tradingCfg } = ensureTrading212Config(user);
+  tradingCfg.lastNetDeposits = netDepositsNumber;
   refreshAnchors(user, history);
   saveDB(db);
   res.json({ ok: true });
+});
+
+app.get('/api/integrations/trading212', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user);
+  const cfg = user.trading212 || {};
+  const parsed = parseSnapshotTime(cfg.snapshotTime);
+  res.json({
+    enabled: !!cfg.enabled,
+    snapshotTime: parsed ? `${parsed.hour}:${parsed.minute}` : '21:00',
+    mode: cfg.mode || 'live',
+    timezone: cfg.timezone || 'Europe/London',
+    hasApiKey: !!cfg.apiKey,
+    lastSyncAt: cfg.lastSyncAt || null,
+    lastStatus: cfg.lastStatus || null
+  });
+});
+
+app.post('/api/integrations/trading212', auth, async (req, res) => {
+  const { enabled, apiKey, snapshotTime, mode, timezone, runNow } = req.body || {};
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user);
+  const cfg = user.trading212;
+  if (typeof enabled === 'boolean') {
+    cfg.enabled = enabled;
+  }
+  if (typeof mode === 'string' && ['live', 'practice'].includes(mode)) {
+    cfg.mode = mode;
+  }
+  if (typeof timezone === 'string' && timezone.trim()) {
+    cfg.timezone = timezone.trim();
+  }
+  if (snapshotTime !== undefined) {
+    const parsed = parseSnapshotTime(String(snapshotTime));
+    if (!parsed) {
+      return res.status(400).json({ error: 'Snapshot time must be HH:MM in 24-hour format' });
+    }
+    cfg.snapshotTime = `${parsed.hour}:${parsed.minute}`;
+  }
+  if (apiKey !== undefined) {
+    if (typeof apiKey === 'string' && apiKey.trim()) {
+      cfg.apiKey = apiKey.trim();
+    } else if (apiKey === '') {
+      cfg.apiKey = '';
+    }
+  }
+  if (cfg.enabled && !cfg.apiKey) {
+    return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
+  }
+  if (cfg.enabled && cfg.lastNetDeposits === undefined && Number.isFinite(user.initialNetDeposits)) {
+    cfg.lastNetDeposits = Number(user.initialNetDeposits);
+  }
+  saveDB(db);
+  scheduleTrading212Job(req.username, user);
+  let responseCfg = cfg;
+  if (runNow && cfg.enabled && cfg.apiKey) {
+    await syncTrading212ForUser(req.username);
+    const latestDb = loadDB();
+    responseCfg = latestDb.users[req.username]?.trading212 || responseCfg;
+  }
+  res.json({
+    enabled: !!responseCfg.enabled,
+    snapshotTime: responseCfg.snapshotTime,
+    mode: responseCfg.mode,
+    timezone: responseCfg.timezone,
+    hasApiKey: !!responseCfg.apiKey,
+    lastSyncAt: responseCfg.lastSyncAt || null,
+    lastStatus: responseCfg.lastStatus || null
+  });
 });
 
 // profits endpoints
@@ -451,23 +691,20 @@ app.get('/api/rates', auth, async (req,res)=>{
   res.json({ rates, cachedAt: cachedRatesAt || Date.now() });
 });
 
-// --- optional daily sync with Trading 212 at 21:00 Europe/London ---
-const T212_API_KEY = process.env.T212_API_KEY;
-async function syncTrading212ForUser(username) {
-  if (!T212_API_KEY) return; // quietly skip if not configured
-  // Placeholder: call Trading212 endpoints if available to fetch P&L.
-  // The real implementation depends on the official API you enable.
-  return;
-}
-// Run every day at 21:00 London time
-cron.schedule('0 21 * * *', async ()=>{
-  try {
-    const db = loadDB();
-    await Promise.all(Object.keys(db.users).map(syncTrading212ForUser));
-  } catch (e) {
-    console.error('Sync error', e);
+function bootstrapTrading212Schedules() {
+  const db = loadDB();
+  let mutated = false;
+  for (const [username, user] of Object.entries(db.users || {})) {
+    const changed = ensureUserShape(user);
+    if (changed) mutated = true;
+    scheduleTrading212Job(username, user);
   }
-}, { timezone: 'Europe/London' });
+  if (mutated) {
+    saveDB(db);
+  }
+}
+
+bootstrapTrading212Schedules();
 
 app.listen(PORT, ()=>{
   console.log(`P&L Calendar server listening on port ${PORT}`);
