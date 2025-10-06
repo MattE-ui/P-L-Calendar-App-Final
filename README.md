@@ -5,7 +5,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 ## Features
 - Secure sign-up/login with bcrypt-hashed passwords and HTTP-only cookies.
 - Capture the initial portfolio value during sign-up and edit it later from the dashboard.
-- Record daily P&L entries, colour-coded in the calendar (green for profit, red for loss).
+- Record daily portfolio values; the app automatically calculates monetary and percentage changes and colours profitable periods in green and losses in red.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
 
