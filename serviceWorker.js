@@ -1,13 +1,17 @@
 // Bump version when you change cached assets
-const CACHE_NAME = 'pl-calendar-cache-v3';
+const CACHE_NAME = 'pl-calendar-cache-v9';
 const ASSETS = [
   '/',
   '/index.html',
   '/login.html',
+  '/signup.html',
+  '/profile.html',
   '/manifest.json',
   '/static/style.css',
   '/static/script.js',
-  '/static/login.js'
+  '/static/login.js',
+  '/static/signup.js',
+  '/static/profile.js'
 ];
 
 self.addEventListener('install', (event) => {
