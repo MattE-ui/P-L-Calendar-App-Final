@@ -37,6 +37,14 @@ function auth(req, res, next) {
   next();
 }
 
+function ensurePortfolioHistory(user) {
+  if (!user.portfolioHistory) {
+    user.portfolioHistory = user.profits || {};
+    delete user.profits;
+  }
+  return user.portfolioHistory;
+}
+
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -120,12 +128,13 @@ app.post('/api/portfolio', auth, (req,res)=>{
 app.get('/api/pl', auth, (req,res)=>{
   const { year, month } = req.query;
   const db = loadDB();
-  const profits = db.users[req.username].profits || {};
+  const user = db.users[req.username];
+  const history = ensurePortfolioHistory(user);
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
-    res.json(profits[key] || {});
+    res.json(history[key] || {});
   } else {
-    res.json(profits);
+    res.json(history);
   }
 });
 
@@ -134,14 +143,20 @@ app.post('/api/pl', auth, (req,res)=>{
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
-  user.profits ||= {};
+  const history = ensurePortfolioHistory(user);
   const ym = date.slice(0,7);
-  user.profits[ym] ||= {};
-  // If value is null or empty string, delete the entry
-  if (value === null || value === '' || Number(value) === 0) {
-    delete user.profits[ym][date];
+  history[ym] ||= {};
+  if (value === null || value === '') {
+    delete history[ym][date];
+    if (!Object.keys(history[ym]).length) {
+      delete history[ym];
+    }
   } else {
-    user.profits[ym][date] = Number(value);
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) {
+      return res.status(400).json({ error: 'Invalid portfolio value' });
+    }
+    history[ym][date] = num;
   }
   saveDB(db);
   res.json({ ok: true });
