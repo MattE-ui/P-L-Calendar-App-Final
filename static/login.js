@@ -22,8 +22,10 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 document.getElementById('signup-btn').addEventListener('click', async () => {
   const u = document.getElementById('signup-username').value.trim();
   const p = document.getElementById('signup-password').value.trim();
+  const portfolioRaw = document.getElementById('signup-portfolio').value;
+  const portfolio = portfolioRaw === '' ? undefined : Number(portfolioRaw);
   const err = document.getElementById('signup-error'); err.textContent = '';
-  const res = await call('/api/signup', { username: u, password: p });
+  const res = await call('/api/signup', { username: u, password: p, portfolio });
   if (res.ok) {
     // auto login
     const res2 = await call('/api/login', { username: u, password: p });
