@@ -133,10 +133,35 @@ function buildSnapshots(history, initial) {
   return snapshots;
 }
 
-function getLatestClosing(history) {
+function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
   const entries = listChronologicalEntries(history);
-  if (!entries.length) return null;
-  return entries[entries.length - 1].end;
+  let mutated = false;
+  if (entries.length) {
+    const baseline = entries[0].end;
+    const latest = entries[entries.length - 1].end;
+    if (user.initialPortfolio !== baseline) {
+      user.initialPortfolio = baseline;
+      mutated = true;
+    }
+    if (user.portfolio !== latest) {
+      user.portfolio = latest;
+      mutated = true;
+    }
+    return { baseline, mutated };
+  }
+  const fallback = Number.isFinite(user.initialPortfolio)
+    ? user.initialPortfolio
+    : (Number.isFinite(user.portfolio) ? user.portfolio : 0);
+  const normalized = Number.isFinite(fallback) ? fallback : 0;
+  if (user.initialPortfolio !== normalized) {
+    user.initialPortfolio = normalized;
+    mutated = true;
+  }
+  if (user.portfolio !== normalized) {
+    user.portfolio = normalized;
+    mutated = true;
+  }
+  return { baseline: normalized, mutated };
 }
 
 app.use(bodyParser.json());
@@ -155,6 +180,12 @@ app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 
 // --- auth api ---
+function currentDateKey() {
+  const now = new Date();
+  const tzAdjusted = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return tzAdjusted.toISOString().slice(0, 10);
+}
+
 app.post('/api/signup', async (req,res)=>{
   const { username, password, portfolio } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -165,11 +196,19 @@ app.post('/api/signup', async (req,res)=>{
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
+  const normalizedInitial = isNaN(initialPortfolio) ? 0 : initialPortfolio;
+  const todayKey = currentDateKey();
+  const monthKey = todayKey.slice(0, 7);
+  const portfolioHistory = {
+    [monthKey]: {
+      [todayKey]: { end: normalizedInitial, cashIn: 0, cashOut: 0 }
+    }
+  };
   db.users[username] = {
     passwordHash,
-    portfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio,
-    initialPortfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio,
-    portfolioHistory: {}
+    portfolio: normalizedInitial,
+    initialPortfolio: normalizedInitial,
+    portfolioHistory
   };
   saveDB(db);
   res.json({ ok: true });
@@ -230,11 +269,9 @@ app.get('/api/pl', auth, (req,res)=>{
   const user = db.users[req.username];
   const history = ensurePortfolioHistory(user);
   let mutated = normalizePortfolioHistory(user);
-  if (user.initialPortfolio === undefined) {
-    user.initialPortfolio = Number.isFinite(user.portfolio) ? user.portfolio : 0;
-    mutated = true;
-  }
-  const snapshots = buildSnapshots(history, user.initialPortfolio);
+  const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
+  if (anchorMutated) mutated = true;
+  const snapshots = buildSnapshots(history, baseline);
   if (mutated) saveDB(db);
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
@@ -279,14 +316,7 @@ app.post('/api/pl', auth, (req,res)=>{
       cashOut: withdrawal
     };
   }
-  const latest = getLatestClosing(history);
-  if (latest !== null) {
-    user.portfolio = latest;
-  } else if (Number.isFinite(user.initialPortfolio)) {
-    user.portfolio = user.initialPortfolio;
-  } else {
-    user.portfolio = 0;
-  }
+  refreshAnchors(user, history);
   saveDB(db);
   res.json({ ok: true });
 });
