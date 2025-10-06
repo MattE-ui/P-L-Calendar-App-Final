@@ -60,6 +60,14 @@ function ensureTrading212Config(user) {
     cfg.enabled = false;
     mutated = true;
   }
+  if (typeof cfg.apiKey !== 'string') {
+    cfg.apiKey = '';
+    mutated = true;
+  }
+  if (typeof cfg.apiSecret !== 'string') {
+    cfg.apiSecret = '';
+    mutated = true;
+  }
   if (typeof cfg.snapshotTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.snapshotTime)) {
     cfg.snapshotTime = '21:00';
     mutated = true;
@@ -259,11 +267,15 @@ async function fetchTrading212Snapshot(config) {
     ? (process.env.T212_PRACTICE_BASE || 'https://demo.trading212.com')
     : (process.env.T212_LIVE_BASE || 'https://live.trading212.com');
   const endpoint = `${baseUrl}/api/v0/equity/portfolio/summary`;
+  if (!config.apiKey || !config.apiSecret) {
+    throw new Error('Trading 212 credentials are incomplete');
+  }
+  const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
   try {
     const res = await fetch(endpoint, {
       method: 'GET',
       headers: {
-        'Authorization': `Apikey ${config.apiKey}`,
+        'Authorization': `Basic ${encodedCredentials}`,
         'Accept': 'application/json'
       }
     });
@@ -294,7 +306,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   if (!user) return;
   ensureUserShape(user);
   const cfg = user.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   try {
     const snapshot = await fetchTrading212Snapshot(cfg);
     const history = ensurePortfolioHistory(user);
@@ -347,7 +359,7 @@ function stopTrading212Job(username) {
 function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const parsed = parseSnapshotTime(cfg.snapshotTime);
   if (!parsed) return;
   const expression = `${parsed.minute} ${parsed.hour} * * *`;
@@ -532,13 +544,14 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     mode: cfg.mode || 'live',
     timezone: cfg.timezone || 'Europe/London',
     hasApiKey: !!cfg.apiKey,
+    hasApiSecret: !!cfg.apiSecret,
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null
   });
 });
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
-  const { enabled, apiKey, snapshotTime, mode, timezone, runNow } = req.body || {};
+  const { enabled, apiKey, apiSecret, snapshotTime, mode, timezone, runNow } = req.body || {};
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -567,8 +580,15 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
       cfg.apiKey = '';
     }
   }
-  if (cfg.enabled && !cfg.apiKey) {
-    return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
+  if (apiSecret !== undefined) {
+    if (typeof apiSecret === 'string' && apiSecret.trim()) {
+      cfg.apiSecret = apiSecret.trim();
+    } else if (apiSecret === '') {
+      cfg.apiSecret = '';
+    }
+  }
+  if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
+    return res.status(400).json({ error: 'Provide your Trading 212 API credentials to enable automation.' });
   }
   if (cfg.enabled && cfg.lastNetDeposits === undefined && Number.isFinite(user.initialNetDeposits)) {
     cfg.lastNetDeposits = Number(user.initialNetDeposits);
@@ -576,7 +596,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   saveDB(db);
   scheduleTrading212Job(req.username, user);
   let responseCfg = cfg;
-  if (runNow && cfg.enabled && cfg.apiKey) {
+  if (runNow && cfg.enabled && cfg.apiKey && cfg.apiSecret) {
     await syncTrading212ForUser(req.username);
     const latestDb = loadDB();
     responseCfg = latestDb.users[req.username]?.trading212 || responseCfg;
@@ -587,6 +607,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     mode: responseCfg.mode,
     timezone: responseCfg.timezone,
     hasApiKey: !!responseCfg.apiKey,
+    hasApiSecret: !!responseCfg.apiSecret,
     lastSyncAt: responseCfg.lastSyncAt || null,
     lastStatus: responseCfg.lastStatus || null
   });

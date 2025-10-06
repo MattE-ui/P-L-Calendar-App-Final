@@ -48,6 +48,11 @@
           <p class="helper">Your key stays on this server and is only used to request the scheduled snapshot.</p>
         </div>
         <div class="profile-field">
+          <label for="t212-api-secret">Trading 212 API secret</label>
+          <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
+          <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
+        </div>
+        <div class="profile-field">
           <label for="t212-mode">Account</label>
           <select id="t212-mode">
             <option value="live">Live account</option>
@@ -65,8 +70,8 @@
         <p>This integration records your Trading 212 closing balance at the scheduled time and applies any new deposits or withdrawals to your calendar automatically.</p>
         <ol>
           <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
-          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key.</li>
-          <li>Copy the generated key and paste it above, pick your snapshot time, then save.</li>
+          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key and API secret &mdash; copy both.</li>
+          <li>Paste the key and secret above, pick your snapshot time, then save.</li>
           <li>Leave your browser or device off &mdash; we will call the API at the chosen time each day and backfill your calendar.</li>
         </ol>
       </section>

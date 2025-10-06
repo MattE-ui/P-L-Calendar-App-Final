@@ -53,6 +53,7 @@ async function loadProfile() {
 
 const integrationState = {
   hasApiKey: false,
+  hasApiSecret: false,
   enabled: false,
   snapshotTime: '21:00',
   mode: 'live',
@@ -62,11 +63,13 @@ const integrationState = {
 function setIntegrationFieldsDisabled(disabled) {
   const container = document.getElementById('t212-fields');
   const apiInput = document.getElementById('t212-api-key');
+  const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const timeInput = document.getElementById('t212-time');
   const runBtn = document.getElementById('t212-run-now');
   if (container) container.classList.toggle('is-hidden', disabled);
   if (apiInput) apiInput.disabled = disabled;
+  if (secretInput) secretInput.disabled = disabled;
   if (modeSelect) modeSelect.disabled = disabled;
   if (timeInput) timeInput.disabled = disabled;
   if (runBtn) runBtn.disabled = disabled;
@@ -100,12 +103,14 @@ async function loadIntegration() {
   try {
     const data = await api('/api/integrations/trading212');
     integrationState.hasApiKey = !!data.hasApiKey;
+    integrationState.hasApiSecret = !!data.hasApiSecret;
     integrationState.enabled = !!data.enabled;
     integrationState.snapshotTime = data.snapshotTime || '21:00';
     integrationState.mode = data.mode || 'live';
     integrationState.timezone = data.timezone || 'Europe/London';
     const toggle = document.getElementById('t212-enabled');
     const apiInput = document.getElementById('t212-api-key');
+    const secretInput = document.getElementById('t212-api-secret');
     const modeSelect = document.getElementById('t212-mode');
     const timeInput = document.getElementById('t212-time');
     if (toggle) toggle.checked = integrationState.enabled;
@@ -114,6 +119,12 @@ async function loadIntegration() {
       apiInput.placeholder = integrationState.hasApiKey
         ? 'Key saved — paste a new key to replace'
         : 'Paste your API key';
+    }
+    if (secretInput) {
+      secretInput.value = '';
+      secretInput.placeholder = integrationState.hasApiSecret
+        ? 'Secret saved — paste a new secret to replace'
+        : 'Paste your API secret';
     }
     if (modeSelect) modeSelect.value = integrationState.mode;
     if (timeInput) timeInput.value = integrationState.snapshotTime;
@@ -136,6 +147,7 @@ async function saveIntegration({ runNow = false } = {}) {
   if (errorEl) errorEl.textContent = '';
   const toggle = document.getElementById('t212-enabled');
   const apiInput = document.getElementById('t212-api-key');
+  const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const timeInput = document.getElementById('t212-time');
   const enabled = !!toggle?.checked;
@@ -150,6 +162,12 @@ async function saveIntegration({ runNow = false } = {}) {
   } else if (!enabled && integrationState.hasApiKey) {
     payload.apiKey = '';
   }
+  const apiSecretValue = secretInput?.value.trim();
+  if (apiSecretValue) {
+    payload.apiSecret = apiSecretValue;
+  } else if (!enabled && integrationState.hasApiSecret) {
+    payload.apiSecret = '';
+  }
   if (runNow) payload.runNow = true;
   try {
     const data = await api('/api/integrations/trading212', {
@@ -158,6 +176,7 @@ async function saveIntegration({ runNow = false } = {}) {
       body: JSON.stringify(payload)
     });
     integrationState.hasApiKey = !!data.hasApiKey;
+    integrationState.hasApiSecret = !!data.hasApiSecret;
     integrationState.enabled = !!data.enabled;
     integrationState.snapshotTime = data.snapshotTime || integrationState.snapshotTime;
     integrationState.mode = data.mode || integrationState.mode;
@@ -167,6 +186,12 @@ async function saveIntegration({ runNow = false } = {}) {
       apiInput.placeholder = integrationState.hasApiKey
         ? 'Key saved — paste a new key to replace'
         : 'Paste your API key';
+    }
+    if (secretInput) {
+      secretInput.value = '';
+      secretInput.placeholder = integrationState.hasApiSecret
+        ? 'Secret saved — paste a new secret to replace'
+        : 'Paste your API secret';
     }
     if (toggle) toggle.checked = integrationState.enabled;
     setIntegrationFieldsDisabled(!integrationState.enabled);
