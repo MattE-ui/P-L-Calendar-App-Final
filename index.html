@@ -6,12 +6,6 @@
   <title>P&L Calendar</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="static/style.css">
-  <script>
-  // redirect if not authenticated
-  if (!document.cookie.split('; ').find(row => row.startsWith('auth_token='))) {
-    window.location.href = '/login.html';
-  }
-  </script>
 </head>
 <body>
   <header class="topbar">
