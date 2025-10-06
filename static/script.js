@@ -4,7 +4,14 @@ const state = {
   data: {},
   portfolioGBP: 0,
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  metrics: {
+    baselineGBP: 0,
+    latestGBP: 0,
+    netDepositsGBP: 0,
+    netPerformanceGBP: 0,
+    netPerformancePct: null
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -216,19 +223,159 @@ function getValuesForSummary() {
   if (state.view === 'year') {
     return getYearMonths(state.selected).map(item => ({
       change: item.hasChange ? item.totalChange : null,
-      pct: item.hasChange ? item.pct : null
+      pct: item.hasChange ? item.pct : null,
+      cashFlow: item.totalCashFlow ?? 0
     }));
   }
   if (state.view === 'week') {
     return getWeeksInMonth(state.selected).map(item => ({
       change: item.hasChange ? item.totalChange : null,
-      pct: item.hasChange ? item.pct : null
+      pct: item.hasChange ? item.pct : null,
+      cashFlow: item.totalCashFlow ?? 0
     }));
   }
   return getDaysInMonth(state.selected)
     .map(getDailyEntry)
     .filter(Boolean)
-    .map(item => ({ change: item.change, pct: item.pct }));
+    .map(item => ({ change: item.change, pct: item.pct, cashFlow: item.cashFlow ?? 0 }));
+}
+
+function getAllEntries() {
+  const entries = [];
+  Object.entries(state.data || {}).forEach(([, days]) => {
+    Object.keys(days || {}).forEach(dateKey => {
+      const date = new Date(dateKey);
+      if (Number.isNaN(date.getTime())) return;
+      const entry = getDailyEntry(date);
+      if (entry) entries.push(entry);
+    });
+  });
+  entries.sort((a, b) => a.date - b.date);
+  return entries;
+}
+
+function computeLifetimeMetrics() {
+  const entries = getAllEntries();
+  if (!entries.length) {
+    const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+    state.metrics = {
+      baselineGBP: fallback,
+      latestGBP: fallback,
+      netDepositsGBP: 0,
+      netPerformanceGBP: 0,
+      netPerformancePct: null
+    };
+    return;
+  }
+  let baseline = null;
+  let latest = entries[entries.length - 1]?.closing ?? null;
+  let netDeposits = 0;
+  entries.forEach(entry => {
+    if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
+      baseline = entry.opening;
+    }
+    if (entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
+      netDeposits += entry.cashFlow;
+    }
+    if (entry?.closing !== null && entry?.closing !== undefined) {
+      latest = entry.closing;
+    }
+  });
+  if (baseline === null || baseline === undefined) {
+    const first = entries[0];
+    baseline = (first?.opening !== null && first?.opening !== undefined)
+      ? first.opening
+      : (first?.closing ?? 0);
+  }
+  const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
+  const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
+  const netPerformance = safeLatest - safeBaseline - netDeposits;
+  const pct = safeBaseline !== 0 ? (netPerformance / safeBaseline) * 100 : null;
+  state.metrics = {
+    baselineGBP: safeBaseline,
+    latestGBP: safeLatest,
+    netDepositsGBP: netDeposits,
+    netPerformanceGBP: netPerformance,
+    netPerformancePct: Number.isFinite(pct) ? pct : null
+  };
+}
+
+function setMetricTrend(el, value) {
+  if (!el) return;
+  const isPositive = Number.isFinite(value) && value > 0;
+  const isNegative = Number.isFinite(value) && value < 0;
+  el.classList.toggle('positive', isPositive);
+  el.classList.toggle('negative', isNegative);
+  if (!isPositive && !isNegative) {
+    el.classList.remove('positive');
+    el.classList.remove('negative');
+  }
+}
+
+function renderMetrics() {
+  const metrics = state.metrics || {};
+  const latestGBP = Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : state.portfolioGBP;
+  const netDepositsGBP = Number.isFinite(metrics.netDepositsGBP) ? metrics.netDepositsGBP : 0;
+  const netPerformanceGBP = Number.isFinite(metrics.netPerformanceGBP) ? metrics.netPerformanceGBP : 0;
+  const netPerformancePct = Number.isFinite(metrics.netPerformancePct) ? metrics.netPerformancePct : null;
+  const altCurrency = state.currency === 'GBP'
+    ? (state.rates.USD ? 'USD' : null)
+    : 'GBP';
+
+  const portfolioValueEl = $('#metric-portfolio-value');
+  if (portfolioValueEl) {
+    portfolioValueEl.textContent = formatCurrency(latestGBP);
+  }
+  const portfolioSubEl = $('#metric-portfolio-sub');
+  if (portfolioSubEl) {
+    if (altCurrency) {
+      const altValue = formatCurrency(latestGBP, altCurrency);
+      portfolioSubEl.textContent = altValue === '—' ? '' : `≈ ${altValue}`;
+    } else {
+      portfolioSubEl.textContent = '';
+    }
+  }
+
+  const netDepositsEl = $('#metric-net-deposits-value');
+  if (netDepositsEl) {
+    netDepositsEl.textContent = formatSignedCurrency(netDepositsGBP);
+  }
+  const netDepositsSub = $('#metric-net-deposits-sub');
+  if (netDepositsSub) {
+    if (altCurrency) {
+      const altDeposits = formatSignedCurrency(netDepositsGBP, altCurrency);
+      netDepositsSub.textContent = altDeposits === '—' ? '' : `≈ ${altDeposits}`;
+    } else {
+      netDepositsSub.textContent = '';
+    }
+  }
+  setMetricTrend($('#metric-net-deposits'), netDepositsGBP);
+
+  const netPerfEl = $('#metric-net-performance-value');
+  if (netPerfEl) {
+    netPerfEl.textContent = formatSignedCurrency(netPerformanceGBP);
+  }
+  const netPerfSub = $('#metric-net-performance-sub');
+  if (netPerfSub) {
+    const pieces = [];
+    if (altCurrency) {
+      const altPerf = formatSignedCurrency(netPerformanceGBP, altCurrency);
+      if (altPerf !== '—') pieces.push(`≈ ${altPerf}`);
+    }
+    if (netPerformancePct !== null && netPerformancePct !== undefined) {
+      pieces.push(formatPercent(netPerformancePct));
+    }
+    netPerfSub.textContent = pieces.join(' • ');
+  }
+  setMetricTrend($('#metric-net-performance'), netPerformanceGBP);
+
+  const portfolioCard = $('#metric-portfolio');
+  if (portfolioCard) {
+    const deltaFromBaseline = Number.isFinite(metrics.baselineGBP)
+      ? latestGBP - metrics.baselineGBP
+      : 0;
+    setMetricTrend(portfolioCard, deltaFromBaseline);
+  }
 }
 
 function setActiveView() {
@@ -254,12 +401,15 @@ function updateCurrencySelect() {
 function updatePortfolioPill() {
   const el = $('#portfolio-display');
   if (!el) return;
-  const base = formatCurrency(state.portfolioGBP);
+  const latestGBP = Number.isFinite(state.metrics?.latestGBP)
+    ? state.metrics.latestGBP
+    : state.portfolioGBP;
+  const base = formatCurrency(latestGBP);
   if (state.currency === 'USD') {
-    const alt = formatCurrency(state.portfolioGBP, 'GBP');
+    const alt = formatCurrency(latestGBP, 'GBP');
     el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
   } else if (state.rates.USD) {
-    const alt = formatCurrency(state.portfolioGBP, 'USD');
+    const alt = formatCurrency(latestGBP, 'USD');
     el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
   } else {
     el.textContent = `Portfolio: ${base}`;
@@ -340,6 +490,7 @@ function renderSummary() {
   let changeCount = 0;
   let pctSum = 0;
   let pctCount = 0;
+  let cashSum = 0;
   values.forEach(item => {
     if (item?.change !== null && item?.change !== undefined) {
       changeSum += item.change;
@@ -349,9 +500,15 @@ function renderSummary() {
       pctSum += item.pct;
       pctCount++;
     }
+    cashSum += item?.cashFlow ?? 0;
   });
+  const periodLabel = state.view === 'year' ? 'year' : 'month';
+  const cashClass = cashSum > 0 ? 'positive' : cashSum < 0 ? 'negative' : '';
+  const cashValue = formatSignedCurrency(cashSum);
+  const cashClassName = cashClass ? ` ${cashClass}` : '';
+  const cashFlowHtml = `Net deposits this ${periodLabel}: <span class="cashflow${cashClassName}">${cashValue}</span>`;
   if (!changeCount) {
-    avgEl.textContent = 'No recorded data yet';
+    avgEl.innerHTML = `<div class="summary-line"><strong>No performance data yet</strong></div><div class="summary-line">${cashFlowHtml}</div>`;
     avgEl.classList.remove('positive', 'negative');
     return;
   }
@@ -359,7 +516,7 @@ function renderSummary() {
   const avgPct = pctCount ? (pctSum / pctCount) : null;
   const label = viewAvgLabels[state.view] || 'Average';
   const pctText = avgPct === null ? '' : ` (${formatPercent(avgPct)})`;
-  avgEl.textContent = `${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}`;
+  avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}</strong></div><div class="summary-line">${cashFlowHtml}</div>`;
   avgEl.classList.toggle('positive', avgGBP > 0);
   avgEl.classList.toggle('negative', avgGBP < 0);
 }
@@ -546,6 +703,7 @@ function render() {
   setActiveView();
   updatePeriodSelect();
   renderTitle();
+  renderMetrics();
   renderView();
   renderSummary();
 }
@@ -575,6 +733,7 @@ async function loadData() {
     console.error('Failed to load portfolio', e);
     state.portfolioGBP = 0;
   }
+  computeLifetimeMetrics();
 }
 
 function openEntryModal(dateStr, existingEntry = null) {
