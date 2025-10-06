@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P&L Calendar - Profile setup</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <div class="profile-container">
+    <header class="profile-header">
+      <h1>Finish setting up your profile</h1>
+      <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
+    </header>
+    <section class="card profile-card">
+      <p class="profile-date" id="profile-date"></p>
+      <div class="profile-field">
+        <label for="profile-portfolio">Current portfolio value (£)</label>
+        <input id="profile-portfolio" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal" required>
+      </div>
+      <div class="profile-field">
+        <label for="profile-net-deposits">Net deposits to date (£)</label>
+        <input id="profile-net-deposits" type="number" step="0.01" placeholder="0.00" inputmode="decimal" required>
+        <p class="helper">Include lifetime deposits minus withdrawals up to today so we can separate performance from cash movements.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="profile-save" class="primary">Save and continue</button>
+        <button id="profile-logout" class="ghost">Log out</button>
+      </div>
+      <div id="profile-error" class="error"></div>
+    </section>
+    <section class="card profile-card automation-card">
+      <header class="profile-automation-header">
+        <h2>Trading 212 automation</h2>
+        <p class="helper">Automatically pull your daily portfolio value and cash movements from Trading 212 so your calendar updates itself.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="t212-enabled">
+          <span>Enable Trading 212 sync</span>
+        </label>
+      </div>
+      <div id="t212-fields" class="integration-fields">
+        <div class="profile-field">
+          <label for="t212-api-key">Trading 212 API key</label>
+          <input id="t212-api-key" type="password" placeholder="Paste your API key" autocomplete="off">
+          <p class="helper">Your key stays on this server and is only used to request the scheduled snapshot.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-api-secret">Trading 212 API secret</label>
+          <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
+          <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-mode">Account</label>
+          <select id="t212-mode">
+            <option value="live">Live account</option>
+            <option value="practice">Practice (Invest/ISA demo)</option>
+          </select>
+        </div>
+        <div class="profile-field">
+          <label for="t212-time">Snapshot time</label>
+          <input id="t212-time" type="time" value="21:00" required>
+          <p class="helper">Choose the time of day (Europe/London) to capture your portfolio value and net deposits.</p>
+        </div>
+      </div>
+      <section class="integration-instructions">
+        <h3>How to set it up</h3>
+        <p>This integration records your Trading 212 closing balance at the scheduled time and applies any new deposits or withdrawals to your calendar automatically.</p>
+        <ol>
+          <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
+          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key and API secret &mdash; copy both.</li>
+          <li>Paste the key and secret above, pick your snapshot time, then save.</li>
+          <li>Leave your browser or device off &mdash; we will call the API at the chosen time each day and backfill your calendar.</li>
+        </ol>
+      </section>
+      <div class="profile-actions integration-actions">
+        <button id="t212-save" class="primary">Save Trading 212 settings</button>
+        <button id="t212-run-now" class="ghost">Run sync now</button>
+      </div>
+      <div id="t212-error" class="error"></div>
+      <p id="t212-status" class="status-line"></p>
+    </section>
+  </div>
+  <script src="static/profile.js"></script>
+</body>
+</html>
