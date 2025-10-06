@@ -54,12 +54,16 @@ app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifes
 
 // --- auth api ---
 app.post('/api/signup', async (req,res)=>{
-  const { username, password } = req.body || {};
+  const { username, password, portfolio } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const initialPortfolio = Number(portfolio);
+  if (portfolio !== undefined && (isNaN(initialPortfolio) || initialPortfolio < 0)) {
+    return res.status(400).json({ error: 'Invalid portfolio value' });
+  }
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
-  db.users[username] = { passwordHash, portfolio: 0, profits: {} };
+  db.users[username] = { passwordHash, portfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio, profits: {} };
   saveDB(db);
   res.json({ ok: true });
 });
@@ -141,6 +145,38 @@ app.post('/api/pl', auth, (req,res)=>{
   }
   saveDB(db);
   res.json({ ok: true });
+});
+
+// --- exchange rates ---
+let cachedRates = { GBP: 1 };
+let cachedRatesAt = 0;
+async function fetchRates() {
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
+  const now = Date.now();
+  if (cachedRatesAt && (now - cachedRatesAt) < SIX_HOURS && cachedRates.USD) {
+    return cachedRates;
+  }
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/GBP');
+    if (!res.ok) throw new Error(`Rate fetch failed: ${res.status}`);
+    const data = await res.json();
+    const usd = data?.rates?.USD;
+    if (usd && typeof usd === 'number') {
+      cachedRates = { GBP: 1, USD: usd };
+      cachedRatesAt = now;
+    }
+  } catch (e) {
+    console.warn('Unable to refresh exchange rates', e.message || e);
+    if (!cachedRates.USD) {
+      cachedRates = { GBP: 1 };
+    }
+  }
+  return cachedRates;
+}
+
+app.get('/api/rates', auth, async (req,res)=>{
+  const rates = await fetchRates();
+  res.json({ rates, cachedAt: cachedRatesAt || Date.now() });
 });
 
 // --- optional daily sync with Trading 212 at 21:00 Europe/London ---
