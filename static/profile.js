@@ -57,7 +57,8 @@ const integrationState = {
   enabled: false,
   snapshotTime: '21:00',
   mode: 'live',
-  timezone: 'Europe/London'
+  timezone: 'Europe/London',
+  cooldownUntil: null
 };
 
 function setIntegrationFieldsDisabled(disabled) {
@@ -78,22 +79,42 @@ function setIntegrationFieldsDisabled(disabled) {
 function renderIntegrationStatus(data) {
   const statusEl = document.getElementById('t212-status');
   if (!statusEl) return;
+  statusEl.classList.remove('is-error');
   if (!data.enabled) {
     statusEl.textContent = 'Automation is currently switched off.';
     return;
   }
+  const timezone = data.timezone || 'Europe/London';
+  const cooldownDate = data.cooldownUntil ? new Date(data.cooldownUntil) : null;
   if (data.lastSyncAt) {
     const date = new Date(data.lastSyncAt);
     const formatted = Number.isNaN(date.getTime())
       ? data.lastSyncAt
-      : date.toLocaleString('en-GB', { timeZone: data.timezone || 'Europe/London' });
+      : date.toLocaleString('en-GB', { timeZone: timezone });
     if (data.lastStatus && data.lastStatus.ok) {
       statusEl.textContent = `Last synced ${formatted}.`;
     } else if (data.lastStatus && data.lastStatus.message) {
-      statusEl.textContent = `Last sync failed ${formatted}: ${data.lastStatus.message}`;
+      statusEl.classList.add('is-error');
+      const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
+      let message = data.lastStatus.message;
+      if (cooldownDate && !Number.isNaN(cooldownDate.getTime()) && cooldownDate.getTime() > Date.now()) {
+        const seconds = Math.max(0, Math.ceil((cooldownDate.getTime() - Date.now()) / 1000));
+        const cooldownLabel = cooldownDate.toLocaleTimeString('en-GB', {
+          timeZone: timezone,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+        message += ` Next attempt after ${cooldownLabel} (${seconds}s).`;
+      }
+      statusEl.textContent = `Last sync failed${statusCode}: ${message}`;
     } else {
       statusEl.textContent = `Last sync attempted ${formatted}.`;
     }
+  } else if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
+    statusEl.classList.add('is-error');
+    const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
+    statusEl.textContent = `Sync pending${statusCode}: ${data.lastStatus.message}`;
   } else {
     statusEl.textContent = 'No automated Trading 212 sync has run yet.';
   }
@@ -108,6 +129,7 @@ async function loadIntegration() {
     integrationState.snapshotTime = data.snapshotTime || '21:00';
     integrationState.mode = data.mode || 'live';
     integrationState.timezone = data.timezone || 'Europe/London';
+    integrationState.cooldownUntil = data.cooldownUntil || null;
     const toggle = document.getElementById('t212-enabled');
     const apiInput = document.getElementById('t212-api-key');
     const secretInput = document.getElementById('t212-api-secret');
@@ -133,7 +155,8 @@ async function loadIntegration() {
       enabled: integrationState.enabled,
       lastSyncAt: data.lastSyncAt,
       lastStatus: data.lastStatus,
-      timezone: integrationState.timezone
+      timezone: integrationState.timezone,
+      cooldownUntil: integrationState.cooldownUntil
     });
   } catch (e) {
     console.error('Unable to load Trading 212 settings', e);
@@ -181,6 +204,7 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.snapshotTime = data.snapshotTime || integrationState.snapshotTime;
     integrationState.mode = data.mode || integrationState.mode;
     integrationState.timezone = data.timezone || integrationState.timezone;
+    integrationState.cooldownUntil = data.cooldownUntil || null;
     if (apiInput) {
       apiInput.value = '';
       apiInput.placeholder = integrationState.hasApiKey
@@ -199,11 +223,20 @@ async function saveIntegration({ runNow = false } = {}) {
       enabled: integrationState.enabled,
       lastSyncAt: data.lastSyncAt,
       lastStatus: data.lastStatus,
-      timezone: integrationState.timezone
+      timezone: integrationState.timezone,
+      cooldownUntil: integrationState.cooldownUntil
     });
+    if (errorEl) {
+      if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
+        const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
+        errorEl.textContent = `Trading 212${statusCode}: ${data.lastStatus.message}`;
+      } else {
+        errorEl.textContent = '';
+      }
+    }
   } catch (e) {
     console.error(e);
-    if (errorEl) errorEl.textContent = e?.data?.error || 'Unable to save Trading 212 settings.';
+    if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to save Trading 212 settings.';
   }
 }
 

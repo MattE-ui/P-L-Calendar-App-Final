@@ -249,6 +249,7 @@ button.danger { color:#ffd8de; border-color:#ff8aa0; }
 .integration-instructions li::marker { color: var(--accent); font-weight: 600; }
 .integration-actions { margin-top: 4px; }
 .status-line { margin: 0; font-size: 13px; color: var(--muted); }
+.status-line.is-error { color: #d0342c; }
 .status-line strong { color: var(--text); }
 .automation-card .error { margin-top: -4px; }
 label { display:block; margin-top:10px; color: var(--muted); }

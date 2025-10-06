@@ -13,6 +13,34 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'data.json');
 
+class Trading212Error extends Error {
+  constructor(message, { status, retryAfter, code } = {}) {
+    super(message);
+    this.name = 'Trading212Error';
+    if (status !== undefined) this.status = status;
+    if (retryAfter !== undefined) this.retryAfter = retryAfter;
+    if (code !== undefined) this.code = code;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const numeric = Number(header);
+  if (Number.isFinite(numeric)) {
+    return Math.max(0, numeric);
+  }
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    const diff = Math.ceil((date - Date.now()) / 1000);
+    return diff > 0 ? diff : 0;
+  }
+  return null;
+}
+
 // --- helpers ---
 function loadDB() {
   try {
@@ -79,6 +107,13 @@ function ensureTrading212Config(user) {
   if (typeof cfg.timezone !== 'string' || !cfg.timezone) {
     cfg.timezone = 'Europe/London';
     mutated = true;
+  }
+  if (cfg.cooldownUntil !== undefined) {
+    const ts = Date.parse(cfg.cooldownUntil);
+    if (Number.isNaN(ts)) {
+      delete cfg.cooldownUntil;
+      mutated = true;
+    }
   }
   if (cfg.lastNetDeposits !== undefined && !Number.isFinite(Number(cfg.lastNetDeposits))) {
     delete cfg.lastNetDeposits;
@@ -262,40 +297,123 @@ function parseSnapshotTime(value) {
   return { hour: match[1], minute: match[2] };
 }
 
-async function fetchTrading212Snapshot(config) {
-  const baseUrl = config.mode === 'practice'
-    ? (process.env.T212_PRACTICE_BASE || 'https://demo.trading212.com')
-    : (process.env.T212_LIVE_BASE || 'https://live.trading212.com');
-  const endpoint = `${baseUrl}/api/v0/equity/portfolio/summary`;
-  if (!config.apiKey || !config.apiSecret) {
-    throw new Error('Trading 212 credentials are incomplete');
-  }
-  const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
-  try {
-    const res = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${encodedCredentials}`,
-        'Accept': 'application/json'
-      }
-    });
-    if (!res.ok) {
-      throw new Error(`Trading 212 responded with ${res.status}`);
+async function requestTrading212Endpoint(url, headers) {
+  const maxAttempts = 3;
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    let res;
+    try {
+      res = await fetch(url, { method: 'GET', headers });
+    } catch (networkErr) {
+      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      await sleep(Math.min(1000 * attempt, 3000));
+      continue;
     }
-    const data = await res.json();
-    const portfolioValue = Number(data?.totalValue?.value ?? data?.total?.portfolioValue ?? data?.portfolioValue);
-    const netDeposits = Number(data?.totalNetDeposits ?? data?.netDeposits);
+    const status = res.status;
+    if (status === 429) {
+      const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+        status,
+        retryAfter
+      });
+      const wait = retryAfter !== null ? Math.min(retryAfter * 1000, 5000) : Math.min(1000 * attempt, 5000);
+      if (attempt < maxAttempts) {
+        await sleep(wait);
+        continue;
+      }
+      throw lastError;
+    }
+    if (status === 401 || status === 403) {
+      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
+        status,
+        code: 'unauthorised'
+      });
+    }
+    if (status === 404) {
+      throw new Trading212Error('Trading 212 could not find the portfolio summary endpoint.', {
+        status,
+        code: 'not_found'
+      });
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+    }
+    const contentType = res.headers.get('content-type') || '';
+    let data;
+    if (contentType.includes('application/json')) {
+      data = await res.json();
+    } else {
+      const raw = await res.text();
+      try {
+        data = JSON.parse(raw);
+      } catch (e) {
+        throw new Trading212Error('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
+    }
+    const portfolioValue = Number(
+      data?.totalValue?.value ??
+      data?.totalValue ??
+      data?.total?.portfolioValue ??
+      data?.portfolioValue
+    );
+    const netDeposits = Number(
+      data?.totalNetDeposits ??
+      data?.netDeposits ??
+      data?.total?.netDeposits
+    );
     if (!Number.isFinite(portfolioValue)) {
-      throw new Error('Trading 212 payload missing portfolio value');
+      throw new Trading212Error('Trading 212 payload was missing a portfolio value.', {
+        status,
+        code: 'invalid_payload'
+      });
     }
     return {
       portfolioValue,
       netDeposits: Number.isFinite(netDeposits) ? netDeposits : null,
       raw: data
     };
-  } catch (e) {
-    throw new Error(e.message || 'Unable to reach Trading 212');
   }
+  throw lastError || new Trading212Error('Trading 212 request failed.');
+}
+
+async function fetchTrading212Snapshot(config) {
+  if (!config.apiKey || !config.apiSecret) {
+    throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
+  }
+  const baseUrl = config.mode === 'practice'
+    ? (process.env.T212_PRACTICE_BASE || 'https://demo.trading212.com')
+    : (process.env.T212_LIVE_BASE || 'https://live.trading212.com');
+  const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
+  const headers = {
+    'Authorization': `Basic ${encodedCredentials}`,
+    'Accept': 'application/json',
+    'User-Agent': 'PL-Calendar-App/1.0'
+  };
+  const candidates = [
+    '/api/v0/equity/portfolio/summary',
+    '/api/v0/equity/portfolio-summary',
+    '/api/v0/equities/portfolio-summary'
+  ];
+  let lastError = null;
+  for (const pathSuffix of candidates) {
+    const endpoint = `${baseUrl}${pathSuffix}`;
+    try {
+      return await requestTrading212Endpoint(endpoint, headers);
+    } catch (error) {
+      if (error instanceof Trading212Error && error.status === 404) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError || new Trading212Error('Trading 212 portfolio summary endpoint not found.', { status: 404 });
 }
 
 const trading212Jobs = new Map();
@@ -307,6 +425,22 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   ensureUserShape(user);
   const cfg = user.trading212;
   if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  const now = Date.now();
+  if (cfg.cooldownUntil) {
+    const cooldownTs = Date.parse(cfg.cooldownUntil);
+    if (!Number.isNaN(cooldownTs) && cooldownTs > now) {
+      const seconds = Math.max(1, Math.ceil((cooldownTs - now) / 1000));
+      cfg.lastStatus = {
+        ok: false,
+        status: 429,
+        retryAfter: seconds,
+        message: `Trading 212 asked us to wait ${seconds} seconds before the next sync.`
+      };
+      saveDB(db);
+      return;
+    }
+    delete cfg.cooldownUntil;
+  }
   try {
     const snapshot = await fetchTrading212Snapshot(cfg);
     const history = ensurePortfolioHistory(user);
@@ -338,11 +472,21 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     user.profileComplete = true;
     refreshAnchors(user, history);
     cfg.lastSyncAt = new Date().toISOString();
-    cfg.lastStatus = { ok: true };
+    cfg.lastStatus = { ok: true, status: 200 };
+    delete cfg.cooldownUntil;
     saveDB(db);
   } catch (e) {
     cfg.lastSyncAt = new Date().toISOString();
-    cfg.lastStatus = { ok: false, message: e.message || 'Unknown Trading 212 error' };
+    const retryAfter = e instanceof Trading212Error ? e.retryAfter : null;
+    if (retryAfter !== null && retryAfter !== undefined) {
+      cfg.cooldownUntil = new Date(now + retryAfter * 1000).toISOString();
+    }
+    cfg.lastStatus = {
+      ok: false,
+      status: e instanceof Trading212Error && e.status !== undefined ? e.status : undefined,
+      retryAfter: retryAfter !== null && retryAfter !== undefined ? retryAfter : undefined,
+      message: e && e.message ? e.message : 'Unknown Trading 212 error'
+    };
     saveDB(db);
     console.error(`Trading 212 sync failed for ${username}`, e);
   }
@@ -546,7 +690,8 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     hasApiKey: !!cfg.apiKey,
     hasApiSecret: !!cfg.apiSecret,
     lastSyncAt: cfg.lastSyncAt || null,
-    lastStatus: cfg.lastStatus || null
+    lastStatus: cfg.lastStatus || null,
+    cooldownUntil: cfg.cooldownUntil || null
   });
 });
 
@@ -593,6 +738,9 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (cfg.enabled && cfg.lastNetDeposits === undefined && Number.isFinite(user.initialNetDeposits)) {
     cfg.lastNetDeposits = Number(user.initialNetDeposits);
   }
+  if (!cfg.enabled) {
+    delete cfg.cooldownUntil;
+  }
   saveDB(db);
   scheduleTrading212Job(req.username, user);
   let responseCfg = cfg;
@@ -609,7 +757,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     hasApiKey: !!responseCfg.apiKey,
     hasApiSecret: !!responseCfg.apiSecret,
     lastSyncAt: responseCfg.lastSyncAt || null,
-    lastStatus: responseCfg.lastStatus || null
+    lastStatus: responseCfg.lastStatus || null,
+    cooldownUntil: responseCfg.cooldownUntil || null
   });
 });
 

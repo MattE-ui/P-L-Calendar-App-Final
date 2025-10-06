@@ -31,6 +31,10 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 3. When creating the API key inside Trading 212, enable the toggles for **Portfolio value**, **Balance & cash**, and **Transactions** so the integration can fetch balances and cash movements. The Trading 212 UI will show both a key and secret—copy both.
 4. Save your settings. The server will call Trading 212 at the scheduled time each day, record the closing portfolio value, and apply any deposits or withdrawals as cash adjustments on your calendar. Use **Run sync now** to trigger an immediate test pull.
 
+The backend authenticates with Trading 212 using HTTP Basic auth, sending your API key as the username and the API secret as the password exactly as required by their documentation. Credentials are stored encrypted-at-rest in `data.json` on the server and never returned to the browser after the initial save.
+
+If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted; the integration will automatically try both documented portfolio summary endpoints before surfacing the error. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
+
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in `data.json`. Back up this file if you need to preserve your records across deployments.
 
