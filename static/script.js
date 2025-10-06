@@ -105,36 +105,18 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
-function getPortfolioValue(date) {
+function getDailyEntry(date) {
   const key = formatDate(date);
   const month = getMonthData(date);
   if (!(key in month)) return null;
-  const value = Number(month[key]);
-  return Number.isFinite(value) ? value : null;
-}
-
-function findPreviousValue(date) {
-  const cursor = new Date(date);
-  cursor.setDate(cursor.getDate() - 1);
-  for (let i = 0; i < 1825; i++) {
-    if (cursor.getFullYear() < 1970) break;
-    const value = getPortfolioValue(cursor);
-    if (value !== null) {
-      return { date: new Date(cursor), value };
-    }
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return null;
-}
-
-function getDailyEntry(date) {
-  const closing = getPortfolioValue(date);
-  if (closing === null) return null;
-  const previous = findPreviousValue(date);
-  const previousValue = previous ? previous.value : null;
-  const change = previousValue === null ? null : closing - previousValue;
-  const pct = change === null || previousValue === 0 ? null : (change / previousValue) * 100;
-  return { date, closing, change, pct, previousValue };
+  const record = month[key] || {};
+  const opening = Number(record.start);
+  const closing = Number(record.end);
+  if (!Number.isFinite(closing)) return null;
+  const hasOpening = Number.isFinite(opening);
+  const change = hasOpening ? closing - opening : null;
+  const pct = hasOpening && opening !== 0 ? (change / opening) * 100 : null;
+  return { date, opening: hasOpening ? opening : null, closing, change, pct };
 }
 
 function getDaysInMonth(date) {
@@ -169,7 +151,7 @@ function getWeeksInMonth(date) {
     const changeEntries = days.filter(entry => entry.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
     const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.previousValue ?? firstEntry.closing) : null;
+    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing) : null;
     const ending = days.length ? days[days.length - 1].closing : null;
     const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
       ? null
@@ -198,7 +180,7 @@ function getYearMonths(date) {
     const changeEntries = days.filter(entry => entry.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
     const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.previousValue ?? firstEntry.closing) : null;
+    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing) : null;
     const ending = days.length ? days[days.length - 1].closing : null;
     const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
       ? null

@@ -32,3 +32,19 @@ git push origin work
 ```
 
 You can then merge the branch into your default branch on GitHub via pull request or fast-forward merge.
+
+## Branches & Merging
+The active development branch is `work`, which already contains the latest portfolio-value workflow. To merge it into your main branch locally:
+
+```bash
+git checkout work
+git pull
+git checkout main
+git merge work
+```
+
+If Git reports conflicts, keep the versions that reference **recording daily portfolio values** (rather than entering raw profit/loss numbers) so the docs and UI stay aligned. Once everything looks correct, finish with:
+
+```bash
+git push origin main
+```
