@@ -71,11 +71,7 @@ app.post('/api/signup', async (req,res)=>{
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
-  db.users[username] = {
-    passwordHash,
-    portfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio,
-    portfolioHistory: {}
-  };
+  db.users[username] = { passwordHash, portfolio: isNaN(initialPortfolio) ? 0 : initialPortfolio, profits: {} };
   saveDB(db);
   res.json({ ok: true });
 });

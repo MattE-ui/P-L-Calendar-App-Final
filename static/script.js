@@ -90,6 +90,11 @@ function toGBP(value, currency = state.currency) {
   return value / rate;
 }
 
+function percentFromPortfolio(valueGBP) {
+  if (!state.portfolioGBP) return 0;
+  return (valueGBP / state.portfolioGBP) * 100;
+}
+
 function signPrefix(num) {
   return num > 0 ? '+' : '';
 }
@@ -99,42 +104,11 @@ function getMonthData(date) {
   return state.data?.[key] || {};
 }
 
-function formatPercent(value) {
-  if (value === null || value === undefined) return '—';
-  if (value === 0) return '0.00%';
-  return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
-}
-
-function getPortfolioValue(date) {
+function getValueForDate(date) {
   const key = formatDate(date);
   const month = getMonthData(date);
-  if (!(key in month)) return null;
-  const value = Number(month[key]);
-  return Number.isFinite(value) ? value : null;
-}
-
-function findPreviousValue(date) {
-  const cursor = new Date(date);
-  cursor.setDate(cursor.getDate() - 1);
-  for (let i = 0; i < 1825; i++) {
-    if (cursor.getFullYear() < 1970) break;
-    const value = getPortfolioValue(cursor);
-    if (value !== null) {
-      return { date: new Date(cursor), value };
-    }
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return null;
-}
-
-function getDailyEntry(date) {
-  const closing = getPortfolioValue(date);
-  if (closing === null) return null;
-  const previous = findPreviousValue(date);
-  const previousValue = previous ? previous.value : null;
-  const change = previousValue === null ? null : closing - previousValue;
-  const pct = change === null || previousValue === 0 ? null : (change / previousValue) * 100;
-  return { date, closing, change, pct, previousValue };
+  const value = month[key];
+  return value === undefined ? 0 : Number(value) || 0;
 }
 
 function getDaysInMonth(date) {
@@ -158,27 +132,19 @@ function getWeeksInMonth(date) {
     weekEnd.setDate(weekEnd.getDate() + 6);
     const displayStart = weekStart < start ? start : weekStart;
     const displayEnd = weekEnd > end ? end : weekEnd;
-    const days = [];
+    let total = 0;
+    let daysWithData = 0;
     for (let i = 0; i < 7; i++) {
       const day = new Date(weekStart);
       day.setDate(weekStart.getDate() + i);
       if (day < start || day > end) continue;
-      const entry = getDailyEntry(day);
-      if (entry) days.push(entry);
+      const val = getValueForDate(day);
+      if (val !== 0) daysWithData++;
+      total += val;
     }
-    const changeEntries = days.filter(entry => entry.change !== null);
-    const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
-    const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.previousValue ?? firstEntry.closing) : null;
-    const ending = days.length ? days[days.length - 1].closing : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
-      ? null
-      : ((ending - baseline) / baseline) * 100;
     weeks.push({
-      totalChange,
-      pct,
-      hasChange: changeEntries.length > 0,
-      recordedDays: days.length,
+      total,
+      daysWithData,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     });
@@ -192,45 +158,28 @@ function getYearMonths(date) {
   const months = [];
   for (let m = 0; m < 12; m++) {
     const monthDate = new Date(year, m, 1);
-    const days = getDaysInMonth(monthDate)
-      .map(getDailyEntry)
-      .filter(Boolean);
-    const changeEntries = days.filter(entry => entry.change !== null);
-    const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
-    const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.previousValue ?? firstEntry.closing) : null;
-    const ending = days.length ? days[days.length - 1].closing : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0 || ending === null
-      ? null
-      : ((ending - baseline) / baseline) * 100;
-    months.push({
-      monthDate,
-      totalChange,
-      pct,
-      recordedDays: days.length,
-      hasChange: changeEntries.length > 0
+    const monthData = getMonthData(monthDate);
+    let total = 0;
+    let activeDays = 0;
+    Object.values(monthData).forEach(v => {
+      const num = Number(v) || 0;
+      total += num;
+      if (num !== 0) activeDays++;
     });
+    months.push({ monthDate, total, activeDays });
   }
   return months;
 }
 
 function getValuesForSummary() {
   if (state.view === 'year') {
-    return getYearMonths(state.selected).map(item => ({
-      change: item.hasChange ? item.totalChange : null,
-      pct: item.hasChange ? item.pct : null
-    }));
+    return getYearMonths(state.selected).map(m => m.total);
   }
   if (state.view === 'week') {
-    return getWeeksInMonth(state.selected).map(item => ({
-      change: item.hasChange ? item.totalChange : null,
-      pct: item.hasChange ? item.pct : null
-    }));
+    return getWeeksInMonth(state.selected).map(w => w.total);
   }
-  return getDaysInMonth(state.selected)
-    .map(getDailyEntry)
-    .filter(Boolean)
-    .map(item => ({ change: item.change, pct: item.pct }));
+  const month = getMonthData(state.selected);
+  return getDaysInMonth(state.selected).map(d => Number(month[formatDate(d)]) || 0);
 }
 
 function setActiveView() {
@@ -338,30 +287,23 @@ function renderSummary() {
   const avgEl = $('#avg');
   if (!avgEl) return;
   const values = getValuesForSummary();
-  let changeSum = 0;
-  let changeCount = 0;
-  let pctSum = 0;
-  let pctCount = 0;
-  values.forEach(item => {
-    if (item?.change !== null && item?.change !== undefined) {
-      changeSum += item.change;
-      changeCount++;
-    }
-    if (item?.pct !== null && item?.pct !== undefined) {
-      pctSum += item.pct;
-      pctCount++;
+  let sum = 0;
+  let count = 0;
+  values.forEach(v => {
+    if (v !== 0) {
+      sum += v;
+      count++;
     }
   });
-  if (!changeCount) {
+  if (!count) {
     avgEl.textContent = 'No recorded data yet';
     avgEl.classList.remove('positive', 'negative');
     return;
   }
-  const avgGBP = changeSum / changeCount;
-  const avgPct = pctCount ? (pctSum / pctCount) : null;
+  const avgGBP = sum / count;
+  const pct = percentFromPortfolio(avgGBP);
   const label = viewAvgLabels[state.view] || 'Average';
-  const pctText = avgPct === null ? '' : ` (${formatPercent(avgPct)})`;
-  avgEl.textContent = `${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}`;
+  avgEl.textContent = `${label} avg: ${formatSignedCurrency(avgGBP)} (${signPrefix(pct)}${pct.toFixed(2)}%)`;
   avgEl.classList.toggle('positive', avgGBP > 0);
   avgEl.classList.toggle('negative', avgGBP < 0);
 }
@@ -371,30 +313,27 @@ function renderDay() {
   if (!grid) return;
   grid.innerHTML = '';
   const days = getDaysInMonth(state.selected);
+  const monthData = getMonthData(state.selected);
   days.forEach(date => {
     const key = formatDate(date);
-    const entry = getDailyEntry(date);
-    const closing = entry?.closing ?? null;
-    const change = entry?.change ?? null;
-    const pct = entry?.pct ?? null;
+    const val = Number(monthData[key]) || 0;
     const row = document.createElement('div');
     row.className = 'list-row';
-    if (change > 0) row.classList.add('profit');
-    if (change < 0) row.classList.add('loss');
-    const changeText = change === null
-      ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+    if (val > 0) row.classList.add('profit');
+    if (val < 0) row.classList.add('loss');
+    const pct = percentFromPortfolio(val);
+    const pctText = val === 0 ? '—' : `${signPrefix(pct)}${pct.toFixed(2)}%`;
     row.innerHTML = `
       <div class="row-main">
         <div class="row-title">${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
         <div class="row-sub">${key}</div>
       </div>
       <div class="row-value">
-        <strong>${closing === null ? '—' : formatCurrency(closing)}</strong>
-        <span>${changeText}</span>
+        <strong>${formatCurrency(val)}</strong>
+        <span>${pctText}</span>
       </div>
     `;
-    row.addEventListener('click', () => openEntryModal(key, closing));
+    row.addEventListener('click', () => openProfitModal(key, val));
     grid.appendChild(row);
   });
 }
@@ -407,17 +346,15 @@ function renderWeek() {
   weeks.forEach(week => {
     const row = document.createElement('div');
     row.className = 'list-row';
-    if (week.totalChange > 0) row.classList.add('profit');
-    if (week.totalChange < 0) row.classList.add('loss');
-    const hasEntries = week.recordedDays > 0;
-    const hasChange = week.hasChange;
-    const changeText = hasChange ? `Δ ${formatSignedCurrency(week.totalChange)}` : 'Δ —';
-    const pctText = hasChange ? formatPercent(week.pct) : '—';
+    if (week.total > 0) row.classList.add('profit');
+    if (week.total < 0) row.classList.add('loss');
+    const pct = percentFromPortfolio(week.total);
+    const pctText = week.total === 0 ? '—' : `${signPrefix(pct)}${pct.toFixed(2)}%`;
     const rangeLabel = week.displayStart === week.displayEnd
       ? week.displayStart
       : `${week.displayStart} – ${week.displayEnd}`;
-    const subLabel = hasEntries
-      ? `${week.recordedDays} recorded day${week.recordedDays === 1 ? '' : 's'}`
+    const subLabel = week.daysWithData
+      ? `${week.daysWithData} active day${week.daysWithData === 1 ? '' : 's'}`
       : 'No entries recorded';
     row.innerHTML = `
       <div class="row-main">
@@ -425,7 +362,7 @@ function renderWeek() {
         <div class="row-sub">${subLabel}</div>
       </div>
       <div class="row-value">
-        <strong>${changeText}</strong>
+        <strong>${formatCurrency(week.total)}</strong>
         <span>${pctText}</span>
       </div>
     `;
@@ -448,6 +385,7 @@ function renderMonth() {
   const first = startOfMonth(state.selected);
   const startDay = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const monthData = getMonthData(first);
 
   for (let i = 0; i < startDay; i++) {
     const placeholder = document.createElement('div');
@@ -459,23 +397,18 @@ function renderMonth() {
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(first.getFullYear(), first.getMonth(), day);
     const key = formatDate(date);
-    const entry = getDailyEntry(date);
-    const closing = entry?.closing ?? null;
-    const change = entry?.change ?? null;
-    const pct = entry?.pct ?? null;
+    const val = Number(monthData[key]) || 0;
+    const pct = percentFromPortfolio(val);
     const cell = document.createElement('div');
     cell.className = 'cell';
-    if (change > 0) cell.classList.add('profit');
-    if (change < 0) cell.classList.add('loss');
-    const changeText = change === null
-      ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+    if (val > 0) cell.classList.add('profit');
+    if (val < 0) cell.classList.add('loss');
     cell.innerHTML = `
       <div class="date">${day}</div>
-      <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
-      <div class="pct">${changeText}</div>
+      <div class="val">${formatCurrency(val)}</div>
+      <div class="pct">${val === 0 ? '' : `${signPrefix(pct)}${pct.toFixed(2)}%`}</div>
     `;
-    cell.addEventListener('click', () => openEntryModal(key, closing));
+    cell.addEventListener('click', () => openProfitModal(key, val));
     grid.appendChild(cell);
   }
 }
@@ -488,17 +421,16 @@ function renderYear() {
   months.forEach(item => {
     const cell = document.createElement('div');
     cell.className = 'cell';
-    if (item.totalChange > 0) cell.classList.add('profit');
-    if (item.totalChange < 0) cell.classList.add('loss');
-    const hasData = item.recordedDays > 0;
-    const hasChange = item.hasChange;
-    const pctText = hasChange ? formatPercent(item.pct) : '—';
-    const metaText = hasData
-      ? `${item.recordedDays} recorded day${item.recordedDays === 1 ? '' : 's'}`
+    if (item.total > 0) cell.classList.add('profit');
+    if (item.total < 0) cell.classList.add('loss');
+    const pct = percentFromPortfolio(item.total);
+    const pctText = item.total === 0 ? '—' : `${signPrefix(pct)}${pct.toFixed(2)}%`;
+    const metaText = item.activeDays
+      ? `${item.activeDays} active day${item.activeDays === 1 ? '' : 's'}`
       : 'No entries yet';
     cell.innerHTML = `
       <div class="date">${item.monthDate.toLocaleDateString('en-GB', { month: 'short' })}</div>
-      <div class="val">${hasChange ? `Δ ${formatSignedCurrency(item.totalChange)}` : 'Δ —'}</div>
+      <div class="val">${formatCurrency(item.total)}</div>
       <div class="pct">${pctText}</div>
       <div class="meta">${metaText}</div>
     `;
@@ -559,7 +491,7 @@ async function loadData() {
   }
 }
 
-function openEntryModal(dateStr, currentValGBP = null) {
+function openProfitModal(dateStr, currentValGBP = 0) {
   const modal = $('#profit-modal');
   if (!modal) return;
   const title = $('#modal-date');
@@ -572,26 +504,20 @@ function openEntryModal(dateStr, currentValGBP = null) {
     });
   }
   const label = $('#profit-modal-label');
-  if (label) label.textContent = `Portfolio value (${state.currency})`;
+  if (label) label.textContent = `Profit/Loss (${state.currency})`;
   const input = $('#edit-profit-input');
   if (input) {
-    if (currentValGBP === null || currentValGBP === undefined) {
-      input.value = '';
-    } else {
-      const amount = currencyAmount(currentValGBP, state.currency);
-      const fallback = currencyAmount(currentValGBP, 'GBP');
-      const value = amount === null ? fallback : amount;
-      input.value = Number.isFinite(value) ? value.toFixed(2) : '';
-    }
+    const amount = currencyAmount(currentValGBP, state.currency);
+    const fallback = currencyAmount(currentValGBP, 'GBP');
+    const value = amount === null ? fallback : amount;
+    input.value = (Number.isFinite(value) ? value : 0).toFixed(2);
   }
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
     saveBtn.onclick = async () => {
-      const rawStr = $('#edit-profit-input').value.trim();
-      if (rawStr === '') return;
-      const raw = Number(rawStr);
-      if (Number.isNaN(raw) || raw < 0) return;
+      const raw = Number($('#edit-profit-input').value);
+      if (Number.isNaN(raw)) return;
       try {
         await api('/api/pl', {
           method: 'POST',
@@ -613,7 +539,7 @@ function openEntryModal(dateStr, currentValGBP = null) {
         await api('/api/pl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: dateStr, value: null })
+          body: JSON.stringify({ date: dateStr, value: 0 })
         });
         modal.classList.add('hidden');
         await loadData();
