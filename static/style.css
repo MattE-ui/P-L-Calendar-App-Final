@@ -203,8 +203,24 @@ button.danger { color:#ffd8de; border-color:#ff8aa0; }
 
 .login-container { max-width: 440px; margin: 48px auto; padding: 0 16px; }
 .card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; }
+.card-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.profile-container { max-width: 520px; margin: 64px auto; padding: 0 20px 48px; display: flex; flex-direction: column; gap: 18px; }
+.profile-header h1 { margin: 0; font-size: 26px; }
+.profile-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+.profile-card { display: flex; flex-direction: column; gap: 18px; }
+.profile-date { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.profile-field { display: flex; flex-direction: column; gap: 8px; }
+.profile-field label { margin-top: 0; }
+.profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
+.profile-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.profile-actions button { flex: 1; min-width: 160px; }
 label { display:block; margin-top:10px; color: var(--muted); }
 input { width:100%; padding:10px; border-radius: 10px; border:1px solid var(--border); background:#10131a; color:var(--text); margin-top:6px; }
+
+@media (max-width: 540px) {
+  .profile-container { margin-top: 36px; padding-inline: 16px; }
+  .profile-header h1 { font-size: 22px; }
+}
 
 @media (max-width: 960px) {
   .grid.view-month { grid-template-columns: repeat(7, minmax(96px, 1fr)); }

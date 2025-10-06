@@ -4,7 +4,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 
 ## Features
 - Secure sign-up/login with bcrypt-hashed passwords and HTTP-only cookies.
-- Capture the initial portfolio value during sign-up and edit it later from the dashboard.
+- Prompt new users to record their opening portfolio value and cumulative net deposits immediately after sign-in, and allow edits from the dashboard thereafter.
 - Record daily portfolio values while separately tracking net deposits/withdrawals so both the evolving balance and cash-adjusted performance remain visible at a glance.
 - Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
 - Log same-day deposits or withdrawals alongside each portfolio value so cash movements adjust the balance without inflating profit/loss figures.
@@ -22,6 +22,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
    npm start
    ```
 4. Visit [http://localhost:3000](http://localhost:3000) and create an account.
+5. After logging in for the first time, enter your current portfolio value and lifetime net deposits so the calendar can separate performance from cash movements.
 
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in `data.json`. Back up this file if you need to preserve your records across deployments.

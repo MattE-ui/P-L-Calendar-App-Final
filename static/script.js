@@ -3,6 +3,7 @@ const state = {
   selected: new Date(),
   data: {},
   portfolioGBP: 0,
+  initialNetDepositsGBP: 0,
   currency: 'GBP',
   rates: { GBP: 1 },
   metrics: {
@@ -22,18 +23,25 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });
-  if (res.status === 401) {
-    window.location.href = '/login.html';
-    throw new Error('Unauthenticated');
-  }
   let data;
   try {
     data = await res.json();
   } catch (e) {
     data = {};
   }
+  if (res.status === 401) {
+    window.location.href = '/login.html';
+    throw new Error('Unauthenticated');
+  }
+  if (res.status === 409 && data?.code === 'profile_incomplete') {
+    window.location.href = '/profile.html';
+    throw new Error('Profile incomplete');
+  }
   if (!res.ok) {
-    throw new Error(data.error || 'Request failed');
+    const err = new Error(data.error || 'Request failed');
+    err.data = data;
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -256,12 +264,15 @@ function getAllEntries() {
 
 function computeLifetimeMetrics() {
   const entries = getAllEntries();
+  const initialDeposits = Number.isFinite(state.initialNetDepositsGBP)
+    ? state.initialNetDepositsGBP
+    : 0;
   if (!entries.length) {
     const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     state.metrics = {
       baselineGBP: fallback,
       latestGBP: fallback,
-      netDepositsGBP: 0,
+      netDepositsGBP: initialDeposits,
       netPerformanceGBP: 0,
       netPerformancePct: null
     };
@@ -269,7 +280,7 @@ function computeLifetimeMetrics() {
   }
   let baseline = null;
   let latest = entries[entries.length - 1]?.closing ?? null;
-  let netDeposits = 0;
+  let netDeposits = initialDeposits;
   entries.forEach(entry => {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
@@ -723,15 +734,25 @@ async function loadData() {
   try {
     state.data = await api('/api/pl');
   } catch (e) {
-    console.error('Failed to load profit data', e);
+    if (e?.message !== 'Profile incomplete') {
+      console.error('Failed to load profit data', e);
+    }
     state.data = {};
   }
   try {
     const res = await api('/api/portfolio');
-    state.portfolioGBP = Number(res?.portfolio) || 0;
+    const portfolioVal = Number(res?.portfolio);
+    state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
+    const netDepositsVal = Number(res?.initialNetDeposits);
+    state.initialNetDepositsGBP = Number.isFinite(netDepositsVal) ? netDepositsVal : 0;
+    if (!res?.profileComplete) {
+      window.location.href = '/profile.html';
+      return;
+    }
   } catch (e) {
     console.error('Failed to load portfolio', e);
     state.portfolioGBP = 0;
+    state.initialNetDepositsGBP = 0;
   }
   computeLifetimeMetrics();
 }
@@ -877,6 +898,10 @@ function bindControls() {
       updatePeriodSelect();
       render();
     });
+  });
+
+  $('#profile-btn')?.addEventListener('click', () => {
+    window.location.href = '/profile.html';
   });
 
   $('#portfolio-btn')?.addEventListener('click', () => {
