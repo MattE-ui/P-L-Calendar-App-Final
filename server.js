@@ -739,8 +739,12 @@ function currentDateKey() {
 }
 
 app.post('/api/signup', async (req,res)=>{
-  const { username, password } = req.body || {};
+  const { username, password, portfolio } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const initialPortfolio = Number(portfolio);
+  if (portfolio !== undefined && (isNaN(initialPortfolio) || initialPortfolio < 0)) {
+    return res.status(400).json({ error: 'Invalid portfolio value' });
+  }
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
