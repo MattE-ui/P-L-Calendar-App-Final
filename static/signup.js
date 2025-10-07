@@ -14,7 +14,7 @@ function removeLegacyResendElements() {
   });
   document.querySelectorAll('p, span').forEach((el) => {
     const text = (el.textContent || '').toLowerCase();
-    if (text.includes('verification') && text.includes('email') && text.includes('resend')) {
+    if (text.includes('verification') && text.includes('email')) {
       const wrapper = el.closest('.helper, .resend-block');
       if (wrapper) {
         wrapper.remove();
