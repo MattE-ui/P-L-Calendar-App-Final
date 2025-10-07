@@ -68,6 +68,34 @@ function parseRetryAfter(header) {
   return null;
 }
 
+class Trading212Error extends Error {
+  constructor(message, { status, retryAfter, code } = {}) {
+    super(message);
+    this.name = 'Trading212Error';
+    if (status !== undefined) this.status = status;
+    if (retryAfter !== undefined) this.retryAfter = retryAfter;
+    if (code !== undefined) this.code = code;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const numeric = Number(header);
+  if (Number.isFinite(numeric)) {
+    return Math.max(0, numeric);
+  }
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    const diff = Math.ceil((date - Date.now()) / 1000);
+    return diff > 0 ? diff : 0;
+  }
+  return null;
+}
+
 // --- helpers ---
 function loadDB() {
   try {
@@ -708,8 +736,12 @@ function currentDateKey() {
 }
 
 app.post('/api/signup', async (req,res)=>{
-  const { username, password } = req.body || {};
+  const { username, password, portfolio } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const initialPortfolio = Number(portfolio);
+  if (portfolio !== undefined && (isNaN(initialPortfolio) || initialPortfolio < 0)) {
+    return res.status(400).json({ error: 'Invalid portfolio value' });
+  }
   const db = loadDB();
   if (db.users[username]) return res.status(409).json({ error: 'User already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
