@@ -43,53 +43,6 @@ loginPasswordInput?.addEventListener('keypress', (event) => {
   if (event.key === 'Enter') {
     handleLogin();
   }
-  if (loginError) loginError.textContent = '';
-  if (loginInfo) loginInfo.textContent = '';
-
-  loginResendBtn.disabled = true;
-  loginResendBtn.classList.remove('is-cooldown');
-  loginResendBtn.textContent = 'Sending…';
-
-  try {
-    const response = await fetch('/api/auth/resend-verification', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ email })
-    });
-    const result = await response.json().catch(() => ({}));
-
-    if (response.ok) {
-      if (result.status === 'already-verified') {
-        if (loginInfo) loginInfo.textContent = 'This email is already verified. Try logging in instead.';
-        resetButtonCooldown(loginResendBtn);
-        return;
-      }
-      if (loginInfo) {
-        loginInfo.textContent = result.status === 'unknown'
-          ? 'If we find an account for that email, we\'ll send a new verification link shortly.'
-          : 'If your account still needs verification, we just sent a new link.';
-      }
-      const wait = Number.isFinite(Number(result.retryAfter)) ? Number(result.retryAfter) : 60;
-      startButtonCooldown(loginResendBtn, wait > 0 ? wait : 60);
-    } else if (response.status === 429) {
-      const wait = Number.isFinite(Number(result.retryAfter)) ? Number(result.retryAfter) : 60;
-      if (loginInfo) {
-        loginInfo.textContent = result.error || 'Please wait a moment before requesting another email.';
-      }
-      startButtonCooldown(loginResendBtn, wait > 0 ? wait : 60);
-    } else if (response.status === 400) {
-      if (loginError) loginError.textContent = result.error || 'Enter a valid email before requesting a new link.';
-      resetButtonCooldown(loginResendBtn);
-    } else {
-      if (loginError) loginError.textContent = result.error || 'Could not resend the verification email. Try again shortly.';
-      resetButtonCooldown(loginResendBtn);
-    }
-  } catch (error) {
-    console.error(error);
-    if (loginError) loginError.textContent = 'Could not resend the verification email. Try again shortly.';
-    resetButtonCooldown(loginResendBtn);
-  }
 }
 
 if (document.getElementById('login-btn')) {
@@ -103,6 +56,10 @@ loginPasswordInput?.addEventListener('keypress', (event) => {
 });
 
 loginResendBtn?.addEventListener('click', handleLoginResend);
+
+document.getElementById('signup-link')?.addEventListener('click', () => {
+  window.location.href = '/signup.html';
+});
 
 document.getElementById('signup-link')?.addEventListener('click', () => {
   window.location.href = '/signup.html';

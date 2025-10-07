@@ -3,7 +3,8 @@ const state = {
   selected: new Date(),
   data: {},
   portfolioGBP: 0,
-  initialNetDepositsGBP: 0,
+  netDepositsBaselineGBP: 0,
+  netDepositsTotalGBP: 0,
   firstEntryKey: null,
   currency: 'GBP',
   rates: { GBP: 1 },
@@ -266,18 +267,21 @@ function getAllEntries() {
 
 function computeLifetimeMetrics() {
   const entries = getAllEntries();
-  const initialDeposits = Number.isFinite(state.initialNetDepositsGBP)
-    ? state.initialNetDepositsGBP
+  const baselineDeposits = Number.isFinite(state.netDepositsBaselineGBP)
+    ? state.netDepositsBaselineGBP
     : 0;
+  const knownTotalDeposits = Number.isFinite(state.netDepositsTotalGBP)
+    ? state.netDepositsTotalGBP
+    : baselineDeposits;
   state.firstEntryKey = entries.length ? formatDate(entries[0].date) : null;
   if (!entries.length) {
     const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
-    const netPerformance = fallback - initialDeposits;
+    const netPerformance = fallback - knownTotalDeposits;
     const pct = fallback !== 0 ? (netPerformance / fallback) * 100 : null;
     state.metrics = {
       baselineGBP: fallback,
       latestGBP: fallback,
-      netDepositsGBP: initialDeposits,
+      netDepositsGBP: knownTotalDeposits,
       netPerformanceGBP: netPerformance,
       netPerformancePct: Number.isFinite(pct) ? pct : null
     };
@@ -287,13 +291,13 @@ function computeLifetimeMetrics() {
   let latest = Number.isFinite(entries[entries.length - 1]?.closing)
     ? entries[entries.length - 1].closing
     : Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : null;
-  let totalNetDeposits = initialDeposits;
+  let computedTotalDeposits = baselineDeposits;
   entries.forEach(entry => {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
     }
     if (!entry?.preBaseline && entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
-      totalNetDeposits += entry.cashFlow;
+      computedTotalDeposits += entry.cashFlow;
     }
     if (entry?.closing !== null && entry?.closing !== undefined) {
       latest = entry.closing;
@@ -307,6 +311,10 @@ function computeLifetimeMetrics() {
   }
   const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
   const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
+  const totalNetDeposits = Number.isFinite(state.netDepositsTotalGBP)
+    ? state.netDepositsTotalGBP
+    : computedTotalDeposits;
+  state.netDepositsTotalGBP = totalNetDeposits;
   const netPerformance = safeLatest - totalNetDeposits;
   const pct = safeBaseline !== 0 ? (netPerformance / safeBaseline) * 100 : null;
   state.metrics = {
@@ -760,8 +768,12 @@ async function loadData() {
     const res = await api('/api/portfolio');
     const portfolioVal = Number(res?.portfolio);
     state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
-    const netDepositsVal = Number(res?.initialNetDeposits);
-    state.initialNetDepositsGBP = Number.isFinite(netDepositsVal) ? netDepositsVal : 0;
+    const baselineVal = Number(res?.initialNetDeposits);
+    const totalVal = Number(res?.netDepositsTotal);
+    state.netDepositsBaselineGBP = Number.isFinite(baselineVal) ? baselineVal : 0;
+    state.netDepositsTotalGBP = Number.isFinite(totalVal)
+      ? totalVal
+      : state.netDepositsBaselineGBP;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
       return;
@@ -769,7 +781,8 @@ async function loadData() {
   } catch (e) {
     console.error('Failed to load portfolio', e);
     state.portfolioGBP = 0;
-    state.initialNetDepositsGBP = 0;
+    state.netDepositsBaselineGBP = 0;
+    state.netDepositsTotalGBP = 0;
   }
   computeLifetimeMetrics();
 }

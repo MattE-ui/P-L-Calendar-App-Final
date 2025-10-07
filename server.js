@@ -424,6 +424,21 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
   return { baseline: normalized, mutated };
 }
 
+function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) {
+  const baseline = Number.isFinite(Number(user?.initialNetDeposits))
+    ? Number(user.initialNetDeposits)
+    : 0;
+  let total = baseline;
+  const entries = listChronologicalEntries(history);
+  for (const entry of entries) {
+    if (entry.preBaseline) continue;
+    const cashIn = Number.isFinite(entry.cashIn) ? entry.cashIn : 0;
+    const cashOut = Number.isFinite(entry.cashOut) ? entry.cashOut : 0;
+    total += cashIn - cashOut;
+  }
+  return { baseline, total };
+}
+
 function dateKeyInTimezone(timezone, date = new Date()) {
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -673,6 +688,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const snapshot = await fetchTrading212Snapshot(cfg);
     const history = ensurePortfolioHistory(user);
     normalizePortfolioHistory(user);
+    const { total: currentTotal } = computeNetDepositsTotals(user, history);
     const timezone = cfg.timezone || 'Europe/London';
     const dateKey = dateKeyInTimezone(timezone, runDate);
     const ym = dateKey.slice(0, 7);
@@ -680,7 +696,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const existing = history[ym][dateKey] || {};
     const previousNet = Number.isFinite(Number(cfg.lastNetDeposits))
       ? Number(cfg.lastNetDeposits)
-      : (Number.isFinite(user.initialNetDeposits) ? Number(user.initialNetDeposits) : 0);
+      : currentTotal;
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
     if (snapshot.netDeposits !== null) {
@@ -698,6 +714,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       cashOut
     };
     user.profileComplete = true;
+    const { total: updatedTotal } = computeNetDepositsTotals(user, history);
+    cfg.lastNetDeposits = Number.isFinite(Number(cfg.lastNetDeposits))
+      ? Number(cfg.lastNetDeposits)
+      : updatedTotal;
     refreshAnchors(user, history);
     cfg.lastSyncAt = new Date().toISOString();
     cfg.lastStatus = { ok: true, status: 200 };
@@ -965,10 +985,15 @@ app.get('/api/portfolio', auth, (req,res)=>{
   const db = loadDB();
   const user = db.users[req.username];
   const mutated = ensureUserShape(user, req.username);
-  if (mutated) saveDB(db);
+  const history = ensurePortfolioHistory(user);
+  const normalized = normalizePortfolioHistory(user);
+  const totals = computeNetDepositsTotals(user, history);
+  const anchors = refreshAnchors(user, history);
+  if (mutated || normalized || anchors.mutated) saveDB(db);
   res.json({
     portfolio: Number.isFinite(user.portfolio) ? user.portfolio : 0,
-    initialNetDeposits: Number.isFinite(user.initialNetDeposits) ? user.initialNetDeposits : 0,
+    initialNetDeposits: totals.baseline,
+    netDepositsTotal: totals.total,
     profileComplete: !!user.profileComplete
   });
 });
@@ -991,13 +1016,15 @@ app.get('/api/profile', auth, (req,res)=>{
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
-  const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
+  const { baseline, total } = computeNetDepositsTotals(user, history);
+  const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
   res.json({
     profileComplete: !!user.profileComplete,
-    portfolio: Number.isFinite(user.portfolio) ? user.portfolio : baseline || 0,
-    initialNetDeposits: Number.isFinite(user.initialNetDeposits) ? user.initialNetDeposits : 0,
+    portfolio: Number.isFinite(user.portfolio) ? user.portfolio : portfolioBaseline || 0,
+    initialNetDeposits: baseline,
+    netDepositsTotal: total,
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
     username: user.username || req.username
@@ -1018,7 +1045,9 @@ app.post('/api/profile', auth, (req,res)=>{
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const wasComplete = !!user.profileComplete;
-  const previousNet = Number.isFinite(user.initialNetDeposits) ? Number(user.initialNetDeposits) : 0;
+  const history = ensurePortfolioHistory(user);
+  normalizePortfolioHistory(user);
+  const { baseline: previousBaseline, total: previousTotal } = computeNetDepositsTotals(user, history);
   let netDepositsNumber;
   if (!wasComplete) {
     if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
@@ -1029,22 +1058,20 @@ app.post('/api/profile', auth, (req,res)=>{
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
   } else if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
-    netDepositsNumber = previousNet;
+    netDepositsNumber = previousTotal;
   } else {
     netDepositsNumber = Number(netDeposits);
     if (!Number.isFinite(netDepositsNumber)) {
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
   }
-  const netDelta = netDepositsNumber - previousNet;
+  const netDelta = netDepositsNumber - (wasComplete ? previousTotal : previousBaseline);
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
   if (!user.netDepositsAnchor) {
     user.netDepositsAnchor = targetDate;
   }
-  const history = ensurePortfolioHistory(user);
-  normalizePortfolioHistory(user);
   const ym = targetDate.slice(0, 7);
   history[ym] ||= {};
   const existing = history[ym][targetDate] || {};
@@ -1062,13 +1089,16 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
-  user.initialNetDeposits = netDepositsNumber;
+  if (!wasComplete) {
+    user.initialNetDeposits = netDepositsNumber;
+  }
   user.profileComplete = true;
   const { config: tradingCfg } = ensureTrading212Config(user);
-  tradingCfg.lastNetDeposits = netDepositsNumber;
+  const totals = computeNetDepositsTotals(user, history);
+  tradingCfg.lastNetDeposits = totals.total;
   refreshAnchors(user, history);
   saveDB(db);
-  res.json({ ok: true, netDeposits: netDepositsNumber });
+  res.json({ ok: true, netDeposits: totals.total });
 });
 
 app.post('/api/account/password', auth, async (req, res) => {
@@ -1147,6 +1177,9 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.trading212;
+  const history = ensurePortfolioHistory(user);
+  normalizePortfolioHistory(user);
+  const totals = computeNetDepositsTotals(user, history);
   if (typeof enabled === 'boolean') {
     cfg.enabled = enabled;
   }
@@ -1196,8 +1229,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
     return res.status(400).json({ error: 'Provide your Trading 212 API credentials to enable automation.' });
   }
-  if (cfg.enabled && cfg.lastNetDeposits === undefined && Number.isFinite(user.initialNetDeposits)) {
-    cfg.lastNetDeposits = Number(user.initialNetDeposits);
+  if (cfg.enabled && cfg.lastNetDeposits === undefined) {
+    cfg.lastNetDeposits = totals.total;
   }
   if (!cfg.enabled) {
     delete cfg.cooldownUntil;

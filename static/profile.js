@@ -21,6 +21,7 @@ async function api(path, opts = {}) {
 const profileState = {
   complete: false,
   netDeposits: 0,
+  netDepositsBaseline: 0,
   username: ''
 };
 
@@ -28,9 +29,13 @@ async function loadProfile() {
   try {
     const data = await api('/api/profile');
     const portfolio = Number(data.portfolio);
-    const netDeposits = Number(data.initialNetDeposits);
+    const netDepositsBaseline = Number(data.initialNetDeposits);
+    const netDepositsTotal = Number(data.netDepositsTotal);
     profileState.complete = !!data.profileComplete;
-    profileState.netDeposits = Number.isFinite(netDeposits) ? netDeposits : 0;
+    profileState.netDepositsBaseline = Number.isFinite(netDepositsBaseline) ? netDepositsBaseline : 0;
+    profileState.netDeposits = Number.isFinite(netDepositsTotal)
+      ? netDepositsTotal
+      : profileState.netDepositsBaseline;
     profileState.username = data.username || '';
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
