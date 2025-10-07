@@ -15,19 +15,21 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 
 ## Getting Started
 1. Install Node.js 22.
-2. Install dependencies:
+2. Review the provided `.env` file and adjust any values (such as `SMTP_FROM` or `APP_BASE_URL`) to match your deployment.
+3. Install dependencies:
    ```bash
    npm install
    ```
-3. Start the server:
+4. Start the server:
    ```bash
    npm start
    ```
-4. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account. You’ll receive a verification email; approve it before logging in with the same credentials.
-5. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
+5. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account. You’ll receive a verification email; approve it before logging in with the same credentials.
+6. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
 
 ## Email verification & account security
-- Configure SMTP credentials via the environment so the app can send verification and approval emails:
+- SMTP settings are defined in the root `.env` file. The default values target Mailjet’s SMTP gateway (`in-v3.mailjet.com` on port `587`) and include the provided API key/secret so emails work out of the box.
+- Adjust the following keys if you’re using a different provider:
   - `SMTP_HOST` and `SMTP_PORT` (or set `SMTP_SECURE=true` when using TLS on port 465)
   - `SMTP_USER` and `SMTP_PASS` if your server requires authentication
   - `SMTP_FROM` (or `MAIL_FROM`/`EMAIL_FROM`) to control the “From” address
