@@ -40,43 +40,22 @@ function ensureDataStore() {
 
 ensureDataStore();
 
-class Trading212Error extends Error {
-  constructor(message, { status, retryAfter, code } = {}) {
-    super(message);
-    this.name = 'Trading212Error';
-    if (status !== undefined) this.status = status;
-    if (retryAfter !== undefined) this.retryAfter = retryAfter;
-    if (code !== undefined) this.code = code;
+const Trading212Error = (() => {
+  if (global.__Trading212Error__) {
+    return global.__Trading212Error__;
   }
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function parseRetryAfter(header) {
-  if (!header) return null;
-  const numeric = Number(header);
-  if (Number.isFinite(numeric)) {
-    return Math.max(0, numeric);
+  class Trading212ErrorImpl extends Error {
+    constructor(message, { status, retryAfter, code } = {}) {
+      super(message);
+      this.name = 'Trading212Error';
+      if (status !== undefined) this.status = status;
+      if (retryAfter !== undefined) this.retryAfter = retryAfter;
+      if (code !== undefined) this.code = code;
+    }
   }
-  const date = Date.parse(header);
-  if (!Number.isNaN(date)) {
-    const diff = Math.ceil((date - Date.now()) / 1000);
-    return diff > 0 ? diff : 0;
-  }
-  return null;
-}
-
-class Trading212Error extends Error {
-  constructor(message, { status, retryAfter, code } = {}) {
-    super(message);
-    this.name = 'Trading212Error';
-    if (status !== undefined) this.status = status;
-    if (retryAfter !== undefined) this.retryAfter = retryAfter;
-    if (code !== undefined) this.code = code;
-  }
-}
+  global.__Trading212Error__ = Trading212ErrorImpl;
+  return Trading212ErrorImpl;
+})();
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
