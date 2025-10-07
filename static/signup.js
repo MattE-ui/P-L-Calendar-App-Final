@@ -12,10 +12,25 @@ function removeLegacyResendElements() {
       }
     }
   });
-  document.querySelectorAll('p, span').forEach((el) => {
-    const text = (el.textContent || '').toLowerCase();
-    if (text.includes('verification') && text.includes('email')) {
-      const wrapper = el.closest('.helper, .resend-block');
+  const legacyTextMatchers = [
+    (text) => text.includes('verification') && text.includes('email'),
+    (text) => text.includes("didn't get") && text.includes('email'),
+    (text) => text.includes('send another link'),
+    (text) => text.includes('another link to the address above')
+  ];
+
+  document.querySelectorAll('p, span, div, small').forEach((el) => {
+    const text = (el.textContent || '').toLowerCase().trim();
+    if (!text) return;
+    if (legacyTextMatchers.some((fn) => {
+      try {
+        return fn(text);
+      } catch (error) {
+        console.warn('Legacy resend matcher failed', error);
+        return false;
+      }
+    })) {
+      const wrapper = el.closest('.helper, .resend-block, .resend-container');
       if (wrapper) {
         wrapper.remove();
       } else {
