@@ -901,6 +901,26 @@ app.post('/api/profile', auth, (req,res)=>{
   res.json({ ok: true, netDeposits: netDepositsNumber });
 });
 
+app.delete('/api/profile', auth, (req, res) => {
+  const db = loadDB();
+  const username = req.username;
+  const user = db.users[username];
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+  stopTrading212Job(username);
+  delete db.users[username];
+  const tokens = Object.keys(db.sessions);
+  for (const token of tokens) {
+    if (db.sessions[token] === username) {
+      delete db.sessions[token];
+    }
+  }
+  saveDB(db);
+  res.clearCookie('auth_token');
+  res.json({ ok: true });
+});
+
 app.get('/api/integrations/trading212', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];

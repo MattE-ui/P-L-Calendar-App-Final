@@ -215,7 +215,14 @@ button { cursor:pointer; }
 button.primary { background: var(--primary); color:#001; border: none; border-radius: 10px; padding:10px 14px; font-weight:700; }
 button.primary.outline { background:transparent; color:var(--primary); border:1px solid var(--primary); }
 button.ghost { background:transparent; color: var(--text); border:1px solid var(--border); }
-button.danger { color:#ffd8de; border-color:#ff8aa0; }
+button.danger {
+  background: rgba(208, 52, 44, 0.18);
+  color: #ffd8de;
+  border: 1px solid #ff8aa0;
+}
+button.danger:hover {
+  background: rgba(208, 52, 44, 0.28);
+}
 .error { color: #ff8aa0; margin-top: 8px; font-size: 14px; }
 
 .login-container { max-width: 440px; margin: 48px auto; padding: 0 16px; }
@@ -230,6 +237,20 @@ button.danger { color:#ffd8de; border-color:#ff8aa0; }
 .profile-header h1 { margin: 0; font-size: 26px; }
 .profile-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
 .profile-card { display: flex; flex-direction: column; gap: 18px; }
+.profile-card.danger-zone {
+  border-color: rgba(255, 138, 160, 0.55);
+  background: rgba(208, 52, 44, 0.08);
+  gap: 14px;
+}
+.profile-card.danger-zone h2 {
+  color: #ff8aa0;
+}
+.profile-card.danger-zone .helper {
+  color: #ffb3c1;
+}
+.profile-card.danger-zone .profile-actions {
+  margin-top: 0;
+}
 .profile-date { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .profile-field { display: flex; flex-direction: column; gap: 8px; }
 .profile-field label { margin-top: 0; }

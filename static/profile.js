@@ -357,6 +357,25 @@ async function saveProfile() {
   }
 }
 
+async function resetProfile() {
+  const errEl = document.getElementById('profile-reset-error');
+  if (errEl) errEl.textContent = '';
+  const confirmed = window.confirm('This will permanently delete all of your calendar data. Continue?');
+  if (!confirmed) return;
+  const button = document.getElementById('profile-reset');
+  if (button) button.disabled = true;
+  try {
+    await api('/api/profile', { method: 'DELETE' });
+    window.location.href = '/signup.html';
+  } catch (e) {
+    console.error(e);
+    if (errEl) {
+      errEl.textContent = e?.data?.error || 'Unable to remove your data. Please try again.';
+    }
+    if (button) button.disabled = false;
+  }
+}
+
 async function logout() {
   try {
     await api('/api/logout', { method: 'POST' });
@@ -397,4 +416,5 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('t212-save')?.addEventListener('click', () => saveIntegration());
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
+  document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
 });

@@ -9,6 +9,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
 - Log same-day deposits or withdrawals alongside each portfolio value so cash movements adjust the balance without inflating profit/loss figures.
 - Optionally connect a Trading 212 account to automate daily portfolio snapshots and cash adjustments at a time you choose.
+- Reset and permanently delete all stored data (including persistent disk records) from the profile page when you need a clean start.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
 
@@ -44,6 +45,11 @@ User accounts, sessions, and P&L entries are stored in a JSON file whose locatio
 - On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DATA_DIR=/var/data/pl-calendar` in the service environment so user records survive code pushes and restarts.
 
 When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
+
+## Resetting your data
+- Open the **Profile** page and scroll to the **Reset your data** card.
+- Review the warning, then choose **Delete everything** to remove your account, portfolio history, cash adjustments, and Trading 212 credentials.
+- The server wipes your record from the persistent data store immediately; you’ll be redirected to sign up again if you want to create a fresh account.
 
 ## Deploying / Pushing to GitHub
 All changes currently live on the local `work` branch. To publish them to your GitHub repository, push the branch from your machine or a Codespaces/CI session:
