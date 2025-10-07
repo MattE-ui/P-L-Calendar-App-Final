@@ -226,12 +226,20 @@ function ensureUserShape(user) {
     user.portfolio = Number.isFinite(user.initialPortfolio) ? Number(user.initialPortfolio) : 0;
     mutated = true;
   }
+  if (user.netDepositsAnchor === undefined) {
+    user.netDepositsAnchor = null;
+    mutated = true;
+  } else if (user.netDepositsAnchor !== null && typeof user.netDepositsAnchor !== 'string') {
+    user.netDepositsAnchor = null;
+    mutated = true;
+  }
   return mutated;
 }
 
 function normalizePortfolioHistory(user) {
   const history = ensurePortfolioHistory(user);
   let mutated = false;
+  const anchor = typeof user.netDepositsAnchor === 'string' ? user.netDepositsAnchor : null;
   for (const [monthKey, days] of Object.entries(history)) {
     for (const [dateKey, record] of Object.entries(days)) {
       if (record === null || record === undefined) {
@@ -240,13 +248,19 @@ function normalizePortfolioHistory(user) {
         continue;
       }
       if (typeof record === 'number') {
-        days[dateKey] = { end: record, cashIn: 0, cashOut: 0 };
+        const preBaseline = anchor && dateKey < anchor;
+        days[dateKey] = preBaseline
+          ? { end: record, cashIn: 0, cashOut: 0, preBaseline: true }
+          : { end: record, cashIn: 0, cashOut: 0 };
         mutated = true;
         continue;
       }
       if (typeof record === 'object') {
         if (record.end === undefined && typeof record.value === 'number') {
-          days[dateKey] = { end: record.value, cashIn: 0, cashOut: 0 };
+          const preBaseline = (record.preBaseline === true) || (anchor && dateKey < anchor);
+          days[dateKey] = preBaseline
+            ? { end: record.value, cashIn: 0, cashOut: 0, preBaseline: true }
+            : { end: record.value, cashIn: 0, cashOut: 0 };
           mutated = true;
           continue;
         }
@@ -260,10 +274,15 @@ function normalizePortfolioHistory(user) {
         const cashOutRaw = Number(record.cashOut ?? 0);
         const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
         const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
-        if (cashIn !== cashInRaw || cashOut !== cashOutRaw || record.start !== undefined) {
+        const preBaselineRaw = record.preBaseline === true;
+        const shouldBePreBaseline = anchor && dateKey < anchor;
+        const preBaseline = preBaselineRaw || shouldBePreBaseline;
+        if (cashIn !== cashInRaw || cashOut !== cashOutRaw || record.start !== undefined || (!!record.preBaseline !== preBaseline)) {
           mutated = true;
         }
-        days[dateKey] = { end, cashIn, cashOut };
+        days[dateKey] = preBaseline
+          ? { end, cashIn, cashOut, preBaseline: true }
+          : { end, cashIn, cashOut };
         continue;
       }
       delete days[dateKey];
@@ -290,7 +309,8 @@ function listChronologicalEntries(history) {
         date: dateKey,
         end,
         cashIn: Number.isFinite(cashIn) && cashIn >= 0 ? cashIn : 0,
-        cashOut: Number.isFinite(cashOut) && cashOut >= 0 ? cashOut : 0
+        cashOut: Number.isFinite(cashOut) && cashOut >= 0 ? cashOut : 0,
+        preBaseline: record.preBaseline === true
       });
     }
   }
@@ -306,12 +326,16 @@ function buildSnapshots(history, initial) {
     const monthKey = entry.date.slice(0, 7);
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
     const start = baseline !== null ? baseline : entry.end;
-    snapshots[monthKey][entry.date] = {
+    const payload = {
       start,
       end: entry.end,
       cashIn: entry.cashIn,
       cashOut: entry.cashOut
     };
+    if (entry.preBaseline) {
+      payload.preBaseline = true;
+    }
+    snapshots[monthKey][entry.date] = payload;
     baseline = entry.end;
   }
   return snapshots;
@@ -805,7 +829,8 @@ app.get('/api/profile', auth, (req,res)=>{
     profileComplete: !!user.profileComplete,
     portfolio: Number.isFinite(user.portfolio) ? user.portfolio : baseline || 0,
     initialNetDeposits: Number.isFinite(user.initialNetDeposits) ? user.initialNetDeposits : 0,
-    today: currentDateKey()
+    today: currentDateKey(),
+    netDepositsAnchor: user.netDepositsAnchor || null
   });
 });
 
@@ -845,6 +870,9 @@ app.post('/api/profile', auth, (req,res)=>{
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
+  if (!user.netDepositsAnchor) {
+    user.netDepositsAnchor = targetDate;
+  }
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
   const ym = targetDate.slice(0, 7);
@@ -1022,6 +1050,8 @@ app.post('/api/pl', auth, (req,res)=>{
   }
   const ym = date.slice(0,7);
   history[ym] ||= {};
+  const existingRecord = history[ym][date];
+  const anchorDate = user.netDepositsAnchor || null;
   if (value === null || value === '') {
     delete history[ym][date];
     if (!Object.keys(history[ym]).length) {
@@ -1040,11 +1070,17 @@ app.post('/api/pl', auth, (req,res)=>{
     if (!Number.isFinite(withdrawal) || withdrawal < 0) {
       return res.status(400).json({ error: 'Invalid withdrawal value' });
     }
-    history[ym][date] = {
+    const existingPreBaseline = existingRecord?.preBaseline === true;
+    const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
+    const entryPayload = {
       end: num,
       cashIn: deposit,
       cashOut: withdrawal
     };
+    if (shouldFlagPreBaseline) {
+      entryPayload.preBaseline = true;
+    }
+    history[ym][date] = entryPayload;
   }
   refreshAnchors(user, history);
   saveDB(db);

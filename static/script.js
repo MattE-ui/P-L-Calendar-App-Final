@@ -145,7 +145,8 @@ function getDailyEntry(date) {
     pct,
     cashIn,
     cashOut,
-    cashFlow: netCash
+    cashFlow: netCash,
+    preBaseline: record.preBaseline === true
   };
 }
 
@@ -291,7 +292,7 @@ function computeLifetimeMetrics() {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
     }
-    if (entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
+    if (!entry?.preBaseline && entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
       totalNetDeposits += entry.cashFlow;
     }
     if (entry?.closing !== null && entry?.closing !== undefined) {
