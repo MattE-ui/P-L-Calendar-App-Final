@@ -1,3 +1,30 @@
+function removeLegacyResendElements() {
+  const candidates = Array.from(document.querySelectorAll('button, .resend-block, .resend-container'));
+  candidates.forEach((el) => {
+    if (!el) return;
+    const text = (el.textContent || '').toLowerCase();
+    if (text.includes('resend') && text.includes('verification')) {
+      const wrapper = el.closest('.resend-block, .resend-container, .helper');
+      if (wrapper) {
+        wrapper.remove();
+      } else {
+        el.remove();
+      }
+    }
+  });
+  document.querySelectorAll('p, span').forEach((el) => {
+    const text = (el.textContent || '').toLowerCase();
+    if (text.includes('verification') && text.includes('email') && text.includes('resend')) {
+      const wrapper = el.closest('.helper, .resend-block');
+      if (wrapper) {
+        wrapper.remove();
+      } else {
+        el.remove();
+      }
+    }
+  });
+}
+
 function createSignupHandlers() {
   const usernameInput = document.getElementById('signup-username');
   const passwordInput = document.getElementById('signup-password');
@@ -9,6 +36,8 @@ function createSignupHandlers() {
   if (!usernameInput || !passwordInput || !signupBtn) {
     return;
   }
+
+  removeLegacyResendElements();
 
   function setMessage(el, message) {
     if (el) {

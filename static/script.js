@@ -276,12 +276,19 @@ function computeLifetimeMetrics() {
   state.firstEntryKey = entries.length ? formatDate(entries[0].date) : null;
   if (!entries.length) {
     const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
-    const netPerformance = fallback - knownTotalDeposits;
-    const pct = fallback !== 0 ? (netPerformance / fallback) * 100 : null;
+    const totalNetDeposits = Number.isFinite(knownTotalDeposits)
+      ? knownTotalDeposits
+      : baselineDeposits;
+    const netPerformance = fallback - totalNetDeposits;
+    const denominator = totalNetDeposits !== 0
+      ? totalNetDeposits
+      : (fallback !== 0 ? fallback : null);
+    const pct = denominator ? (netPerformance / denominator) * 100 : null;
+    state.netDepositsTotalGBP = Number.isFinite(totalNetDeposits) ? totalNetDeposits : 0;
     state.metrics = {
       baselineGBP: fallback,
       latestGBP: fallback,
-      netDepositsGBP: knownTotalDeposits,
+      netDepositsGBP: state.netDepositsTotalGBP,
       netPerformanceGBP: netPerformance,
       netPerformancePct: Number.isFinite(pct) ? pct : null
     };
@@ -311,16 +318,19 @@ function computeLifetimeMetrics() {
   }
   const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
   const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
-  const totalNetDeposits = Number.isFinite(state.netDepositsTotalGBP)
+  const totalNetDeposits = entries.length
+    ? computedTotalDeposits
+    : (Number.isFinite(state.netDepositsTotalGBP) ? state.netDepositsTotalGBP : baselineDeposits);
+  state.netDepositsTotalGBP = Number.isFinite(totalNetDeposits) ? totalNetDeposits : 0;
+  const netPerformance = safeLatest - state.netDepositsTotalGBP;
+  const denominator = state.netDepositsTotalGBP !== 0
     ? state.netDepositsTotalGBP
-    : computedTotalDeposits;
-  state.netDepositsTotalGBP = totalNetDeposits;
-  const netPerformance = safeLatest - totalNetDeposits;
-  const pct = safeBaseline !== 0 ? (netPerformance / safeBaseline) * 100 : null;
+    : (safeBaseline !== 0 ? safeBaseline : null);
+  const pct = denominator ? (netPerformance / denominator) * 100 : null;
   state.metrics = {
     baselineGBP: safeBaseline,
     latestGBP: safeLatest,
-    netDepositsGBP: totalNetDeposits,
+    netDepositsGBP: state.netDepositsTotalGBP,
     netPerformanceGBP: netPerformance,
     netPerformancePct: Number.isFinite(pct) ? pct : null
   };
