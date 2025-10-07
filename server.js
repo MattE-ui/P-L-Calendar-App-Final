@@ -376,6 +376,16 @@ function ensureUserShape(user) {
       delete user.security.pendingPassword;
       mutated = true;
     }
+    if (!user.security.verification || typeof user.security.verification !== 'object') {
+      user.security.verification = {};
+      mutated = true;
+    } else if (user.security.verification.lastSentAt) {
+      const last = Date.parse(user.security.verification.lastSentAt);
+      if (Number.isNaN(last)) {
+        delete user.security.verification.lastSentAt;
+        mutated = true;
+      }
+    }
   }
   ensurePortfolioHistory(user);
   const { mutated: tradingMutated } = ensureTrading212Config(user);
@@ -1124,7 +1134,83 @@ app.post('/api/signup', async (req,res)=>{
     return res.status(500).json({ error: 'Unable to send verification email right now. Please try again.' });
   }
 
+  const createdUser = db.users[email];
+  if (createdUser) {
+    if (!createdUser.security || typeof createdUser.security !== 'object') {
+      createdUser.security = {};
+    }
+    if (!createdUser.security.verification || typeof createdUser.security.verification !== 'object') {
+      createdUser.security.verification = {};
+    }
+    createdUser.security.verification.lastSentAt = new Date().toISOString();
+    saveDB(db);
+  }
+
   res.json({ ok: true });
+});
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const rawEmail = typeof req.body?.email === 'string' ? req.body.email : req.body?.username;
+  const email = normalizeEmail(rawEmail);
+  if (!email || !emailRegex().test(email)) {
+    return res.status(400).json({ error: 'Enter a valid email address before requesting a new link.' });
+  }
+
+  const db = loadDB();
+  purgeExpiredVerifications(db);
+  const user = db.users[email];
+  if (!user) {
+    return res.json({ ok: true, status: 'unknown', retryAfter: 60 });
+  }
+
+  const mutated = ensureUserShape(user);
+  if (mutated) saveDB(db);
+
+  if (user.emailVerified) {
+    return res.json({ ok: true, status: 'already-verified' });
+  }
+
+  if (!user.security) user.security = {};
+  if (!user.security.verification || typeof user.security.verification !== 'object') {
+    user.security.verification = {};
+  }
+  const now = Date.now();
+  const lastSent = user.security.verification.lastSentAt ? Date.parse(user.security.verification.lastSentAt) : NaN;
+  if (!Number.isNaN(lastSent) && now - lastSent < 60000) {
+    const waitSeconds = Math.ceil((60000 - (now - lastSent)) / 1000);
+    res.set('Retry-After', String(waitSeconds));
+    saveDB(db);
+    return res.status(429).json({
+      error: `Please wait ${waitSeconds} seconds before requesting another verification email.`,
+      retryAfter: waitSeconds
+    });
+  }
+
+  const token = createVerification(db, { type: 'signup', username: email });
+  saveDB(db);
+
+  const base = appBaseUrl(req);
+  const verifyLink = `${base}/api/auth/verify-email?token=${token}`;
+  try {
+    await sendMail({
+      to: email,
+      subject: 'Confirm your P&L Calendar account',
+      html: `<p>We noticed you requested another verification link.</p>
+        <p>Click below to confirm your email address and finish setting up your account:</p>
+        <p><a href="${verifyLink}">${verifyLink}</a></p>
+        <p>If you didn't ask for this, you can ignore the message.</p>`
+    });
+  } catch (mailError) {
+    console.error('Failed to resend verification email:', mailError);
+    delete db.verifications[token];
+    saveDB(db);
+    return res.status(500).json({ error: 'We could not send a new verification email right now. Please try again soon.' });
+  }
+
+  user.security.verification.lastSentAt = new Date().toISOString();
+  saveDB(db);
+
+  res.json({ ok: true, status: 'sent', retryAfter: 60 });
 });
 
 app.post('/api/login', async (req,res)=>{

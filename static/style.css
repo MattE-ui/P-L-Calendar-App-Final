@@ -223,7 +223,33 @@ button.danger {
 button.danger:hover {
   background: rgba(208, 52, 44, 0.28);
 }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+button.is-cooldown {
+  pointer-events: none;
+}
 .error { color: #ff8aa0; margin-top: 8px; font-size: 14px; }
+
+.resend-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resend-actions button {
+  width: auto;
+  align-self: flex-start;
+  padding-inline: 16px;
+}
+
+.resend-actions .helper {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
 
 .login-container { max-width: 440px; margin: 48px auto; padding: 0 16px; }
 .login-container h1 { text-align: center; margin: 0 0 24px; }
