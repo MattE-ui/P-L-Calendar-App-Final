@@ -39,28 +39,23 @@
     <section class="card profile-card security-card">
       <header class="profile-automation-header">
         <h2>Account &amp; security</h2>
-        <p class="helper">Manage your login details. Every change is confirmed via email before it goes live.</p>
+        <p class="helper">Update your login details. Password changes take effect immediately.</p>
       </header>
       <div class="profile-field">
-        <label for="account-email-current">Current email</label>
-        <input id="account-email-current" type="email" readonly>
-        <p class="helper" id="account-email-status">We’ll send approvals to this address.</p>
+        <label for="account-username">Username</label>
+        <input id="account-username" type="text" readonly>
       </div>
       <div class="profile-field">
-        <label for="account-email-new">Request a new email</label>
-        <input id="account-email-new" type="email" placeholder="name@example.com" inputmode="email">
-        <p class="helper">Step 1: We email your current address to approve the change. Step 2: once approved, we email the new address to confirm it. The switch completes only after both emails are confirmed.</p>
-      </div>
-      <div class="profile-actions">
-        <button id="account-email-submit" class="ghost">Start email change</button>
+        <label for="account-password-current">Current password</label>
+        <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password">
       </div>
       <div class="profile-field">
-        <label for="account-password-new">Request a new password</label>
+        <label for="account-password-new">New password</label>
         <input id="account-password-new" type="password" placeholder="New password" autocomplete="new-password">
-        <p class="helper">Use at least 12 characters, including upper- and lower-case letters, a number, and a symbol. We’ll email a confirmation link before applying it.</p>
+        <p class="helper">Use at least 12 characters, including upper- and lower-case letters, a number, and a symbol.</p>
       </div>
       <div class="profile-actions">
-        <button id="account-password-submit" class="ghost">Email me a confirmation link</button>
+        <button id="account-password-submit" class="ghost">Update password</button>
       </div>
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>

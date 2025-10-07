@@ -41,63 +41,13 @@ function ensureDataStore() {
 
     const initialPayload = JSON.stringify({
       users: {},
-      sessions: {},
-      verifications: {},
-      emailChangeRequests: {}
+      sessions: {}
     }, null, 2);
     fs.writeFileSync(DATA_FILE, initialPayload, 'utf-8');
   }
 }
 
 ensureDataStore();
-
-const SMTP_HOST = process.env.SMTP_HOST;
-const SMTP_PORT = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
-const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
-const SMTP_USER = process.env.SMTP_USER;
-const SMTP_PASS = process.env.SMTP_PASS;
-const SMTP_FROM = process.env.SMTP_FROM || process.env.MAIL_FROM || process.env.EMAIL_FROM || 'no-reply@localhost';
-
-let mailTransport = null;
-if (SMTP_HOST && nodemailer) {
-  mailTransport = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined
-  });
-} else if (SMTP_HOST && !nodemailer) {
-  console.warn('SMTP settings provided but nodemailer is unavailable. Emails will be logged to the console.');
-}
-
-async function sendMail({ to, subject, html, text }) {
-  if (!to) throw new Error('Missing recipient');
-  const payload = {
-    from: SMTP_FROM,
-    to,
-    subject,
-    text: text || html?.replace(/<[^>]+>/g, ' '),
-    html
-  };
-  if (!mailTransport) {
-    console.info('Mail (simulated):', JSON.stringify(payload, null, 2));
-    return;
-  }
-  await mailTransport.sendMail(payload);
-}
-
-function appBaseUrl(req) {
-  if (process.env.APP_BASE_URL) {
-    return process.env.APP_BASE_URL.replace(/\/$/, '');
-  }
-  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
-  return `${proto}://${host}`.replace(/\/$/, '');
-}
-
-function normalizeEmail(email) {
-  return (email || '').trim().toLowerCase();
-}
 
 function isStrongPassword(password) {
   if (typeof password !== 'string' || password.length < 12) return false;
@@ -106,73 +56,6 @@ function isStrongPassword(password) {
   const hasNumber = /\d/.test(password);
   const hasSymbol = /[^A-Za-z0-9]/.test(password);
   return hasUpper && hasLower && hasNumber && hasSymbol;
-}
-
-function emailRegex() {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-}
-
-function createVerification(db, payload) {
-  const token = crypto.randomBytes(32).toString('hex');
-  db.verifications[token] = {
-    ...payload,
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString()
-  };
-  return token;
-}
-
-function consumeVerification(db, token, types) {
-  if (!token) return null;
-  const entry = db.verifications?.[token];
-  if (!entry) return null;
-  if (Array.isArray(types) && !types.includes(entry.type)) return null;
-  if (entry.expiresAt && Date.parse(entry.expiresAt) < Date.now()) {
-    delete db.verifications[token];
-    return null;
-  }
-  delete db.verifications[token];
-  return entry;
-}
-
-function purgeExpiredVerifications(db) {
-  if (!db.verifications) return;
-  const now = Date.now();
-  for (const [token, payload] of Object.entries(db.verifications)) {
-    if (payload?.expiresAt && Date.parse(payload.expiresAt) < now) {
-      delete db.verifications[token];
-    }
-  }
-}
-
-function verificationPage(res, { title, message, success }) {
-  const heading = success ? 'Success' : 'Action required';
-  res.set('Content-Type', 'text/html');
-  res.send(`<!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${title}</title>
-      <link rel="stylesheet" href="/static/style.css">
-      <style>
-        body { display:flex; align-items:center; justify-content:center; min-height:100vh; background:#0d1b2a; color:#fff; padding:2rem; }
-        .verify-card { background:rgba(13,27,42,0.85); border-radius:16px; padding:2.5rem; max-width:520px; width:100%; box-shadow:0 25px 45px rgba(0,0,0,0.35); text-align:center; }
-        .verify-card h1 { margin-bottom:1rem; font-size:2rem; }
-        .verify-card p { line-height:1.6; }
-        .verify-card.success { border:1px solid rgba(95, 221, 166, 0.5); }
-        .verify-card.error { border:1px solid rgba(255, 102, 102, 0.5); }
-        .verify-card a { color:#5FDDA6; }
-      </style>
-    </head>
-    <body>
-      <div class="verify-card ${success ? 'success' : 'error'}">
-        <h1>${heading}</h1>
-        <p>${message}</p>
-        <p><a href="/login.html">Back to login</a></p>
-      </div>
-    </body>
-    </html>`);
 }
 
 const Trading212Error = (() => {
@@ -222,7 +105,7 @@ function loadDB() {
     return db;
   } catch (e) {
     console.warn('Falling back to empty database in loadDB:', e?.message || e);
-    return { users: {}, sessions: {}, verifications: {}, emailChangeRequests: {} };
+    return { users: {}, sessions: {} };
   }
 }
 
@@ -338,54 +221,40 @@ function ensureTrading212Config(user) {
   return { mutated, config: cfg };
 }
 
-function ensureUserShape(user) {
+function ensureUserShape(user, identifier) {
   if (!user) return false;
   let mutated = false;
-  if (typeof user.email !== 'string' || !user.email) {
-    if (typeof user.username === 'string' && user.username.includes('@')) {
-      user.email = normalizeEmail(user.username);
-    } else if (user.username) {
-      user.email = String(user.username);
-    }
-    mutated = true;
-  } else {
-    const normalized = normalizeEmail(user.email);
-    if (normalized !== user.email) {
-      user.email = normalized;
-      mutated = true;
-    }
-  }
-  if (typeof user.emailVerified !== 'boolean') {
-    user.emailVerified = false;
+  if (identifier && user.username !== identifier) {
+    user.username = identifier;
     mutated = true;
   }
-  if (!user.security) {
+  if (!user.username && typeof user.email === 'string') {
+    user.username = user.email;
+    mutated = true;
+  }
+  if (user.email !== undefined) {
+    delete user.email;
+    mutated = true;
+  }
+  if (user.emailVerified !== undefined) {
+    delete user.emailVerified;
+    mutated = true;
+  }
+  if (!user.security || typeof user.security !== 'object') {
     user.security = {};
     mutated = true;
   }
-  if (user.security && typeof user.security !== 'object') {
-    user.security = {};
+  if (user.security.pendingEmail !== undefined) {
+    delete user.security.pendingEmail;
     mutated = true;
   }
-  if (user.security) {
-    if (user.security.pendingEmail && typeof user.security.pendingEmail !== 'object') {
-      delete user.security.pendingEmail;
-      mutated = true;
-    }
-    if (user.security.pendingPassword && typeof user.security.pendingPassword !== 'object') {
-      delete user.security.pendingPassword;
-      mutated = true;
-    }
-    if (!user.security.verification || typeof user.security.verification !== 'object') {
-      user.security.verification = {};
-      mutated = true;
-    } else if (user.security.verification.lastSentAt) {
-      const last = Date.parse(user.security.verification.lastSentAt);
-      if (Number.isNaN(last)) {
-        delete user.security.verification.lastSentAt;
-        mutated = true;
-      }
-    }
+  if (user.security.pendingPassword !== undefined) {
+    delete user.security.pendingPassword;
+    mutated = true;
+  }
+  if (user.security.verification !== undefined) {
+    delete user.security.verification;
+    mutated = true;
   }
   ensurePortfolioHistory(user);
   const { mutated: tradingMutated } = ensureTrading212Config(user);
@@ -781,7 +650,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   const db = loadDB();
   const user = db.users[username];
   if (!user) return;
-  ensureUserShape(user);
+  ensureUserShape(user, username);
   const cfg = user.trading212;
   if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const now = Date.now();
@@ -911,170 +780,6 @@ app.get('/serviceWorker.js', (req,res)=>{
 app.get('/', (req,res)=>{ res.sendFile(path.join(__dirname,'index.html')); });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
-
-async function handleVerification(req, res) {
-  const token = typeof req.query?.token === 'string' ? req.query.token : null;
-  if (!token) {
-    return verificationPage(res, {
-      title: 'Verification failed',
-      message: 'Missing verification token. Please open the latest email we sent you.',
-      success: false
-    });
-  }
-  const db = loadDB();
-  purgeExpiredVerifications(db);
-  const entry = consumeVerification(db, token);
-  if (!entry) {
-    saveDB(db);
-    return verificationPage(res, {
-      title: 'Verification expired',
-      message: 'That link is no longer valid. Request a new email from the app to continue.',
-      success: false
-    });
-  }
-  let message = 'Your request has been confirmed.';
-  let success = true;
-  const username = entry.username ? normalizeEmail(entry.username) : null;
-  const user = username ? db.users[username] : null;
-  switch (entry.type) {
-    case 'signup': {
-      if (!user) {
-        success = false;
-        message = 'We could not find your account. Try signing up again.';
-        break;
-      }
-      user.emailVerified = true;
-      ensureUserShape(user);
-      saveDB(db);
-      message = 'Email confirmed! You can now log in and finish setting up your profile.';
-      break;
-    }
-    case 'password-change': {
-      if (!user || !entry.passwordHash) {
-        success = false;
-        message = 'We could not update your password. Start the process again from the profile page.';
-        break;
-      }
-      user.passwordHash = entry.passwordHash;
-      if (user.security?.pendingPassword) {
-        delete user.security.pendingPassword;
-      }
-      // invalidate all sessions for this user
-      for (const [sessionToken, sessionUser] of Object.entries(db.sessions)) {
-        if (sessionUser === username) {
-          delete db.sessions[sessionToken];
-        }
-      }
-      saveDB(db);
-      message = 'Password updated. Please log in with your new password.';
-      break;
-    }
-    case 'email-change-old': {
-      const processId = entry.processId;
-      const process = processId ? db.emailChangeRequests?.[processId] : null;
-      if (!user || !process || process.username !== username) {
-        success = false;
-        message = 'We could not verify this email change request.';
-        break;
-      }
-      process.stage = 'pending-new';
-      process.confirmedOldAt = new Date().toISOString();
-      if (!user.security) user.security = {};
-      user.security.pendingEmail = {
-        newEmail: process.newEmail,
-        stage: 'pending-new',
-        requestedAt: process.createdAt || process.confirmedOldAt,
-        confirmedOldAt: process.confirmedOldAt
-      };
-      const newToken = createVerification(db, {
-        type: 'email-change-new',
-        username,
-        processId,
-        newEmail: process.newEmail
-      });
-      saveDB(db);
-      const base = process.baseUrl || appBaseUrl(req);
-      const verifyLink = `${base}/api/auth/verify-email?token=${newToken}`;
-      try {
-        await sendMail({
-          to: process.newEmail,
-          subject: 'Confirm your new email for P&L Calendar',
-          html: `<p>You requested to switch your P&L Calendar account to this email address.</p>
-            <p>Confirm the change by clicking the link below:</p>
-            <p><a href="${verifyLink}">${verifyLink}</a></p>
-            <p>If you didn't request this, ignore this message and your email will stay the same.</p>`
-        });
-        message = 'Great! Check your new email inbox and confirm the change to finish.';
-      } catch (mailError) {
-        console.error('Failed to send new email confirmation:', mailError);
-        delete db.verifications[newToken];
-        process.stage = 'pending-old';
-        delete process.confirmedOldAt;
-        if (user.security?.pendingEmail) {
-          user.security.pendingEmail = {
-            newEmail: process.newEmail,
-            stage: 'pending-old',
-            requestedAt: process.createdAt || new Date().toISOString()
-          };
-        }
-        saveDB(db);
-        message = 'We verified the request but could not email the new address. Try again later.';
-        success = false;
-      }
-      break;
-    }
-    case 'email-change-new': {
-      const processId = entry.processId;
-      const process = processId ? db.emailChangeRequests?.[processId] : null;
-      if (!user || !process || process.username !== username || process.stage !== 'pending-new') {
-        success = false;
-        message = 'We could not complete this email change.';
-        break;
-      }
-      const newEmail = normalizeEmail(entry.newEmail || process.newEmail);
-      if (!newEmail || !emailRegex().test(newEmail)) {
-        success = false;
-        message = 'The new email address is invalid. Start again from the profile page.';
-        break;
-      }
-      if (db.users[newEmail] && newEmail !== username) {
-        success = false;
-        message = 'Another account already uses this email address.';
-        break;
-      }
-      delete db.emailChangeRequests[processId];
-      if (user.security?.pendingEmail) delete user.security.pendingEmail;
-      // move user record
-      if (newEmail !== username) {
-        db.users[newEmail] = user;
-        delete db.users[username];
-        for (const [sessionToken, sessionUser] of Object.entries(db.sessions)) {
-          if (sessionUser === username) {
-            db.sessions[sessionToken] = newEmail;
-          }
-        }
-      }
-      user.email = newEmail;
-      user.emailVerified = true;
-      ensureUserShape(user);
-      saveDB(db);
-      message = 'Email address updated! Use your new email when logging in.';
-      break;
-    }
-    default:
-      success = false;
-      message = 'This verification link is not recognised.';
-      break;
-  }
-  saveDB(db);
-  if (!success) {
-    return verificationPage(res, { title: 'Verification issue', message, success: false });
-  }
-  verificationPage(res, { title: 'Verification complete', message, success: true });
-}
-
-app.get('/api/auth/verify-email', handleVerification);
-app.get('/api/auth/verify', handleVerification);
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 
@@ -1086,33 +791,39 @@ function currentDateKey() {
 }
 
 app.post('/api/signup', async (req,res)=>{
-  const rawEmail = typeof req.body?.username === 'string' ? req.body.username : req.body?.email;
-  const email = normalizeEmail(rawEmail);
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
   const password = req.body?.password;
-  if (!email || !emailRegex().test(email)) {
-    return res.status(400).json({ error: 'Enter a valid email address' });
+  const username = rawUsername.trim();
+  if (!username) {
+    return res.status(400).json({ error: 'Choose a username to create your account.' });
+  }
+  if (username.length < 3) {
+    return res.status(400).json({ error: 'Usernames must be at least 3 characters long.' });
+  }
+  if (/\s/.test(username)) {
+    return res.status(400).json({ error: 'Usernames cannot contain spaces.' });
   }
   if (!isStrongPassword(password)) {
-    return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol)' });
+    return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol).' });
   }
   const db = loadDB();
-  purgeExpiredVerifications(db);
-  if (db.users[email]) {
-    return res.status(409).json({ error: 'An account with this email already exists' });
+  if (db.users[username]) {
+    return res.status(409).json({ error: 'That username is already in use.' });
   }
   const passwordHash = await bcrypt.hash(password, 10);
-  db.users[email] = {
+  db.users[username] = {
+    username,
     passwordHash,
-    email,
-    emailVerified: false,
     portfolio: 0,
     initialPortfolio: 0,
     initialNetDeposits: 0,
     profileComplete: false,
     portfolioHistory: {},
+    netDepositsAnchor: null,
+    trading212: {},
     security: {}
   };
-  const token = createVerification(db, { type: 'signup', username: email });
+  ensureUserShape(db.users[username], username);
   saveDB(db);
 
   const base = appBaseUrl(req);
@@ -1214,18 +925,18 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 });
 
 app.post('/api/login', async (req,res)=>{
-  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : req.body?.email;
-  const username = normalizeEmail(rawUsername);
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
+  const username = rawUsername.trim();
   const password = req.body?.password;
+  if (!username || !password) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
   const db = loadDB();
   const user = db.users[username];
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-  if (!user.emailVerified) {
-    return res.status(403).json({ error: 'Check your inbox and confirm your email before logging in.' });
-  }
-  ensureUserShape(user);
+  ensureUserShape(user, username);
   const token = crypto.randomBytes(24).toString('hex');
   db.sessions[token] = username;
   saveDB(db);
@@ -1253,7 +964,7 @@ app.post('/api/logout', (req,res)=>{
 app.get('/api/portfolio', auth, (req,res)=>{
   const db = loadDB();
   const user = db.users[req.username];
-  const mutated = ensureUserShape(user);
+  const mutated = ensureUserShape(user, req.username);
   if (mutated) saveDB(db);
   res.json({
     portfolio: Number.isFinite(user.portfolio) ? user.portfolio : 0,
@@ -1277,7 +988,7 @@ app.get('/api/profile', auth, (req,res)=>{
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  let mutated = ensureUserShape(user);
+  let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
   const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
@@ -1289,9 +1000,7 @@ app.get('/api/profile', auth, (req,res)=>{
     initialNetDeposits: Number.isFinite(user.initialNetDeposits) ? user.initialNetDeposits : 0,
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
-    email: user.email || req.username,
-    emailVerified: !!user.emailVerified,
-    security: user.security || {}
+    username: user.username || req.username
   });
 });
 
@@ -1307,7 +1016,7 @@ app.post('/api/profile', auth, (req,res)=>{
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user);
+  ensureUserShape(user, req.username);
   const wasComplete = !!user.profileComplete;
   const previousNet = Number.isFinite(user.initialNetDeposits) ? Number(user.initialNetDeposits) : 0;
   let netDepositsNumber;
@@ -1363,106 +1072,27 @@ app.post('/api/profile', auth, (req,res)=>{
 });
 
 app.post('/api/account/password', auth, async (req, res) => {
-  const newPassword = req.body?.password;
+  const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+  const newPassword = req.body?.password ?? req.body?.newPassword;
   if (!isStrongPassword(newPassword)) {
     return res.status(400).json({ error: 'Passwords must be 12+ characters and include upper, lower, number, and symbol.' });
   }
   const db = loadDB();
-  purgeExpiredVerifications(db);
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user);
-  const passwordHash = await bcrypt.hash(newPassword, 10);
-  const token = createVerification(db, { type: 'password-change', username: req.username, passwordHash });
+  ensureUserShape(user, req.username);
+  const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!matches) {
+    return res.status(403).json({ error: 'Your current password is incorrect.' });
+  }
+  const samePassword = await bcrypt.compare(newPassword, user.passwordHash);
+  if (samePassword) {
+    return res.status(400).json({ error: 'Choose a password you have not used before.' });
+  }
+  user.passwordHash = await bcrypt.hash(newPassword, 10);
   user.security ||= {};
-  user.security.pendingPassword = {
-    requestedAt: new Date().toISOString()
-  };
+  user.security.passwordUpdatedAt = new Date().toISOString();
   saveDB(db);
-  const base = appBaseUrl(req);
-  const link = `${base}/api/auth/verify-email?token=${token}`;
-  try {
-    await sendMail({
-      to: user.email || req.username,
-      subject: 'Confirm your new P&L Calendar password',
-      html: `<p>You requested to change your P&L Calendar password.</p>
-        <p>To confirm this update, click the link below:</p>
-        <p><a href="${link}">${link}</a></p>
-        <p>If you didn't ask for this change, ignore this email and your password will stay the same.</p>`
-    });
-  } catch (mailError) {
-    console.error('Unable to send password confirmation email:', mailError);
-    delete db.verifications[token];
-    if (user.security?.pendingPassword) {
-      delete user.security.pendingPassword;
-    }
-    saveDB(db);
-    return res.status(500).json({ error: 'We could not email you right now. Try again later.' });
-  }
-  res.json({ ok: true });
-});
-
-app.post('/api/account/email', auth, async (req, res) => {
-  const rawEmail = req.body?.email;
-  const newEmail = normalizeEmail(rawEmail);
-  if (!newEmail || !emailRegex().test(newEmail)) {
-    return res.status(400).json({ error: 'Enter a valid email address.' });
-  }
-  const db = loadDB();
-  purgeExpiredVerifications(db);
-  const user = db.users[req.username];
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user);
-  if (newEmail === user.email) {
-    return res.status(400).json({ error: 'That is already your email address.' });
-  }
-  if (db.users[newEmail]) {
-    return res.status(409).json({ error: 'Another account already uses that email.' });
-  }
-  for (const [id, proc] of Object.entries(db.emailChangeRequests)) {
-    if (proc?.username === req.username) {
-      delete db.emailChangeRequests[id];
-    }
-  }
-  if (user.security?.pendingEmail) {
-    delete user.security.pendingEmail;
-  }
-  const processId = crypto.randomUUID();
-  const base = appBaseUrl(req);
-  db.emailChangeRequests[processId] = {
-    username: req.username,
-    oldEmail: user.email,
-    newEmail,
-    stage: 'pending-old',
-    createdAt: new Date().toISOString(),
-    baseUrl: base
-  };
-  const token = createVerification(db, { type: 'email-change-old', username: req.username, processId });
-  user.security ||= {};
-  user.security.pendingEmail = {
-    newEmail,
-    stage: 'pending-old',
-    requestedAt: new Date().toISOString()
-  };
-  saveDB(db);
-  const link = `${base}/api/auth/verify-email?token=${token}`;
-  try {
-    await sendMail({
-      to: user.email || req.username,
-      subject: 'Confirm your email change for P&L Calendar',
-      html: `<p>You asked to move your P&L Calendar account to ${newEmail}.</p>
-        <p>To start the process, confirm from your current email by clicking below:</p>
-        <p><a href="${link}">${link}</a></p>
-        <p>After you approve, we will email ${newEmail} for the final confirmation.</p>`
-    });
-  } catch (mailError) {
-    console.error('Unable to send old email confirmation:', mailError);
-    delete db.emailChangeRequests[processId];
-    delete db.verifications[token];
-    if (user.security?.pendingEmail) delete user.security.pendingEmail;
-    saveDB(db);
-    return res.status(500).json({ error: 'We could not send the confirmation email. Try again later.' });
-  }
   res.json({ ok: true });
 });
 
@@ -1490,7 +1120,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user);
+  ensureUserShape(user, req.username);
   const cfg = user.trading212 || {};
   const parsed = parseSnapshotTime(cfg.snapshotTime);
   res.json({
@@ -1515,7 +1145,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user);
+  ensureUserShape(user, req.username);
   const cfg = user.trading212;
   if (typeof enabled === 'boolean') {
     cfg.enabled = enabled;
@@ -1602,7 +1232,7 @@ app.get('/api/pl', auth, (req,res)=>{
   const { year, month } = req.query;
   const db = loadDB();
   const user = db.users[req.username];
-  ensureUserShape(user);
+  ensureUserShape(user, req.username);
   if (!user.profileComplete) {
     return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
   }
@@ -1624,7 +1254,7 @@ app.post('/api/pl', auth, (req,res)=>{
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
-  ensureUserShape(user);
+  ensureUserShape(user, req.username);
   if (!user.profileComplete) {
     return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
   }
@@ -1708,7 +1338,7 @@ function bootstrapTrading212Schedules() {
   const db = loadDB();
   let mutated = false;
   for (const [username, user] of Object.entries(db.users || {})) {
-    const changed = ensureUserShape(user);
+    const changed = ensureUserShape(user, username);
     if (changed) mutated = true;
     scheduleTrading212Job(username, user);
   }

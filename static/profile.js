@@ -21,9 +21,7 @@ async function api(path, opts = {}) {
 const profileState = {
   complete: false,
   netDeposits: 0,
-  email: '',
-  emailVerified: false,
-  security: {}
+  username: ''
 };
 
 async function loadProfile() {
@@ -33,9 +31,7 @@ async function loadProfile() {
     const netDeposits = Number(data.initialNetDeposits);
     profileState.complete = !!data.profileComplete;
     profileState.netDeposits = Number.isFinite(netDeposits) ? netDeposits : 0;
-    profileState.email = data.email || '';
-    profileState.emailVerified = !!data.emailVerified;
-    profileState.security = data.security || {};
+    profileState.username = data.username || '';
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
     const deltaField = document.getElementById('profile-net-delta-field');
@@ -90,113 +86,67 @@ async function loadProfile() {
 }
 
 function renderSecurityState() {
-  const emailCurrent = document.getElementById('account-email-current');
-  if (emailCurrent) {
-    emailCurrent.value = profileState.email || '';
+  const usernameInput = document.getElementById('account-username');
+  if (usernameInput) {
+    usernameInput.value = profileState.username || '';
   }
-  const emailStatus = document.getElementById('account-email-status');
-  if (emailStatus) {
-    let message;
-    const pending = profileState.security?.pendingEmail;
-    if (pending) {
-      if (pending.stage === 'pending-old') {
-        message = `Awaiting approval from ${profileState.email} to switch to ${pending.newEmail}.`;
-      } else if (pending.stage === 'pending-new') {
-        message = `Check ${pending.newEmail} to finish confirming your email change.`;
-      }
-    }
-    if (!message) {
-      message = profileState.emailVerified
-        ? 'Verified — we’ll send confirmations to this address.'
-        : 'Email not verified yet. Open the link we emailed you when signing up.';
-    }
-    emailStatus.textContent = message;
+  const currentPasswordInput = document.getElementById('account-password-current');
+  if (currentPasswordInput) {
+    currentPasswordInput.value = '';
+  }
+  const newPasswordInput = document.getElementById('account-password-new');
+  if (newPasswordInput) {
+    newPasswordInput.value = '';
   }
   const statusLine = document.getElementById('account-security-status');
   if (statusLine) {
-    const messages = [];
-    const pending = profileState.security?.pendingEmail;
-    if (pending) {
-      if (pending.stage === 'pending-old') {
-        messages.push(`Email change pending approval at ${profileState.email}.`);
-      } else if (pending.stage === 'pending-new') {
-        messages.push(`Email change awaiting confirmation at ${pending.newEmail}.`);
-      }
-    }
-    if (profileState.security?.pendingPassword) {
-      messages.push('Password change waiting for you to confirm via email.');
-    }
-    statusLine.textContent = messages.join(' ');
-    statusLine.classList.toggle('is-hidden', messages.length === 0);
+    statusLine.textContent = '';
+    statusLine.classList.add('is-hidden');
   }
-}
-
-async function handleEmailChange() {
-  const input = document.getElementById('account-email-new');
-  const error = document.getElementById('account-security-error');
-  const status = document.getElementById('account-security-status');
-  if (!input) return;
-  const value = input.value.trim();
-  if (error) error.textContent = '';
-  if (status) status.textContent = '';
-  if (!value) {
-    if (error) error.textContent = 'Enter the new email you would like to use.';
-    return;
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-    if (error) error.textContent = 'Enter a valid email address.';
-    return;
-  }
-  try {
-    await api('/api/account/email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: value })
-    });
-    if (status) {
-      status.textContent = `Check ${profileState.email} for a confirmation email to start the change.`;
-      status.classList.remove('is-hidden');
-    }
-    input.value = '';
-    await loadProfile();
-  } catch (e) {
-    console.error('Unable to request email change', e);
-    if (error) error.textContent = e?.data?.error || 'Unable to start the email change right now.';
+  const errorLine = document.getElementById('account-security-error');
+  if (errorLine) {
+    errorLine.textContent = '';
   }
 }
 
 async function handlePasswordChange() {
-  const input = document.getElementById('account-password-new');
+  const currentInput = document.getElementById('account-password-current');
+  const newInput = document.getElementById('account-password-new');
   const error = document.getElementById('account-security-error');
   const status = document.getElementById('account-security-status');
-  if (!input) return;
-  const value = input.value.trim();
+  if (!currentInput || !newInput) return;
+  const currentValue = currentInput.value.trim();
+  const newValue = newInput.value.trim();
   if (error) error.textContent = '';
   if (status) status.textContent = '';
-  const strong = value.length >= 12
-    && /[A-Z]/.test(value)
-    && /[a-z]/.test(value)
-    && /\d/.test(value)
-    && /[^A-Za-z0-9]/.test(value);
+  if (!currentValue) {
+    if (error) error.textContent = 'Enter your current password before updating it.';
+    return;
+  }
+  const strong = newValue.length >= 12
+    && /[A-Z]/.test(newValue)
+    && /[a-z]/.test(newValue)
+    && /\d/.test(newValue)
+    && /[^A-Za-z0-9]/.test(newValue);
   if (!strong) {
-    if (error) error.textContent = 'Enter a stronger password before requesting the change.';
+    if (error) error.textContent = 'Enter a stronger password before updating it.';
     return;
   }
   try {
     await api('/api/account/password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: value })
+      body: JSON.stringify({ currentPassword: currentValue, password: newValue })
     });
-    input.value = '';
+    currentInput.value = '';
+    newInput.value = '';
     if (status) {
-      status.textContent = 'We emailed you a link to confirm the new password. It takes effect once you approve it.';
+      status.textContent = 'Password updated successfully. Use your new password next time you log in.';
       status.classList.remove('is-hidden');
     }
-    await loadProfile();
   } catch (e) {
-    console.error('Unable to request password change', e);
-    if (error) error.textContent = e?.data?.error || 'Unable to start the password change right now.';
+    console.error('Unable to update password', e);
+    if (error) error.textContent = e?.data?.error || 'Unable to update your password right now.';
   }
 }
 
@@ -535,6 +485,5 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-save')?.addEventListener('click', () => saveIntegration());
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
-  document.getElementById('account-email-submit')?.addEventListener('click', handleEmailChange);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
 });

@@ -3,41 +3,34 @@
 This project provides a profit & loss tracking calendar with multi-scale views and built-in GBP/USD currency conversion.
 
 ## Features
-- Secure, email-verified sign-up/login with bcrypt-hashed passwords, strong password requirements, and HTTP-only cookies.
+- Secure username-based sign-up/login with bcrypt-hashed passwords, strong password requirements, and HTTP-only cookies.
 - Prompt new users to record their opening portfolio value and cumulative net deposits immediately after sign-in, and allow edits from the dashboard thereafter.
 - Record daily portfolio values while separately tracking net deposits/withdrawals so both the evolving balance and cash-adjusted performance remain visible at a glance.
 - Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
 - Log same-day deposits or withdrawals alongside each portfolio value so cash movements adjust the balance without inflating profit/loss figures.
 - Optionally connect a Trading 212 account to automate daily portfolio snapshots and cash adjustments at a time you choose.
 - Reset and permanently delete all stored data (including persistent disk records) from the profile page when you need a clean start.
+- Update your password directly from the profile page once you’re logged in.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
 
 ## Getting Started
 1. Install Node.js 22.
-2. Review the provided `.env` file and adjust any values (such as `SMTP_FROM` or `APP_BASE_URL`) to match your deployment.
-3. Install dependencies:
+2. Install dependencies:
    ```bash
    npm install
    ```
-4. Start the server:
+3. Start the server:
    ```bash
    npm start
    ```
-5. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account. You’ll receive a verification email; approve it before logging in with the same credentials.
-6. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
+4. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account with a unique username and strong password.
+5. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
 
-## Email verification & account security
-- SMTP settings are defined in the root `.env` file. The default values target Mailjet’s SMTP gateway (`in-v3.mailjet.com` on port `587`) and include the provided API key/secret so emails work out of the box.
-- Adjust the following keys if you’re using a different provider:
-  - `SMTP_HOST` and `SMTP_PORT` (or set `SMTP_SECURE=true` when using TLS on port 465)
-  - `SMTP_USER` and `SMTP_PASS` if your server requires authentication
-  - `SMTP_FROM` (or `MAIL_FROM`/`EMAIL_FROM`) to control the “From” address
-  - Optionally set `APP_BASE_URL` if the automatic host detection shouldn’t be used when building verification links
-- Without SMTP settings (or when running locally), the server logs verification links to the console so you can complete the flow manually.
-- New sign-ups must confirm their email before the login succeeds.
-- Passwords must be at least 12 characters and include upper-case, lower-case, numeric, and symbol characters; the profile page only allows password changes after the user approves the emailed confirmation link.
-- Email address changes follow a two-step approval: the existing email receives the first approval link, and the new email receives the second. The profile page explains the process and surfaces pending status updates.
+## Account security
+- Usernames are unique and must not contain spaces; passwords must be at least 12 characters long and include upper-case, lower-case, numeric, and symbol characters.
+- All passwords are hashed with bcrypt and stored server-side; authentication cookies are HTTP-only.
+- You can update your password from the profile page at any time by supplying your current password and a new strong password. Updates take effect immediately—there is no email approval step.
 
 ## Trading 212 automation
 1. Visit the profile page (link in the header) and scroll to the **Trading 212 automation** card.
