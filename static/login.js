@@ -43,6 +43,26 @@ loginPasswordInput?.addEventListener('keypress', (event) => {
   if (event.key === 'Enter') {
     handleLogin();
   }
+}
+
+if (document.getElementById('login-btn')) {
+  document.getElementById('login-btn').addEventListener('click', handleLogin);
+}
+
+loginPasswordInput?.addEventListener('keypress', (event) => {
+  if (event.key === 'Enter') {
+    handleLogin();
+  }
+});
+
+loginResendBtn?.addEventListener('click', handleLoginResend);
+
+document.getElementById('signup-link')?.addEventListener('click', () => {
+  window.location.href = '/signup.html';
+});
+
+document.getElementById('signup-link')?.addEventListener('click', () => {
+  window.location.href = '/signup.html';
 });
 
 document.getElementById('signup-link')?.addEventListener('click', () => {
