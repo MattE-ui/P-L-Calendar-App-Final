@@ -154,3 +154,7 @@ loginResendBtn?.addEventListener('click', handleLoginResend);
 document.getElementById('signup-link')?.addEventListener('click', () => {
   window.location.href = '/signup.html';
 });
+
+document.getElementById('signup-link')?.addEventListener('click', () => {
+  window.location.href = '/signup.html';
+});
