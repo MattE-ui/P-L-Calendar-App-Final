@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P&L Calendar - Profile setup</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <div class="profile-container">
+    <header class="profile-header">
+      <h1>Finish setting up your profile</h1>
+      <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
+    </header>
+    <section class="card profile-card">
+      <p class="profile-date" id="profile-date"></p>
+      <div class="profile-field">
+        <label for="profile-portfolio">Current portfolio value (£)</label>
+        <input id="profile-portfolio" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal" required>
+      </div>
+      <div class="profile-field" id="profile-net-total-field">
+        <label for="profile-net-deposits">Net deposits to date (£)</label>
+        <input id="profile-net-deposits" type="number" step="0.01" placeholder="0.00" inputmode="decimal" required>
+        <p class="helper" id="net-deposits-helper-initial">Include lifetime deposits minus withdrawals up to today so we can separate performance from cash movements.</p>
+        <p class="helper is-hidden" id="net-deposits-helper-existing">This running total updates automatically when you add or withdraw cash below.</p>
+      </div>
+      <div class="profile-field is-hidden" id="profile-net-delta-field">
+        <label for="profile-net-deposits-delta">Add cash adjustments (£)</label>
+        <input id="profile-net-deposits-delta" type="number" step="0.01" placeholder="0.00" inputmode="decimal">
+        <p class="helper">Enter additional deposits (positive) or withdrawals (negative) to update your total net deposits.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="profile-save" class="primary">Save and continue</button>
+        <button id="profile-logout" class="ghost">Log out</button>
+      </div>
+      <div id="profile-error" class="error"></div>
+    </section>
+    <section class="card profile-card security-card">
+      <header class="profile-automation-header">
+        <h2>Account &amp; security</h2>
+        <p class="helper">Manage your login details. Every change is confirmed via email before it goes live.</p>
+      </header>
+      <div class="profile-field">
+        <label for="account-email-current">Current email</label>
+        <input id="account-email-current" type="email" readonly>
+        <p class="helper" id="account-email-status">We’ll send approvals to this address.</p>
+      </div>
+      <div class="profile-field">
+        <label for="account-email-new">Request a new email</label>
+        <input id="account-email-new" type="email" placeholder="name@example.com" inputmode="email">
+        <p class="helper">Step 1: We email your current address to approve the change. Step 2: once approved, we email the new address to confirm it. The switch completes only after both emails are confirmed.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="account-email-submit" class="ghost">Start email change</button>
+      </div>
+      <div class="profile-field">
+        <label for="account-password-new">Request a new password</label>
+        <input id="account-password-new" type="password" placeholder="New password" autocomplete="new-password">
+        <p class="helper">Use at least 12 characters, including upper- and lower-case letters, a number, and a symbol. We’ll email a confirmation link before applying it.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="account-password-submit" class="ghost">Email me a confirmation link</button>
+      </div>
+      <div id="account-security-status" class="status-line"></div>
+      <div id="account-security-error" class="error"></div>
+    </section>
+    <section class="card profile-card automation-card">
+      <header class="profile-automation-header">
+        <h2>Trading 212 automation</h2>
+        <p class="helper">Automatically pull your daily portfolio value and cash movements from Trading 212 so your calendar updates itself.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="t212-enabled">
+          <span>Enable Trading 212 sync</span>
+        </label>
+      </div>
+      <div id="t212-fields" class="integration-fields">
+        <div class="profile-field">
+          <label for="t212-api-key">Trading 212 API key</label>
+          <input id="t212-api-key" type="password" placeholder="Paste your API key" autocomplete="off">
+          <p class="helper">Your key stays on this server and is only used to request the scheduled snapshot.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-api-secret">Trading 212 API secret</label>
+          <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
+          <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-host">API base URL (optional)</label>
+          <input id="t212-host" type="text" placeholder="https://api.trading212.com" autocomplete="off">
+          <p class="helper">Trading 212 usually works with <code>https://api.trading212.com</code> (live) or <code>https://demo.trading212.com</code> (practice). Override this only if their docs instruct otherwise.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-endpoint">Portfolio endpoint path</label>
+          <input id="t212-endpoint" type="text" value="/api/v0/equity/portfolio/summary" autocomplete="off">
+          <p class="helper">Keep <code>/api/v0/equity/portfolio/summary</code> unless Trading 212 specifies a different path for your account type.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-mode">Account</label>
+          <select id="t212-mode">
+            <option value="live">Live account</option>
+            <option value="practice">Practice (Invest/ISA demo)</option>
+          </select>
+        </div>
+        <div class="profile-field">
+          <label for="t212-time">Snapshot time</label>
+          <input id="t212-time" type="time" value="21:00" required>
+          <p class="helper">Choose the time of day (Europe/London) to capture your portfolio value and net deposits.</p>
+        </div>
+      </div>
+      <section class="integration-instructions">
+        <h3>How to set it up</h3>
+        <p>This integration records your Trading 212 closing balance at the scheduled time and applies any new deposits or withdrawals to your calendar automatically.</p>
+        <ol>
+          <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
+          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key (username) and API secret (password) &mdash; copy both.</li>
+          <li>Paste the key and secret above, pick your snapshot time, then save. Update the base URL or endpoint only if Trading 212 provides alternate values.</li>
+          <li>Leave your browser or device off &mdash; we will call the API at the chosen time each day and backfill your calendar.</li>
+        </ol>
+      </section>
+      <div class="profile-actions integration-actions">
+        <button id="t212-save" class="primary">Save Trading 212 settings</button>
+        <button id="t212-run-now" class="ghost">Run sync now</button>
+      </div>
+      <div id="t212-error" class="error"></div>
+      <p id="t212-status" class="status-line"></p>
+    </section>
+    <section class="card profile-card danger-zone">
+      <header class="profile-automation-header">
+        <h2>Reset your data</h2>
+        <p class="helper">Remove your account, portfolio history, deposits, and integration settings from this server.</p>
+      </header>
+      <p class="helper">This action permanently deletes your stored data, including anything kept on the persistent disk. You'll need to sign up again to use the app afterwards.</p>
+      <div class="profile-actions">
+        <button id="profile-reset" class="danger">Delete everything</button>
+      </div>
+      <div id="profile-reset-error" class="error"></div>
+    </section>
+  </div>
+  <script src="static/profile.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P&L Calendar - Sign up</title>
+  <link rel="stylesheet" href="static/style.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <div class="login-container">
+    <h1>Create your account</h1>
+    <section class="card">
+      <p class="card-subtitle">Use the email you want to receive confirmations at. We’ll send a verification link before you can log in.</p>
+      <label>Email address</label>
+      <input id="signup-email" type="email" autocomplete="username" inputmode="email" placeholder="you@example.com">
+      <label>Password</label>
+      <input id="signup-password" type="password" autocomplete="new-password" placeholder="At least 12 characters">
+      <p class="helper">Passwords must include upper- and lower-case letters, a number, and a symbol.</p>
+      <button id="signup-btn" class="primary">Send verification email</button>
+      <div id="signup-error" class="error"></div>
+      <div id="signup-success" class="success"></div>
+      <div class="resend-actions">
+        <p class="helper">Need another email? We can resend the verification link once every 60 seconds.</p>
+        <button type="button" id="signup-resend-btn" class="ghost" data-label="Resend verification email">Resend verification email</button>
+      </div>
+    </section>
+    <div class="auth-switch">
+      <p>Already have an account?</p>
+      <button id="login-link" class="ghost">Back to login</button>
+    </div>
+  </div>
+  <script src="static/signup.js"></script>
+</body>
+</html>
