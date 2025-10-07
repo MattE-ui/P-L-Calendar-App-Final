@@ -3,7 +3,7 @@
 This project provides a profit & loss tracking calendar with multi-scale views and built-in GBP/USD currency conversion.
 
 ## Features
-- Secure sign-up/login with bcrypt-hashed passwords and HTTP-only cookies.
+- Secure, email-verified sign-up/login with bcrypt-hashed passwords, strong password requirements, and HTTP-only cookies.
 - Prompt new users to record their opening portfolio value and cumulative net deposits immediately after sign-in, and allow edits from the dashboard thereafter.
 - Record daily portfolio values while separately tracking net deposits/withdrawals so both the evolving balance and cash-adjusted performance remain visible at a glance.
 - Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
@@ -23,8 +23,19 @@ This project provides a profit & loss tracking calendar with multi-scale views a
    ```bash
    npm start
    ```
-4. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account, then log in with the same credentials.
+4. Visit [http://localhost:3000](http://localhost:3000) and use the **Sign Up** button to create an account. You’ll receive a verification email; approve it before logging in with the same credentials.
 5. After logging in for the first time, complete the profile setup form by entering your current portfolio value and lifetime net deposits (numeric values are required) so the calendar can separate performance from cash movements.
+
+## Email verification & account security
+- Configure SMTP credentials via the environment so the app can send verification and approval emails:
+  - `SMTP_HOST` and `SMTP_PORT` (or set `SMTP_SECURE=true` when using TLS on port 465)
+  - `SMTP_USER` and `SMTP_PASS` if your server requires authentication
+  - `SMTP_FROM` (or `MAIL_FROM`/`EMAIL_FROM`) to control the “From” address
+  - Optionally set `APP_BASE_URL` if the automatic host detection shouldn’t be used when building verification links
+- Without SMTP settings (or when running locally), the server logs verification links to the console so you can complete the flow manually.
+- New sign-ups must confirm their email before the login succeeds.
+- Passwords must be at least 12 characters and include upper-case, lower-case, numeric, and symbol characters; the profile page only allows password changes after the user approves the emailed confirmation link.
+- Email address changes follow a two-step approval: the existing email receives the first approval link, and the new email receives the second. The profile page explains the process and surfaces pending status updates.
 
 ## Trading 212 automation
 1. Visit the profile page (link in the header) and scroll to the **Trading 212 automation** card.

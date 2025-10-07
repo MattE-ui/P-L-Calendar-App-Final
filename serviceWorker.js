@@ -1,5 +1,5 @@
 // Bump version when you change cached assets
-const CACHE_NAME = 'pl-calendar-cache-v11';
+const CACHE_NAME = 'pl-calendar-cache-v12';
 const ASSETS = [
   '/',
   '/index.html',

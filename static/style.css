@@ -282,8 +282,13 @@ button.danger:hover {
 .integration-instructions li::marker { color: var(--accent); font-weight: 600; }
 .integration-actions { margin-top: 4px; }
 .status-line { margin: 0; font-size: 13px; color: var(--muted); }
+.status-line.is-hidden { display: none; }
 .status-line.is-error { color: #d0342c; }
 .status-line strong { color: var(--text); }
+.security-card input[readonly] {
+  background: rgba(255, 255, 255, 0.04);
+  cursor: default;
+}
 .automation-card .error { margin-top: -4px; }
 label { display:block; margin-top:10px; color: var(--muted); }
 input { width:100%; padding:10px; border-radius: 10px; border:1px solid var(--border); background:#10131a; color:var(--text); margin-top:6px; }

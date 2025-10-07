@@ -27,7 +27,7 @@ function setMessage(id, message) {
 }
 
 async function handleSignup() {
-  const usernameEl = document.getElementById('signup-username');
+  const usernameEl = document.getElementById('signup-email');
   const passwordEl = document.getElementById('signup-password');
   const username = usernameEl?.value.trim() ?? '';
   const password = passwordEl?.value.trim() ?? '';
@@ -35,16 +35,31 @@ async function handleSignup() {
   setMessage('signup-success', '');
 
   if (!username || !password) {
-    setMessage('signup-error', 'Choose a username and password to continue.');
+    setMessage('signup-error', 'Enter your email and a strong password to continue.');
+    return;
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username)) {
+    setMessage('signup-error', 'Enter a valid email address.');
+    return;
+  }
+
+  const strong = password.length >= 12
+    && /[A-Z]/.test(password)
+    && /[a-z]/.test(password)
+    && /\d/.test(password)
+    && /[^A-Za-z0-9]/.test(password);
+
+  if (!strong) {
+    setMessage('signup-error', 'Passwords must be 12+ characters with upper, lower, number, and symbol.');
     return;
   }
 
   try {
-    await request('/api/signup', { username, password });
-    setMessage('signup-success', 'Account created! You can log in now.');
-    setTimeout(() => {
-      window.location.href = '/login.html';
-    }, 900);
+    await request('/api/signup', { email: username, username, password });
+    setMessage('signup-success', 'Check your inbox for a verification link to activate your account.');
+    usernameEl.value = '';
+    passwordEl.value = '';
   } catch (e) {
     console.error(e);
     setMessage('signup-error', e?.data?.error || 'Sign up failed. Please try again.');
