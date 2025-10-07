@@ -11,7 +11,62 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
+
+const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
+const DATA_FILE = process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
+const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
+
+function ensureDataStore() {
+  const dataDir = path.dirname(DATA_FILE);
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  if (!fs.existsSync(DATA_FILE)) {
+    if (fs.existsSync(LEGACY_DATA_FILE) && LEGACY_DATA_FILE !== DATA_FILE) {
+      try {
+        const legacy = fs.readFileSync(LEGACY_DATA_FILE, 'utf-8');
+        if (legacy && legacy.trim()) {
+          fs.writeFileSync(DATA_FILE, legacy, 'utf-8');
+          return;
+        }
+      } catch (error) {
+        console.warn('Unable to migrate legacy data file:', error);
+      }
+    }
+
+    const initialPayload = JSON.stringify({ users: {}, sessions: {} }, null, 2);
+    fs.writeFileSync(DATA_FILE, initialPayload, 'utf-8');
+  }
+}
+
+ensureDataStore();
+
+class Trading212Error extends Error {
+  constructor(message, { status, retryAfter, code } = {}) {
+    super(message);
+    this.name = 'Trading212Error';
+    if (status !== undefined) this.status = status;
+    if (retryAfter !== undefined) this.retryAfter = retryAfter;
+    if (code !== undefined) this.code = code;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const numeric = Number(header);
+  if (Number.isFinite(numeric)) {
+    return Math.max(0, numeric);
+  }
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    const diff = Math.ceil((date - Date.now()) / 1000);
+    return diff > 0 ? diff : 0;
+  }
+  return null;
+}
 
 class Trading212Error extends Error {
   constructor(message, { status, retryAfter, code } = {}) {
@@ -50,10 +105,36 @@ function loadDB() {
     db.sessions ||= {};
     return db;
   } catch (e) {
+    console.warn('Falling back to empty database in loadDB:', e?.message || e);
     return { users: {}, sessions: {} };
   }
 }
-function saveDB(db) { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); }
+
+function saveDB(db) {
+  const dir = path.dirname(DATA_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(
+    dir,
+    `.tmp-${Date.now()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`
+  );
+
+  const payload = JSON.stringify(db, null, 2);
+  try {
+    fs.writeFileSync(tmp, payload, 'utf-8');
+    fs.renameSync(tmp, DATA_FILE);
+  } catch (error) {
+    console.error('Failed to persist database snapshot:', error);
+    throw error;
+  } finally {
+    if (fs.existsSync(tmp)) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch (cleanupError) {
+        console.warn('Could not remove temporary data file:', cleanupError);
+      }
+    }
+  }
+}
 
 function auth(req, res, next) {
   const token = req.cookies?.auth_token;

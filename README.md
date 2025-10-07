@@ -32,12 +32,18 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 4. Optional: provide a custom API base URL or endpoint path if Trading 212 instructs you to use a different hostname/path (the defaults cover the documented live and practice hosts). The integration remembers the last successful combination and surfaces it on the profile page.
 5. Save your settings. The server will call Trading 212 at the scheduled time each day, record the closing portfolio value, and apply any deposits or withdrawals as cash adjustments on your calendar. Use **Run sync now** to trigger an immediate test pull.
 
-The backend authenticates with Trading 212 using HTTP Basic auth, sending your API key as the username and the API secret as the password exactly as required by their documentation. Credentials are stored encrypted-at-rest in `data.json` on the server and never returned to the browser after the initial save.
+The backend authenticates with Trading 212 using HTTP Basic auth, sending your API key as the username and the API secret as the password exactly as required by their documentation. Credentials are stored encrypted-at-rest in the server data store (by default `storage/data.json`) and never returned to the browser after the initial save.
 
 If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted. The integration will automatically fan out across the documented live and practice hosts and a wider set of portfolio-summary endpoints (plus any custom URL/path you provide) before surfacing the error, and shows which combination failed in the profile status. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
 
 ## Persisted Data
-User accounts, sessions, and P&L entries are stored in `data.json`. Back up this file if you need to preserve your records across deployments.
+User accounts, sessions, and P&L entries are stored in a JSON file whose location you can configure:
+
+- By default the app reads and writes `storage/data.json` (the directory is created automatically on boot).
+- Set the `DATA_DIR` environment variable to a directory mounted on persistent storage (for example `/var/data/pl-calendar`) to keep data across redeploys, or set `DATA_FILE` to point to an explicit file path.
+- On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DATA_DIR=/var/data/pl-calendar` in the service environment so user records survive code pushes and restarts.
+
+When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
 
 ## Deploying / Pushing to GitHub
 All changes currently live on the local `work` branch. To publish them to your GitHub repository, push the branch from your machine or a Codespaces/CI session:
