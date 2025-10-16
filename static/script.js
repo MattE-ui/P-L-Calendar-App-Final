@@ -134,6 +134,8 @@ function getDailyEntry(date) {
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
+  const noteRaw = typeof record.note === 'string' ? record.note : '';
+  const note = noteRaw.trim();
   const hasOpening = Number.isFinite(opening);
   const netCash = cashIn - cashOut;
   const change = hasOpening ? closing - opening - netCash : null;
@@ -147,7 +149,8 @@ function getDailyEntry(date) {
     cashIn,
     cashOut,
     cashFlow: netCash,
-    preBaseline: record.preBaseline === true
+    preBaseline: record.preBaseline === true,
+    note
   };
 }
 
@@ -593,6 +596,16 @@ function renderDay() {
         ${cashHtml}
       </div>
     `;
+    if (entry?.note) {
+      const main = row.querySelector('.row-main');
+      if (main) {
+        const noteEl = document.createElement('div');
+        noteEl.className = 'note';
+        noteEl.textContent = entry.note;
+        noteEl.insertAdjacentText('afterbegin', '📝 ');
+        main.appendChild(noteEl);
+      }
+    }
     row.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(row);
   });
@@ -691,6 +704,14 @@ function renderMonth() {
       <div class="pct">${changeText}</div>
       ${cashHtml}
     `;
+    if (entry?.note) {
+      const noteEl = document.createElement('div');
+      noteEl.className = 'note';
+      noteEl.textContent = entry.note;
+      noteEl.insertAdjacentText('afterbegin', '📝 ');
+      noteEl.title = entry.note;
+      cell.appendChild(noteEl);
+    }
     cell.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(cell);
   }
@@ -813,6 +834,7 @@ function openEntryModal(dateStr, existingEntry = null) {
   const currentValGBP = entry?.closing ?? null;
   const depositGBP = entry?.cashIn ?? 0;
   const withdrawalGBP = entry?.cashOut ?? 0;
+  const noteText = entry?.note ?? '';
   const label = $('#profit-modal-label');
   if (label) label.textContent = `Closing portfolio value (${state.currency})`;
   const depositLabel = $('#cash-in-label');
@@ -852,6 +874,10 @@ function openEntryModal(dateStr, existingEntry = null) {
       withdrawalInput.value = '';
     }
   }
+  const noteInput = $('#note-input');
+  if (noteInput) {
+    noteInput.value = noteText;
+  }
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
@@ -866,6 +892,7 @@ function openEntryModal(dateStr, existingEntry = null) {
       const withdrawalVal = withdrawalStr === '' ? 0 : Number(withdrawalStr);
       if (Number.isNaN(depositVal) || depositVal < 0) return;
       if (Number.isNaN(withdrawalVal) || withdrawalVal < 0) return;
+      const noteVal = noteInput ? noteInput.value.trim() : '';
       try {
         await api('/api/pl', {
           method: 'POST',
@@ -874,7 +901,8 @@ function openEntryModal(dateStr, existingEntry = null) {
             date: dateStr,
             value: toGBP(raw),
             cashIn: toGBP(depositVal),
-            cashOut: toGBP(withdrawalVal)
+            cashOut: toGBP(withdrawalVal),
+            note: noteVal
           })
         });
         modal.classList.add('hidden');

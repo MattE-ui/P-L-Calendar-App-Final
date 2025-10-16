@@ -326,15 +326,28 @@ function normalizePortfolioHistory(user) {
         const cashOutRaw = Number(record.cashOut ?? 0);
         const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
         const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
+        const noteRaw = typeof record.note === 'string' ? record.note : '';
+        const note = noteRaw.trim();
         const preBaselineRaw = record.preBaseline === true;
         const shouldBePreBaseline = anchor && dateKey < anchor;
         const preBaseline = preBaselineRaw || shouldBePreBaseline;
-        if (cashIn !== cashInRaw || cashOut !== cashOutRaw || record.start !== undefined || (!!record.preBaseline !== preBaseline)) {
+        if (
+          cashIn !== cashInRaw ||
+          cashOut !== cashOutRaw ||
+          record.start !== undefined ||
+          (!!record.preBaseline !== preBaseline) ||
+          (note && note !== noteRaw) ||
+          (!note && record.note !== undefined)
+        ) {
           mutated = true;
         }
-        days[dateKey] = preBaseline
+        const payload = preBaseline
           ? { end, cashIn, cashOut, preBaseline: true }
           : { end, cashIn, cashOut };
+        if (note) {
+          payload.note = note;
+        }
+        days[dateKey] = payload;
         continue;
       }
       delete days[dateKey];
@@ -357,13 +370,19 @@ function listChronologicalEntries(history) {
       if (!Number.isFinite(end) || end < 0) continue;
       const cashIn = Number(record.cashIn ?? 0);
       const cashOut = Number(record.cashOut ?? 0);
-      entries.push({
+      const noteRaw = typeof record.note === 'string' ? record.note : '';
+      const note = noteRaw.trim();
+      const payload = {
         date: dateKey,
         end,
         cashIn: Number.isFinite(cashIn) && cashIn >= 0 ? cashIn : 0,
         cashOut: Number.isFinite(cashOut) && cashOut >= 0 ? cashOut : 0,
         preBaseline: record.preBaseline === true
-      });
+      };
+      if (note) {
+        payload.note = note;
+      }
+      entries.push(payload);
     }
   }
   entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -386,6 +405,9 @@ function buildSnapshots(history, initial) {
     };
     if (entry.preBaseline) {
       payload.preBaseline = true;
+    }
+    if (entry.note) {
+      payload.note = entry.note;
     }
     snapshots[monthKey][entry.date] = payload;
     baseline = entry.end;
@@ -708,11 +730,19 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
       cfg.lastNetDeposits = snapshot.netDeposits;
     }
-    history[ym][dateKey] = {
+    const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
+    const payload = {
       end: snapshot.portfolioValue,
       cashIn,
       cashOut
     };
+    if (existing.preBaseline) {
+      payload.preBaseline = true;
+    }
+    if (existingNote) {
+      payload.note = existingNote;
+    }
+    history[ym][dateKey] = payload;
     user.profileComplete = true;
     const { total: updatedTotal } = computeNetDepositsTotals(user, history);
     cfg.lastNetDeposits = Number.isFinite(Number(cfg.lastNetDeposits))
@@ -1283,7 +1313,7 @@ app.get('/api/pl', auth, (req,res)=>{
 });
 
 app.post('/api/pl', auth, (req,res)=>{
-  const { date, value, cashIn, cashOut } = req.body || {};
+  const { date, value, cashIn, cashOut, note } = req.body || {};
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
@@ -1318,6 +1348,16 @@ app.post('/api/pl', auth, (req,res)=>{
     if (!Number.isFinite(withdrawal) || withdrawal < 0) {
       return res.status(400).json({ error: 'Invalid withdrawal value' });
     }
+    let normalizedNote;
+    if (note !== undefined) {
+      if (note === null) {
+        normalizedNote = '';
+      } else if (typeof note === 'string') {
+        normalizedNote = note.trim();
+      } else {
+        return res.status(400).json({ error: 'Invalid note value' });
+      }
+    }
     const existingPreBaseline = existingRecord?.preBaseline === true;
     const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
     const entryPayload = {
@@ -1327,6 +1367,16 @@ app.post('/api/pl', auth, (req,res)=>{
     };
     if (shouldFlagPreBaseline) {
       entryPayload.preBaseline = true;
+    }
+    if (normalizedNote !== undefined) {
+      if (normalizedNote) {
+        entryPayload.note = normalizedNote;
+      }
+    } else if (existingRecord && typeof existingRecord.note === 'string') {
+      const carryNote = existingRecord.note.trim();
+      if (carryNote) {
+        entryPayload.note = carryNote;
+      }
     }
     history[ym][date] = entryPayload;
   }

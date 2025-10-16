@@ -6,6 +6,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Secure username-based sign-up/login with bcrypt-hashed passwords, strong password requirements, and HTTP-only cookies.
 - Prompt new users to record their opening portfolio value and cumulative net deposits immediately after sign-in, and allow edits from the dashboard thereafter.
 - Record daily portfolio values while separately tracking net deposits/withdrawals so both the evolving balance and cash-adjusted performance remain visible at a glance.
+- Attach optional notes to individual calendar days and surface them across daily and monthly views for added context.
 - Surface lifetime summary cards that highlight the current balance, cumulative net deposits, and performance excluding cash movements in both GBP and USD.
 - Log same-day deposits or withdrawals alongside each portfolio value so cash movements adjust the balance without inflating profit/loss figures.
 - Optionally connect a Trading 212 account to automate daily portfolio snapshots and cash adjustments at a time you choose.
