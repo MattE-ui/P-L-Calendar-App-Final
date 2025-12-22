@@ -156,6 +156,14 @@ function ensurePortfolioHistory(user) {
   return user.portfolioHistory;
 }
 
+function ensureTradeJournal(user) {
+  if (!user) return {};
+  if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
+    user.tradeJournal = {};
+  }
+  return user.tradeJournal;
+}
+
 function ensureTrading212Config(user) {
   if (!user) return { mutated: false, config: {} };
   let mutated = false;
@@ -285,6 +293,10 @@ function ensureUserShape(user, identifier) {
     user.netDepositsAnchor = null;
     mutated = true;
   }
+  if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
+    user.tradeJournal = {};
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -389,7 +401,81 @@ function listChronologicalEntries(history) {
   return entries;
 }
 
-function buildSnapshots(history, initial) {
+function normalizeTradeJournal(user) {
+  const journal = ensureTradeJournal(user);
+  let mutated = false;
+  const cleanDate = /^\d{4}-\d{2}-\d{2}$/;
+  for (const [dateKey, trades] of Object.entries(journal)) {
+    if (!cleanDate.test(dateKey)) {
+      delete journal[dateKey];
+      mutated = true;
+      continue;
+    }
+    if (!Array.isArray(trades)) {
+      delete journal[dateKey];
+      mutated = true;
+      continue;
+    }
+    const normalized = [];
+    for (const trade of trades) {
+      if (!trade || typeof trade !== 'object') continue;
+      const entry = Number(trade.entry);
+      const stop = Number(trade.stop);
+      const riskPct = Number(trade.riskPct);
+      const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
+      const riskAmountGBP = Number(trade.riskAmountGBP);
+      const positionGBP = Number(trade.positionGBP);
+      const sizeUnits = Number(trade.sizeUnits);
+      const perUnitRisk = Number(trade.perUnitRisk);
+      const portfolioGBPAtCalc = Number(trade.portfolioGBPAtCalc);
+      const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
+      if (
+        !Number.isFinite(entry) || entry <= 0 ||
+        !Number.isFinite(stop) || stop <= 0 ||
+        !Number.isFinite(riskPct) || riskPct <= 0 ||
+        !Number.isFinite(perUnitRisk) || perUnitRisk <= 0 ||
+        !Number.isFinite(sizeUnits) || sizeUnits <= 0
+      ) {
+        mutated = true;
+        continue;
+      }
+      const id = typeof trade.id === 'string' && trade.id ? trade.id : crypto.randomBytes(8).toString('hex');
+      const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : new Date().toISOString();
+      const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
+      const normalizedTrade = {
+        id,
+        entry,
+        stop,
+        currency,
+        riskPct,
+        perUnitRisk,
+        sizeUnits,
+        riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : undefined,
+        positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
+        portfolioGBPAtCalc: Number.isFinite(portfolioGBPAtCalc) ? portfolioGBPAtCalc : undefined,
+        portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
+        createdAt
+      };
+      if (Number.isFinite(trade.riskAmountCurrency)) normalizedTrade.riskAmountCurrency = trade.riskAmountCurrency;
+      if (Number.isFinite(trade.positionCurrency)) normalizedTrade.positionCurrency = trade.positionCurrency;
+      if (noteRaw) normalizedTrade.note = noteRaw;
+      normalized.push(normalizedTrade);
+      if (normalized.length >= 50) break; // guard against runaway growth
+    }
+    if (!normalized.length) {
+      delete journal[dateKey];
+      mutated = true;
+    } else if (normalized.length !== trades.length) {
+      journal[dateKey] = normalized;
+      mutated = true;
+    } else {
+      journal[dateKey] = normalized;
+    }
+  }
+  return mutated;
+}
+
+function buildSnapshots(history, initial, tradeJournal = {}) {
   const entries = listChronologicalEntries(history);
   const snapshots = {};
   let baseline = Number.isFinite(initial) ? initial : null;
@@ -411,6 +497,14 @@ function buildSnapshots(history, initial) {
     }
     snapshots[monthKey][entry.date] = payload;
     baseline = entry.end;
+  }
+  for (const [dateKey, trades] of Object.entries(tradeJournal)) {
+    const monthKey = dateKey.slice(0, 7);
+    if (!snapshots[monthKey]) snapshots[monthKey] = {};
+    if (!snapshots[monthKey][dateKey]) {
+      snapshots[monthKey][dateKey] = {};
+    }
+    snapshots[monthKey][dateKey].trades = trades;
   }
   return snapshots;
 }
@@ -1301,9 +1395,11 @@ app.get('/api/pl', auth, (req,res)=>{
   }
   const history = ensurePortfolioHistory(user);
   let mutated = normalizePortfolioHistory(user);
+  const journal = ensureTradeJournal(user);
+  if (normalizeTradeJournal(user)) mutated = true;
   const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
-  const snapshots = buildSnapshots(history, baseline);
+  const snapshots = buildSnapshots(history, baseline, journal);
   if (mutated) saveDB(db);
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
@@ -1411,6 +1507,97 @@ async function fetchRates() {
   }
   return cachedRates;
 }
+
+function convertGBPToCurrency(valueGBP, currency, rates) {
+  if (!Number.isFinite(valueGBP)) return null;
+  if (currency === 'GBP') return valueGBP;
+  const rate = rates?.[currency];
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return valueGBP * rate;
+}
+
+function convertToGBP(value, currency, rates) {
+  if (!Number.isFinite(value)) return null;
+  if (currency === 'GBP') return value;
+  const rate = rates?.[currency];
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return value / rate;
+}
+
+app.post('/api/trades', auth, async (req, res) => {
+  const { date, entry, stop, riskPct, currency, note } = req.body || {};
+  const tradeCurrency = currency === 'USD' ? 'USD' : 'GBP';
+  const entryNum = Number(entry);
+  const stopNum = Number(stop);
+  const pctNum = Number(riskPct);
+  if (!Number.isFinite(entryNum) || entryNum <= 0) {
+    return res.status(400).json({ error: 'Enter a valid entry price' });
+  }
+  if (!Number.isFinite(stopNum) || stopNum <= 0) {
+    return res.status(400).json({ error: 'Enter a valid stop-loss price' });
+  }
+  if (!Number.isFinite(pctNum) || pctNum <= 0) {
+    return res.status(400).json({ error: 'Enter a valid risk percentage' });
+  }
+  const perUnitRisk = Math.abs(entryNum - stopNum);
+  if (perUnitRisk === 0) {
+    return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (!user.profileComplete) {
+    return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
+  }
+  const rates = await fetchRates();
+  if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {
+    return res.status(400).json({ error: `Missing FX rate for ${tradeCurrency}` });
+  }
+  const journal = ensureTradeJournal(user);
+  const history = ensurePortfolioHistory(user);
+  normalizePortfolioHistory(user);
+  normalizeTradeJournal(user);
+  const portfolioGBP = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
+  const portfolioInCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
+  if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
+    return res.status(400).json({ error: 'Add your portfolio value first' });
+  }
+  const riskAmountCurrency = portfolioInCurrency * (pctNum / 100);
+  const sizeUnits = riskAmountCurrency / perUnitRisk;
+  const positionCurrency = sizeUnits * entryNum;
+  const riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
+  const positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
+  const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
+    ? date
+    : currentDateKey();
+  const trade = {
+    id: crypto.randomBytes(8).toString('hex'),
+    entry: entryNum,
+    stop: stopNum,
+    currency: tradeCurrency,
+    riskPct: pctNum,
+    perUnitRisk,
+    sizeUnits,
+    riskAmountCurrency,
+    positionCurrency,
+    riskAmountGBP,
+    positionGBP,
+    portfolioGBPAtCalc: portfolioGBP,
+    portfolioCurrencyAtCalc: portfolioInCurrency,
+    createdAt: new Date().toISOString()
+  };
+  if (typeof note === 'string' && note.trim()) {
+    trade.note = note.trim();
+  }
+  journal[targetDate] ||= [];
+  journal[targetDate].push(trade);
+  if (journal[targetDate].length > 50) {
+    journal[targetDate] = journal[targetDate].slice(-50);
+  }
+  saveDB(db);
+  res.json({ ok: true, trade, date: targetDate });
+});
 
 app.get('/api/rates', auth, async (req,res)=>{
   const rates = await fetchRates();

@@ -7,6 +7,7 @@ const state = {
   netDepositsTotalGBP: 0,
   firstEntryKey: null,
   currency: 'GBP',
+  riskCurrency: 'GBP',
   rates: { GBP: 1 },
   metrics: {
     baselineGBP: 0,
@@ -100,6 +101,18 @@ function formatSignedCurrency(valueGBP, currency = state.currency) {
   return `${sign}${currencySymbols[currency]}${amount.toFixed(2)}`;
 }
 
+function formatShares(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (Math.abs(value) >= 1) return value.toFixed(2);
+  return value.toFixed(4);
+}
+
+function formatPrice(value, currency = state.currency) {
+  const symbol = currencySymbols[currency] || '';
+  if (!Number.isFinite(value)) return '—';
+  return `${symbol}${value.toFixed(4)}`;
+}
+
 function toGBP(value, currency = state.currency) {
   if (currency === 'GBP') return value;
   const rate = state.rates[currency];
@@ -122,6 +135,47 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
+function normalizeTradeRecords(trades) {
+  if (!Array.isArray(trades)) return [];
+  return trades.map(trade => {
+    if (!trade || typeof trade !== 'object') return null;
+    const entry = Number(trade.entry);
+    const stop = Number(trade.stop);
+    const riskPct = Number(trade.riskPct);
+    const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
+    const perUnitRisk = Number(trade.perUnitRisk);
+    const sizeUnits = Number(trade.sizeUnits);
+    if (!Number.isFinite(entry) || entry <= 0) return null;
+    if (!Number.isFinite(stop) || stop <= 0) return null;
+    if (!Number.isFinite(riskPct) || riskPct <= 0) return null;
+    if (!Number.isFinite(perUnitRisk) || perUnitRisk <= 0) return null;
+    if (!Number.isFinite(sizeUnits) || sizeUnits <= 0) return null;
+    const riskAmountGBP = Number(trade.riskAmountGBP);
+    const positionGBP = Number(trade.positionGBP);
+    const riskAmountCurrency = Number(trade.riskAmountCurrency);
+    const positionCurrency = Number(trade.positionCurrency);
+    const note = typeof trade.note === 'string' ? trade.note.trim() : '';
+    const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : '';
+    return {
+      id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
+      entry,
+      stop,
+      currency,
+      riskPct,
+      perUnitRisk,
+      sizeUnits,
+      riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : null,
+      positionGBP: Number.isFinite(positionGBP) ? positionGBP : null,
+      riskAmountCurrency: Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : null,
+      positionCurrency: Number.isFinite(positionCurrency) ? positionCurrency : null,
+      portfolioGBPAtCalc: Number.isFinite(trade.portfolioGBPAtCalc) ? Number(trade.portfolioGBPAtCalc) : null,
+      portfolioCurrencyAtCalc: Number.isFinite(trade.portfolioCurrencyAtCalc) ? Number(trade.portfolioCurrencyAtCalc) : null,
+      note,
+      createdAt
+    };
+  }).filter(Boolean);
+}
+
 function getDailyEntry(date) {
   const key = formatDate(date);
   const month = getMonthData(date);
@@ -129,7 +183,9 @@ function getDailyEntry(date) {
   const record = month[key] || {};
   const opening = Number(record.start);
   const closing = Number(record.end);
-  if (!Number.isFinite(closing)) return null;
+  const trades = normalizeTradeRecords(record.trades);
+  const hasClosing = Number.isFinite(closing);
+  if (!hasClosing && !trades.length) return null;
   const cashInRaw = Number(record.cashIn ?? 0);
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -138,19 +194,22 @@ function getDailyEntry(date) {
   const note = noteRaw.trim();
   const hasOpening = Number.isFinite(opening);
   const netCash = cashIn - cashOut;
-  const change = hasOpening ? closing - opening - netCash : null;
-  const pct = hasOpening && opening !== 0 ? (change / opening) * 100 : null;
+  const change = hasOpening && hasClosing ? closing - opening - netCash : null;
+  const pct = hasOpening && hasClosing && opening !== 0 ? (change / opening) * 100 : null;
   return {
     date,
     opening: hasOpening ? opening : null,
-    closing,
+    closing: hasClosing ? closing : null,
+    hasClosing,
     change,
     pct,
     cashIn,
     cashOut,
     cashFlow: netCash,
     preBaseline: record.preBaseline === true,
-    note
+    note,
+    trades,
+    tradesCount: trades.length
   };
 }
 
@@ -186,6 +245,7 @@ function getWeeksInMonth(date) {
     const changeEntries = days.filter(entry => entry?.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
     const totalCashFlow = days.reduce((sum, entry) => sum + (entry?.cashFlow ?? 0), 0);
+    const totalTrades = days.reduce((sum, entry) => sum + (entry?.tradesCount ?? 0), 0);
     const firstEntry = changeEntries[0] || days[0];
     const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing ?? null) : null;
     const pct = !changeEntries.length || baseline === null || baseline === 0
@@ -196,6 +256,7 @@ function getWeeksInMonth(date) {
       pct,
       hasChange: changeEntries.length > 0,
       totalCashFlow,
+      totalTrades,
       recordedDays: days.length,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
@@ -261,7 +322,7 @@ function getAllEntries() {
       const date = new Date(dateKey);
       if (Number.isNaN(date.getTime())) return;
       const entry = getDailyEntry(date);
-      if (entry) entries.push(entry);
+      if (entry?.hasClosing) entries.push(entry);
     });
   });
   entries.sort((a, b) => a.date - b.date);
@@ -368,16 +429,17 @@ function setRiskOutputs(values = null) {
     return;
   }
 
-  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP } = values;
-  riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP));
-  positionEl && (positionEl.textContent = formatCurrency(positionGBP));
-  sharesEl && (sharesEl.textContent = Number.isFinite(shares) ? shares.toLocaleString() : '0');
-  perShareEl && (perShareEl.textContent = formatCurrency(perShareRiskGBP));
+  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency } = values;
+  const riskCurrency = state.riskCurrency || state.currency;
+  riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP, riskCurrency));
+  positionEl && (positionEl.textContent = formatCurrency(positionGBP, riskCurrency));
+  sharesEl && (sharesEl.textContent = formatShares(shares));
+  perShareEl && (perShareEl.textContent = formatCurrency(perShareRiskGBP, riskCurrency));
   amountNote && (amountNote.textContent = `Risking ${riskPct.toFixed(2)}% of your portfolio`);
   positionNote && (positionNote.textContent = shares > 0
-    ? `Rounded down to whole units at ${formatCurrency(entryGBP)}`
+    ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${riskCurrency !== 'GBP' && Number.isFinite(positionCurrency) ? ` (${formatCurrency(positionCurrency, 'GBP')})` : ''}`
     : 'Position too small for the chosen risk');
-  shareNote && (shareNote.textContent = shares > 0 ? 'Whole shares/units only' : '');
+  shareNote && (shareNote.textContent = shares > 0 ? 'Fractional units allowed for sizing' : '');
   perShareNote && (perShareNote.textContent = 'Difference between entry and stop-loss');
 }
 
@@ -392,6 +454,7 @@ function calculateRiskPosition(showErrors = false) {
   const stopRaw = Number(stopInput.value);
   const riskPct = Number(riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
+  const riskCurrency = state.riskCurrency || 'GBP';
 
   let error = '';
   if (!Number.isFinite(portfolioGBP) || portfolioGBP <= 0) {
@@ -404,8 +467,12 @@ function calculateRiskPosition(showErrors = false) {
     error = 'Enter a risk percentage above 0.';
   }
 
-  const entryGBP = toGBP(entryRaw);
-  const stopGBP = toGBP(stopRaw);
+  const entryGBP = toGBP(entryRaw, riskCurrency);
+  const stopGBP = toGBP(stopRaw, riskCurrency);
+  const portfolioInRiskCurrency = currencyAmount(portfolioGBP, riskCurrency);
+  if (!Number.isFinite(portfolioInRiskCurrency)) {
+    error = 'Missing exchange rate to convert your portfolio.';
+  }
   const perShareRiskGBP = Math.abs(entryGBP - stopGBP);
   if (!error && perShareRiskGBP === 0) {
     error = 'Entry and stop-loss cannot be the same.';
@@ -421,28 +488,43 @@ function calculateRiskPosition(showErrors = false) {
   }
 
   const riskAmountGBP = portfolioGBP * (riskPct / 100);
-  const shares = perShareRiskGBP > 0 ? Math.floor(riskAmountGBP / perShareRiskGBP) : 0;
-  const positionGBP = shares * entryGBP;
+  const riskAmountInCurrency = currencyAmount(riskAmountGBP, riskCurrency) ?? riskAmountGBP;
+  const perShareRiskInCurrency = Math.abs(entryRaw - stopRaw);
+  const shares = perShareRiskInCurrency > 0 ? (riskAmountInCurrency / perShareRiskInCurrency) : 0;
+  const positionInCurrency = shares * entryRaw;
+  const positionGBP = toGBP(positionInCurrency, riskCurrency);
 
   setRiskOutputs({
     riskAmountGBP,
     positionGBP,
     shares,
-    perShareRiskGBP,
+    perShareRiskGBP: toGBP(perShareRiskInCurrency, riskCurrency),
     riskPct: Number.isFinite(riskPct) ? riskPct : 0,
-    entryGBP
+    entryGBP,
+    riskAmountCurrency: riskAmountInCurrency,
+    positionCurrency: positionInCurrency
   });
 }
 
 function renderRiskCalculator() {
+  if (state.riskCurrency === 'USD' && !state.rates.USD) {
+    state.riskCurrency = 'GBP';
+  }
   const entryLabel = $('#risk-entry-label');
-  if (entryLabel) entryLabel.textContent = `Entry price (${state.currency})`;
+  if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
   const stopLabel = $('#risk-stop-label');
-  if (stopLabel) stopLabel.textContent = `Stop-loss price (${state.currency})`;
+  if (stopLabel) stopLabel.textContent = `Stop-loss price (${state.riskCurrency})`;
   const portfolioEl = $('#risk-portfolio-display');
-  if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP());
+  if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
   if (pctInput && !pctInput.value) pctInput.value = '1';
+  const dateInput = $('#risk-date-input');
+  if (dateInput && !dateInput.value) {
+    dateInput.valueAsDate = new Date();
+  }
+  $$('#risk-currency-toggle button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.riskCurrency === state.riskCurrency);
+  });
   calculateRiskPosition(false);
 }
 
@@ -682,6 +764,7 @@ function renderDay() {
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const cashFlow = entry?.cashFlow ?? 0;
+    const tradeCount = entry?.tradesCount ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
     if (change > 0) row.classList.add('profit');
@@ -692,6 +775,9 @@ function renderDay() {
     const cashHtml = cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
+    const tradesHtml = tradeCount
+      ? `<span class="cashflow">Trades: ${tradeCount}</span>`
+      : '';
     row.innerHTML = `
       <div class="row-main">
         <div class="row-title">${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</div>
@@ -701,6 +787,7 @@ function renderDay() {
         <strong>${closing === null ? '—' : formatCurrency(closing)}</strong>
         <span>${changeText}</span>
         ${cashHtml}
+        ${tradesHtml}
       </div>
     `;
     if (entry?.note) {
@@ -736,6 +823,9 @@ function renderWeek() {
     const cashHtml = cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
+    const tradesHtml = week.totalTrades
+      ? `<span class="cashflow">Trades: ${week.totalTrades}</span>`
+      : '';
     const rangeLabel = week.displayStart === week.displayEnd
       ? week.displayStart
       : `${week.displayStart} – ${week.displayEnd}`;
@@ -751,6 +841,7 @@ function renderWeek() {
         <strong>${changeText}</strong>
         <span>${pctText}</span>
         ${cashHtml}
+        ${tradesHtml}
       </div>
     `;
     grid.appendChild(row);
@@ -789,6 +880,7 @@ function renderMonth() {
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const cashFlow = entry?.cashFlow ?? 0;
+    const tradeCount = entry?.tradesCount ?? 0;
     const cell = document.createElement('div');
     cell.className = 'cell';
     const isFirstEntry = firstEntryKey && key === firstEntryKey;
@@ -805,11 +897,15 @@ function renderMonth() {
     const cashHtml = cashFlow === 0
       ? ''
       : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
+    const tradeHtml = tradeCount
+      ? `<div class="trade-count">Trades: ${tradeCount}</div>`
+      : '';
     cell.innerHTML = `
       <div class="date">${day}</div>
       <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
       <div class="pct">${changeText}</div>
       ${cashHtml}
+      ${tradeHtml}
     `;
     if (entry?.note) {
       const noteEl = document.createElement('div');
@@ -926,6 +1022,61 @@ async function loadData() {
   computeLifetimeMetrics();
 }
 
+function renderTradeList(trades = []) {
+  const list = $('#trade-list');
+  const sub = $('#trade-count-sub');
+  if (!list || !sub) return;
+  list.innerHTML = '';
+  if (!trades.length) {
+    sub.textContent = 'No trades logged for this day.';
+    return;
+  }
+  sub.textContent = trades.length === 1 ? '1 trade logged.' : `${trades.length} trades logged.`;
+  trades.forEach(trade => {
+    const pill = document.createElement('div');
+    pill.className = 'trade-pill';
+    const currency = trade.currency || 'GBP';
+    const riskAmountDisplay = Number.isFinite(trade.riskAmountGBP)
+      ? formatCurrency(trade.riskAmountGBP, currency)
+      : formatPrice(trade.riskAmountCurrency, currency);
+    const positionDisplay = Number.isFinite(trade.positionGBP)
+      ? formatCurrency(trade.positionGBP, currency)
+      : formatPrice(trade.positionCurrency, currency);
+    const perShareDisplay = formatPrice(trade.perUnitRisk, currency);
+    const metaLine = document.createElement('div');
+    metaLine.className = 'trade-line';
+    metaLine.textContent = `Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
+    pill.appendChild(metaLine);
+
+    const badges = document.createElement('div');
+    badges.className = 'trade-meta';
+    badges.innerHTML = `
+      <span class="trade-badge">Risk ${trade.riskPct.toFixed(2)}%</span>
+      <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
+      <span class="trade-badge">Risk ${riskAmountDisplay}</span>
+      <span class="trade-badge">Position ${positionDisplay}</span>
+      <span class="trade-badge">Risk/share ${perShareDisplay}</span>
+    `;
+    pill.appendChild(badges);
+    if (trade.note) {
+      const note = document.createElement('p');
+      note.className = 'trade-note';
+      note.textContent = trade.note;
+      pill.appendChild(note);
+    }
+    if (trade.createdAt) {
+      const meta = document.createElement('div');
+      meta.className = 'trade-meta';
+      const dt = new Date(trade.createdAt);
+      if (!Number.isNaN(dt.getTime())) {
+        meta.textContent = `Logged ${dt.toLocaleString()}`;
+      }
+      pill.appendChild(meta);
+    }
+    list.appendChild(pill);
+  });
+}
+
 function openEntryModal(dateStr, existingEntry = null) {
   const modal = $('#profit-modal');
   if (!modal) return;
@@ -986,6 +1137,7 @@ function openEntryModal(dateStr, existingEntry = null) {
   if (noteInput) {
     noteInput.value = noteText;
   }
+  renderTradeList(entry?.trades || []);
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
@@ -1132,6 +1284,59 @@ function bindControls() {
   $('#risk-calc-btn')?.addEventListener('click', () => calculateRiskPosition(true));
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
+  });
+  $('#risk-log-btn')?.addEventListener('click', async () => {
+    calculateRiskPosition(true);
+    const errorText = $('#risk-error')?.textContent?.trim();
+    if (errorText) return;
+    const entryInput = $('#risk-entry-input');
+    const stopInput = $('#risk-stop-input');
+    const riskPctInput = $('#risk-percent-input');
+    const dateInput = $('#risk-date-input');
+    const noteInput = $('#risk-trade-note');
+    const statusEl = $('#risk-log-status');
+    if (statusEl) {
+      statusEl.textContent = '';
+      statusEl.classList.remove('success', 'error');
+    }
+    if (!entryInput || !stopInput || !riskPctInput) return;
+    const payload = {
+      entry: Number(entryInput.value),
+      stop: Number(stopInput.value),
+      riskPct: Number(riskPctInput.value),
+      currency: state.riskCurrency,
+      date: dateInput?.value,
+      note: noteInput?.value || undefined
+    };
+    try {
+      await api('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (statusEl) {
+        statusEl.classList.remove('error');
+        statusEl.classList.add('success');
+        statusEl.textContent = 'Trade saved to calendar.';
+      }
+      await loadData();
+      render();
+    } catch (e) {
+      console.error(e);
+      if (statusEl) {
+        statusEl.classList.remove('success');
+        statusEl.classList.add('error');
+        statusEl.textContent = e?.message || 'Failed to save trade.';
+      }
+    }
+  });
+  $$('#risk-currency-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cur = btn.dataset.riskCurrency;
+      if (!cur || !['GBP', 'USD'].includes(cur)) return;
+      state.riskCurrency = cur;
+      renderRiskCalculator();
+    });
   });
 }
 

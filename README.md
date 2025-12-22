@@ -12,7 +12,8 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Optionally connect a Trading 212 account to automate daily portfolio snapshots and cash adjustments at a time you choose.
 - Reset and permanently delete all stored data (including persistent disk records) from the profile page when you need a clean start.
 - Update your password directly from the profile page once you’re logged in.
-- Size trades with the built-in risk calculator that uses your current portfolio value, chosen entry/stop-loss, and desired risk percentage.
+- Size trades with the built-in risk calculator (choose GBP or USD) that uses your current portfolio value, chosen entry/stop-loss, and desired risk percentage.
+- Journal trades straight from the calculator into any calendar day (defaulting to today) and view the trade count per day without cluttering the grid.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
 
@@ -32,10 +33,12 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 ## Risk calculator
 - Open the dashboard (main calendar page) and scroll to the **Risk calculator** card.
 - Enter your planned entry price, stop-loss price, and the percentage of your portfolio you’re willing to risk on the trade.
-- The calculator uses your current portfolio balance (and the currency you’ve selected in the header) to show:
+- Toggle the calculator currency between **GBP** and **USD** (independent of the portfolio display currency) to match the instrument you’re sizing.
+- The calculator uses your current portfolio balance to show:
   - How much capital is at risk for the trade.
-  - The number of whole shares/units to buy.
+  - The number of fractional shares/units to buy.
   - The position size at the entry price.
+- Add an optional trade note and click **Save trade to calendar** to log the trade on today or a past date. The calendar shows how many trades were taken per day; click a day to view full trade details alongside portfolio entries.
 - Adjust the inputs as needed; the figures update instantly and stay in sync with your latest recorded portfolio value.
 
 ## Account security
