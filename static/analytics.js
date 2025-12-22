@@ -52,10 +52,33 @@ function destroyChart(id) {
   }
 }
 
+function showEmptyState(id, message) {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  if (!message) {
+    el.dataset.empty = '';
+    return false;
+  }
+  const container = el.parentElement;
+  if (container) {
+    const existing = container.querySelector('.chart-empty');
+    if (existing) existing.remove();
+    const note = document.createElement('p');
+    note.className = 'tool-note chart-empty';
+    note.textContent = message;
+    container.appendChild(note);
+  }
+  return true;
+}
+
 function renderChart(id, config) {
   destroyChart(id);
   const ctx = document.getElementById(id);
   if (!ctx) return;
+  const parent = ctx.parentElement;
+  if (parent) {
+    parent.querySelectorAll('.chart-empty').forEach(el => el.remove());
+  }
   charts[id] = new Chart(ctx, config);
 }
 
@@ -88,6 +111,10 @@ function updateKpis(summary, dist, dd, streaks) {
 }
 
 function renderEquityCurve(curve = []) {
+  if (!curve.length) {
+    showEmptyState('equity-chart', 'No equity data yet.');
+    return;
+  }
   const labels = curve.map(p => p.date);
   const values = curve.map(p => p.cumulative);
   renderChart('equity-chart', {
@@ -111,6 +138,10 @@ function renderEquityCurve(curve = []) {
 }
 
 function renderDrawdown(drawdown = {}) {
+  if (!drawdown.series || !drawdown.series.length) {
+    showEmptyState('drawdown-chart', 'No drawdown data yet.');
+    return;
+  }
   const labels = (drawdown.series || []).map(p => p.date);
   const values = (drawdown.series || []).map(p => p.drawdown);
   renderChart('drawdown-chart', {
@@ -134,6 +165,10 @@ function renderDrawdown(drawdown = {}) {
 }
 
 function renderDistribution(dist = {}) {
+  if (!dist.histogram || !dist.histogram.length) {
+    showEmptyState('distribution-chart', 'No trades to chart.');
+    return;
+  }
   const labels = (dist.histogram || []).map(b => `${Number(b.start || 0).toFixed(0)} → ${Number(b.end || 0).toFixed(0)}`);
   const values = (dist.histogram || []).map(b => b.count || 0);
   renderChart('distribution-chart', {
@@ -184,6 +219,13 @@ function renderHeatmap(curve = []) {
     if (!point.date) return;
     byDate[point.date] = (byDate[point.date] || 0) + (point.pnl || 0);
   });
+  if (!Object.keys(byDate).length) {
+    const note = document.createElement('p');
+    note.className = 'tool-note';
+    note.textContent = 'No monthly data yet.';
+    grid.appendChild(note);
+    return;
+  }
   const entries = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
   entries.forEach(([date, pnl]) => {
     const card = document.createElement('div');
@@ -237,6 +279,12 @@ function resetFilters() {
   document.querySelector('#filter-strategy').value = '';
   document.querySelector('#filter-tags').value = '';
   document.querySelector('#filter-winloss').value = '';
+  state.filters = {
+    from: '', to: '', symbol: '', tradeType: '', assetClass: '', strategyTag: '', tags: '', winLoss: ''
+  };
+  if (window?.history?.replaceState) {
+    history.replaceState(null, '', location.pathname);
+  }
   refreshAnalytics().catch(console.error);
 }
 

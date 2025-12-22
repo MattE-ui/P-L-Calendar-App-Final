@@ -18,7 +18,11 @@ const state = {
     netDepositsGBP: 0,
     netPerformanceGBP: 0,
     netPerformancePct: null
-  }
+  },
+  direction: 'long',
+  fees: 0,
+  slippage: 0,
+  rounding: 'fractional'
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -110,6 +114,42 @@ function formatShares(value) {
   return value.toFixed(4);
 }
 
+function computeRiskPlan({
+  entry,
+  stop,
+  portfolio,
+  riskPct,
+  fees = 0,
+  slippage = 0,
+  direction = 'long',
+  allowFractional = true
+}) {
+  if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(portfolio) || portfolio <= 0) {
+    return { error: 'Missing prices or portfolio value.' };
+  }
+  const dir = direction === 'short' ? 'short' : 'long';
+  if (dir === 'long' && stop >= entry) return { error: 'Stop must be below entry for long trades.' };
+  if (dir === 'short' && stop <= entry) return { error: 'Stop must be above entry for short trades.' };
+  if (!Number.isFinite(riskPct) || riskPct <= 0) return { error: 'Enter a risk percentage above 0.' };
+  const perShareRiskBase = dir === 'long' ? (entry - stop) : (stop - entry);
+  const perShareRisk = perShareRiskBase + (slippage > 0 ? slippage : 0);
+  if (perShareRisk <= 0) return { error: 'Entry and stop-loss cannot match.' };
+  const riskAmount = portfolio * (riskPct / 100);
+  const spendable = Math.max(riskAmount - fees, 0);
+  const sharesRaw = spendable / perShareRisk;
+  const shares = allowFractional ? sharesRaw : Math.floor(sharesRaw);
+  const positionValue = shares * entry;
+  const unusedRisk = allowFractional ? 0 : (spendable - shares * perShareRisk);
+  return {
+    riskAmount,
+    perShareRisk,
+    shares,
+    positionValue,
+    unusedRisk,
+    fees
+  };
+}
+
 function formatPrice(value, currency = state.currency) {
   const symbol = currencySymbols[currency] || '';
   if (!Number.isFinite(value)) return '—';
@@ -136,6 +176,16 @@ function formatPercent(value) {
   if (value === null || value === undefined) return '—';
   if (value === 0) return '0.00%';
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
+}
+
+function summarizeWeek(entries = []) {
+  const totalChange = entries.reduce((sum, e) => sum + (e.change ?? 0), 0);
+  const totalCashFlow = entries.reduce((sum, e) => sum + (e.cashFlow ?? 0), 0);
+  const totalTrades = entries.reduce((sum, e) => sum + (e.tradesCount ?? 0), 0);
+  const realized = entries
+    .filter(e => e.change !== null && e.change !== undefined)
+    .reduce((sum, e) => sum + e.change, 0);
+  return { totalChange, totalCashFlow, totalTrades, realized };
 }
 
 function getSelectedTags(name) {
@@ -172,6 +222,10 @@ function normalizeTradeRecords(trades) {
     const setupTags = Array.isArray(trade.setupTags) ? trade.setupTags : [];
     const emotionTags = Array.isArray(trade.emotionTags) ? trade.emotionTags : [];
     const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl : '';
+    const direction = trade.direction === 'short' ? 'short' : 'long';
+    const fees = Number(trade.fees);
+    const slippage = Number(trade.slippage);
+    const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
@@ -198,6 +252,10 @@ function normalizeTradeRecords(trades) {
       setupTags,
       emotionTags,
       screenshotUrl,
+      direction,
+      fees: Number.isFinite(fees) ? fees : 0,
+      slippage: Number.isFinite(slippage) ? slippage : 0,
+      rounding,
       createdAt
     };
   }).filter(Boolean);
@@ -278,6 +336,7 @@ function getWeeksInMonth(date) {
     const pct = !changeEntries.length || baseline === null || baseline === 0
       ? null
       : (totalChange / baseline) * 100;
+    const trades = days.flatMap(d => d.trades || []);
     weeks.push({
       totalChange,
       pct,
@@ -285,6 +344,8 @@ function getWeeksInMonth(date) {
       totalCashFlow,
       totalTrades,
       recordedDays: days.length,
+      entries: days,
+      trades,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     });
@@ -458,7 +519,7 @@ function setRiskOutputs(values = null) {
     return;
   }
 
-  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency } = values;
+  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency, unusedRisk } = values;
   const riskCurrency = state.riskCurrency || state.currency;
   riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP, riskCurrency));
   positionEl && (positionEl.textContent = formatCurrency(positionGBP, riskCurrency));
@@ -469,7 +530,10 @@ function setRiskOutputs(values = null) {
     ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${riskCurrency !== 'GBP' && Number.isFinite(positionCurrency) ? ` (${formatCurrency(positionCurrency, 'GBP')})` : ''}`
     : 'Position too small for the chosen risk');
   shareNote && (shareNote.textContent = shares > 0 ? 'Fractional units allowed for sizing' : '');
-  perShareNote && (perShareNote.textContent = 'Difference between entry and stop-loss');
+  perShareNote && (perShareNote.textContent = `Difference between entry and stop-loss${state.direction === 'short' ? ' (short)' : ''}`);
+  if (unusedRisk && unusedRisk > 0) {
+    amountNote && (amountNote.textContent += ` • Unused risk: ${formatCurrency(unusedRisk, riskCurrency)}`);
+  }
 }
 
 function calculateRiskPosition(showErrors = false) {
@@ -484,27 +548,28 @@ function calculateRiskPosition(showErrors = false) {
   const riskPct = Number(riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
+  const direction = state.direction || 'long';
+  const fees = Number($('#risk-fees-input')?.value) || 0;
+  const slippage = Number($('#risk-slippage-input')?.value) || 0;
+  const allowFractional = state.rounding !== 'whole';
 
   let error = '';
-  if (!Number.isFinite(portfolioGBP) || portfolioGBP <= 0) {
-    error = 'Add your portfolio value first.';
-  } else if (!Number.isFinite(entryRaw) || entryRaw <= 0) {
-    error = 'Enter a valid entry price.';
-  } else if (!Number.isFinite(stopRaw) || stopRaw <= 0) {
-    error = 'Enter a valid stop-loss price.';
-  } else if (!Number.isFinite(riskPct) || riskPct <= 0) {
-    error = 'Enter a risk percentage above 0.';
-  }
-
   const entryGBP = toGBP(entryRaw, riskCurrency);
   const stopGBP = toGBP(stopRaw, riskCurrency);
   const portfolioInRiskCurrency = currencyAmount(portfolioGBP, riskCurrency);
+  const computed = computeRiskPlan({
+    entry: entryRaw,
+    stop: stopRaw,
+    portfolio: portfolioInRiskCurrency,
+    riskPct,
+    fees,
+    slippage,
+    direction,
+    allowFractional
+  });
+  if (computed.error) error = computed.error;
   if (!Number.isFinite(portfolioInRiskCurrency)) {
     error = 'Missing exchange rate to convert your portfolio.';
-  }
-  const perShareRiskGBP = Math.abs(entryGBP - stopGBP);
-  if (!error && perShareRiskGBP === 0) {
-    error = 'Entry and stop-loss cannot be the same.';
   }
 
   if (errorEl) {
@@ -516,22 +581,22 @@ function calculateRiskPosition(showErrors = false) {
     return;
   }
 
-  const riskAmountGBP = portfolioGBP * (riskPct / 100);
-  const riskAmountInCurrency = currencyAmount(riskAmountGBP, riskCurrency) ?? riskAmountGBP;
-  const perShareRiskInCurrency = Math.abs(entryRaw - stopRaw);
-  const shares = perShareRiskInCurrency > 0 ? (riskAmountInCurrency / perShareRiskInCurrency) : 0;
-  const positionInCurrency = shares * entryRaw;
+  const riskAmountInCurrency = currencyAmount(portfolioGBP * (riskPct / 100), riskCurrency) ?? (portfolioGBP * (riskPct/100));
+  const shares = computed.shares;
+  const positionInCurrency = computed.positionValue;
   const positionGBP = toGBP(positionInCurrency, riskCurrency);
+  const perShareRiskInCurrency = computed.perShareRisk;
 
   setRiskOutputs({
-    riskAmountGBP,
+    riskAmountGBP: toGBP(riskAmountInCurrency, riskCurrency),
     positionGBP,
     shares,
     perShareRiskGBP: toGBP(perShareRiskInCurrency, riskCurrency),
     riskPct: Number.isFinite(riskPct) ? riskPct : 0,
     entryGBP,
     riskAmountCurrency: riskAmountInCurrency,
-    positionCurrency: positionInCurrency
+    positionCurrency: positionInCurrency,
+    unusedRisk: computed.unusedRisk
   });
 }
 
@@ -539,12 +604,17 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.direction === state.direction);
+  });
   const tradeTypeInput = $('#trade-type-input');
   if (tradeTypeInput && !tradeTypeInput.value) tradeTypeInput.value = 'day';
   const assetClassInput = $('#asset-class-input');
   if (assetClassInput && !assetClassInput.value) assetClassInput.value = 'stocks';
   const marketConditionInput = $('#market-condition-input');
   if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
+  const roundingSelect = $('#risk-rounding-select');
+  if (roundingSelect) roundingSelect.value = state.rounding;
   const entryLabel = $('#risk-entry-label');
   if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
   const stopLabel = $('#risk-stop-label');
@@ -585,7 +655,7 @@ function renderActiveTrades() {
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    priceLine.textContent = `${sym} @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
+    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
     pill.appendChild(priceLine);
     const badges = document.createElement('div');
     badges.className = 'trade-meta';
@@ -597,6 +667,7 @@ function renderActiveTrades() {
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
+      ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
     const closeRow = document.createElement('div');
@@ -726,6 +797,7 @@ function renderMetrics() {
 function setActiveView() {
   $$('#view-controls button[data-view]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
+    btn.setAttribute('aria-pressed', btn.dataset.view === state.view ? 'true' : 'false');
   });
 }
 
@@ -928,7 +1000,7 @@ function renderWeek() {
   const weeks = getWeeksInMonth(state.selected);
   weeks.forEach(week => {
     const row = document.createElement('div');
-    row.className = 'list-row';
+    row.className = 'list-row week-row';
     if (week.totalChange > 0) row.classList.add('profit');
     if (week.totalChange < 0) row.classList.add('loss');
     const hasEntries = week.recordedDays > 0;
@@ -948,18 +1020,47 @@ function renderWeek() {
     const subLabel = hasEntries
       ? `${week.recordedDays} recorded day${week.recordedDays === 1 ? '' : 's'}`
       : 'No entries recorded';
-    row.innerHTML = `
-      <div class="row-main">
-        <div class="row-title">${rangeLabel}</div>
-        <div class="row-sub">${subLabel}</div>
-      </div>
-      <div class="row-value">
-        <strong>${changeText}</strong>
-        <span>${pctText}</span>
-        ${cashHtml}
-        ${tradesHtml}
-      </div>
+    const toggle = document.createElement('button');
+    toggle.className = 'collapse-btn';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = '▸';
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = `
+      <div class="row-title">${rangeLabel}</div>
+      <div class="row-sub">${subLabel}</div>
     `;
+    const value = document.createElement('div');
+    value.className = 'row-value';
+    value.innerHTML = `
+      <strong>${changeText}</strong>
+      <span>${pctText}</span>
+      ${cashHtml}
+      ${tradesHtml}
+    `;
+    row.append(toggle, main, value);
+
+    const detail = document.createElement('div');
+    detail.className = 'week-detail hidden';
+    const summary = summarizeWeek(week.entries || []);
+    const tradeList = (week.trades || []).map(t => `${t.symbol || '—'} ${t.tradeType || ''} ${t.status || ''}`.trim());
+    detail.innerHTML = `
+      <div class="week-detail-grid">
+        <div><strong>Cash flow</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
+        <div><strong>Realized P&L</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
+        <div><strong>Trades</strong><span>${summary.totalTrades || 0}</span></div>
+      </div>
+      ${tradeList.length
+        ? `<div class="week-trades">${tradeList.map(t => `<span class="tag-chip">${t}</span>`).join('')}</div>`
+        : `<p class="tool-note">No trades recorded this week.</p>`}
+    `;
+    row.appendChild(detail);
+
+    toggle.addEventListener('click', () => {
+      const nowHidden = detail.classList.toggle('hidden');
+      toggle.setAttribute('aria-expanded', String(!nowHidden));
+      toggle.textContent = nowHidden ? '▸' : '▾';
+    });
     grid.appendChild(row);
   });
 }
@@ -1346,6 +1447,13 @@ function openEntryModal(dateStr, existingEntry = null) {
       }
     };
   }
+  const closeBtn = $('#profit-close-btn');
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      modal.classList.add('hidden');
+    };
+    closeBtn.focus();
+  }
 }
 
 function bindControls() {
@@ -1464,6 +1572,9 @@ function bindControls() {
     const strategyTagInput = $('#strategy-tag-input');
     const marketConditionInput = $('#market-condition-input');
     const screenshotInput = $('#screenshot-url-input');
+    const feesInput = $('#risk-fees-input');
+    const slippageInput = $('#risk-slippage-input');
+    const roundingSelect = $('#risk-rounding-select');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1478,6 +1589,10 @@ function bindControls() {
       symbol: symbolInput?.value,
       date: dateInput?.value,
       note: noteInput?.value || undefined,
+      direction: state.direction,
+      fees: Number(feesInput?.value) || 0,
+      slippage: Number(slippageInput?.value) || 0,
+      rounding: roundingSelect?.value || 'fractional',
       tradeType: tradeTypeInput?.value,
       assetClass: assetClassInput?.value,
       strategyTag: strategyTagInput?.value,
@@ -1516,6 +1631,28 @@ function bindControls() {
       renderRiskCalculator();
     });
   });
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dir = btn.dataset.direction;
+      if (!dir || !['long', 'short'].includes(dir)) return;
+      state.direction = dir;
+      renderRiskCalculator();
+    });
+  });
+  $('#risk-rounding-select')?.addEventListener('change', (e) => {
+    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
+    renderRiskCalculator();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      $('#profit-modal')?.classList.add('hidden');
+    }
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 async function init() {
@@ -1532,4 +1669,6 @@ async function init() {
   render();
 }
 
-window.addEventListener('DOMContentLoaded', init);
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', init);
+}

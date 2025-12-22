@@ -21,6 +21,15 @@ const ASSET_CLASSES = ['stocks', 'options', 'forex', 'crypto', 'futures', 'other
 const MARKET_CONDITIONS = ['bull', 'bear', 'range', 'volatile', 'news-driven'];
 const DEFAULT_SETUP_TAGS = ['breakout', 'pullback', 'mean reversion', 'trend', 'news', 'momentum'];
 const DEFAULT_EMOTION_TAGS = ['FOMO', 'revenge', 'disciplined', 'hesitant', 'confident'];
+const DIRECTIONS = ['long', 'short'];
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UnhandledRejection:', reason, { promise });
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('UncaughtException:', error);
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -150,6 +159,12 @@ function auth(req, res, next) {
   if (!username) return res.status(401).json({ error: 'Unauthenticated' });
   req.username = username;
   next();
+}
+
+function asyncHandler(fn) {
+  return function wrapped(req, res, next) {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
 }
 
 function ensurePortfolioHistory(user) {
@@ -516,14 +531,23 @@ function computeRealizedPnl(trade, rates = {}) {
   if (!Number.isFinite(closePrice) || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
     return null;
   }
-  const pnlCurrency = (closePrice - entry) * sizeUnits;
+  const direction = trade.direction === 'short' ? 'short' : 'long';
+  const slippage = Number(trade.slippage) || 0;
+  const effectiveClose = direction === 'long'
+    ? closePrice - slippage
+    : closePrice + slippage;
+  const pnlCurrency = direction === 'long'
+    ? (effectiveClose - entry) * sizeUnits
+    : (entry - effectiveClose) * sizeUnits;
   const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const feesCurrency = Number(trade.fees) || 0;
+  const netPnlCurrency = pnlCurrency - feesCurrency;
   const realizedPnlGBP = Number.isFinite(Number(trade.realizedPnlGBP))
     ? Number(trade.realizedPnlGBP)
-    : (Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency);
+    : (Number.isFinite(pnlGBP) ? pnlGBP - convertToGBP(feesCurrency, trade.currency || 'GBP', rates) : netPnlCurrency);
   const riskGBP = Number(trade.riskAmountGBP);
   const rMultiple = Number.isFinite(riskGBP) && riskGBP !== 0 ? realizedPnlGBP / riskGBP : null;
-  return { realizedPnlGBP, realizedPnlCurrency: pnlCurrency, rMultiple };
+  return { realizedPnlGBP, realizedPnlCurrency: netPnlCurrency, rMultiple };
 }
 
 function flattenTrades(user, rates = {}) {
@@ -626,15 +650,24 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
     : (defaultDate || currentDateKey());
-  const pnlCurrency = (closePrice - Number(trade.entry)) * Number(trade.sizeUnits);
-  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
-  const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
+  const direction = trade.direction === 'short' ? 'short' : 'long';
+  const slippage = Number(trade.slippage) || 0;
+  const effectiveClose = direction === 'long'
+    ? closePrice - slippage
+    : closePrice + slippage;
+  const pnlCurrency = direction === 'long'
+    ? (effectiveClose - Number(trade.entry)) * Number(trade.sizeUnits)
+    : (Number(trade.entry) - effectiveClose) * Number(trade.sizeUnits);
+  const feesCurrency = Number(trade.fees) || 0;
+  const netPnlCurrency = pnlCurrency - feesCurrency;
+  const pnlGBP = convertToGBP(netPnlCurrency, trade.currency || 'GBP', rates);
+  const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : netPnlCurrency;
   trade.status = 'closed';
   trade.closePrice = closePrice;
   trade.closeDate = targetDate;
   trade.closedAt = trade.closedAt || new Date().toISOString();
   trade.realizedPnlGBP = pnlSafe;
-  trade.realizedPnlCurrency = pnlCurrency;
+  trade.realizedPnlCurrency = netPnlCurrency;
   const risk = Number(trade.riskAmountGBP);
   trade.rMultiple = Number.isFinite(risk) && risk !== 0 ? pnlSafe / risk : null;
   updateHistoryForClose(user, history, targetDate, pnlSafe);
@@ -1086,6 +1119,9 @@ app.use('/static', express.static(path.join(__dirname, 'static')));
 app.get('/serviceWorker.js', (req,res)=>{
   res.set('Content-Type','application/javascript').send(fs.readFileSync(path.join(__dirname,'serviceWorker.js'),'utf-8'));
 });
+app.get('/health', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime(), timestamp: new Date().toISOString() });
+});
 
 // pages
 app.get('/', (req,res)=>{ res.sendFile(path.join(__dirname,'index.html')); });
@@ -1103,7 +1139,7 @@ function currentDateKey() {
   return tzAdjusted.toISOString().slice(0, 10);
 }
 
-app.post('/api/signup', async (req,res)=>{
+app.post('/api/signup', asyncHandler(async (req,res)=>{
   const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
   const password = req.body?.password;
   const username = rawUsername.trim();
@@ -1139,9 +1175,9 @@ app.post('/api/signup', async (req,res)=>{
   ensureUserShape(db.users[username], username);
   saveDB(db);
   res.json({ ok: true, profileComplete: false });
-});
+}));
 
-app.post('/api/auth/resend-verification', async (req, res) => {
+app.post('/api/auth/resend-verification', asyncHandler(async (req, res) => {
   const rawEmail = typeof req.body?.email === 'string' ? req.body.email : req.body?.username;
   const email = normalizeEmail(rawEmail);
   if (!email || !emailRegex().test(email)) {
@@ -1203,7 +1239,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   saveDB(db);
 
   res.json({ ok: true, status: 'sent', retryAfter: 60 });
-});
+}));
 
 app.post('/api/login', async (req,res)=>{
   const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
@@ -1698,11 +1734,19 @@ function normalizeTradeMeta(trade = {}) {
   const strategy = typeof trade.strategyTag === 'string' ? trade.strategyTag.trim() : '';
   const screenshotRaw = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
   const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
+  const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : 'long';
+  const feesRaw = Number(trade.fees);
+  const slippageRaw = Number(trade.slippage);
+  const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
   return {
     ...trade,
     tradeType: TRADE_TYPES.includes(type) ? type : 'day',
     assetClass: ASSET_CLASSES.includes(asset) ? asset : 'stocks',
     marketCondition: MARKET_CONDITIONS.includes(condition) ? condition : '',
+    direction: DIRECTIONS.includes(directionRaw) ? directionRaw : 'long',
+    fees: Number.isFinite(feesRaw) && feesRaw >= 0 ? feesRaw : 0,
+    slippage: Number.isFinite(slippageRaw) && slippageRaw >= 0 ? slippageRaw : 0,
+    rounding,
     strategyTag: strategy,
     setupTags: sanitizeTagList(trade.setupTags ?? trade.tags ?? [], 15),
     emotionTags: sanitizeTagList(trade.emotionTags ?? [], 15),
@@ -1783,6 +1827,8 @@ async function buildActiveTrades(user, rates = {}) {
       currency: trade.currency || 'GBP',
       sizeUnits,
       riskPct: Number(trade.riskPct),
+      direction: trade.direction || 'long',
+      fees: Number(trade.fees) || 0,
       livePrice: livePrice !== null ? livePrice : undefined,
       liveCurrency,
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
@@ -1872,6 +1918,8 @@ app.post('/api/trades', auth, async (req, res) => {
     currency,
     note,
     symbol,
+    direction,
+    rounding,
     tradeType,
     assetClass,
     strategyTag,
@@ -1889,13 +1937,28 @@ app.post('/api/trades', auth, async (req, res) => {
   const pctNum = Number(riskPct);
   const riskAmountNum = Number(riskAmount);
   const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
+  const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
   }
   if (!Number.isFinite(stopNum) || stopNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid stop-loss price' });
   }
-  const perUnitRisk = Math.abs(entryNum - stopNum);
+  if (directionClean === 'long' && stopNum >= entryNum) {
+    return res.status(400).json({ error: 'For long trades, stop-loss must be below entry.' });
+  }
+  if (directionClean === 'short' && stopNum <= entryNum) {
+    return res.status(400).json({ error: 'For short trades, stop-loss must be above entry.' });
+  }
+  if (!Number.isFinite(entryNum) || entryNum <= 0) {
+    return res.status(400).json({ error: 'Enter a valid entry price' });
+  }
+  if (!Number.isFinite(stopNum) || stopNum <= 0) {
+    return res.status(400).json({ error: 'Enter a valid stop-loss price' });
+  }
+  const perUnitRisk = directionClean === 'long'
+    ? entryNum - stopNum
+    : stopNum - entryNum;
   if (perUnitRisk === 0) {
     return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
   }
@@ -1935,6 +1998,10 @@ app.post('/api/trades', auth, async (req, res) => {
   const positionCurrency = sizeUnits * entryNum;
   const riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
   const positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
+  const feesNum = Number(req.body?.fees);
+  const slippageNum = Number(req.body?.slippage);
+  const fees = Number.isFinite(feesNum) && feesNum >= 0 ? feesNum : 0;
+  const slippage = Number.isFinite(slippageNum) && slippageNum >= 0 ? slippageNum : 0;
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
@@ -1954,6 +2021,10 @@ app.post('/api/trades', auth, async (req, res) => {
     portfolioGBPAtCalc: portfolioGBP,
     portfolioCurrencyAtCalc: portfolioInCurrency,
     createdAt: new Date().toISOString(),
+    direction: directionClean,
+    fees,
+    slippage,
+    rounding,
     status: status === 'closed' ? 'closed' : 'open',
     tradeType,
     assetClass,
@@ -2012,13 +2083,22 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     const stopNum = Number(updates.stop ?? trade.stop);
     const pctNum = Number(updates.riskPct ?? trade.riskPct);
     const riskAmountNum = Number(updates.riskAmount);
+    const dir = DIRECTIONS.includes((updates.direction || trade.direction || '').toLowerCase())
+      ? (updates.direction || trade.direction).toLowerCase()
+      : 'long';
     if (!Number.isFinite(entryNum) || entryNum <= 0) {
       return res.status(400).json({ error: 'Enter a valid entry price' });
     }
     if (!Number.isFinite(stopNum) || stopNum <= 0) {
       return res.status(400).json({ error: 'Enter a valid stop-loss price' });
     }
-    const perUnitRisk = Math.abs(entryNum - stopNum);
+    if (dir === 'long' && stopNum >= entryNum) {
+      return res.status(400).json({ error: 'For long trades, stop-loss must be below entry.' });
+    }
+    if (dir === 'short' && stopNum <= entryNum) {
+      return res.status(400).json({ error: 'For short trades, stop-loss must be above entry.' });
+    }
+    const perUnitRisk = dir === 'long' ? (entryNum - stopNum) : (stopNum - entryNum);
     if (perUnitRisk === 0) {
       return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
     }
@@ -2050,9 +2130,12 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     trade.positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
     trade.portfolioGBPAtCalc = portfolioGBP;
     trade.portfolioCurrencyAtCalc = portfolioCurrency;
+    trade.direction = dir;
   }
   const meta = normalizeTradeMeta({
     ...trade,
+    fees: updates.fees ?? trade.fees,
+    slippage: updates.slippage ?? trade.slippage,
     tradeType: updates.tradeType ?? trade.tradeType,
     assetClass: updates.assetClass ?? trade.assetClass,
     strategyTag: updates.strategyTag ?? trade.strategyTag,
@@ -2060,7 +2143,8 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     setupTags: updates.setupTags ?? trade.setupTags,
     emotionTags: updates.emotionTags ?? trade.emotionTags,
     screenshotUrl: updates.screenshotUrl ?? trade.screenshotUrl,
-    note: updates.note !== undefined ? updates.note : trade.note
+    note: updates.note !== undefined ? updates.note : trade.note,
+    rounding: updates.rounding ?? trade.rounding
   });
   trade.tradeType = meta.tradeType;
   trade.assetClass = meta.assetClass;
@@ -2239,3 +2323,10 @@ module.exports = {
   flattenTrades,
   filterTrades
 };
+
+// global error handler
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  console.error('Unhandled error', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'Unexpected server error' });
+});

@@ -276,6 +276,12 @@ function resetFilters() {
   document.querySelector('#filter-strategy').value = '';
   document.querySelector('#filter-tags').value = '';
   document.querySelector('#filter-winloss').value = '';
+  state.filters = {
+    from: '', to: '', symbol: '', tradeType: '', assetClass: '', strategyTag: '', tags: '', winLoss: ''
+  };
+  if (window?.history?.replaceState) {
+    history.replaceState(null, '', location.pathname);
+  }
   loadTrades().catch(console.error);
 }
 
