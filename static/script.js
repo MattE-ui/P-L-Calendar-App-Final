@@ -545,7 +545,7 @@ function calculateRiskPosition(showErrors = false) {
 
   const entryRaw = Number(entryInput.value);
   const stopRaw = Number(stopInput.value);
-  const riskPct = Number(riskPctInput.value);
+  const riskPct = Number(state.riskPct ?? riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
   const direction = state.direction || 'long';
@@ -626,6 +626,9 @@ function renderRiskCalculator() {
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
   if (pctInput && !pctInput.value) pctInput.value = '1';
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.classList.toggle('active', Number(btn.dataset.riskPct) === Number(state.riskPct || pctInput?.value || 1));
+  });
   const dateInput = $('#risk-date-input');
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
@@ -1598,6 +1601,16 @@ function bindControls() {
   $('#risk-calc-btn')?.addEventListener('click', () => calculateRiskPosition(true));
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
+  });
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pct = Number(btn.dataset.riskPct);
+      if (!Number.isFinite(pct) || pct <= 0) return;
+      state.riskPct = pct;
+      const pctInput = $('#risk-percent-input');
+      if (pctInput) pctInput.value = String(pct);
+      renderRiskCalculator();
+    });
   });
   $('#risk-log-btn')?.addEventListener('click', async () => {
     calculateRiskPosition(true);
