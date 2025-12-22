@@ -9,6 +9,9 @@ const state = {
   currency: 'GBP',
   riskCurrency: 'GBP',
   rates: { GBP: 1 },
+  liveOpenPnlGBP: 0,
+  livePortfolioGBP: 0,
+  activeTrades: [],
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -145,6 +148,8 @@ function normalizeTradeRecords(trades) {
     const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
     const perUnitRisk = Number(trade.perUnitRisk);
     const sizeUnits = Number(trade.sizeUnits);
+    const status = trade.status === 'closed' ? 'closed' : 'open';
+    const symbol = typeof trade.symbol === 'string' ? trade.symbol : '';
     if (!Number.isFinite(entry) || entry <= 0) return null;
     if (!Number.isFinite(stop) || stop <= 0) return null;
     if (!Number.isFinite(riskPct) || riskPct <= 0) return null;
@@ -164,12 +169,16 @@ function normalizeTradeRecords(trades) {
       riskPct,
       perUnitRisk,
       sizeUnits,
+      status,
+      symbol,
       riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : null,
       positionGBP: Number.isFinite(positionGBP) ? positionGBP : null,
       riskAmountCurrency: Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : null,
       positionCurrency: Number.isFinite(positionCurrency) ? positionCurrency : null,
       portfolioGBPAtCalc: Number.isFinite(trade.portfolioGBPAtCalc) ? Number(trade.portfolioGBPAtCalc) : null,
       portfolioCurrencyAtCalc: Number.isFinite(trade.portfolioCurrencyAtCalc) ? Number(trade.portfolioCurrencyAtCalc) : null,
+      closePrice: Number.isFinite(trade.closePrice) ? trade.closePrice : null,
+      closeDate: typeof trade.closeDate === 'string' ? trade.closeDate : null,
       note,
       createdAt
     };
@@ -401,6 +410,8 @@ function computeLifetimeMetrics() {
 }
 
 function getLatestPortfolioGBP() {
+  const live = Number(state.livePortfolioGBP);
+  if (Number.isFinite(live) && live > 0) return live;
   const latestMetric = Number(state.metrics?.latestGBP);
   if (Number.isFinite(latestMetric) && latestMetric > 0) return latestMetric;
   const portfolioVal = Number(state.portfolioGBP);
@@ -522,10 +533,86 @@ function renderRiskCalculator() {
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
   }
+  const symbolInput = $('#risk-symbol-input');
+  if (symbolInput && !symbolInput.value) symbolInput.value = '';
   $$('#risk-currency-toggle button').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.riskCurrency === state.riskCurrency);
   });
   calculateRiskPosition(false);
+}
+
+function renderActiveTrades() {
+  const list = $('#active-trade-list');
+  const empty = $('#active-trade-empty');
+  const pnlEl = $('#live-pnl-display');
+  if (!list) return;
+  list.innerHTML = '';
+  const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
+  if (pnlEl) pnlEl.textContent = formatSignedCurrency(state.liveOpenPnlGBP, state.currency);
+  if (!trades.length) {
+    if (empty) empty.classList.remove('is-hidden');
+    return;
+  }
+  if (empty) empty.classList.add('is-hidden');
+  trades.forEach(trade => {
+    const pill = document.createElement('div');
+    pill.className = 'trade-pill';
+    const priceLine = document.createElement('div');
+    priceLine.className = 'trade-line';
+    const sym = trade.symbol || '—';
+    const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
+    priceLine.textContent = `${sym} @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
+    pill.appendChild(priceLine);
+    const badges = document.createElement('div');
+    badges.className = 'trade-meta';
+    const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+    const pnlBadge = document.createElement('span');
+    pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
+    badges.appendChild(pnlBadge);
+    badges.insertAdjacentHTML('beforeend', `
+      <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
+      <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
+    `);
+    pill.appendChild(badges);
+    const closeRow = document.createElement('div');
+    closeRow.className = 'close-row';
+    const priceInput = document.createElement('input');
+    priceInput.type = 'number';
+    priceInput.step = '0.0001';
+    priceInput.min = '0';
+    priceInput.value = livePrice ? livePrice : '';
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.valueAsDate = new Date();
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'primary outline';
+    closeBtn.textContent = 'Close trade';
+    const status = document.createElement('div');
+    status.className = 'tool-note';
+    closeBtn.addEventListener('click', async () => {
+      status.textContent = '';
+      const priceVal = Number(priceInput.value);
+      if (!Number.isFinite(priceVal) || priceVal <= 0) {
+        status.textContent = 'Enter a valid closing price.';
+        return;
+      }
+      try {
+        await api('/api/trades/close', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: trade.id, price: priceVal, date: dateInput.value })
+        });
+        await loadData();
+        render();
+      } catch (e) {
+        status.textContent = e?.message || 'Failed to close trade.';
+      }
+    });
+    closeRow.append(priceInput, dateInput, closeBtn, status);
+    pill.appendChild(closeRow);
+    list.appendChild(pill);
+  });
 }
 
 function setMetricTrend(el, value) {
@@ -543,6 +630,7 @@ function setMetricTrend(el, value) {
 function renderMetrics() {
   const metrics = state.metrics || {};
   const latestGBP = Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : state.portfolioGBP;
+  const liveGBP = Number.isFinite(state.livePortfolioGBP) ? state.livePortfolioGBP : latestGBP;
   const netDepositsGBP = Number.isFinite(metrics.netDepositsGBP) ? metrics.netDepositsGBP : 0;
   const netPerformanceGBP = Number.isFinite(metrics.netPerformanceGBP) ? metrics.netPerformanceGBP : 0;
   const netPerformancePct = Number.isFinite(metrics.netPerformancePct) ? metrics.netPerformancePct : null;
@@ -552,16 +640,18 @@ function renderMetrics() {
 
   const portfolioValueEl = $('#metric-portfolio-value');
   if (portfolioValueEl) {
-    portfolioValueEl.textContent = formatCurrency(latestGBP);
+    portfolioValueEl.textContent = formatCurrency(liveGBP);
   }
   const portfolioSubEl = $('#metric-portfolio-sub');
   if (portfolioSubEl) {
+    const pieces = [];
     if (altCurrency) {
-      const altValue = formatCurrency(latestGBP, altCurrency);
-      portfolioSubEl.textContent = altValue === '—' ? '' : `≈ ${altValue}`;
-    } else {
-      portfolioSubEl.textContent = '';
+      const altValue = formatCurrency(liveGBP, altCurrency);
+      if (altValue !== '—') pieces.push(`≈ ${altValue}`);
     }
+    const openPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+    if (openPnl !== 0) pieces.push(`Live PnL: ${formatSignedCurrency(openPnl)}`);
+    portfolioSubEl.textContent = pieces.join(' • ');
   }
 
   const netDepositsEl = $('#metric-net-deposits-value');
@@ -632,9 +722,11 @@ function updateCurrencySelect() {
 function updatePortfolioPill() {
   const el = $('#portfolio-display');
   if (!el) return;
-  const latestGBP = Number.isFinite(state.metrics?.latestGBP)
-    ? state.metrics.latestGBP
-    : state.portfolioGBP;
+  const latestGBP = Number.isFinite(state.livePortfolioGBP)
+    ? state.livePortfolioGBP
+    : (Number.isFinite(state.metrics?.latestGBP)
+      ? state.metrics.latestGBP
+      : state.portfolioGBP);
   const base = formatCurrency(latestGBP);
   if (state.currency === 'USD') {
     const alt = formatCurrency(latestGBP, 'GBP');
@@ -975,6 +1067,7 @@ function render() {
   renderTitle();
   renderMetrics();
   renderRiskCalculator();
+  renderActiveTrades();
   renderView();
   renderSummary();
 }
@@ -1009,6 +1102,9 @@ async function loadData() {
     state.netDepositsTotalGBP = Number.isFinite(totalVal)
       ? totalVal
       : state.netDepositsBaselineGBP;
+    state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
+    const livePortfolio = Number.isFinite(res?.livePortfolio) ? res.livePortfolio : state.portfolioGBP;
+    state.livePortfolioGBP = livePortfolio;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
       return;
@@ -1020,6 +1116,17 @@ async function loadData() {
     state.netDepositsTotalGBP = 0;
   }
   computeLifetimeMetrics();
+  try {
+    const activeRes = await api('/api/trades/active');
+    state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    if (Number.isFinite(activeRes?.liveOpenPnl)) {
+      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
+      state.livePortfolioGBP = (Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0) + activeRes.liveOpenPnl;
+    }
+  } catch (e) {
+    console.warn('Failed to load active trades', e);
+    state.activeTrades = [];
+  }
 }
 
 function renderTradeList(trades = []) {
@@ -1045,7 +1152,9 @@ function renderTradeList(trades = []) {
     const perShareDisplay = formatPrice(trade.perUnitRisk, currency);
     const metaLine = document.createElement('div');
     metaLine.className = 'trade-line';
-    metaLine.textContent = `Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
+    const sym = trade.symbol || '—';
+    const status = trade.status === 'closed' ? 'Closed' : 'Open';
+    metaLine.textContent = `${sym} • ${status} • Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
     pill.appendChild(metaLine);
 
     const badges = document.createElement('div');
@@ -1058,6 +1167,12 @@ function renderTradeList(trades = []) {
       <span class="trade-badge">Risk/share ${perShareDisplay}</span>
     `;
     pill.appendChild(badges);
+    if (trade.status === 'closed' && Number.isFinite(trade.closePrice)) {
+      const closed = document.createElement('div');
+      closed.className = 'trade-meta';
+      closed.textContent = `Closed at ${formatPrice(trade.closePrice, currency)}${trade.closeDate ? ` on ${trade.closeDate}` : ''}`;
+      pill.appendChild(closed);
+    }
     if (trade.note) {
       const note = document.createElement('p');
       note.className = 'trade-note';
@@ -1294,6 +1409,7 @@ function bindControls() {
     const riskPctInput = $('#risk-percent-input');
     const dateInput = $('#risk-date-input');
     const noteInput = $('#risk-trade-note');
+    const symbolInput = $('#risk-symbol-input');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1305,6 +1421,7 @@ function bindControls() {
       stop: Number(stopInput.value),
       riskPct: Number(riskPctInput.value),
       currency: state.riskCurrency,
+      symbol: symbolInput?.value,
       date: dateInput?.value,
       note: noteInput?.value || undefined
     };

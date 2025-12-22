@@ -14,6 +14,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Update your password directly from the profile page once you’re logged in.
 - Size trades with the built-in risk calculator (choose GBP or USD) that uses your current portfolio value, chosen entry/stop-loss, and desired risk percentage.
 - Journal trades straight from the calculator into any calendar day (defaulting to today) and view the trade count per day without cluttering the grid.
+- Track active trades with live market pricing (GBP/USD aware), show open PnL that rolls into your live portfolio total, and close trades with recorded fills.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
 
@@ -40,6 +41,11 @@ This project provides a profit & loss tracking calendar with multi-scale views a
   - The position size at the entry price.
 - Add an optional trade note and click **Save trade to calendar** to log the trade on today or a past date. The calendar shows how many trades were taken per day; click a day to view full trade details alongside portfolio entries.
 - Adjust the inputs as needed; the figures update instantly and stay in sync with your latest recorded portfolio value.
+
+## Live pricing & active trades
+- The dashboard now shows an **Active trades** card listing all open trades with live market prices and open PnL. Live open PnL is added to your recorded portfolio to present a “live” total in the key metrics.
+- When logging a trade, include the ticker so the server can pull prices (defaults to Yahoo Finance; override with `MARKET_DATA_URL` if needed).
+- To close a trade, enter the fill price and date in the Active trades card and hit **Close trade**. Closed trades stay in the journal for history while being removed from the live PnL tally.
 
 ## Account security
 - Usernames are unique and must not contain spaces; passwords must be at least 12 characters long and include upper-case, lower-case, numeric, and symbol characters.

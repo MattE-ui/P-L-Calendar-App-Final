@@ -71,6 +71,10 @@
       </div>
       <div class="tool-grid">
         <div class="tool-field">
+          <label for="risk-symbol-input">Ticker / symbol</label>
+          <input id="risk-symbol-input" type="text" placeholder="e.g. AAPL">
+        </div>
+        <div class="tool-field">
           <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
           <input id="risk-entry-input" type="number" step="0.0001" min="0">
         </div>
@@ -132,6 +136,22 @@
           <div id="risk-log-status" class="error" aria-live="polite"></div>
         </div>
       </div>
+    </section>
+
+    <section id="active-trades-card" class="tool-card">
+      <div class="tool-header">
+        <div>
+          <p class="tool-overline">Active trades</p>
+          <h3>Live positions & PnL</h3>
+          <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
+        </div>
+        <div class="tool-portfolio">
+          <span>Live open PnL</span>
+          <strong id="live-pnl-display">£0.00</strong>
+        </div>
+      </div>
+      <div id="active-trade-list" class="trade-list"></div>
+      <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
     </section>
 
     <section id="grid" class="grid"></section>
