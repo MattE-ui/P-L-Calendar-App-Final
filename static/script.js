@@ -138,6 +138,10 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
+function getSelectedTags(name) {
+  return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(el => el.value);
+}
+
 function normalizeTradeRecords(trades) {
   if (!Array.isArray(trades)) return [];
   return trades.map(trade => {
@@ -161,6 +165,13 @@ function normalizeTradeRecords(trades) {
     const positionCurrency = Number(trade.positionCurrency);
     const note = typeof trade.note === 'string' ? trade.note.trim() : '';
     const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : '';
+    const tradeType = typeof trade.tradeType === 'string' ? trade.tradeType : 'day';
+    const assetClass = typeof trade.assetClass === 'string' ? trade.assetClass : 'stocks';
+    const strategyTag = typeof trade.strategyTag === 'string' ? trade.strategyTag : '';
+    const marketCondition = typeof trade.marketCondition === 'string' ? trade.marketCondition : '';
+    const setupTags = Array.isArray(trade.setupTags) ? trade.setupTags : [];
+    const emotionTags = Array.isArray(trade.emotionTags) ? trade.emotionTags : [];
+    const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl : '';
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
@@ -180,6 +191,13 @@ function normalizeTradeRecords(trades) {
       closePrice: Number.isFinite(trade.closePrice) ? trade.closePrice : null,
       closeDate: typeof trade.closeDate === 'string' ? trade.closeDate : null,
       note,
+      tradeType,
+      assetClass,
+      strategyTag,
+      marketCondition,
+      setupTags,
+      emotionTags,
+      screenshotUrl,
       createdAt
     };
   }).filter(Boolean);
@@ -521,6 +539,12 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
+  const tradeTypeInput = $('#trade-type-input');
+  if (tradeTypeInput && !tradeTypeInput.value) tradeTypeInput.value = 'day';
+  const assetClassInput = $('#asset-class-input');
+  if (assetClassInput && !assetClassInput.value) assetClassInput.value = 'stocks';
+  const marketConditionInput = $('#market-condition-input');
+  if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
   const entryLabel = $('#risk-entry-label');
   if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
   const stopLabel = $('#risk-stop-label');
@@ -1167,6 +1191,23 @@ function renderTradeList(trades = []) {
       <span class="trade-badge">Risk/share ${perShareDisplay}</span>
     `;
     pill.appendChild(badges);
+    const tags = document.createElement('div');
+    tags.className = 'tag-chips';
+    const addChip = (label, tone = '') => {
+      const chip = document.createElement('span');
+      chip.className = `tag-chip ${tone}`;
+      chip.textContent = label;
+      tags.appendChild(chip);
+    };
+    if (trade.tradeType) addChip(trade.tradeType);
+    if (trade.assetClass) addChip(trade.assetClass);
+    if (trade.strategyTag) addChip(trade.strategyTag);
+    if (trade.marketCondition) addChip(trade.marketCondition);
+    (trade.setupTags || []).forEach(tag => addChip(tag));
+    (trade.emotionTags || []).forEach(tag => addChip(tag));
+    if (tags.childElementCount) {
+      pill.appendChild(tags);
+    }
     if (trade.status === 'closed' && Number.isFinite(trade.closePrice)) {
       const closed = document.createElement('div');
       closed.className = 'trade-meta';
@@ -1347,6 +1388,14 @@ function bindControls() {
     window.location.href = '/profile.html';
   });
 
+  $('#analytics-btn')?.addEventListener('click', () => {
+    window.location.href = '/analytics.html';
+  });
+
+  $('#trades-btn')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+
   $('#portfolio-btn')?.addEventListener('click', () => {
     const modalTitle = $('#portfolio-modal-title');
     if (modalTitle) modalTitle.textContent = `Portfolio value (${state.currency})`;
@@ -1410,6 +1459,11 @@ function bindControls() {
     const dateInput = $('#risk-date-input');
     const noteInput = $('#risk-trade-note');
     const symbolInput = $('#risk-symbol-input');
+    const tradeTypeInput = $('#trade-type-input');
+    const assetClassInput = $('#asset-class-input');
+    const strategyTagInput = $('#strategy-tag-input');
+    const marketConditionInput = $('#market-condition-input');
+    const screenshotInput = $('#screenshot-url-input');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1423,7 +1477,14 @@ function bindControls() {
       currency: state.riskCurrency,
       symbol: symbolInput?.value,
       date: dateInput?.value,
-      note: noteInput?.value || undefined
+      note: noteInput?.value || undefined,
+      tradeType: tradeTypeInput?.value,
+      assetClass: assetClassInput?.value,
+      strategyTag: strategyTagInput?.value,
+      marketCondition: marketConditionInput?.value,
+      setupTags: getSelectedTags('setup-tag'),
+      emotionTags: getSelectedTags('emotion-tag'),
+      screenshotUrl: screenshotInput?.value || undefined
     };
     try {
       await api('/api/trades', {

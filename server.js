@@ -14,6 +14,13 @@ try {
   console.warn('Nodemailer not installed; falling back to console email logging.');
 }
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const analytics = require('./lib/analytics');
+
+const TRADE_TYPES = ['scalp', 'day', 'swing', 'position'];
+const ASSET_CLASSES = ['stocks', 'options', 'forex', 'crypto', 'futures', 'other'];
+const MARKET_CONDITIONS = ['bull', 'bear', 'range', 'volatile', 'news-driven'];
+const DEFAULT_SETUP_TAGS = ['breakout', 'pullback', 'mean reversion', 'trend', 'news', 'momentum'];
+const DEFAULT_EMOTION_TAGS = ['FOMO', 'revenge', 'disciplined', 'hesitant', 'confident'];
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -425,6 +432,13 @@ function normalizeTradeJournal(user) {
       const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
       const status = trade.status === 'closed' ? 'closed' : 'open';
       const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
+      const typeRaw = typeof trade.tradeType === 'string' ? trade.tradeType.trim().toLowerCase() : '';
+      const assetRaw = typeof trade.assetClass === 'string' ? trade.assetClass.trim().toLowerCase() : '';
+      const conditionRaw = typeof trade.marketCondition === 'string' ? trade.marketCondition.trim().toLowerCase() : '';
+      const strategyTag = typeof trade.strategyTag === 'string' ? trade.strategyTag.trim() : '';
+      const setupTags = sanitizeTagList(trade.setupTags ?? trade.tags ?? []);
+      const emotionTags = sanitizeTagList(trade.emotionTags ?? []);
+      const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
       const riskAmountGBP = Number(trade.riskAmountGBP);
       const positionGBP = Number(trade.positionGBP);
       const sizeUnits = Number(trade.sizeUnits);
@@ -456,6 +470,13 @@ function normalizeTradeJournal(user) {
         perUnitRisk,
         sizeUnits,
         status,
+        tradeType: TRADE_TYPES.includes(typeRaw) ? typeRaw : 'day',
+        assetClass: ASSET_CLASSES.includes(assetRaw) ? assetRaw : 'stocks',
+        strategyTag,
+        marketCondition: MARKET_CONDITIONS.includes(conditionRaw) ? conditionRaw : '',
+        setupTags,
+        emotionTags,
+        screenshotUrl: screenshotUrl || undefined,
         riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : undefined,
         positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
         portfolioGBPAtCalc: Number.isFinite(portfolioGBPAtCalc) ? portfolioGBPAtCalc : undefined,
@@ -485,6 +506,140 @@ function normalizeTradeJournal(user) {
     }
   }
   return mutated;
+}
+
+function computeRealizedPnl(trade, rates = {}) {
+  if (!trade || trade.status !== 'closed') return null;
+  const closePrice = Number(trade.closePrice);
+  const entry = Number(trade.entry);
+  const sizeUnits = Number(trade.sizeUnits);
+  if (!Number.isFinite(closePrice) || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
+    return null;
+  }
+  const pnlCurrency = (closePrice - entry) * sizeUnits;
+  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const realizedPnlGBP = Number.isFinite(Number(trade.realizedPnlGBP))
+    ? Number(trade.realizedPnlGBP)
+    : (Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency);
+  const riskGBP = Number(trade.riskAmountGBP);
+  const rMultiple = Number.isFinite(riskGBP) && riskGBP !== 0 ? realizedPnlGBP / riskGBP : null;
+  return { realizedPnlGBP, realizedPnlCurrency: pnlCurrency, rMultiple };
+}
+
+function flattenTrades(user, rates = {}) {
+  const journal = ensureTradeJournal(user);
+  const trades = [];
+  for (const [dateKey, items] of Object.entries(journal)) {
+    for (const trade of items || []) {
+      if (!trade || typeof trade !== 'object') continue;
+      const normalized = normalizeTradeMeta(trade);
+      const base = { ...normalized, openDate: dateKey };
+      base.status = base.status === 'closed' ? 'closed' : 'open';
+      base.currency = base.currency || 'GBP';
+      if (!base.createdAt) {
+        base.createdAt = new Date().toISOString();
+      }
+      const pnl = computeRealizedPnl(base, rates);
+      if (pnl) {
+        base.realizedPnlGBP = pnl.realizedPnlGBP;
+        base.realizedPnlCurrency = pnl.realizedPnlCurrency;
+        base.rMultiple = pnl.rMultiple;
+      }
+      const closeDate = typeof base.closeDate === 'string' ? base.closeDate : null;
+      base.closeDate = closeDate || base.close_at || base.openDate;
+      trades.push(base);
+    }
+  }
+  return trades;
+}
+
+function filterTrades(trades = [], filters = {}) {
+  const from = typeof filters.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(filters.from) ? filters.from : null;
+  const to = typeof filters.to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(filters.to) ? filters.to : null;
+  const symbol = typeof filters.symbol === 'string' ? filters.symbol.trim().toUpperCase() : null;
+  const tradeType = typeof filters.tradeType === 'string' ? filters.tradeType.trim().toLowerCase() : null;
+  const assetClass = typeof filters.assetClass === 'string' ? filters.assetClass.trim().toLowerCase() : null;
+  const strategyTag = typeof filters.strategyTag === 'string' ? filters.strategyTag.trim().toLowerCase() : null;
+  const marketCondition = typeof filters.marketCondition === 'string' ? filters.marketCondition.trim().toLowerCase() : null;
+  const tags = sanitizeTagList(filters.tags);
+  const winLoss = typeof filters.winLoss === 'string' ? filters.winLoss.trim().toLowerCase() : null;
+  const status = typeof filters.status === 'string' ? filters.status.trim().toLowerCase() : null;
+
+  return trades.filter(trade => {
+    const dateKey = trade.status === 'closed' ? trade.closeDate : trade.openDate;
+    if (from && dateKey < from) return false;
+    if (to && dateKey > to) return false;
+    if (symbol && (trade.symbol || '').toUpperCase() !== symbol) return false;
+    if (tradeType && (trade.tradeType || '').toLowerCase() !== tradeType) return false;
+    if (assetClass && (trade.assetClass || '').toLowerCase() !== assetClass) return false;
+    if (strategyTag && (trade.strategyTag || '').toLowerCase() !== strategyTag) return false;
+    if (marketCondition && (trade.marketCondition || '').toLowerCase() !== marketCondition) return false;
+    if (status && status !== (trade.status || '').toLowerCase()) return false;
+    if (tags.length) {
+      const allTags = [
+        ...(trade.setupTags || []),
+        ...(trade.emotionTags || []),
+        trade.strategyTag || ''
+      ].map(t => (t || '').toString().toLowerCase());
+      const missing = tags.some(tag => !allTags.includes(tag.toLowerCase()));
+      if (missing) return false;
+    }
+    const pnl = Number(trade.realizedPnlGBP);
+    if (winLoss === 'win' && !(pnl > 0)) return false;
+    if (winLoss === 'loss' && !(pnl < 0)) return false;
+    return true;
+  });
+}
+
+function findTradeById(user, id) {
+  const journal = ensureTradeJournal(user);
+  for (const [dateKey, trades] of Object.entries(journal)) {
+    for (const trade of trades || []) {
+      if (trade && trade.id === id) {
+        return { trade, dateKey };
+      }
+    }
+  }
+  return null;
+}
+
+function updateHistoryForClose(user, history, closeDateKey, pnlGBP) {
+  const ym = closeDateKey.slice(0, 7);
+  history[ym] ||= {};
+  const existing = history[ym][closeDateKey] || {};
+  const endRaw = Number(existing.end);
+  const cashIn = Number.isFinite(existing.cashIn) ? existing.cashIn : 0;
+  const cashOut = Number.isFinite(existing.cashOut) ? existing.cashOut : 0;
+  const note = typeof existing.note === 'string' ? existing.note.trim() : '';
+  const preBaseline = existing.preBaseline === true;
+  const baseEnd = Number.isFinite(endRaw) ? endRaw : (Number.isFinite(user.portfolio) ? user.portfolio : 0);
+  const end = baseEnd + pnlGBP;
+  const payload = preBaseline
+    ? { end, cashIn, cashOut, preBaseline: true }
+    : { end, cashIn, cashOut };
+  if (note) payload.note = note;
+  history[ym][closeDateKey] = payload;
+}
+
+function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate) {
+  const history = ensurePortfolioHistory(user);
+  const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
+    ? closeDate
+    : (defaultDate || currentDateKey());
+  const pnlCurrency = (closePrice - Number(trade.entry)) * Number(trade.sizeUnits);
+  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
+  trade.status = 'closed';
+  trade.closePrice = closePrice;
+  trade.closeDate = targetDate;
+  trade.closedAt = trade.closedAt || new Date().toISOString();
+  trade.realizedPnlGBP = pnlSafe;
+  trade.realizedPnlCurrency = pnlCurrency;
+  const risk = Number(trade.riskAmountGBP);
+  trade.rMultiple = Number.isFinite(risk) && risk !== 0 ? pnlSafe / risk : null;
+  updateHistoryForClose(user, history, targetDate, pnlSafe);
+  refreshAnchors(user, history);
+  return { pnlGBP: pnlSafe, closeDateKey: targetDate };
 }
 
 function buildSnapshots(history, initial, tradeJournal = {}) {
@@ -937,6 +1092,8 @@ app.get('/', (req,res)=>{ res.sendFile(path.join(__dirname,'index.html')); });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
+app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
+app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 
 // --- auth api ---
@@ -981,39 +1138,7 @@ app.post('/api/signup', async (req,res)=>{
   };
   ensureUserShape(db.users[username], username);
   saveDB(db);
-
-  const base = appBaseUrl(req);
-  const verifyLink = `${base}/api/auth/verify-email?token=${token}`;
-  try {
-    await sendMail({
-      to: email,
-      subject: 'Confirm your P&L Calendar account',
-      html: `<p>Welcome to the P&L Calendar!</p>
-        <p>Click the link below to confirm your email address and finish setting up your account:</p>
-        <p><a href="${verifyLink}">${verifyLink}</a></p>
-        <p>If you didn't request this, you can ignore this message.</p>`
-    });
-  } catch (mailError) {
-    console.error('Failed to send verification email:', mailError);
-    delete db.users[email];
-    delete db.verifications[token];
-    saveDB(db);
-    return res.status(500).json({ error: 'Unable to send verification email right now. Please try again.' });
-  }
-
-  const createdUser = db.users[email];
-  if (createdUser) {
-    if (!createdUser.security || typeof createdUser.security !== 'object') {
-      createdUser.security = {};
-    }
-    if (!createdUser.security.verification || typeof createdUser.security.verification !== 'object') {
-      createdUser.security.verification = {};
-    }
-    createdUser.security.verification.lastSentAt = new Date().toISOString();
-    saveDB(db);
-  }
-
-  res.json({ ok: true });
+  res.json({ ok: true, profileComplete: false });
 });
 
 app.post('/api/auth/resend-verification', async (req, res) => {
@@ -1505,6 +1630,13 @@ let cachedRatesAt = 0;
 async function fetchRates() {
   const SIX_HOURS = 6 * 60 * 60 * 1000;
   const now = Date.now();
+  if (process.env.SKIP_RATE_FETCH === 'true') {
+    if (!cachedRates.USD) {
+      cachedRates = { GBP: 1, USD: 1 };
+    }
+    cachedRatesAt = now;
+    return cachedRates;
+  }
   if (cachedRatesAt && (now - cachedRatesAt) < SIX_HOURS && cachedRates.USD) {
     return cachedRates;
   }
@@ -1540,6 +1672,43 @@ function convertToGBP(value, currency, rates) {
   const rate = rates?.[currency];
   if (!Number.isFinite(rate) || rate <= 0) return null;
   return value / rate;
+}
+
+function sanitizeTagList(value, limit = 10) {
+  if (!value) return [];
+  const items = Array.isArray(value) ? value : String(value).split(',');
+  const deduped = [];
+  items.forEach(item => {
+    if (!item) return;
+    const normalized = String(item).trim();
+    if (!normalized) return;
+    if (deduped.length >= limit) return;
+    if (!deduped.includes(normalized)) {
+      deduped.push(normalized);
+    }
+  });
+  return deduped;
+}
+
+function normalizeTradeMeta(trade = {}) {
+  if (!trade || typeof trade !== 'object') return {};
+  const type = typeof trade.tradeType === 'string' ? trade.tradeType.trim().toLowerCase() : '';
+  const asset = typeof trade.assetClass === 'string' ? trade.assetClass.trim().toLowerCase() : '';
+  const condition = typeof trade.marketCondition === 'string' ? trade.marketCondition.trim().toLowerCase() : '';
+  const strategy = typeof trade.strategyTag === 'string' ? trade.strategyTag.trim() : '';
+  const screenshotRaw = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
+  const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
+  return {
+    ...trade,
+    tradeType: TRADE_TYPES.includes(type) ? type : 'day',
+    assetClass: ASSET_CLASSES.includes(asset) ? asset : 'stocks',
+    marketCondition: MARKET_CONDITIONS.includes(condition) ? condition : '',
+    strategyTag: strategy,
+    setupTags: sanitizeTagList(trade.setupTags ?? trade.tags ?? [], 15),
+    emotionTags: sanitizeTagList(trade.emotionTags ?? [], 15),
+    screenshotUrl: screenshotRaw || undefined,
+    note: noteRaw || undefined
+  };
 }
 
 const marketCache = new Map();
@@ -1623,21 +1792,108 @@ async function buildActiveTrades(user, rates = {}) {
   return { trades: enriched, liveOpenPnlGBP };
 }
 
+app.get('/api/trades', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const rates = await fetchRates();
+  const trades = flattenTrades(user, rates);
+  const filtered = filterTrades(trades, req.query || {})
+    .sort((a, b) => {
+      const aDate = a.closeDate || a.openDate || '';
+      const bDate = b.closeDate || b.openDate || '';
+      return bDate.localeCompare(aDate);
+    });
+  res.json({ trades: filtered });
+});
+
+app.get('/api/trades/export', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const rates = await fetchRates();
+  const trades = filterTrades(flattenTrades(user, rates), req.query || {});
+  const headers = [
+    'id', 'symbol', 'status', 'openDate', 'closeDate', 'entry', 'stop', 'closePrice',
+    'currency', 'sizeUnits', 'riskPct', 'riskAmountGBP', 'positionGBP', 'realizedPnlGBP',
+    'rMultiple', 'tradeType', 'assetClass', 'strategyTag', 'marketCondition',
+    'setupTags', 'emotionTags', 'note', 'screenshotUrl'
+  ];
+  const escape = (val) => {
+    if (val === null || val === undefined) return '';
+    const str = Array.isArray(val) ? val.join('|') : String(val);
+    if (str.includes(',') || str.includes('"')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+  const rows = trades.map(trade => [
+    trade.id,
+    trade.symbol || '',
+    trade.status || 'open',
+    trade.openDate || '',
+    trade.closeDate || '',
+    Number(trade.entry) || '',
+    Number(trade.stop) || '',
+    Number(trade.closePrice) || '',
+    trade.currency || 'GBP',
+    Number(trade.sizeUnits) || '',
+    Number(trade.riskPct) || '',
+    Number(trade.riskAmountGBP) || '',
+    Number(trade.positionGBP) || '',
+    Number(trade.realizedPnlGBP) || '',
+    Number(trade.rMultiple) || '',
+    trade.tradeType || '',
+    trade.assetClass || '',
+    trade.strategyTag || '',
+    trade.marketCondition || '',
+    (trade.setupTags || []).join('|'),
+    (trade.emotionTags || []).join('|'),
+    trade.note || '',
+    trade.screenshotUrl || ''
+  ]);
+  const csv = [headers.map(escape).join(','), ...rows.map(row => row.map(escape).join(','))].join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="trades.csv"');
+  res.send(csv);
+});
+
 app.post('/api/trades', auth, async (req, res) => {
-  const { date, entry, stop, riskPct, currency, note, symbol } = req.body || {};
+  const {
+    date,
+    entry,
+    stop,
+    riskPct,
+    riskAmount,
+    currency,
+    note,
+    symbol,
+    tradeType,
+    assetClass,
+    strategyTag,
+    marketCondition,
+    setupTags,
+    emotionTags,
+    screenshotUrl,
+    status,
+    closePrice,
+    closeDate
+  } = req.body || {};
   const tradeCurrency = currency === 'USD' ? 'USD' : 'GBP';
   const entryNum = Number(entry);
   const stopNum = Number(stop);
   const pctNum = Number(riskPct);
+  const riskAmountNum = Number(riskAmount);
   const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
   }
   if (!Number.isFinite(stopNum) || stopNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid stop-loss price' });
-  }
-  if (!Number.isFinite(pctNum) || pctNum <= 0) {
-    return res.status(400).json({ error: 'Enter a valid risk percentage' });
   }
   const perUnitRisk = Math.abs(entryNum - stopNum);
   if (perUnitRisk === 0) {
@@ -1663,7 +1919,18 @@ app.post('/api/trades', auth, async (req, res) => {
   if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
     return res.status(400).json({ error: 'Add your portfolio value first' });
   }
-  const riskAmountCurrency = portfolioInCurrency * (pctNum / 100);
+  let pctToUse = Number.isFinite(pctNum) && pctNum > 0 ? pctNum : null;
+  let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0
+    ? riskAmountNum
+    : null;
+  if (!riskAmountCurrency && pctToUse) {
+    riskAmountCurrency = portfolioInCurrency * (pctToUse / 100);
+  } else if (riskAmountCurrency && !pctToUse) {
+    pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
+  }
+  if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
+    return res.status(400).json({ error: 'Enter a valid risk percentage or amount' });
+  }
   const sizeUnits = riskAmountCurrency / perUnitRisk;
   const positionCurrency = sizeUnits * entryNum;
   const riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
@@ -1671,13 +1938,13 @@ app.post('/api/trades', auth, async (req, res) => {
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
-  const trade = {
+  const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
     stop: stopNum,
     symbol: symbolClean || undefined,
     currency: tradeCurrency,
-    riskPct: pctNum,
+    riskPct: pctToUse || pctNum || 0,
     perUnitRisk,
     sizeUnits,
     riskAmountCurrency,
@@ -1686,18 +1953,136 @@ app.post('/api/trades', auth, async (req, res) => {
     positionGBP,
     portfolioGBPAtCalc: portfolioGBP,
     portfolioCurrencyAtCalc: portfolioInCurrency,
-    createdAt: new Date().toISOString()
-  };
-  if (typeof note === 'string' && note.trim()) {
-    trade.note = note.trim();
-  }
+    createdAt: new Date().toISOString(),
+    status: status === 'closed' ? 'closed' : 'open',
+    tradeType,
+    assetClass,
+    strategyTag,
+    marketCondition,
+    setupTags,
+    emotionTags,
+    screenshotUrl,
+    note
+  });
   journal[targetDate] ||= [];
   journal[targetDate].push(trade);
   if (journal[targetDate].length > 50) {
     journal[targetDate] = journal[targetDate].slice(-50);
   }
+  if (trade.status === 'closed' || Number.isFinite(Number(closePrice))) {
+    const closeNum = Number(closePrice);
+    if (!Number.isFinite(closeNum) || closeNum <= 0) {
+      return res.status(400).json({ error: 'Enter a valid closing price to log a closed trade' });
+    }
+    applyTradeClose(user, trade, closeNum, closeDate, rates, targetDate);
+  }
   saveDB(db);
   res.json({ ok: true, trade, date: targetDate });
+});
+
+app.put('/api/trades/:id', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ error: 'Trade not found' });
+  const trade = found.trade;
+  const updates = req.body || {};
+  const rates = await fetchRates();
+  const tradeCurrency = trade.currency || 'GBP';
+  if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {
+    return res.status(400).json({ error: `Missing FX rate for ${tradeCurrency}` });
+  }
+  const wantsRiskUpdate = (
+    updates.entry !== undefined ||
+    updates.stop !== undefined ||
+    updates.riskPct !== undefined ||
+    updates.riskAmount !== undefined
+  );
+  if (trade.status === 'closed' && wantsRiskUpdate) {
+    return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
+  }
+  if (typeof updates.symbol === 'string') {
+    trade.symbol = updates.symbol.trim().toUpperCase() || undefined;
+  }
+  if (wantsRiskUpdate && trade.status !== 'closed') {
+    const entryNum = Number(updates.entry ?? trade.entry);
+    const stopNum = Number(updates.stop ?? trade.stop);
+    const pctNum = Number(updates.riskPct ?? trade.riskPct);
+    const riskAmountNum = Number(updates.riskAmount);
+    if (!Number.isFinite(entryNum) || entryNum <= 0) {
+      return res.status(400).json({ error: 'Enter a valid entry price' });
+    }
+    if (!Number.isFinite(stopNum) || stopNum <= 0) {
+      return res.status(400).json({ error: 'Enter a valid stop-loss price' });
+    }
+    const perUnitRisk = Math.abs(entryNum - stopNum);
+    if (perUnitRisk === 0) {
+      return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
+    }
+    const portfolioGBP = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
+    const portfolioCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
+    if (!Number.isFinite(portfolioCurrency) || portfolioCurrency <= 0) {
+      return res.status(400).json({ error: 'Add your portfolio value first' });
+    }
+    let pctToUse = Number.isFinite(pctNum) && pctNum > 0 ? pctNum : null;
+    let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0 ? riskAmountNum : null;
+    if (!riskAmountCurrency && pctToUse) {
+      riskAmountCurrency = portfolioCurrency * (pctToUse / 100);
+    } else if (riskAmountCurrency && !pctToUse) {
+      pctToUse = portfolioCurrency > 0 ? (riskAmountCurrency / portfolioCurrency) * 100 : null;
+    }
+    if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
+      return res.status(400).json({ error: 'Enter a valid risk percentage or amount' });
+    }
+    const sizeUnits = riskAmountCurrency / perUnitRisk;
+    const positionCurrency = sizeUnits * entryNum;
+    trade.entry = entryNum;
+    trade.stop = stopNum;
+    trade.perUnitRisk = perUnitRisk;
+    trade.riskPct = pctToUse || pctNum || 0;
+    trade.sizeUnits = sizeUnits;
+    trade.riskAmountCurrency = riskAmountCurrency;
+    trade.positionCurrency = positionCurrency;
+    trade.riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
+    trade.positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
+    trade.portfolioGBPAtCalc = portfolioGBP;
+    trade.portfolioCurrencyAtCalc = portfolioCurrency;
+  }
+  const meta = normalizeTradeMeta({
+    ...trade,
+    tradeType: updates.tradeType ?? trade.tradeType,
+    assetClass: updates.assetClass ?? trade.assetClass,
+    strategyTag: updates.strategyTag ?? trade.strategyTag,
+    marketCondition: updates.marketCondition ?? trade.marketCondition,
+    setupTags: updates.setupTags ?? trade.setupTags,
+    emotionTags: updates.emotionTags ?? trade.emotionTags,
+    screenshotUrl: updates.screenshotUrl ?? trade.screenshotUrl,
+    note: updates.note !== undefined ? updates.note : trade.note
+  });
+  trade.tradeType = meta.tradeType;
+  trade.assetClass = meta.assetClass;
+  trade.strategyTag = meta.strategyTag;
+  trade.marketCondition = meta.marketCondition;
+  trade.setupTags = meta.setupTags;
+  trade.emotionTags = meta.emotionTags;
+  trade.screenshotUrl = meta.screenshotUrl;
+  trade.note = meta.note;
+  const shouldClose = (updates.status && updates.status === 'closed') || Number.isFinite(Number(updates.closePrice));
+  if (shouldClose) {
+    if (trade.status === 'closed') {
+      return res.status(400).json({ error: 'Trade already closed' });
+    }
+    const closeNum = Number(updates.closePrice);
+    if (!Number.isFinite(closeNum) || closeNum <= 0) {
+      return res.status(400).json({ error: 'Enter a valid closing price' });
+    }
+    applyTradeClose(user, trade, closeNum, updates.closeDate, rates, found.dateKey);
+  }
+  saveDB(db);
+  res.json({ ok: true, trade });
 });
 
 app.post('/api/trades/close', auth, (req, res) => {
@@ -1713,56 +2098,23 @@ app.post('/api/trades/close', auth, (req, res) => {
   ensureUserShape(user, req.username);
   const journal = ensureTradeJournal(user);
   const history = ensurePortfolioHistory(user);
-  const ratesPromise = fetchRates();
-  let updated = false;
-  let targetTrade = null;
-  for (const [dateKey, trades] of Object.entries(journal)) {
-    for (const trade of trades || []) {
-      if (trade.id === id && trade.status !== 'closed') {
-        trade.status = 'closed';
-        trade.closePrice = closePrice;
-        trade.closeDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
-          ? date
-          : dateKey;
-        targetTrade = { ...trade, date: dateKey };
-        updated = true;
-        break;
-      }
-    }
-    if (updated) break;
-  }
-  if (!updated || !targetTrade) {
+  const found = findTradeById(user, id);
+  if (!found || found.trade.status === 'closed') {
     return res.status(404).json({ error: 'Trade not found' });
   }
-  ratesPromise.then((rates) => {
-    const tradeCurrency = targetTrade.currency || 'GBP';
-    const pnlCurrency = (closePrice - Number(targetTrade.entry)) * Number(targetTrade.sizeUnits);
-    const pnlGBP = convertToGBP(pnlCurrency, tradeCurrency, rates);
-    const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
-    const closeDateKey = targetTrade.closeDate || targetTrade.date;
-    const ym = closeDateKey.slice(0, 7);
-    history[ym] ||= {};
-    const existing = history[ym][closeDateKey] || {};
-    const endRaw = Number(existing.end);
-    const cashIn = Number.isFinite(existing.cashIn) ? existing.cashIn : 0;
-    const cashOut = Number.isFinite(existing.cashOut) ? existing.cashOut : 0;
-    const note = typeof existing.note === 'string' ? existing.note.trim() : '';
-    const preBaseline = existing.preBaseline === true;
-    const baseEnd = Number.isFinite(endRaw) ? endRaw : (Number.isFinite(user.portfolio) ? user.portfolio : 0);
-    const end = baseEnd + pnlSafe;
-    const payload = preBaseline
-      ? { end, cashIn, cashOut, preBaseline: true }
-      : { end, cashIn, cashOut };
-    if (note) payload.note = note;
-    history[ym][closeDateKey] = payload;
-    refreshAnchors(user, history);
-    saveDB(db);
-    res.json({ ok: true, pnlGBP: pnlSafe });
-  }).catch((err) => {
-    console.error('Failed to compute PnL on trade close', err);
-    saveDB(db);
-    res.status(500).json({ error: 'Failed to apply trade close' });
-  });
+  const trade = found.trade;
+  const defaultDate = found.dateKey;
+  fetchRates()
+    .then((rates) => {
+      const result = applyTradeClose(user, trade, closePrice, date, rates, defaultDate);
+      saveDB(db);
+      res.json({ ok: true, pnlGBP: result.pnlGBP });
+    })
+    .catch((err) => {
+      console.error('Failed to compute PnL on trade close', err);
+      saveDB(db);
+      res.status(500).json({ error: 'Failed to apply trade close' });
+    });
 });
 
 app.get('/api/rates', auth, async (req,res)=>{
@@ -1780,6 +2132,83 @@ app.get('/api/trades/active', auth, async (req, res) => {
   res.json({ trades, liveOpenPnl: liveOpenPnlGBP });
 });
 
+async function loadFilteredTrades(username, query = {}) {
+  const db = loadDB();
+  const user = db.users[username];
+  if (!user) return { trades: [], user: null, rates: {} };
+  ensureUserShape(user, username);
+  normalizeTradeJournal(user);
+  const rates = await fetchRates();
+  const trades = filterTrades(flattenTrades(user, rates), query);
+  return { trades, user, rates };
+}
+
+app.get('/api/analytics/summary', auth, async (req, res) => {
+  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const closed = trades.filter(t => t.status === 'closed');
+  const summary = analytics.summarizeTrades(closed);
+  const curve = analytics.equityCurve(closed);
+  const dd = analytics.drawdowns(curve);
+  const dist = analytics.distribution(closed);
+  const streak = analytics.streaks(closed);
+  const breakdown = analytics.breakdowns(closed);
+  res.json({
+    range: {
+      from: req.query?.from || null,
+      to: req.query?.to || null
+    },
+    summary,
+    drawdown: {
+      maxDrawdown: dd.maxDrawdown,
+      durationDays: dd.durationDays,
+      peakDate: dd.peakDate,
+      troughDate: dd.troughDate
+    },
+    distribution: {
+      median: dist.median,
+      stddev: dist.stddev,
+      best: dist.best,
+      worst: dist.worst
+    },
+    breakdowns: breakdown,
+    streaks: streak
+  });
+});
+
+app.get('/api/analytics/equity-curve', auth, async (req, res) => {
+  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const closed = trades.filter(t => t.status === 'closed');
+  const curve = analytics.equityCurve(closed);
+  res.json({ curve });
+});
+
+app.get('/api/analytics/drawdown', auth, async (req, res) => {
+  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const closed = trades.filter(t => t.status === 'closed');
+  const curve = analytics.equityCurve(closed);
+  const dd = analytics.drawdowns(curve);
+  res.json({ drawdown: dd });
+});
+
+app.get('/api/analytics/distribution', auth, async (req, res) => {
+  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const closed = trades.filter(t => t.status === 'closed');
+  const dist = analytics.distribution(closed);
+  res.json({ distribution: dist });
+});
+
+app.get('/api/analytics/streaks', auth, async (req, res) => {
+  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const closed = trades.filter(t => t.status === 'closed');
+  const streak = analytics.streaks(closed);
+  res.json({ streaks: streak });
+});
+
 function bootstrapTrading212Schedules() {
   const db = loadDB();
   let mutated = false;
@@ -1793,8 +2222,20 @@ function bootstrapTrading212Schedules() {
   }
 }
 
-bootstrapTrading212Schedules();
+if (require.main === module) {
+  bootstrapTrading212Schedules();
+  app.listen(PORT, ()=>{
+    console.log(`P&L Calendar server listening on port ${PORT}`);
+  });
+}
 
-app.listen(PORT, ()=>{
-  console.log(`P&L Calendar server listening on port ${PORT}`);
-});
+module.exports = {
+  app,
+  loadDB,
+  saveDB,
+  ensureUserShape,
+  ensurePortfolioHistory,
+  ensureTradeJournal,
+  flattenTrades,
+  filterTrades
+};
