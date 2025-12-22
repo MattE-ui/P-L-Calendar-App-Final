@@ -18,7 +18,11 @@ const state = {
     netDepositsGBP: 0,
     netPerformanceGBP: 0,
     netPerformancePct: null
-  }
+  },
+  direction: 'long',
+  fees: 0,
+  slippage: 0,
+  rounding: 'fractional'
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -110,6 +114,42 @@ function formatShares(value) {
   return value.toFixed(4);
 }
 
+function computeRiskPlan({
+  entry,
+  stop,
+  portfolio,
+  riskPct,
+  fees = 0,
+  slippage = 0,
+  direction = 'long',
+  allowFractional = true
+}) {
+  if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(portfolio) || portfolio <= 0) {
+    return { error: 'Missing prices or portfolio value.' };
+  }
+  const dir = direction === 'short' ? 'short' : 'long';
+  if (dir === 'long' && stop >= entry) return { error: 'Stop must be below entry for long trades.' };
+  if (dir === 'short' && stop <= entry) return { error: 'Stop must be above entry for short trades.' };
+  if (!Number.isFinite(riskPct) || riskPct <= 0) return { error: 'Enter a risk percentage above 0.' };
+  const perShareRiskBase = dir === 'long' ? (entry - stop) : (stop - entry);
+  const perShareRisk = perShareRiskBase + (slippage > 0 ? slippage : 0);
+  if (perShareRisk <= 0) return { error: 'Entry and stop-loss cannot match.' };
+  const riskAmount = portfolio * (riskPct / 100);
+  const spendable = Math.max(riskAmount - fees, 0);
+  const sharesRaw = spendable / perShareRisk;
+  const shares = allowFractional ? sharesRaw : Math.floor(sharesRaw);
+  const positionValue = shares * entry;
+  const unusedRisk = allowFractional ? 0 : (spendable - shares * perShareRisk);
+  return {
+    riskAmount,
+    perShareRisk,
+    shares,
+    positionValue,
+    unusedRisk,
+    fees
+  };
+}
+
 function formatPrice(value, currency = state.currency) {
   const symbol = currencySymbols[currency] || '';
   if (!Number.isFinite(value)) return '—';
@@ -138,6 +178,20 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
+function summarizeWeek(entries = []) {
+  const totalChange = entries.reduce((sum, e) => sum + (e.change ?? 0), 0);
+  const totalCashFlow = entries.reduce((sum, e) => sum + (e.cashFlow ?? 0), 0);
+  const totalTrades = entries.reduce((sum, e) => sum + (e.tradesCount ?? 0), 0);
+  const realized = entries
+    .filter(e => e.change !== null && e.change !== undefined)
+    .reduce((sum, e) => sum + e.change, 0);
+  return { totalChange, totalCashFlow, totalTrades, realized };
+}
+
+function getSelectedTags(name) {
+  return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(el => el.value);
+}
+
 function normalizeTradeRecords(trades) {
   if (!Array.isArray(trades)) return [];
   return trades.map(trade => {
@@ -161,6 +215,17 @@ function normalizeTradeRecords(trades) {
     const positionCurrency = Number(trade.positionCurrency);
     const note = typeof trade.note === 'string' ? trade.note.trim() : '';
     const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : '';
+    const tradeType = typeof trade.tradeType === 'string' ? trade.tradeType : 'day';
+    const assetClass = typeof trade.assetClass === 'string' ? trade.assetClass : 'stocks';
+    const strategyTag = typeof trade.strategyTag === 'string' ? trade.strategyTag : '';
+    const marketCondition = typeof trade.marketCondition === 'string' ? trade.marketCondition : '';
+    const setupTags = Array.isArray(trade.setupTags) ? trade.setupTags : [];
+    const emotionTags = Array.isArray(trade.emotionTags) ? trade.emotionTags : [];
+    const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl : '';
+    const direction = trade.direction === 'short' ? 'short' : 'long';
+    const fees = Number(trade.fees);
+    const slippage = Number(trade.slippage);
+    const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
@@ -180,6 +245,17 @@ function normalizeTradeRecords(trades) {
       closePrice: Number.isFinite(trade.closePrice) ? trade.closePrice : null,
       closeDate: typeof trade.closeDate === 'string' ? trade.closeDate : null,
       note,
+      tradeType,
+      assetClass,
+      strategyTag,
+      marketCondition,
+      setupTags,
+      emotionTags,
+      screenshotUrl,
+      direction,
+      fees: Number.isFinite(fees) ? fees : 0,
+      slippage: Number.isFinite(slippage) ? slippage : 0,
+      rounding,
       createdAt
     };
   }).filter(Boolean);
@@ -260,6 +336,7 @@ function getWeeksInMonth(date) {
     const pct = !changeEntries.length || baseline === null || baseline === 0
       ? null
       : (totalChange / baseline) * 100;
+    const trades = days.flatMap(d => d.trades || []);
     weeks.push({
       totalChange,
       pct,
@@ -267,6 +344,8 @@ function getWeeksInMonth(date) {
       totalCashFlow,
       totalTrades,
       recordedDays: days.length,
+      entries: days,
+      trades,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     });
@@ -440,7 +519,7 @@ function setRiskOutputs(values = null) {
     return;
   }
 
-  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency } = values;
+  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency, unusedRisk } = values;
   const riskCurrency = state.riskCurrency || state.currency;
   riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP, riskCurrency));
   positionEl && (positionEl.textContent = formatCurrency(positionGBP, riskCurrency));
@@ -451,7 +530,10 @@ function setRiskOutputs(values = null) {
     ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${riskCurrency !== 'GBP' && Number.isFinite(positionCurrency) ? ` (${formatCurrency(positionCurrency, 'GBP')})` : ''}`
     : 'Position too small for the chosen risk');
   shareNote && (shareNote.textContent = shares > 0 ? 'Fractional units allowed for sizing' : '');
-  perShareNote && (perShareNote.textContent = 'Difference between entry and stop-loss');
+  perShareNote && (perShareNote.textContent = `Difference between entry and stop-loss${state.direction === 'short' ? ' (short)' : ''}`);
+  if (unusedRisk && unusedRisk > 0) {
+    amountNote && (amountNote.textContent += ` • Unused risk: ${formatCurrency(unusedRisk, riskCurrency)}`);
+  }
 }
 
 function calculateRiskPosition(showErrors = false) {
@@ -463,30 +545,31 @@ function calculateRiskPosition(showErrors = false) {
 
   const entryRaw = Number(entryInput.value);
   const stopRaw = Number(stopInput.value);
-  const riskPct = Number(riskPctInput.value);
+  const riskPct = Number(state.riskPct ?? riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
+  const direction = state.direction || 'long';
+  const fees = 0;
+  const slippage = 0;
+  const allowFractional = state.rounding !== 'whole';
 
   let error = '';
-  if (!Number.isFinite(portfolioGBP) || portfolioGBP <= 0) {
-    error = 'Add your portfolio value first.';
-  } else if (!Number.isFinite(entryRaw) || entryRaw <= 0) {
-    error = 'Enter a valid entry price.';
-  } else if (!Number.isFinite(stopRaw) || stopRaw <= 0) {
-    error = 'Enter a valid stop-loss price.';
-  } else if (!Number.isFinite(riskPct) || riskPct <= 0) {
-    error = 'Enter a risk percentage above 0.';
-  }
-
   const entryGBP = toGBP(entryRaw, riskCurrency);
   const stopGBP = toGBP(stopRaw, riskCurrency);
   const portfolioInRiskCurrency = currencyAmount(portfolioGBP, riskCurrency);
+  const computed = computeRiskPlan({
+    entry: entryRaw,
+    stop: stopRaw,
+    portfolio: portfolioInRiskCurrency,
+    riskPct,
+    fees,
+    slippage,
+    direction,
+    allowFractional
+  });
+  if (computed.error) error = computed.error;
   if (!Number.isFinite(portfolioInRiskCurrency)) {
     error = 'Missing exchange rate to convert your portfolio.';
-  }
-  const perShareRiskGBP = Math.abs(entryGBP - stopGBP);
-  if (!error && perShareRiskGBP === 0) {
-    error = 'Entry and stop-loss cannot be the same.';
   }
 
   if (errorEl) {
@@ -498,22 +581,22 @@ function calculateRiskPosition(showErrors = false) {
     return;
   }
 
-  const riskAmountGBP = portfolioGBP * (riskPct / 100);
-  const riskAmountInCurrency = currencyAmount(riskAmountGBP, riskCurrency) ?? riskAmountGBP;
-  const perShareRiskInCurrency = Math.abs(entryRaw - stopRaw);
-  const shares = perShareRiskInCurrency > 0 ? (riskAmountInCurrency / perShareRiskInCurrency) : 0;
-  const positionInCurrency = shares * entryRaw;
+  const riskAmountInCurrency = currencyAmount(portfolioGBP * (riskPct / 100), riskCurrency) ?? (portfolioGBP * (riskPct/100));
+  const shares = computed.shares;
+  const positionInCurrency = computed.positionValue;
   const positionGBP = toGBP(positionInCurrency, riskCurrency);
+  const perShareRiskInCurrency = computed.perShareRisk;
 
   setRiskOutputs({
-    riskAmountGBP,
+    riskAmountGBP: toGBP(riskAmountInCurrency, riskCurrency),
     positionGBP,
     shares,
     perShareRiskGBP: toGBP(perShareRiskInCurrency, riskCurrency),
     riskPct: Number.isFinite(riskPct) ? riskPct : 0,
     entryGBP,
     riskAmountCurrency: riskAmountInCurrency,
-    positionCurrency: positionInCurrency
+    positionCurrency: positionInCurrency,
+    unusedRisk: computed.unusedRisk
   });
 }
 
@@ -521,6 +604,20 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
+  const directionSelect = $('#risk-direction-select');
+  if (directionSelect) {
+    const safeDirection = ['long', 'short'].includes(state.direction) ? state.direction : 'long';
+    state.direction = safeDirection;
+    directionSelect.value = safeDirection;
+  }
+  const tradeTypeInput = $('#trade-type-input');
+  if (tradeTypeInput && !tradeTypeInput.value) tradeTypeInput.value = 'day';
+  const assetClassInput = $('#asset-class-input');
+  if (assetClassInput && !assetClassInput.value) assetClassInput.value = 'stocks';
+  const marketConditionInput = $('#market-condition-input');
+  if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
+  const roundingSelect = $('#risk-rounding-select');
+  if (roundingSelect) roundingSelect.value = state.rounding;
   const entryLabel = $('#risk-entry-label');
   if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
   const stopLabel = $('#risk-stop-label');
@@ -529,15 +626,22 @@ function renderRiskCalculator() {
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
   if (pctInput && !pctInput.value) pctInput.value = '1';
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.classList.toggle('active', Number(btn.dataset.riskPct) === Number(state.riskPct || pctInput?.value || 1));
+  });
   const dateInput = $('#risk-date-input');
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
   }
   const symbolInput = $('#risk-symbol-input');
   if (symbolInput && !symbolInput.value) symbolInput.value = '';
-  $$('#risk-currency-toggle button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.riskCurrency === state.riskCurrency);
-  });
+  const riskCurrencySelect = $('#risk-calc-currency');
+  if (riskCurrencySelect) {
+    const allowedCurrencies = ['GBP', 'USD'];
+    const safeCurrency = allowedCurrencies.includes(state.riskCurrency) ? state.riskCurrency : 'GBP';
+    state.riskCurrency = safeCurrency;
+    riskCurrencySelect.value = safeCurrency;
+  }
   calculateRiskPosition(false);
 }
 
@@ -561,7 +665,7 @@ function renderActiveTrades() {
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    priceLine.textContent = `${sym} @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
+    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
     pill.appendChild(priceLine);
     const badges = document.createElement('div');
     badges.className = 'trade-meta';
@@ -573,6 +677,7 @@ function renderActiveTrades() {
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
+      ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
     const closeRow = document.createElement('div');
@@ -612,6 +717,30 @@ function renderActiveTrades() {
     closeRow.append(priceInput, dateInput, closeBtn, status);
     pill.appendChild(closeRow);
     list.appendChild(pill);
+  });
+}
+
+function renderPortfolioTrend() {
+  const el = $('#portfolio-trend');
+  if (!el) return;
+  el.innerHTML = '';
+  const entries = getAllEntries();
+  const last = entries.slice(-12);
+  if (!last.length) {
+    el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
+    return;
+  }
+  const max = Math.max(...last.map(e => e.closing ?? e.opening ?? 0));
+  const min = Math.min(...last.map(e => e.closing ?? e.opening ?? 0));
+  const range = Math.max(max - min, 1);
+  last.forEach(entry => {
+    const val = entry.closing ?? entry.opening ?? 0;
+    const heightPct = ((val - min) / range) * 100;
+    const bar = document.createElement('div');
+    bar.className = 'mini-bar';
+    bar.style.height = `${Math.max(8, heightPct)}%`;
+    bar.title = `${entry.date.toLocaleDateString()} • ${formatCurrency(val)}`;
+    el.appendChild(bar);
   });
 }
 
@@ -702,6 +831,7 @@ function renderMetrics() {
 function setActiveView() {
   $$('#view-controls button[data-view]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
+    btn.setAttribute('aria-pressed', btn.dataset.view === state.view ? 'true' : 'false');
   });
 }
 
@@ -721,21 +851,31 @@ function updateCurrencySelect() {
 
 function updatePortfolioPill() {
   const el = $('#portfolio-display');
-  if (!el) return;
+  const heroVal = $('#header-portfolio-value');
+  const heroSub = $('#header-portfolio-sub');
   const latestGBP = Number.isFinite(state.livePortfolioGBP)
     ? state.livePortfolioGBP
     : (Number.isFinite(state.metrics?.latestGBP)
       ? state.metrics.latestGBP
       : state.portfolioGBP);
   const base = formatCurrency(latestGBP);
-  if (state.currency === 'USD') {
-    const alt = formatCurrency(latestGBP, 'GBP');
-    el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-  } else if (state.rates.USD) {
-    const alt = formatCurrency(latestGBP, 'USD');
-    el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-  } else {
-    el.textContent = `Portfolio: ${base}`;
+  const alt = state.currency === 'USD'
+    ? formatCurrency(latestGBP, 'GBP')
+    : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
+  if (el) {
+    if (state.currency === 'USD') {
+      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
+    } else if (state.rates.USD) {
+      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
+    } else {
+      el.textContent = `Portfolio: ${base}`;
+    }
+  }
+  if (heroVal) {
+    heroVal.textContent = base;
+  }
+  if (heroSub) {
+    heroSub.textContent = alt ? `≈ ${alt}` : '';
   }
 }
 
@@ -904,7 +1044,7 @@ function renderWeek() {
   const weeks = getWeeksInMonth(state.selected);
   weeks.forEach(week => {
     const row = document.createElement('div');
-    row.className = 'list-row';
+    row.className = 'list-row week-row';
     if (week.totalChange > 0) row.classList.add('profit');
     if (week.totalChange < 0) row.classList.add('loss');
     const hasEntries = week.recordedDays > 0;
@@ -924,18 +1064,47 @@ function renderWeek() {
     const subLabel = hasEntries
       ? `${week.recordedDays} recorded day${week.recordedDays === 1 ? '' : 's'}`
       : 'No entries recorded';
-    row.innerHTML = `
-      <div class="row-main">
-        <div class="row-title">${rangeLabel}</div>
-        <div class="row-sub">${subLabel}</div>
-      </div>
-      <div class="row-value">
-        <strong>${changeText}</strong>
-        <span>${pctText}</span>
-        ${cashHtml}
-        ${tradesHtml}
-      </div>
+    const toggle = document.createElement('button');
+    toggle.className = 'collapse-btn';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = '▸';
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = `
+      <div class="row-title">${rangeLabel}</div>
+      <div class="row-sub">${subLabel}</div>
     `;
+    const value = document.createElement('div');
+    value.className = 'row-value';
+    value.innerHTML = `
+      <strong>${changeText}</strong>
+      <span>${pctText}</span>
+      ${cashHtml}
+      ${tradesHtml}
+    `;
+    row.append(toggle, main, value);
+
+    const detail = document.createElement('div');
+    detail.className = 'week-detail hidden';
+    const summary = summarizeWeek(week.entries || []);
+    const tradeList = (week.trades || []).map(t => `${t.symbol || '—'} ${t.tradeType || ''} ${t.status || ''}`.trim());
+    detail.innerHTML = `
+      <div class="week-detail-grid">
+        <div><strong>Cash flow</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
+        <div><strong>Realized P&L</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
+        <div><strong>Trades</strong><span>${summary.totalTrades || 0}</span></div>
+      </div>
+      ${tradeList.length
+        ? `<div class="week-trades">${tradeList.map(t => `<span class="tag-chip">${t}</span>`).join('')}</div>`
+        : `<p class="tool-note">No trades recorded this week.</p>`}
+    `;
+    row.appendChild(detail);
+
+    toggle.addEventListener('click', () => {
+      const nowHidden = detail.classList.toggle('hidden');
+      toggle.setAttribute('aria-expanded', String(!nowHidden));
+      toggle.textContent = nowHidden ? '▸' : '▾';
+    });
     grid.appendChild(row);
   });
 }
@@ -1068,6 +1237,7 @@ function render() {
   renderMetrics();
   renderRiskCalculator();
   renderActiveTrades();
+  renderPortfolioTrend();
   renderView();
   renderSummary();
 }
@@ -1167,6 +1337,23 @@ function renderTradeList(trades = []) {
       <span class="trade-badge">Risk/share ${perShareDisplay}</span>
     `;
     pill.appendChild(badges);
+    const tags = document.createElement('div');
+    tags.className = 'tag-chips';
+    const addChip = (label, tone = '') => {
+      const chip = document.createElement('span');
+      chip.className = `tag-chip ${tone}`;
+      chip.textContent = label;
+      tags.appendChild(chip);
+    };
+    if (trade.tradeType) addChip(trade.tradeType);
+    if (trade.assetClass) addChip(trade.assetClass);
+    if (trade.strategyTag) addChip(trade.strategyTag);
+    if (trade.marketCondition) addChip(trade.marketCondition);
+    (trade.setupTags || []).forEach(tag => addChip(tag));
+    (trade.emotionTags || []).forEach(tag => addChip(tag));
+    if (tags.childElementCount) {
+      pill.appendChild(tags);
+    }
     if (trade.status === 'closed' && Number.isFinite(trade.closePrice)) {
       const closed = document.createElement('div');
       closed.className = 'trade-meta';
@@ -1305,6 +1492,13 @@ function openEntryModal(dateStr, existingEntry = null) {
       }
     };
   }
+  const closeBtn = $('#profit-close-btn');
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      modal.classList.add('hidden');
+    };
+    closeBtn.focus();
+  }
 }
 
 function bindControls() {
@@ -1345,6 +1539,14 @@ function bindControls() {
 
   $('#profile-btn')?.addEventListener('click', () => {
     window.location.href = '/profile.html';
+  });
+
+  $('#analytics-btn')?.addEventListener('click', () => {
+    window.location.href = '/analytics.html';
+  });
+
+  $('#trades-btn')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
   });
 
   $('#portfolio-btn')?.addEventListener('click', () => {
@@ -1400,6 +1602,16 @@ function bindControls() {
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
   });
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pct = Number(btn.dataset.riskPct);
+      if (!Number.isFinite(pct) || pct <= 0) return;
+      state.riskPct = pct;
+      const pctInput = $('#risk-percent-input');
+      if (pctInput) pctInput.value = String(pct);
+      renderRiskCalculator();
+    });
+  });
   $('#risk-log-btn')?.addEventListener('click', async () => {
     calculateRiskPosition(true);
     const errorText = $('#risk-error')?.textContent?.trim();
@@ -1410,6 +1622,12 @@ function bindControls() {
     const dateInput = $('#risk-date-input');
     const noteInput = $('#risk-trade-note');
     const symbolInput = $('#risk-symbol-input');
+    const tradeTypeInput = $('#trade-type-input');
+    const assetClassInput = $('#asset-class-input');
+    const strategyTagInput = $('#strategy-tag-input');
+    const marketConditionInput = $('#market-condition-input');
+    const screenshotInput = $('#screenshot-url-input');
+    const roundingSelect = $('#risk-rounding-select');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1423,7 +1641,18 @@ function bindControls() {
       currency: state.riskCurrency,
       symbol: symbolInput?.value,
       date: dateInput?.value,
-      note: noteInput?.value || undefined
+      note: noteInput?.value || undefined,
+      direction: state.direction,
+      fees: 0,
+      slippage: 0,
+      rounding: roundingSelect?.value || 'fractional',
+      tradeType: tradeTypeInput?.value,
+      assetClass: assetClassInput?.value,
+      strategyTag: strategyTagInput?.value,
+      marketCondition: marketConditionInput?.value,
+      setupTags: getSelectedTags('setup-tag'),
+      emotionTags: getSelectedTags('emotion-tag'),
+      screenshotUrl: screenshotInput?.value || undefined
     };
     try {
       await api('/api/trades', {
@@ -1447,14 +1676,31 @@ function bindControls() {
       }
     }
   });
-  $$('#risk-currency-toggle button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const cur = btn.dataset.riskCurrency;
-      if (!cur || !['GBP', 'USD'].includes(cur)) return;
-      state.riskCurrency = cur;
-      renderRiskCalculator();
-    });
+  $('#risk-calc-currency')?.addEventListener('change', (e) => {
+    const cur = e.target.value;
+    if (!['GBP', 'USD'].includes(cur)) return;
+    state.riskCurrency = cur;
+    renderRiskCalculator();
   });
+  $('#risk-direction-select')?.addEventListener('change', (e) => {
+    const dir = e.target.value === 'short' ? 'short' : 'long';
+    state.direction = dir;
+    renderRiskCalculator();
+  });
+  $('#risk-rounding-select')?.addEventListener('change', (e) => {
+    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
+    renderRiskCalculator();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      $('#profit-modal')?.classList.add('hidden');
+    }
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 async function init() {
@@ -1471,4 +1717,6 @@ async function init() {
   render();
 }
 
-window.addEventListener('DOMContentLoaded', init);
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', init);
+}
