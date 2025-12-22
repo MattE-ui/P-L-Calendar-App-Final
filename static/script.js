@@ -549,8 +549,8 @@ function calculateRiskPosition(showErrors = false) {
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
   const direction = state.direction || 'long';
-  const fees = Number($('#risk-fees-input')?.value) || 0;
-  const slippage = Number($('#risk-slippage-input')?.value) || 0;
+  const fees = 0;
+  const slippage = 0;
   const allowFractional = state.rounding !== 'whole';
 
   let error = '';
@@ -1627,8 +1627,6 @@ function bindControls() {
     const strategyTagInput = $('#strategy-tag-input');
     const marketConditionInput = $('#market-condition-input');
     const screenshotInput = $('#screenshot-url-input');
-    const feesInput = $('#risk-fees-input');
-    const slippageInput = $('#risk-slippage-input');
     const roundingSelect = $('#risk-rounding-select');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
@@ -1645,8 +1643,8 @@ function bindControls() {
       date: dateInput?.value,
       note: noteInput?.value || undefined,
       direction: state.direction,
-      fees: Number(feesInput?.value) || 0,
-      slippage: Number(slippageInput?.value) || 0,
+      fees: 0,
+      slippage: 0,
       rounding: roundingSelect?.value || 'fractional',
       tradeType: tradeTypeInput?.value,
       assetClass: assetClassInput?.value,
