@@ -1686,14 +1686,6 @@ function bindControls() {
       $('#profit-modal')?.classList.add('hidden');
     }
   });
-  $$('#risk-direction-toggle button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const dir = btn.dataset.direction;
-      if (!dir || !['long', 'short'].includes(dir)) return;
-      state.direction = dir;
-      renderRiskCalculator();
-    });
-  });
   $('#risk-rounding-select')?.addEventListener('change', (e) => {
     state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
     renderRiskCalculator();
@@ -1704,6 +1696,10 @@ function bindControls() {
       $('#profit-modal')?.classList.add('hidden');
     }
   });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {

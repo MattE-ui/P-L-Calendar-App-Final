@@ -36,6 +36,11 @@ body {
   gap: 20px;
   align-items: start;
 }
+.column-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
 .center-column { display: flex; flex-direction: column; gap: 14px; }
 .side-column { display: flex; flex-direction: column; gap: 14px; }
 .hero {
