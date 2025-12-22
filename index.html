@@ -12,6 +12,8 @@
     <h1>P&L Calendar</h1>
     <div class="spacer"></div>
     <div id="portfolio-display" class="portfolio-pill"></div>
+    <button id="analytics-btn" class="ghost">Analytics</button>
+    <button id="trades-btn" class="ghost">Trades</button>
     <button id="profile-btn" class="ghost">Profile</button>
     <button id="portfolio-btn" class="ghost">Portfolio</button>
     <button id="logout-btn" class="danger ghost">Logout</button>
@@ -130,6 +132,66 @@
         <div class="tool-field">
           <label for="risk-trade-note">Trade note (optional)</label>
           <textarea id="risk-trade-note" rows="2" placeholder="Ticker, strategy, or notes"></textarea>
+        </div>
+        <div class="tool-field">
+          <label for="trade-type-input">Trade type</label>
+          <select id="trade-type-input">
+            <option value="day">Day</option>
+            <option value="scalp">Scalp</option>
+            <option value="swing">Swing</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="asset-class-input">Asset class</label>
+          <select id="asset-class-input">
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+            <option value="forex">Forex</option>
+            <option value="crypto">Crypto</option>
+            <option value="futures">Futures</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="strategy-tag-input">Strategy tag</label>
+          <input id="strategy-tag-input" type="text" placeholder="e.g. Earnings breakout">
+        </div>
+        <div class="tool-field">
+          <label for="market-condition-input">Market condition</label>
+          <select id="market-condition-input">
+            <option value="">Select market condition</option>
+            <option value="bull">Bull</option>
+            <option value="bear">Bear</option>
+            <option value="range">Range</option>
+            <option value="volatile">Volatile</option>
+            <option value="news-driven">News-driven</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label>Setup tags</label>
+          <div class="checkbox-grid" id="setup-tag-options">
+            <label><input type="checkbox" name="setup-tag" value="breakout"> Breakout</label>
+            <label><input type="checkbox" name="setup-tag" value="pullback"> Pullback</label>
+            <label><input type="checkbox" name="setup-tag" value="mean reversion"> Mean reversion</label>
+            <label><input type="checkbox" name="setup-tag" value="trend"> Trend</label>
+            <label><input type="checkbox" name="setup-tag" value="news"> News</label>
+            <label><input type="checkbox" name="setup-tag" value="momentum"> Momentum</label>
+          </div>
+        </div>
+        <div class="tool-field">
+          <label>Emotion tags</label>
+          <div class="checkbox-grid" id="emotion-tag-options">
+            <label><input type="checkbox" name="emotion-tag" value="FOMO"> FOMO</label>
+            <label><input type="checkbox" name="emotion-tag" value="revenge"> Revenge</label>
+            <label><input type="checkbox" name="emotion-tag" value="disciplined"> Disciplined</label>
+            <label><input type="checkbox" name="emotion-tag" value="hesitant"> Hesitant</label>
+            <label><input type="checkbox" name="emotion-tag" value="confident"> Confident</label>
+          </div>
+        </div>
+        <div class="tool-field">
+          <label for="screenshot-url-input">Screenshot or chart URL</label>
+          <input id="screenshot-url-input" type="url" placeholder="https://...">
         </div>
         <div class="tool-actions log-actions">
           <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
