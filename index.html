@@ -20,225 +20,233 @@
   </header>
 
   <main class="container">
-    <div id="view-controls">
-      <div class="control-group">
-        <button data-view="day">Day</button>
-        <button data-view="week">Week</button>
-        <button data-view="month" class="active">Month</button>
-        <button data-view="year">Year</button>
+    <div class="dashboard-grid">
+      <div class="side-column">
+        <section id="risk-card" class="tool-card">
+          <div class="tool-header">
+            <div>
+              <p class="tool-overline">Risk calculator</p>
+              <h3>Size your next trade</h3>
+              <p class="tool-sub">Use your balance, entry, stop, and risk to find a position size.</p>
+            </div>
+            <div class="tool-portfolio">
+              <span>Portfolio</span>
+              <strong id="risk-portfolio-display">£0.00</strong>
+            </div>
+          </div>
+          <div class="tool-grid">
+            <div class="tool-field">
+              <label for="risk-symbol-input">Ticker / symbol</label>
+              <input id="risk-symbol-input" type="text" placeholder="e.g. AAPL">
+            </div>
+            <div class="tool-field">
+              <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
+              <input id="risk-entry-input" type="number" step="0.0001" min="0">
+            </div>
+            <div class="tool-field">
+              <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
+              <input id="risk-stop-input" type="number" step="0.0001" min="0">
+            </div>
+            <div class="tool-field">
+              <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
+              <input id="risk-percent-input" type="number" step="0.1" min="0.01" value="1">
+            </div>
+            <div class="tool-field">
+              <label>Direction</label>
+              <div class="chip-toggle" id="risk-direction-toggle" role="group" aria-label="Trade direction">
+                <button data-direction="long" class="active">Long</button>
+                <button data-direction="short">Short</button>
+              </div>
+            </div>
+            <div class="tool-field">
+              <label for="risk-currency-toggle">Risk calculator currency</label>
+              <div class="chip-toggle" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
+                <button data-risk-currency="GBP" class="active">GBP (£)</button>
+                <button data-risk-currency="USD">USD ($)</button>
+              </div>
+              <p class="tool-note">Calculator currency can differ from the portfolio display.</p>
+            </div>
+            <div class="tool-field">
+              <label for="risk-fees-input">Fees (flat, in calculator currency)</label>
+              <input id="risk-fees-input" type="number" step="0.01" min="0" placeholder="0.00">
+            </div>
+            <div class="tool-field">
+              <label for="risk-slippage-input">Slippage per unit (price)</label>
+              <input id="risk-slippage-input" type="number" step="0.0001" min="0" placeholder="0.00">
+            </div>
+            <div class="tool-field">
+              <label for="risk-rounding-select">Rounding</label>
+              <select id="risk-rounding-select">
+                <option value="fractional">Allow fractional</option>
+                <option value="whole">Whole units only</option>
+              </select>
+            </div>
+            <div class="tool-actions">
+              <button id="risk-calc-btn" class="primary">Calculate</button>
+              <div id="risk-error" class="error" aria-live="polite"></div>
+            </div>
+          </div>
+          <div class="tool-results" id="risk-results">
+            <div class="tool-result">
+              <p>Risk amount</p>
+              <strong id="risk-amount-display">£0.00</strong>
+              <span id="risk-amount-note" class="tool-note"></span>
+            </div>
+            <div class="tool-result">
+              <p>Position size</p>
+              <strong id="risk-position-display">£0.00</strong>
+              <span id="risk-position-note" class="tool-note"></span>
+            </div>
+            <div class="tool-result">
+              <p>Shares / units</p>
+              <strong id="risk-shares-display">0</strong>
+              <span id="risk-share-note" class="tool-note"></span>
+            </div>
+            <div class="tool-result">
+              <p>Risk per share</p>
+              <strong id="risk-per-share-display">£0.00</strong>
+              <span id="risk-per-share-note" class="tool-note"></span>
+            </div>
+          </div>
+          <div class="tool-grid">
+            <div class="tool-field">
+              <label for="risk-date-input">Log trade to calendar</label>
+              <input id="risk-date-input" type="date">
+              <p class="tool-note">Defaults to today; pick another day if you’re backfilling.</p>
+            </div>
+            <div class="tool-field">
+              <label for="risk-trade-note">Trade note (optional)</label>
+              <textarea id="risk-trade-note" rows="2" placeholder="Ticker, strategy, or notes"></textarea>
+            </div>
+            <div class="tool-field">
+              <label for="trade-type-input">Trade type</label>
+              <select id="trade-type-input">
+                <option value="day">Day</option>
+                <option value="scalp">Scalp</option>
+                <option value="swing">Swing</option>
+                <option value="position">Position</option>
+              </select>
+            </div>
+            <div class="tool-field">
+              <label for="asset-class-input">Asset class</label>
+              <select id="asset-class-input">
+                <option value="stocks">Stocks</option>
+                <option value="options">Options</option>
+                <option value="forex">Forex</option>
+                <option value="crypto">Crypto</option>
+                <option value="futures">Futures</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="tool-field">
+              <label for="strategy-tag-input">Strategy tag</label>
+              <input id="strategy-tag-input" type="text" placeholder="e.g. Earnings breakout">
+            </div>
+            <div class="tool-field">
+              <label for="market-condition-input">Market condition</label>
+              <select id="market-condition-input">
+                <option value="">Select market condition</option>
+                <option value="bull">Bull</option>
+                <option value="bear">Bear</option>
+                <option value="range">Range</option>
+                <option value="volatile">Volatile</option>
+                <option value="news-driven">News-driven</option>
+              </select>
+            </div>
+            <div class="tool-field">
+              <label>Setup tags</label>
+              <div class="checkbox-grid" id="setup-tag-options">
+                <label><input type="checkbox" name="setup-tag" value="breakout"> Breakout</label>
+                <label><input type="checkbox" name="setup-tag" value="pullback"> Pullback</label>
+                <label><input type="checkbox" name="setup-tag" value="mean reversion"> Mean reversion</label>
+                <label><input type="checkbox" name="setup-tag" value="trend"> Trend</label>
+                <label><input type="checkbox" name="setup-tag" value="news"> News</label>
+                <label><input type="checkbox" name="setup-tag" value="momentum"> Momentum</label>
+              </div>
+            </div>
+            <div class="tool-field">
+              <label>Emotion tags</label>
+              <div class="checkbox-grid" id="emotion-tag-options">
+                <label><input type="checkbox" name="emotion-tag" value="FOMO"> FOMO</label>
+                <label><input type="checkbox" name="emotion-tag" value="revenge"> Revenge</label>
+                <label><input type="checkbox" name="emotion-tag" value="disciplined"> Disciplined</label>
+                <label><input type="checkbox" name="emotion-tag" value="hesitant"> Hesitant</label>
+                <label><input type="checkbox" name="emotion-tag" value="confident"> Confident</label>
+              </div>
+            </div>
+            <div class="tool-field">
+              <label for="screenshot-url-input">Screenshot or chart URL</label>
+              <input id="screenshot-url-input" type="url" placeholder="https://...">
+            </div>
+            <div class="tool-actions log-actions">
+              <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
+              <div id="risk-log-status" class="error" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="control-group end">
-        <select id="period-select" aria-label="Period selector"></select>
-        <select id="currency-select" aria-label="Currency selector">
-          <option value="GBP">GBP (£)</option>
-          <option value="USD">USD ($)</option>
-        </select>
+
+      <div class="center-column">
+        <div id="view-controls">
+          <div class="control-group">
+            <button data-view="day">Day</button>
+            <button data-view="week">Week</button>
+            <button data-view="month" class="active">Month</button>
+            <button data-view="year">Year</button>
+          </div>
+          <div class="control-group end">
+            <select id="period-select" aria-label="Period selector"></select>
+            <select id="currency-select" aria-label="Currency selector">
+              <option value="GBP">GBP (£)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+          </div>
+        </div>
+
+        <section class="title-wrap">
+          <h2 id="title"></h2>
+          <div id="avg" class="avg"></div>
+        </section>
+
+        <section id="key-metrics" class="key-metrics">
+          <article class="metric-card" id="metric-portfolio">
+            <h3>Current balance</h3>
+            <div class="metric-value" id="metric-portfolio-value">£0.00</div>
+            <div class="metric-sub" id="metric-portfolio-sub"></div>
+          </article>
+          <article class="metric-card" id="metric-net-deposits">
+            <h3>Net deposits</h3>
+            <div class="metric-value" id="metric-net-deposits-value">£0.00</div>
+            <div class="metric-sub" id="metric-net-deposits-sub"></div>
+          </article>
+          <article class="metric-card" id="metric-net-performance">
+            <h3>Net performance</h3>
+            <div class="metric-value" id="metric-net-performance-value">£0.00</div>
+            <div class="metric-sub" id="metric-net-performance-sub"></div>
+          </article>
+        </section>
+
+        <section id="grid" class="grid"></section>
+      </div>
+
+      <div class="side-column">
+        <section id="active-trades-card" class="tool-card">
+          <div class="tool-header">
+            <div>
+              <p class="tool-overline">Active trades</p>
+              <h3>Live positions & PnL</h3>
+              <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
+            </div>
+            <div class="tool-portfolio">
+              <span>Live open PnL</span>
+              <strong id="live-pnl-display">£0.00</strong>
+            </div>
+          </div>
+          <div id="active-trade-list" class="trade-list"></div>
+          <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
+        </section>
       </div>
     </div>
-
-    <section class="title-wrap">
-      <h2 id="title"></h2>
-      <div id="avg" class="avg"></div>
-    </section>
-
-    <section id="key-metrics" class="key-metrics">
-      <article class="metric-card" id="metric-portfolio">
-        <h3>Current balance</h3>
-        <div class="metric-value" id="metric-portfolio-value">£0.00</div>
-        <div class="metric-sub" id="metric-portfolio-sub"></div>
-      </article>
-      <article class="metric-card" id="metric-net-deposits">
-        <h3>Net deposits</h3>
-        <div class="metric-value" id="metric-net-deposits-value">£0.00</div>
-        <div class="metric-sub" id="metric-net-deposits-sub"></div>
-      </article>
-      <article class="metric-card" id="metric-net-performance">
-        <h3>Net performance</h3>
-        <div class="metric-value" id="metric-net-performance-value">£0.00</div>
-        <div class="metric-sub" id="metric-net-performance-sub"></div>
-      </article>
-    </section>
-
-    <section id="risk-card" class="tool-card">
-      <div class="tool-header">
-        <div>
-          <p class="tool-overline">Risk calculator</p>
-          <h3>Size your next trade</h3>
-          <p class="tool-sub">Use your balance, entry, stop, and risk to find a position size.</p>
-        </div>
-        <div class="tool-portfolio">
-          <span>Portfolio</span>
-          <strong id="risk-portfolio-display">£0.00</strong>
-        </div>
-      </div>
-      <div class="tool-grid">
-        <div class="tool-field">
-          <label for="risk-symbol-input">Ticker / symbol</label>
-          <input id="risk-symbol-input" type="text" placeholder="e.g. AAPL">
-        </div>
-        <div class="tool-field">
-          <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
-          <input id="risk-entry-input" type="number" step="0.0001" min="0">
-        </div>
-        <div class="tool-field">
-          <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
-          <input id="risk-stop-input" type="number" step="0.0001" min="0">
-        </div>
-        <div class="tool-field">
-          <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
-          <input id="risk-percent-input" type="number" step="0.1" min="0.01" value="1">
-        </div>
-        <div class="tool-field">
-          <label>Direction</label>
-          <div class="chip-toggle" id="risk-direction-toggle" role="group" aria-label="Trade direction">
-            <button data-direction="long" class="active">Long</button>
-            <button data-direction="short">Short</button>
-          </div>
-        </div>
-        <div class="tool-field">
-          <label for="risk-currency-toggle">Risk calculator currency</label>
-          <div class="chip-toggle" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
-            <button data-risk-currency="GBP" class="active">GBP (£)</button>
-            <button data-risk-currency="USD">USD ($)</button>
-          </div>
-          <p class="tool-note">Calculator currency can differ from the portfolio display.</p>
-        </div>
-        <div class="tool-field">
-          <label for="risk-fees-input">Fees (flat, in calculator currency)</label>
-          <input id="risk-fees-input" type="number" step="0.01" min="0" placeholder="0.00">
-        </div>
-        <div class="tool-field">
-          <label for="risk-slippage-input">Slippage per unit (price)</label>
-          <input id="risk-slippage-input" type="number" step="0.0001" min="0" placeholder="0.00">
-        </div>
-        <div class="tool-field">
-          <label for="risk-rounding-select">Rounding</label>
-          <select id="risk-rounding-select">
-            <option value="fractional">Allow fractional</option>
-            <option value="whole">Whole units only</option>
-          </select>
-        </div>
-        <div class="tool-actions">
-          <button id="risk-calc-btn" class="primary">Calculate</button>
-          <div id="risk-error" class="error" aria-live="polite"></div>
-        </div>
-      </div>
-      <div class="tool-results" id="risk-results">
-        <div class="tool-result">
-          <p>Risk amount</p>
-          <strong id="risk-amount-display">£0.00</strong>
-          <span id="risk-amount-note" class="tool-note"></span>
-        </div>
-        <div class="tool-result">
-          <p>Position size</p>
-          <strong id="risk-position-display">£0.00</strong>
-          <span id="risk-position-note" class="tool-note"></span>
-        </div>
-        <div class="tool-result">
-          <p>Shares / units</p>
-          <strong id="risk-shares-display">0</strong>
-          <span id="risk-share-note" class="tool-note"></span>
-        </div>
-        <div class="tool-result">
-          <p>Risk per share</p>
-          <strong id="risk-per-share-display">£0.00</strong>
-          <span id="risk-per-share-note" class="tool-note"></span>
-        </div>
-      </div>
-      <div class="tool-grid">
-        <div class="tool-field">
-          <label for="risk-date-input">Log trade to calendar</label>
-          <input id="risk-date-input" type="date">
-          <p class="tool-note">Defaults to today; pick another day if you’re backfilling.</p>
-        </div>
-        <div class="tool-field">
-          <label for="risk-trade-note">Trade note (optional)</label>
-          <textarea id="risk-trade-note" rows="2" placeholder="Ticker, strategy, or notes"></textarea>
-        </div>
-        <div class="tool-field">
-          <label for="trade-type-input">Trade type</label>
-          <select id="trade-type-input">
-            <option value="day">Day</option>
-            <option value="scalp">Scalp</option>
-            <option value="swing">Swing</option>
-            <option value="position">Position</option>
-          </select>
-        </div>
-        <div class="tool-field">
-          <label for="asset-class-input">Asset class</label>
-          <select id="asset-class-input">
-            <option value="stocks">Stocks</option>
-            <option value="options">Options</option>
-            <option value="forex">Forex</option>
-            <option value="crypto">Crypto</option>
-            <option value="futures">Futures</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div class="tool-field">
-          <label for="strategy-tag-input">Strategy tag</label>
-          <input id="strategy-tag-input" type="text" placeholder="e.g. Earnings breakout">
-        </div>
-        <div class="tool-field">
-          <label for="market-condition-input">Market condition</label>
-          <select id="market-condition-input">
-            <option value="">Select market condition</option>
-            <option value="bull">Bull</option>
-            <option value="bear">Bear</option>
-            <option value="range">Range</option>
-            <option value="volatile">Volatile</option>
-            <option value="news-driven">News-driven</option>
-          </select>
-        </div>
-        <div class="tool-field">
-          <label>Setup tags</label>
-          <div class="checkbox-grid" id="setup-tag-options">
-            <label><input type="checkbox" name="setup-tag" value="breakout"> Breakout</label>
-            <label><input type="checkbox" name="setup-tag" value="pullback"> Pullback</label>
-            <label><input type="checkbox" name="setup-tag" value="mean reversion"> Mean reversion</label>
-            <label><input type="checkbox" name="setup-tag" value="trend"> Trend</label>
-            <label><input type="checkbox" name="setup-tag" value="news"> News</label>
-            <label><input type="checkbox" name="setup-tag" value="momentum"> Momentum</label>
-          </div>
-        </div>
-        <div class="tool-field">
-          <label>Emotion tags</label>
-          <div class="checkbox-grid" id="emotion-tag-options">
-            <label><input type="checkbox" name="emotion-tag" value="FOMO"> FOMO</label>
-            <label><input type="checkbox" name="emotion-tag" value="revenge"> Revenge</label>
-            <label><input type="checkbox" name="emotion-tag" value="disciplined"> Disciplined</label>
-            <label><input type="checkbox" name="emotion-tag" value="hesitant"> Hesitant</label>
-            <label><input type="checkbox" name="emotion-tag" value="confident"> Confident</label>
-          </div>
-        </div>
-        <div class="tool-field">
-          <label for="screenshot-url-input">Screenshot or chart URL</label>
-          <input id="screenshot-url-input" type="url" placeholder="https://...">
-        </div>
-        <div class="tool-actions log-actions">
-          <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
-          <div id="risk-log-status" class="error" aria-live="polite"></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="active-trades-card" class="tool-card">
-      <div class="tool-header">
-        <div>
-          <p class="tool-overline">Active trades</p>
-          <h3>Live positions & PnL</h3>
-          <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
-        </div>
-        <div class="tool-portfolio">
-          <span>Live open PnL</span>
-          <strong id="live-pnl-display">£0.00</strong>
-        </div>
-      </div>
-      <div id="active-trade-list" class="trade-list"></div>
-      <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
-    </section>
-
-    <section id="grid" class="grid"></section>
   </main>
 
   <!-- Profit edit modal -->
