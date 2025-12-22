@@ -6,33 +6,132 @@
   <title>P&L Calendar</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="static/style.css">
-  <script>
-  // redirect if not authenticated
-  if (!document.cookie.split('; ').find(row => row.startsWith('auth_token='))) {
-    window.location.href = '/login.html';
-  }
-  </script>
 </head>
 <body>
   <header class="topbar">
     <h1>P&L Calendar</h1>
     <div class="spacer"></div>
+    <div id="portfolio-display" class="portfolio-pill"></div>
+    <button id="profile-btn" class="ghost">Profile</button>
     <button id="portfolio-btn" class="ghost">Portfolio</button>
     <button id="logout-btn" class="danger ghost">Logout</button>
   </header>
 
   <main class="container">
     <div id="view-controls">
-      <button id="view-day"  data-view="day">Day</button>
-      <button id="view-week" data-view="week">Week</button>
-      <button id="view-month" data-view="month" class="active">Month</button>
-      <button id="view-year" data-view="year">Year</button>
-      <select id="month-select"></select>
+      <div class="control-group">
+        <button data-view="day">Day</button>
+        <button data-view="week">Week</button>
+        <button data-view="month" class="active">Month</button>
+        <button data-view="year">Year</button>
+      </div>
+      <div class="control-group end">
+        <select id="period-select" aria-label="Period selector"></select>
+        <select id="currency-select" aria-label="Currency selector">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
     </div>
 
     <section class="title-wrap">
       <h2 id="title"></h2>
       <div id="avg" class="avg"></div>
+    </section>
+
+    <section id="key-metrics" class="key-metrics">
+      <article class="metric-card" id="metric-portfolio">
+        <h3>Current balance</h3>
+        <div class="metric-value" id="metric-portfolio-value">£0.00</div>
+        <div class="metric-sub" id="metric-portfolio-sub"></div>
+      </article>
+      <article class="metric-card" id="metric-net-deposits">
+        <h3>Net deposits</h3>
+        <div class="metric-value" id="metric-net-deposits-value">£0.00</div>
+        <div class="metric-sub" id="metric-net-deposits-sub"></div>
+      </article>
+      <article class="metric-card" id="metric-net-performance">
+        <h3>Net performance</h3>
+        <div class="metric-value" id="metric-net-performance-value">£0.00</div>
+        <div class="metric-sub" id="metric-net-performance-sub"></div>
+      </article>
+    </section>
+
+    <section id="risk-card" class="tool-card">
+      <div class="tool-header">
+        <div>
+          <p class="tool-overline">Risk calculator</p>
+          <h3>Size your next trade</h3>
+          <p class="tool-sub">Use your balance, entry, stop, and risk to find a position size.</p>
+        </div>
+        <div class="tool-portfolio">
+          <span>Portfolio</span>
+          <strong id="risk-portfolio-display">£0.00</strong>
+        </div>
+      </div>
+      <div class="tool-grid">
+        <div class="tool-field">
+          <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
+          <input id="risk-entry-input" type="number" step="0.0001" min="0">
+        </div>
+        <div class="tool-field">
+          <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
+          <input id="risk-stop-input" type="number" step="0.0001" min="0">
+        </div>
+        <div class="tool-field">
+          <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
+          <input id="risk-percent-input" type="number" step="0.1" min="0.01" value="1">
+        </div>
+        <div class="tool-field">
+          <label for="risk-currency-toggle">Risk calculator currency</label>
+          <div class="chip-toggle" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
+            <button data-risk-currency="GBP" class="active">GBP (£)</button>
+            <button data-risk-currency="USD">USD ($)</button>
+          </div>
+          <p class="tool-note">Calculator currency can differ from the portfolio display.</p>
+        </div>
+        <div class="tool-actions">
+          <button id="risk-calc-btn" class="primary">Calculate</button>
+          <div id="risk-error" class="error" aria-live="polite"></div>
+        </div>
+      </div>
+      <div class="tool-results" id="risk-results">
+        <div class="tool-result">
+          <p>Risk amount</p>
+          <strong id="risk-amount-display">£0.00</strong>
+          <span id="risk-amount-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Position size</p>
+          <strong id="risk-position-display">£0.00</strong>
+          <span id="risk-position-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Shares / units</p>
+          <strong id="risk-shares-display">0</strong>
+          <span id="risk-share-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Risk per share</p>
+          <strong id="risk-per-share-display">£0.00</strong>
+          <span id="risk-per-share-note" class="tool-note"></span>
+        </div>
+      </div>
+      <div class="tool-grid">
+        <div class="tool-field">
+          <label for="risk-date-input">Log trade to calendar</label>
+          <input id="risk-date-input" type="date">
+          <p class="tool-note">Defaults to today; pick another day if you’re backfilling.</p>
+        </div>
+        <div class="tool-field">
+          <label for="risk-trade-note">Trade note (optional)</label>
+          <textarea id="risk-trade-note" rows="2" placeholder="Ticker, strategy, or notes"></textarea>
+        </div>
+        <div class="tool-actions log-actions">
+          <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
+          <div id="risk-log-status" class="error" aria-live="polite"></div>
+        </div>
+      </div>
     </section>
 
     <section id="grid" class="grid"></section>
@@ -42,8 +141,33 @@
   <div id="profit-modal" class="modal hidden">
     <div class="modal-card">
       <h3 id="modal-date"></h3>
-      <label>Profit/Loss (£)</label>
-      <input id="edit-profit-input" type="number" step="0.01">
+      <div class="modal-field">
+        <label id="profit-modal-label" for="edit-profit-input">Closing portfolio value</label>
+        <input id="edit-profit-input" type="number" step="0.01" min="0">
+      </div>
+      <div class="modal-field two-col">
+        <div>
+          <label id="cash-in-label" for="cash-in-input">Deposits</label>
+          <input id="cash-in-input" type="number" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div>
+          <label id="cash-out-label" for="cash-out-input">Withdrawals</label>
+          <input id="cash-out-input" type="number" step="0.01" min="0" placeholder="0.00">
+        </div>
+      </div>
+      <div class="modal-field">
+        <label for="note-input">Notes</label>
+        <textarea id="note-input" rows="3" placeholder="Add an optional note"></textarea>
+      </div>
+      <div class="modal-field" id="trade-section">
+        <div class="trade-header">
+          <div>
+            <p class="tool-overline">Logged trades</p>
+            <p class="tool-sub" id="trade-count-sub">No trades logged for this day.</p>
+          </div>
+        </div>
+        <div id="trade-list" class="trade-list"></div>
+      </div>
       <div class="row">
         <button id="save-profit-btn" class="primary">Save</button>
         <button id="delete-profit-btn" class="danger">Delete</button>
@@ -55,7 +179,7 @@
   <!-- Portfolio modal -->
   <div id="portfolio-modal" class="modal hidden">
     <div class="modal-card">
-      <h3>Portfolio value</h3>
+      <h3 id="portfolio-modal-title">Portfolio value</h3>
       <input id="portfolio-input" type="number" step="0.01">
       <div class="row">
         <button id="save-portfolio-btn" class="primary">Save</button>
