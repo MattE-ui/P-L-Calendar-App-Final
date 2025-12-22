@@ -551,7 +551,7 @@ function calculateRiskPosition(showErrors = false) {
   const direction = state.direction || 'long';
   const fees = 0;
   const slippage = 0;
-  const allowFractional = state.rounding !== 'whole';
+  const allowFractional = true;
 
   let error = '';
   const entryGBP = toGBP(entryRaw, riskCurrency);
@@ -615,8 +615,6 @@ function renderRiskCalculator() {
   if (assetClassInput && !assetClassInput.value) assetClassInput.value = 'stocks';
   const marketConditionInput = $('#market-condition-input');
   if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
-  const roundingSelect = $('#risk-rounding-select');
-  if (roundingSelect) roundingSelect.value = state.rounding;
   const entryLabel = $('#risk-entry-label');
   if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
   const stopLabel = $('#risk-stop-label');
@@ -1640,7 +1638,6 @@ function bindControls() {
     const strategyTagInput = $('#strategy-tag-input');
     const marketConditionInput = $('#market-condition-input');
     const screenshotInput = $('#screenshot-url-input');
-    const roundingSelect = $('#risk-rounding-select');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1658,7 +1655,7 @@ function bindControls() {
       direction: state.direction,
       fees: 0,
       slippage: 0,
-      rounding: roundingSelect?.value || 'fractional',
+      rounding: 'fractional',
       tradeType: tradeTypeInput?.value,
       assetClass: assetClassInput?.value,
       strategyTag: strategyTagInput?.value,
@@ -1689,35 +1686,11 @@ function bindControls() {
       }
     }
   });
-  $('#risk-rounding-select')?.addEventListener('change', (e) => {
-    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
-    renderRiskCalculator();
-  });
-
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       $('#profit-modal')?.classList.add('hidden');
     }
   });
-  $('#risk-direction-select')?.addEventListener('change', (e) => {
-    const dir = e.target.value === 'short' ? 'short' : 'long';
-    state.direction = dir;
-    renderRiskCalculator();
-  });
-  $('#risk-rounding-select')?.addEventListener('change', (e) => {
-    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
-    renderRiskCalculator();
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $('#profit-modal')?.classList.add('hidden');
-    }
-  });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
