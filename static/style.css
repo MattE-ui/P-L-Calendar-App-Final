@@ -17,7 +17,6 @@ body {
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
-  overflow: hidden;
 }
 
 .is-hidden { display: none !important; }
@@ -33,27 +32,22 @@ body {
 
 .container {
   max-width: 1600px;
-  margin: 12px auto 20px;
-  padding: 0 16px 20px;
-  height: calc(100vh - 150px);
+  margin: 12px auto 32px;
+  padding: 0 16px 32px;
 }
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 320px;
-  gap: 16px;
-  align-items: stretch;
-  height: 100%;
+  grid-template-columns: 320px minmax(0, 1.4fr) 360px;
+  gap: 18px;
+  align-items: start;
 }
 .column-panel {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: 100%;
-  overflow: auto;
 }
-.column-panel > .tool-card { height: 100%; }
-.center-column { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.side-column { display: flex; flex-direction: column; gap: 14px; height: 100%; }
+.center-column { display: flex; flex-direction: column; gap: 14px; }
+.side-column { display: flex; flex-direction: column; gap: 14px; }
 .center-panel {
   background: var(--card);
   border: 1px solid var(--border);
@@ -62,8 +56,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: 100%;
-  overflow: auto;
 }
 .hero {
   display: grid;

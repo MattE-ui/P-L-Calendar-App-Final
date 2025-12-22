@@ -1686,34 +1686,6 @@ function bindControls() {
       $('#profit-modal')?.classList.add('hidden');
     }
   });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $('#profit-modal')?.classList.add('hidden');
-    }
-  });
-  $('#risk-rounding-select')?.addEventListener('change', (e) => {
-    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
-    renderRiskCalculator();
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $('#profit-modal')?.classList.add('hidden');
-    }
-  });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
