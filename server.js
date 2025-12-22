@@ -1712,26 +1712,57 @@ app.post('/api/trades/close', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const journal = ensureTradeJournal(user);
+  const history = ensurePortfolioHistory(user);
+  const ratesPromise = fetchRates();
   let updated = false;
-  for (const trades of Object.values(journal)) {
+  let targetTrade = null;
+  for (const [dateKey, trades] of Object.entries(journal)) {
     for (const trade of trades || []) {
       if (trade.id === id && trade.status !== 'closed') {
         trade.status = 'closed';
         trade.closePrice = closePrice;
-        if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          trade.closeDate = date;
-        }
+        trade.closeDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
+          ? date
+          : dateKey;
+        targetTrade = { ...trade, date: dateKey };
         updated = true;
         break;
       }
     }
     if (updated) break;
   }
-  if (!updated) {
+  if (!updated || !targetTrade) {
     return res.status(404).json({ error: 'Trade not found' });
   }
-  saveDB(db);
-  res.json({ ok: true });
+  ratesPromise.then((rates) => {
+    const tradeCurrency = targetTrade.currency || 'GBP';
+    const pnlCurrency = (closePrice - Number(targetTrade.entry)) * Number(targetTrade.sizeUnits);
+    const pnlGBP = convertToGBP(pnlCurrency, tradeCurrency, rates);
+    const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
+    const closeDateKey = targetTrade.closeDate || targetTrade.date;
+    const ym = closeDateKey.slice(0, 7);
+    history[ym] ||= {};
+    const existing = history[ym][closeDateKey] || {};
+    const endRaw = Number(existing.end);
+    const cashIn = Number.isFinite(existing.cashIn) ? existing.cashIn : 0;
+    const cashOut = Number.isFinite(existing.cashOut) ? existing.cashOut : 0;
+    const note = typeof existing.note === 'string' ? existing.note.trim() : '';
+    const preBaseline = existing.preBaseline === true;
+    const baseEnd = Number.isFinite(endRaw) ? endRaw : (Number.isFinite(user.portfolio) ? user.portfolio : 0);
+    const end = baseEnd + pnlSafe;
+    const payload = preBaseline
+      ? { end, cashIn, cashOut, preBaseline: true }
+      : { end, cashIn, cashOut };
+    if (note) payload.note = note;
+    history[ym][closeDateKey] = payload;
+    refreshAnchors(user, history);
+    saveDB(db);
+    res.json({ ok: true, pnlGBP: pnlSafe });
+  }).catch((err) => {
+    console.error('Failed to compute PnL on trade close', err);
+    saveDB(db);
+    res.status(500).json({ error: 'Failed to apply trade close' });
+  });
 });
 
 app.get('/api/rates', auth, async (req,res)=>{
