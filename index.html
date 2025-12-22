@@ -8,15 +8,27 @@
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <h1>P&L Calendar</h1>
-    <div class="spacer"></div>
-    <div id="portfolio-display" class="portfolio-pill"></div>
-    <button id="analytics-btn" class="ghost">Analytics</button>
-    <button id="trades-btn" class="ghost">Trades</button>
-    <button id="profile-btn" class="ghost">Profile</button>
-    <button id="portfolio-btn" class="ghost">Portfolio</button>
-    <button id="logout-btn" class="danger ghost">Logout</button>
+  <header class="hero">
+    <div class="hero-left">
+      <h1>P&L Calendar</h1>
+      <p class="hero-sub">Trading journal & performance dashboard</p>
+    </div>
+    <div class="hero-center">
+      <div class="hero-card">
+        <p class="tool-overline">Portfolio value</p>
+        <div class="hero-value" id="header-portfolio-value">£0.00</div>
+        <div class="hero-subvalue" id="header-portfolio-sub"></div>
+      </div>
+    </div>
+    <div class="hero-right">
+      <div class="hero-actions">
+        <button id="analytics-btn" class="ghost">Analytics</button>
+        <button id="trades-btn" class="ghost">Trades</button>
+        <button id="profile-btn" class="ghost">Profile</button>
+        <button id="portfolio-btn" class="ghost">Portfolio</button>
+        <button id="logout-btn" class="danger ghost">Logout</button>
+      </div>
+    </div>
   </header>
 
   <main class="container">
@@ -241,6 +253,13 @@
               <span>Live open PnL</span>
               <strong id="live-pnl-display">£0.00</strong>
             </div>
+          </div>
+          <div class="mini-chart" id="portfolio-trend-card">
+            <div class="mini-chart-head">
+              <p class="tool-overline">Portfolio trend</p>
+              <span class="mini-chart-note">Last updates</span>
+            </div>
+            <div id="portfolio-trend" class="mini-bars"></div>
           </div>
           <div id="active-trade-list" class="trade-list"></div>
           <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
