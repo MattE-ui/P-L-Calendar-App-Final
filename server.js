@@ -1138,39 +1138,7 @@ app.post('/api/signup', async (req,res)=>{
   };
   ensureUserShape(db.users[username], username);
   saveDB(db);
-
-  const base = appBaseUrl(req);
-  const verifyLink = `${base}/api/auth/verify-email?token=${token}`;
-  try {
-    await sendMail({
-      to: email,
-      subject: 'Confirm your P&L Calendar account',
-      html: `<p>Welcome to the P&L Calendar!</p>
-        <p>Click the link below to confirm your email address and finish setting up your account:</p>
-        <p><a href="${verifyLink}">${verifyLink}</a></p>
-        <p>If you didn't request this, you can ignore this message.</p>`
-    });
-  } catch (mailError) {
-    console.error('Failed to send verification email:', mailError);
-    delete db.users[email];
-    delete db.verifications[token];
-    saveDB(db);
-    return res.status(500).json({ error: 'Unable to send verification email right now. Please try again.' });
-  }
-
-  const createdUser = db.users[email];
-  if (createdUser) {
-    if (!createdUser.security || typeof createdUser.security !== 'object') {
-      createdUser.security = {};
-    }
-    if (!createdUser.security.verification || typeof createdUser.security.verification !== 'object') {
-      createdUser.security.verification = {};
-    }
-    createdUser.security.verification.lastSentAt = new Date().toISOString();
-    saveDB(db);
-  }
-
-  res.json({ ok: true });
+  res.json({ ok: true, profileComplete: false });
 });
 
 app.post('/api/auth/resend-verification', async (req, res) => {
