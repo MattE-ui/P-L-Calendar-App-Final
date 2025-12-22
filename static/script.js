@@ -339,6 +339,113 @@ function computeLifetimeMetrics() {
   };
 }
 
+function getLatestPortfolioGBP() {
+  const latestMetric = Number(state.metrics?.latestGBP);
+  if (Number.isFinite(latestMetric) && latestMetric > 0) return latestMetric;
+  const portfolioVal = Number(state.portfolioGBP);
+  return Number.isFinite(portfolioVal) && portfolioVal > 0 ? portfolioVal : 0;
+}
+
+function setRiskOutputs(values = null) {
+  const riskAmountEl = $('#risk-amount-display');
+  const positionEl = $('#risk-position-display');
+  const sharesEl = $('#risk-shares-display');
+  const perShareEl = $('#risk-per-share-display');
+  const amountNote = $('#risk-amount-note');
+  const positionNote = $('#risk-position-note');
+  const shareNote = $('#risk-share-note');
+  const perShareNote = $('#risk-per-share-note');
+
+  if (!values) {
+    riskAmountEl && (riskAmountEl.textContent = '—');
+    positionEl && (positionEl.textContent = '—');
+    perShareEl && (perShareEl.textContent = '—');
+    sharesEl && (sharesEl.textContent = '0');
+    amountNote && (amountNote.textContent = '');
+    positionNote && (positionNote.textContent = '');
+    shareNote && (shareNote.textContent = '');
+    perShareNote && (perShareNote.textContent = '');
+    return;
+  }
+
+  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP } = values;
+  riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP));
+  positionEl && (positionEl.textContent = formatCurrency(positionGBP));
+  sharesEl && (sharesEl.textContent = Number.isFinite(shares) ? shares.toLocaleString() : '0');
+  perShareEl && (perShareEl.textContent = formatCurrency(perShareRiskGBP));
+  amountNote && (amountNote.textContent = `Risking ${riskPct.toFixed(2)}% of your portfolio`);
+  positionNote && (positionNote.textContent = shares > 0
+    ? `Rounded down to whole units at ${formatCurrency(entryGBP)}`
+    : 'Position too small for the chosen risk');
+  shareNote && (shareNote.textContent = shares > 0 ? 'Whole shares/units only' : '');
+  perShareNote && (perShareNote.textContent = 'Difference between entry and stop-loss');
+}
+
+function calculateRiskPosition(showErrors = false) {
+  const entryInput = $('#risk-entry-input');
+  const stopInput = $('#risk-stop-input');
+  const riskPctInput = $('#risk-percent-input');
+  const errorEl = $('#risk-error');
+  if (!entryInput || !stopInput || !riskPctInput) return;
+
+  const entryRaw = Number(entryInput.value);
+  const stopRaw = Number(stopInput.value);
+  const riskPct = Number(riskPctInput.value);
+  const portfolioGBP = getLatestPortfolioGBP();
+
+  let error = '';
+  if (!Number.isFinite(portfolioGBP) || portfolioGBP <= 0) {
+    error = 'Add your portfolio value first.';
+  } else if (!Number.isFinite(entryRaw) || entryRaw <= 0) {
+    error = 'Enter a valid entry price.';
+  } else if (!Number.isFinite(stopRaw) || stopRaw <= 0) {
+    error = 'Enter a valid stop-loss price.';
+  } else if (!Number.isFinite(riskPct) || riskPct <= 0) {
+    error = 'Enter a risk percentage above 0.';
+  }
+
+  const entryGBP = toGBP(entryRaw);
+  const stopGBP = toGBP(stopRaw);
+  const perShareRiskGBP = Math.abs(entryGBP - stopGBP);
+  if (!error && perShareRiskGBP === 0) {
+    error = 'Entry and stop-loss cannot be the same.';
+  }
+
+  if (errorEl) {
+    errorEl.textContent = showErrors ? error : '';
+  }
+
+  if (error) {
+    setRiskOutputs(null);
+    return;
+  }
+
+  const riskAmountGBP = portfolioGBP * (riskPct / 100);
+  const shares = perShareRiskGBP > 0 ? Math.floor(riskAmountGBP / perShareRiskGBP) : 0;
+  const positionGBP = shares * entryGBP;
+
+  setRiskOutputs({
+    riskAmountGBP,
+    positionGBP,
+    shares,
+    perShareRiskGBP,
+    riskPct: Number.isFinite(riskPct) ? riskPct : 0,
+    entryGBP
+  });
+}
+
+function renderRiskCalculator() {
+  const entryLabel = $('#risk-entry-label');
+  if (entryLabel) entryLabel.textContent = `Entry price (${state.currency})`;
+  const stopLabel = $('#risk-stop-label');
+  if (stopLabel) stopLabel.textContent = `Stop-loss price (${state.currency})`;
+  const portfolioEl = $('#risk-portfolio-display');
+  if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP());
+  const pctInput = $('#risk-percent-input');
+  if (pctInput && !pctInput.value) pctInput.value = '1';
+  calculateRiskPosition(false);
+}
+
 function setMetricTrend(el, value) {
   if (!el) return;
   const isPositive = Number.isFinite(value) && value > 0;
@@ -771,6 +878,7 @@ function render() {
   updatePeriodSelect();
   renderTitle();
   renderMetrics();
+  renderRiskCalculator();
   renderView();
   renderSummary();
 }
@@ -1019,6 +1127,11 @@ function bindControls() {
       console.warn(e);
     }
     window.location.href = '/login.html';
+  });
+
+  $('#risk-calc-btn')?.addEventListener('click', () => calculateRiskPosition(true));
+  ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
+    $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
   });
 }
 

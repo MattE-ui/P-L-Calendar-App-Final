@@ -57,6 +57,60 @@
       </article>
     </section>
 
+    <section id="risk-card" class="tool-card">
+      <div class="tool-header">
+        <div>
+          <p class="tool-overline">Risk calculator</p>
+          <h3>Size your next trade</h3>
+          <p class="tool-sub">Use your balance, entry, stop, and risk to find a position size.</p>
+        </div>
+        <div class="tool-portfolio">
+          <span>Portfolio</span>
+          <strong id="risk-portfolio-display">£0.00</strong>
+        </div>
+      </div>
+      <div class="tool-grid">
+        <div class="tool-field">
+          <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
+          <input id="risk-entry-input" type="number" step="0.0001" min="0">
+        </div>
+        <div class="tool-field">
+          <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
+          <input id="risk-stop-input" type="number" step="0.0001" min="0">
+        </div>
+        <div class="tool-field">
+          <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
+          <input id="risk-percent-input" type="number" step="0.1" min="0.01" value="1">
+        </div>
+        <div class="tool-actions">
+          <button id="risk-calc-btn" class="primary">Calculate</button>
+          <div id="risk-error" class="error" aria-live="polite"></div>
+        </div>
+      </div>
+      <div class="tool-results" id="risk-results">
+        <div class="tool-result">
+          <p>Risk amount</p>
+          <strong id="risk-amount-display">£0.00</strong>
+          <span id="risk-amount-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Position size</p>
+          <strong id="risk-position-display">£0.00</strong>
+          <span id="risk-position-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Shares / units</p>
+          <strong id="risk-shares-display">0</strong>
+          <span id="risk-share-note" class="tool-note"></span>
+        </div>
+        <div class="tool-result">
+          <p>Risk per share</p>
+          <strong id="risk-per-share-display">£0.00</strong>
+          <span id="risk-per-share-note" class="tool-note"></span>
+        </div>
+      </div>
+    </section>
+
     <section id="grid" class="grid"></section>
   </main>
 

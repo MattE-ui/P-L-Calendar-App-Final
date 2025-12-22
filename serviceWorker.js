@@ -1,5 +1,5 @@
 // Bump version when you change cached assets
-const CACHE_NAME = 'pl-calendar-cache-v17';
+const CACHE_NAME = 'pl-calendar-cache-v18';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/style.css',
