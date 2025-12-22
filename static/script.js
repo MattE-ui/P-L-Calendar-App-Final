@@ -604,12 +604,11 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
-  const directionSelect = $('#risk-direction-select');
-  if (directionSelect) {
-    const safeDirection = ['long', 'short'].includes(state.direction) ? state.direction : 'long';
-    state.direction = safeDirection;
-    directionSelect.value = safeDirection;
-  }
+  const safeDirection = ['long', 'short'].includes(state.direction) ? state.direction : 'long';
+  state.direction = safeDirection;
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.direction === safeDirection);
+  });
   const tradeTypeInput = $('#trade-type-input');
   if (tradeTypeInput && !tradeTypeInput.value) tradeTypeInput.value = 'day';
   const assetClassInput = $('#asset-class-input');
@@ -635,13 +634,12 @@ function renderRiskCalculator() {
   }
   const symbolInput = $('#risk-symbol-input');
   if (symbolInput && !symbolInput.value) symbolInput.value = '';
-  const riskCurrencySelect = $('#risk-calc-currency');
-  if (riskCurrencySelect) {
-    const allowedCurrencies = ['GBP', 'USD'];
-    const safeCurrency = allowedCurrencies.includes(state.riskCurrency) ? state.riskCurrency : 'GBP';
-    state.riskCurrency = safeCurrency;
-    riskCurrencySelect.value = safeCurrency;
-  }
+  const allowedCurrencies = ['GBP', 'USD'];
+  const safeCurrency = allowedCurrencies.includes(state.riskCurrency) ? state.riskCurrency : 'GBP';
+  state.riskCurrency = safeCurrency;
+  $$('#risk-currency-toggle button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.riskCurrency === safeCurrency);
+  });
   calculateRiskPosition(false);
 }
 
@@ -1598,7 +1596,6 @@ function bindControls() {
     window.location.href = '/login.html';
   });
 
-  $('#risk-calc-btn')?.addEventListener('click', () => calculateRiskPosition(true));
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
   });
@@ -1609,6 +1606,22 @@ function bindControls() {
       state.riskPct = pct;
       const pctInput = $('#risk-percent-input');
       if (pctInput) pctInput.value = String(pct);
+      renderRiskCalculator();
+    });
+  });
+  $$('#risk-currency-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cur = btn.dataset.riskCurrency;
+      if (!cur || !['GBP', 'USD'].includes(cur)) return;
+      state.riskCurrency = cur;
+      renderRiskCalculator();
+    });
+  });
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dir = btn.dataset.direction;
+      if (!dir || !['long', 'short'].includes(dir)) return;
+      state.direction = dir;
       renderRiskCalculator();
     });
   });
@@ -1676,11 +1689,15 @@ function bindControls() {
       }
     }
   });
-  $('#risk-calc-currency')?.addEventListener('change', (e) => {
-    const cur = e.target.value;
-    if (!['GBP', 'USD'].includes(cur)) return;
-    state.riskCurrency = cur;
+  $('#risk-rounding-select')?.addEventListener('change', (e) => {
+    state.rounding = e.target.value === 'whole' ? 'whole' : 'fractional';
     renderRiskCalculator();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      $('#profit-modal')?.classList.add('hidden');
+    }
   });
   $('#risk-direction-select')?.addEventListener('change', (e) => {
     const dir = e.target.value === 'short' ? 'short' : 'long';
@@ -1697,6 +1714,10 @@ function bindControls() {
       $('#profit-modal')?.classList.add('hidden');
     }
   });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {

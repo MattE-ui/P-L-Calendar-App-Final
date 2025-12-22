@@ -48,13 +48,15 @@
               <label for="risk-symbol-input">Ticker / symbol</label>
               <input id="risk-symbol-input" type="text" placeholder="e.g. AAPL">
             </div>
-            <div class="tool-field">
-              <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
-              <input id="risk-entry-input" type="number" step="0.0001" min="0">
-            </div>
-            <div class="tool-field">
-              <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
-              <input id="risk-stop-input" type="number" step="0.0001" min="0">
+            <div class="field-row">
+              <div class="tool-field">
+                <label id="risk-entry-label" for="risk-entry-input">Entry price (GBP)</label>
+                <input id="risk-entry-input" type="number" step="0.0001" min="0">
+              </div>
+              <div class="tool-field">
+                <label id="risk-stop-label" for="risk-stop-input">Stop-loss price (GBP)</label>
+                <input id="risk-stop-input" type="number" step="0.0001" min="0">
+              </div>
             </div>
             <div class="tool-field">
               <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
@@ -67,20 +69,22 @@
               </div>
               <input id="risk-percent-input" type="number" step="0.01" min="0.01" value="1" class="sr-only">
             </div>
-            <div class="tool-field">
-              <label for="risk-direction-select">Direction</label>
-              <select id="risk-direction-select">
-                <option value="long">Long</option>
-                <option value="short">Short</option>
-              </select>
-            </div>
-            <div class="tool-field">
-              <label for="risk-calc-currency">Risk calculator currency</label>
-              <select id="risk-calc-currency">
-                <option value="GBP">GBP (£)</option>
-                <option value="USD">USD ($)</option>
-              </select>
-              <p class="tool-note">Calculator currency can differ from the portfolio display.</p>
+            <div class="field-row">
+              <div class="tool-field">
+                <label>Direction</label>
+                <div class="chip-toggle inline" id="risk-direction-toggle" role="group" aria-label="Trade direction">
+                  <button data-direction="long" class="active" type="button">Long</button>
+                  <button data-direction="short" type="button">Short</button>
+                </div>
+              </div>
+              <div class="tool-field">
+                <label>Risk calculator currency</label>
+                <div class="chip-toggle inline" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
+                  <button data-risk-currency="GBP" class="active" type="button">GBP (£)</button>
+                  <button data-risk-currency="USD" type="button">USD ($)</button>
+                </div>
+                <p class="tool-note">Calculator currency can differ from the portfolio display.</p>
+              </div>
             </div>
             <div class="tool-field">
               <label for="risk-rounding-select">Rounding</label>
@@ -89,8 +93,7 @@
                 <option value="whole">Whole units only</option>
               </select>
             </div>
-            <div class="tool-actions">
-              <button id="risk-calc-btn" class="primary">Calculate</button>
+            <div class="tool-field full-span">
               <div id="risk-error" class="error" aria-live="polite"></div>
             </div>
           </div>
