@@ -198,6 +198,17 @@ select {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
+.field-row.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.grouped-toggle {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,.02);
+}
+.grouped-toggle label { margin-bottom: 2px; }
 .tool-field {
   display: flex;
   flex-direction: column;
