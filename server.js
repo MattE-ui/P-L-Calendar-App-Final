@@ -1756,6 +1756,54 @@ function normalizeTradeMeta(trade = {}) {
 }
 
 const marketCache = new Map();
+async function fetchYahooQuote(symbol) {
+  const baseUrls = [
+    'https://query1.finance.yahoo.com/v7/finance/quote',
+    'https://query2.finance.yahoo.com/v7/finance/quote'
+  ];
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const headers = {
+    'User-Agent': 'Mozilla/5.0',
+    'Accept': 'application/json,text/plain,*/*'
+  };
+  for (const baseUrl of baseUrls) {
+    const url = `${baseUrl}?symbols=${encodeURIComponent(trimmed)}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) continue;
+    const data = await res.json();
+    const quote = data?.quoteResponse?.result?.[0];
+    if (!quote) continue;
+    const price = quote?.regularMarketPrice
+      ?? quote?.postMarketPrice
+      ?? quote?.preMarketPrice
+      ?? quote?.regularMarketPreviousClose;
+    const currency = quote?.currency || 'GBP';
+    if (!Number.isFinite(price) || price <= 0) continue;
+    return { symbol: trimmed, price, currency };
+  }
+  throw new Error('Yahoo quote not available');
+}
+
+async function fetchStooqQuote(symbol) {
+  const trimmed = (symbol || '').trim();
+  if (!trimmed) throw new Error('Missing symbol');
+  const candidates = [trimmed, `${trimmed}.us`];
+  for (const candidate of candidates) {
+    const url = `https://stooq.com/q/l/?s=${encodeURIComponent(candidate.toLowerCase())}&f=sd2t2ohlcv&h&e=csv`;
+    const res = await fetch(url);
+    if (!res.ok) continue;
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) continue;
+    const cols = lines[1].split(',');
+    const price = Number(cols[6]);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    return { symbol: trimmed.toUpperCase(), price, currency: 'USD' };
+  }
+  throw new Error('Stooq quote not available');
+}
+
 async function fetchMarketPrice(symbol) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
@@ -1765,16 +1813,30 @@ async function fetchMarketPrice(symbol) {
   if (cached && (now - cached.at) < 5 * 60 * 1000) {
     return cached.quote;
   }
-  const baseUrl = process.env.MARKET_DATA_URL || 'https://query1.finance.yahoo.com/v7/finance/quote';
-  const url = `${baseUrl}?symbols=${encodeURIComponent(trimmed)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Market data error ${res.status}`);
-  const data = await res.json();
-  const quote = data?.quoteResponse?.result?.[0];
-  const price = quote?.regularMarketPrice;
-  const currency = quote?.currency || 'GBP';
-  if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid market price');
-  const normalized = { symbol: trimmed, price, currency };
+  let normalized = null;
+  if (process.env.MARKET_DATA_URL) {
+    const url = `${process.env.MARKET_DATA_URL}?symbols=${encodeURIComponent(trimmed)}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      const quote = data?.quoteResponse?.result?.[0];
+      const price = quote?.regularMarketPrice
+        ?? quote?.postMarketPrice
+        ?? quote?.preMarketPrice
+        ?? quote?.regularMarketPreviousClose;
+      const currency = quote?.currency || 'GBP';
+      if (Number.isFinite(price) && price > 0) {
+        normalized = { symbol: trimmed, price, currency };
+      }
+    }
+  }
+  if (!normalized) {
+    try {
+      normalized = await fetchYahooQuote(trimmed);
+    } catch (e) {
+      normalized = await fetchStooqQuote(trimmed);
+    }
+  }
   marketCache.set(cacheKey, { quote: normalized, at: now });
   return normalized;
 }
@@ -1806,6 +1868,9 @@ async function buildActiveTrades(user, rates = {}) {
     }
     const sizeUnits = Number(trade.sizeUnits);
     const entry = Number(trade.entry);
+    const direction = trade.direction === 'short' ? 'short' : 'long';
+    const slippage = Number(trade.slippage) || 0;
+    const feesCurrency = Number(trade.fees) || 0;
     const positionCurrency = Number.isFinite(livePrice) ? livePrice * sizeUnits : null;
     const positionGBP = Number.isFinite(positionCurrency)
       ? convertToGBP(positionCurrency, liveCurrency, rates)
@@ -1813,8 +1878,22 @@ async function buildActiveTrades(user, rates = {}) {
     const entryValueGBP = Number.isFinite(entry) && Number.isFinite(sizeUnits)
       ? convertToGBP(entry * sizeUnits, trade.currency || 'GBP', rates)
       : null;
-    const unrealizedGBP = (positionGBP !== null && entryValueGBP !== null)
-      ? positionGBP - entryValueGBP
+    const effectiveLive = Number.isFinite(livePrice)
+      ? (direction === 'short' ? livePrice + slippage : livePrice - slippage)
+      : null;
+    const pnlCurrency = (Number.isFinite(effectiveLive) && Number.isFinite(entry) && Number.isFinite(sizeUnits))
+      ? (direction === 'short'
+        ? (entry - effectiveLive) * sizeUnits
+        : (effectiveLive - entry) * sizeUnits)
+      : null;
+    const pnlGBP = pnlCurrency !== null
+      ? convertToGBP(pnlCurrency, trade.currency || liveCurrency || 'GBP', rates)
+      : null;
+    const feesGBP = Number.isFinite(feesCurrency)
+      ? convertToGBP(feesCurrency, trade.currency || 'GBP', rates)
+      : null;
+    const unrealizedGBP = (pnlGBP !== null)
+      ? (feesGBP !== null ? pnlGBP - feesGBP : pnlGBP)
       : null;
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;
