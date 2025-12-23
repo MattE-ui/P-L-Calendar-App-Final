@@ -695,10 +695,6 @@ function renderActiveTrades() {
     editToggle.addEventListener('click', () => {
       openEditTradeModal(trade);
     });
-    const editToggleWrap = document.createElement('div');
-    editToggleWrap.className = 'close-row edit-toggle-row';
-    editToggleWrap.appendChild(editToggle);
-    pill.appendChild(editToggleWrap);
     const closeRow = document.createElement('div');
     closeRow.className = 'close-row';
     const priceInput = document.createElement('input');
@@ -709,6 +705,9 @@ function renderActiveTrades() {
     const dateInput = document.createElement('input');
     dateInput.type = 'date';
     dateInput.valueAsDate = new Date();
+    const editRow = document.createElement('div');
+    editRow.className = 'close-row';
+    editRow.append(priceInput, editToggle);
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
@@ -733,8 +732,8 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(priceInput, dateInput, closeBtn, status);
-    pill.appendChild(closeRow);
+    closeRow.append(dateInput, closeBtn, status);
+    pill.append(editRow, closeRow);
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
