@@ -88,6 +88,7 @@ body {
   gap: 12px;
   max-width: 720px;
   margin: 0 auto;
+  justify-self: center;
 }
 .hero-metrics .metric-card {
   padding: 12px 14px;
