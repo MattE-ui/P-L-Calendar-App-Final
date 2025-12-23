@@ -14,6 +14,23 @@
         <h1>P&L Calendar</h1>
         <p class="hero-sub">Trading journal & performance dashboard</p>
       </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
       <div class="hero-right">
         <div class="hero-actions">
           <button id="quick-settings-btn" class="ghost">Quick Settings</button>
@@ -24,23 +41,6 @@
           <button id="logout-btn" class="danger ghost">Logout</button>
         </div>
       </div>
-    </div>
-    <div class="hero-metrics key-metrics">
-      <article class="metric-card hero-card" id="hero-portfolio">
-        <h3>Portfolio value</h3>
-        <div class="metric-value" id="header-portfolio-value">£0.00</div>
-        <div class="metric-sub" id="header-portfolio-sub"></div>
-      </article>
-      <article class="metric-card" id="hero-net-deposits">
-        <h3>Net deposits</h3>
-        <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
-        <div class="metric-sub" id="hero-net-deposits-sub"></div>
-      </article>
-      <article class="metric-card" id="hero-net-performance">
-        <h3>Net performance</h3>
-        <div class="metric-value" id="hero-net-performance-value">£0.00</div>
-        <div class="metric-sub" id="hero-net-performance-sub"></div>
-      </article>
     </div>
   </header>
 
@@ -195,6 +195,34 @@
       </div>
     </div>
   </main>
+
+  <!-- Quick settings modal -->
+  <div id="quick-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="qs-risk-select">Default risk per trade</label>
+        <select id="qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="qs-currency-select">Default currency</label>
+        <select id="qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="save-qs-btn" class="primary">Save</button>
+        <button id="close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Quick settings modal -->
   <div id="quick-settings-modal" class="modal hidden">

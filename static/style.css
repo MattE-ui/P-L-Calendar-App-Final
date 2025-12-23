@@ -68,9 +68,9 @@ body {
   margin: 12px auto 18px;
 }
 .hero-top {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 .hero-left h1 { margin: 0; }
