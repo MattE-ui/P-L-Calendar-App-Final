@@ -646,6 +646,14 @@ button.danger {
   background: rgba(208, 52, 44, 0.18);
   color: #ffd8de;
   border: 1px solid #ff8aa0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+button.danger.outline {
+  background: transparent;
+  color: #ff8aa0;
+  border: 1px solid #ff8aa0;
 }
 button.danger.outline {
   background: transparent;
