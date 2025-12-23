@@ -281,8 +281,12 @@ function getDailyEntry(date) {
   const note = noteRaw.trim();
   const netCash = cashIn - cashOut;
   const base = (Number.isFinite(opening) ? opening : 0) + netCash;
-  const change = hasClosing ? closing - base : null;
-  const pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
+  let change = hasClosing ? closing - base : null;
+  let pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
+  if (hasClosing && netCash > 0 && Number.isFinite(opening) && opening === closing) {
+    change = 0;
+    pct = 0;
+  }
   return {
     date,
     opening: Number.isFinite(opening) ? opening : null,
