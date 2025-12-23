@@ -223,6 +223,8 @@ select {
   display: inline-flex;
   gap: 4px;
   width: fit-content;
+  width: 100%;
+  justify-content: space-between;
 }
 .chip-toggle button {
   border: none;
