@@ -166,7 +166,7 @@ function toGBP(value, currency = state.currency) {
 }
 
 function signPrefix(num) {
-  return num > 0 ? '+' : '';
+  return num > 0 ? '+' : num < 0 ? '-' : '';
 }
 
 function getMonthData(date) {
