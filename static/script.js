@@ -689,90 +689,16 @@ function renderActiveTrades() {
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
-    const editRow = document.createElement('div');
-    editRow.className = 'close-row edit-row hidden';
-    const editEntry = document.createElement('input');
-    editEntry.type = 'number';
-    editEntry.step = '0.0001';
-    editEntry.min = '0';
-    editEntry.value = Number.isFinite(trade.entry) ? trade.entry : '';
-    const editStop = document.createElement('input');
-    editStop.type = 'number';
-    editStop.step = '0.0001';
-    editStop.min = '0';
-    editStop.value = Number.isFinite(trade.stop) ? trade.stop : '';
-    const editUnits = document.createElement('input');
-    editUnits.type = 'number';
-    editUnits.step = '0.0001';
-    editUnits.min = '0';
-    editUnits.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
-    const editSave = document.createElement('button');
-    editSave.className = 'primary outline';
-    editSave.textContent = 'Save edits';
-    const editCancel = document.createElement('button');
-    editCancel.className = 'ghost';
-    editCancel.textContent = 'Cancel';
-    const editStatus = document.createElement('div');
-    editStatus.className = 'tool-note';
     const editToggle = document.createElement('button');
     editToggle.className = 'ghost';
     editToggle.textContent = 'Edit trade';
     editToggle.addEventListener('click', () => {
-      editRow.classList.toggle('hidden');
+      openEditTradeModal(trade);
     });
-    editCancel.addEventListener('click', () => {
-      editRow.classList.add('hidden');
-    });
-    editSave.addEventListener('click', async () => {
-      editStatus.textContent = '';
-      const entryVal = Number(editEntry.value);
-      const stopVal = Number(editStop.value);
-      const unitsVal = Number(editUnits.value);
-      if (!Number.isFinite(entryVal) || entryVal <= 0) {
-        editStatus.textContent = 'Enter a valid entry price.';
-        return;
-      }
-      if (!Number.isFinite(stopVal) || stopVal <= 0) {
-        editStatus.textContent = 'Enter a valid stop price.';
-        return;
-      }
-      const isShort = trade.direction === 'short';
-      if (!isShort && stopVal >= entryVal) {
-        editStatus.textContent = 'Stop must be below entry for long trades.';
-        return;
-      }
-      if (isShort && stopVal <= entryVal) {
-        editStatus.textContent = 'Stop must be above entry for short trades.';
-        return;
-      }
-      if (!Number.isFinite(unitsVal) || unitsVal <= 0) {
-        editStatus.textContent = 'Enter a valid unit size.';
-        return;
-      }
-      const perUnitRisk = isShort ? (stopVal - entryVal) : (entryVal - stopVal);
-      const riskAmount = perUnitRisk * unitsVal;
-      try {
-        await api(`/api/trades/${trade.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entry: entryVal,
-            stop: stopVal,
-            riskAmount
-          })
-        });
-        await loadData();
-        render();
-      } catch (e) {
-        editStatus.textContent = e?.message || 'Failed to update trade.';
-      }
-    });
-    editRow.append(editEntry, editStop, editUnits, editSave, editCancel, editStatus);
     const editToggleWrap = document.createElement('div');
     editToggleWrap.className = 'edit-toggle-row';
     editToggleWrap.appendChild(editToggle);
     pill.appendChild(editToggleWrap);
-    pill.appendChild(editRow);
     const closeRow = document.createElement('div');
     closeRow.className = 'close-row';
     const priceInput = document.createElement('input');
@@ -884,6 +810,27 @@ function updateActiveTradesOverflow() {
   }
   const overflowing = list.scrollHeight > list.clientHeight + 1;
   showAll.classList.toggle('is-hidden', !overflowing);
+}
+
+function openEditTradeModal(trade) {
+  const modal = $('#edit-trade-modal');
+  if (!modal) return;
+  const title = $('#edit-trade-title');
+  const entryInput = $('#edit-trade-entry');
+  const stopInput = $('#edit-trade-stop');
+  const unitsInput = $('#edit-trade-units');
+  const status = $('#edit-trade-status');
+  if (title) {
+    const sym = trade.symbol || 'Trade';
+    title.textContent = `Edit ${sym}`;
+  }
+  if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
+  if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
+  if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
+  if (status) status.textContent = '';
+  modal.dataset.tradeId = trade.id;
+  modal.dataset.direction = trade.direction || 'long';
+  modal.classList.remove('hidden');
 }
 
 function setMetricTrend(el, value) {
@@ -1720,6 +1667,65 @@ function bindControls() {
     $('#profit-modal')?.classList.add('hidden');
   });
 
+  $('#close-edit-trade-btn')?.addEventListener('click', () => {
+    $('#edit-trade-modal')?.classList.add('hidden');
+  });
+
+  $('#save-edit-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#edit-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const entryInput = $('#edit-trade-entry');
+    const stopInput = $('#edit-trade-stop');
+    const unitsInput = $('#edit-trade-units');
+    const status = $('#edit-trade-status');
+    if (status) status.textContent = '';
+    const entryVal = Number(entryInput?.value);
+    const stopVal = Number(stopInput?.value);
+    const unitsVal = Number(unitsInput?.value);
+    if (!Number.isFinite(entryVal) || entryVal <= 0) {
+      if (status) status.textContent = 'Enter a valid entry price.';
+      return;
+    }
+    if (!Number.isFinite(stopVal) || stopVal <= 0) {
+      if (status) status.textContent = 'Enter a valid stop price.';
+      return;
+    }
+    if (!Number.isFinite(unitsVal) || unitsVal <= 0) {
+      if (status) status.textContent = 'Enter a valid unit size.';
+      return;
+    }
+    const direction = modal.dataset.direction === 'short' ? 'short' : 'long';
+    if (direction === 'long' && stopVal >= entryVal) {
+      if (status) status.textContent = 'Stop must be below entry for long trades.';
+      return;
+    }
+    if (direction === 'short' && stopVal <= entryVal) {
+      if (status) status.textContent = 'Stop must be above entry for short trades.';
+      return;
+    }
+    try {
+      await api(`/api/trades/${tradeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entry: entryVal,
+          stop: stopVal,
+          sizeUnits: unitsVal
+        })
+      });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to update trade.';
+    }
+  });
+  $('#cancel-edit-trade-btn')?.addEventListener('click', () => {
+    $('#edit-trade-modal')?.classList.add('hidden');
+  });
+
   $('#logout-btn')?.addEventListener('click', async () => {
     try {
       await api('/api/logout', { method: 'POST' });
@@ -1858,11 +1864,16 @@ function bindControls() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       $('#profit-modal')?.classList.add('hidden');
+      $('#edit-trade-modal')?.classList.add('hidden');
     }
   });
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {

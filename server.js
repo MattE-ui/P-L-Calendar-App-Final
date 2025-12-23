@@ -2149,7 +2149,8 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     updates.entry !== undefined ||
     updates.stop !== undefined ||
     updates.riskPct !== undefined ||
-    updates.riskAmount !== undefined
+    updates.riskAmount !== undefined ||
+    updates.sizeUnits !== undefined
   );
   if (trade.status === 'closed' && wantsRiskUpdate) {
     return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
@@ -2162,6 +2163,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     const stopNum = Number(updates.stop ?? trade.stop);
     const pctNum = Number(updates.riskPct ?? trade.riskPct);
     const riskAmountNum = Number(updates.riskAmount);
+    const sizeUnitsNum = Number(updates.sizeUnits);
     const dir = DIRECTIONS.includes((updates.direction || trade.direction || '').toLowerCase())
       ? (updates.direction || trade.direction).toLowerCase()
       : 'long';
@@ -2188,15 +2190,19 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }
     let pctToUse = Number.isFinite(pctNum) && pctNum > 0 ? pctNum : null;
     let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0 ? riskAmountNum : null;
-    if (!riskAmountCurrency && pctToUse) {
+    let sizeUnits = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
+    if (sizeUnits) {
+      riskAmountCurrency = perUnitRisk * sizeUnits;
+      pctToUse = portfolioCurrency > 0 ? (riskAmountCurrency / portfolioCurrency) * 100 : null;
+    } else if (!riskAmountCurrency && pctToUse) {
       riskAmountCurrency = portfolioCurrency * (pctToUse / 100);
     } else if (riskAmountCurrency && !pctToUse) {
       pctToUse = portfolioCurrency > 0 ? (riskAmountCurrency / portfolioCurrency) * 100 : null;
     }
     if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
-      return res.status(400).json({ error: 'Enter a valid risk percentage or amount' });
+      return res.status(400).json({ error: 'Enter a valid risk percentage, amount, or units' });
     }
-    const sizeUnits = riskAmountCurrency / perUnitRisk;
+    sizeUnits = sizeUnits || (riskAmountCurrency / perUnitRisk);
     const positionCurrency = sizeUnits * entryNum;
     trade.entry = entryNum;
     trade.stop = stopNum;

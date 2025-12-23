@@ -354,9 +354,6 @@ select {
   display: flex;
   justify-content: flex-start;
 }
-.trade-pill .edit-row {
-  margin-top: 4px;
-}
 .trade-pill .close-row input[type="number"],
 .trade-pill .close-row input[type="date"] {
   max-width: 160px;
