@@ -799,6 +799,30 @@ function updateActiveTradesOverflow() {
   showAll.classList.toggle('is-hidden', !overflowing);
 }
 
+function renderPortfolioTrend() {
+  const el = $('#portfolio-trend');
+  if (!el) return;
+  el.innerHTML = '';
+  const entries = getAllEntries();
+  const last = entries.slice(-12);
+  if (!last.length) {
+    el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
+    return;
+  }
+  const max = Math.max(...last.map(e => e.closing ?? e.opening ?? 0));
+  const min = Math.min(...last.map(e => e.closing ?? e.opening ?? 0));
+  const range = Math.max(max - min, 1);
+  last.forEach(entry => {
+    const val = entry.closing ?? entry.opening ?? 0;
+    const heightPct = ((val - min) / range) * 100;
+    const bar = document.createElement('div');
+    bar.className = 'mini-bar';
+    bar.style.height = `${Math.max(8, heightPct)}%`;
+    bar.title = `${entry.date.toLocaleDateString()} • ${formatCurrency(val)}`;
+    el.appendChild(bar);
+  });
+}
+
 function setMetricTrend(el, value) {
   if (!el) return;
   const isPositive = Number.isFinite(value) && value > 0;
