@@ -690,13 +690,13 @@ function renderActiveTrades() {
     `);
     pill.appendChild(badges);
     const editToggle = document.createElement('button');
-    editToggle.className = 'ghost';
+    editToggle.className = 'primary outline';
     editToggle.textContent = 'Edit trade';
     editToggle.addEventListener('click', () => {
       openEditTradeModal(trade);
     });
     const editToggleWrap = document.createElement('div');
-    editToggleWrap.className = 'edit-toggle-row';
+    editToggleWrap.className = 'close-row edit-toggle-row';
     editToggleWrap.appendChild(editToggle);
     pill.appendChild(editToggleWrap);
     const closeRow = document.createElement('div');
@@ -710,7 +710,7 @@ function renderActiveTrades() {
     dateInput.type = 'date';
     dateInput.valueAsDate = new Date();
     const closeBtn = document.createElement('button');
-    closeBtn.className = 'primary outline';
+    closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
     const status = document.createElement('div');
     status.className = 'tool-note';
@@ -1870,10 +1870,6 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
