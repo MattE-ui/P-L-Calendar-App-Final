@@ -94,7 +94,7 @@ body {
   padding: 12px 14px;
 }
 
-#view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 16px; }
+#view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 10px; }
 #view-controls .control-group { display:flex; gap:8px; flex-wrap: wrap; }
 #view-controls .control-group.end { margin-left:auto; }
 #view-controls button, .ghost {
@@ -137,7 +137,9 @@ select {
 
 .portfolio-pill span { color: var(--muted); margin-left: 6px; }
 
-.title-wrap { margin: 16px 0 12px; text-align: center; }
+.title-wrap { margin: 4px 0 6px; text-align: center; }
+.title-wrap h2 { font-size: 18px; }
+.avg { margin-top: 4px; }
 .title-wrap h2 { margin: 0; font-weight: 700; letter-spacing:.3px; }
 .avg { margin-top: 6px; font-weight: 700; display:flex; flex-direction: column; gap: 4px; align-items: center; }
 .avg .summary-line { font-weight: 600; color: var(--muted); }
@@ -366,39 +368,56 @@ select {
 }
 
 .grid { display: grid; gap: 12px; width: 100%; }
-.grid.view-month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.grid.view-month { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
 .grid.view-year { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .grid.view-day,
 .grid.view-week { display: flex; flex-direction: column; }
 
-.grid.view-month .dow { text-align:center; font-weight:700; color: var(--muted); padding: 4px 0; }
+.grid.view-month .dow { text-align:center; font-weight:700; color: var(--muted); padding: 2px 0; font-size: 12px; }
 
 .cell {
   background: linear-gradient(155deg, rgba(255,255,255,.02), transparent 60%), var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 18px 16px;
-  min-height: 132px;
+  padding: 12px 12px;
+  min-height: 108px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   position: relative;
   box-shadow: 0 6px 14px rgba(9,12,18,.35);
   transition: background .2s ease, border-color .2s ease, color .2s ease;
 }
+.grid.view-month .cell {
+  min-height: 96px;
+  padding: 10px;
+  gap: 6px;
+}
+.grid.view-month .cell .date {
+  font-size: 11px;
+}
+.grid.view-month .cell .val {
+  font-size: 14px;
+}
+.grid.view-month .cell .pct {
+  font-size: 11px;
+}
+.grid.view-month .cell .trade-count {
+  font-size: 10px;
+}
 .cell .date {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .2px;
 }
 .cell .val {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
 }
 .cell .pct {
   margin-top: auto;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   opacity: .95;
 }
@@ -410,7 +429,7 @@ select {
 .cell .trade-count {
   margin-top: auto;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 .cell.profit {
   background: linear-gradient(155deg, rgba(29,185,84,.35), rgba(12,60,32,.85));
@@ -820,6 +839,7 @@ textarea {
   .grid { overflow-x: auto; padding-bottom: 6px; }
   .grid.view-month { grid-template-columns: repeat(7, minmax(92px, 1fr)); }
   .cell { min-width: 92px; min-height: 132px; }
+  .grid.view-month .cell { min-height: 110px; }
   .modal-card { width: min(420px, 95vw); }
 }
 

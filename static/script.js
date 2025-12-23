@@ -1001,7 +1001,6 @@ function renderDay() {
     const entry = getDailyEntry(date);
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
-    const pct = entry?.pct ?? null;
     const tradeCount = entry?.tradesCount ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
@@ -1009,7 +1008,7 @@ function renderDay() {
     if (change < 0) row.classList.add('loss');
     const changeText = change === null
       ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+      : `Δ ${formatSignedCurrency(change)}`;
     const cashHtml = cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
