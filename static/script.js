@@ -1002,7 +1002,6 @@ function renderDay() {
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
-    const cashFlow = entry?.cashFlow ?? 0;
     const tradeCount = entry?.tradesCount ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
@@ -1162,27 +1161,13 @@ function renderMonth() {
     const changeText = change === null
       ? 'Δ —'
       : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
-    const cashHtml = cashFlow === 0
-      ? ''
-      : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
-    const tradeHtml = tradeCount
-      ? `<div class="trade-count">Trades: ${tradeCount}</div>`
-      : '';
+    const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
     cell.innerHTML = `
       <div class="date">${day}</div>
       <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
       <div class="pct">${changeText}</div>
-      ${cashHtml}
       ${tradeHtml}
     `;
-    if (entry?.note) {
-      const noteEl = document.createElement('div');
-      noteEl.className = 'note';
-      noteEl.textContent = entry.note;
-      noteEl.insertAdjacentText('afterbegin', '📝 ');
-      noteEl.title = entry.note;
-      cell.appendChild(noteEl);
-    }
     cell.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(cell);
   }

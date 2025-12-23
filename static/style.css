@@ -137,7 +137,7 @@ select {
 
 .portfolio-pill span { color: var(--muted); margin-left: 6px; }
 
-.title-wrap { margin: 26px 0 12px; text-align: center; }
+.title-wrap { margin: 16px 0 12px; text-align: center; }
 .title-wrap h2 { margin: 0; font-weight: 700; letter-spacing:.3px; }
 .avg { margin-top: 6px; font-weight: 700; display:flex; flex-direction: column; gap: 4px; align-items: center; }
 .avg .summary-line { font-weight: 600; color: var(--muted); }
@@ -365,8 +365,8 @@ select {
   margin-top: 4px;
 }
 
-.grid { display: grid; gap: 12px; }
-.grid.view-month { grid-template-columns: repeat(7, minmax(110px, 1fr)); }
+.grid { display: grid; gap: 12px; width: 100%; }
+.grid.view-month { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .grid.view-year { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .grid.view-day,
 .grid.view-week { display: flex; flex-direction: column; }
@@ -403,6 +403,11 @@ select {
   opacity: .95;
 }
 .cell .meta {
+  margin-top: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.cell .trade-count {
   margin-top: auto;
   color: var(--muted);
   font-size: 12px;
