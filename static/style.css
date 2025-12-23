@@ -69,10 +69,12 @@ body {
 }
 .hero-top {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }
+.hero-left { justify-self: start; }
+.hero-right { justify-self: end; }
 .hero-left h1 { margin: 0; }
 .hero-sub { margin: 4px 0 0; color: var(--muted); }
 .hero-card {
@@ -81,7 +83,14 @@ body {
 }
 .hero-value { font-size: 22px; font-weight: 700; }
 .hero-subvalue { color: var(--muted); font-size: 13px; }
-.hero-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.hero-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
 .hero-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -89,6 +98,7 @@ body {
   max-width: 720px;
   margin: 0 auto;
   justify-self: center;
+  grid-column: 2;
 }
 .hero-metrics .metric-card {
   padding: 12px 14px;
