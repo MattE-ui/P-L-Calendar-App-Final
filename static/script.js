@@ -279,20 +279,13 @@ function getDailyEntry(date) {
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
-  const hasOpening = Number.isFinite(opening);
   const netCash = cashIn - cashOut;
-  const effectiveOpening = hasOpening
-    ? opening
-    : (hasClosing ? closing - netCash : null);
-  const change = hasClosing && effectiveOpening !== null
-    ? closing - effectiveOpening - netCash
-    : null;
-  const pct = hasClosing && Number.isFinite(effectiveOpening) && effectiveOpening !== 0
-    ? (change / effectiveOpening) * 100
-    : null;
+  const base = (Number.isFinite(opening) ? opening : 0) + netCash;
+  const change = hasClosing ? closing - base : null;
+  const pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
   return {
     date,
-    opening: hasOpening ? opening : null,
+    opening: Number.isFinite(opening) ? opening : null,
     closing: hasClosing ? closing : null,
     hasClosing,
     change,
