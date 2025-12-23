@@ -618,9 +618,14 @@ function renderRiskCalculator() {
   const marketConditionInput = $('#market-condition-input');
   if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
   const entryLabel = $('#risk-entry-label');
-  if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
+  const symbol = currencySymbols[state.riskCurrency] || '£';
+  if (entryLabel) entryLabel.textContent = 'Entry price';
   const stopLabel = $('#risk-stop-label');
-  if (stopLabel) stopLabel.textContent = `Stop-loss price (${state.riskCurrency})`;
+  if (stopLabel) stopLabel.textContent = 'Stop price';
+  const entryInput = $('#risk-entry-input');
+  if (entryInput) entryInput.placeholder = symbol;
+  const stopInput = $('#risk-stop-input');
+  if (stopInput) stopInput.placeholder = symbol;
   const portfolioEl = $('#risk-portfolio-display');
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
