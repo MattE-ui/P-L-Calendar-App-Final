@@ -790,11 +790,11 @@ function renderMetrics() {
     portfolioSubEl.textContent = pieces.join(' • ');
   }
 
-  const netDepositsEl = $('#metric-net-deposits-value');
+  const netDepositsEl = $('#hero-net-deposits-value');
   if (netDepositsEl) {
     netDepositsEl.textContent = formatSignedCurrency(netDepositsGBP);
   }
-  const netDepositsSub = $('#metric-net-deposits-sub');
+  const netDepositsSub = $('#hero-net-deposits-sub');
   if (netDepositsSub) {
     if (altCurrency) {
       const altDeposits = formatSignedCurrency(netDepositsGBP, altCurrency);
@@ -803,16 +803,16 @@ function renderMetrics() {
       netDepositsSub.textContent = '';
     }
   }
-  const netCard = $('#metric-net-deposits');
+  const netCard = $('#hero-net-deposits');
   if (netCard) {
     netCard.classList.remove('positive', 'negative');
   }
 
-  const netPerfEl = $('#metric-net-performance-value');
+  const netPerfEl = $('#hero-net-performance-value');
   if (netPerfEl) {
     netPerfEl.textContent = formatSignedCurrency(netPerformanceGBP);
   }
-  const netPerfSub = $('#metric-net-performance-sub');
+  const netPerfSub = $('#hero-net-performance-sub');
   if (netPerfSub) {
     const pieces = [];
     if (altCurrency) {
@@ -824,9 +824,9 @@ function renderMetrics() {
     }
     netPerfSub.textContent = pieces.join(' • ');
   }
-  setMetricTrend($('#metric-net-performance'), netPerformanceGBP);
+  setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
 
-  const portfolioCard = $('#metric-portfolio');
+  const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
     const deltaFromBaseline = Number.isFinite(metrics.baselineGBP)
       ? latestGBP - metrics.baselineGBP
