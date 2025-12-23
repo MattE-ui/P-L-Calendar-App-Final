@@ -1876,6 +1876,10 @@ if (typeof module !== 'undefined') {
   module.exports = { computeRiskPlan, summarizeWeek };
 }
 
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
+}
+
 async function init() {
   state.selected = startOfMonth(new Date());
   try {
