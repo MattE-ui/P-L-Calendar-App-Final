@@ -68,9 +68,9 @@ body {
   margin: 12px auto 18px;
 }
 .hero-top {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 .hero-left h1 { margin: 0; }
@@ -78,10 +78,6 @@ body {
 .hero-card {
   background: linear-gradient(135deg, rgba(42,163,255,.08), rgba(42,163,255,.02));
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 16px;
-  text-align: center;
-  height: 100%;
 }
 .hero-value { font-size: 22px; font-weight: 700; }
 .hero-subvalue { color: var(--muted); font-size: 13px; }
