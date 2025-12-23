@@ -580,15 +580,17 @@ select {
   display: block;
 }
 .mini-line .line-area {
-  fill: rgba(42,163,255,.2);
+  fill: rgba(42,163,255,.28);
 }
 .mini-line .line-path {
   fill: none;
-  stroke: rgba(42,163,255,.9);
-  stroke-width: 2;
+  stroke: rgba(42,163,255,.95);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .mini-line .line-dot {
-  fill: rgba(42,163,255,.95);
+  fill: rgba(42,163,255,.98);
 }
 #active-trades-card {
   min-height: 0;

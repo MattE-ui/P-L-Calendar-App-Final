@@ -745,8 +745,8 @@ function renderPortfolioTrend() {
   const min = Math.min(...values);
   const range = Math.max(max - min, 1);
   const width = 100;
-  const height = 40;
-  const padding = 4;
+  const height = 48;
+  const padding = 6;
   const plotHeight = height - padding * 2;
   const pointCount = values.length;
   const points = values.map((val, index) => {
@@ -760,6 +760,8 @@ function renderPortfolioTrend() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(height));
   const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   area.setAttribute('d', areaPath);
   area.setAttribute('class', 'line-area');
@@ -770,10 +772,11 @@ function renderPortfolioTrend() {
   const lastPoint = points[points.length - 1];
   dot.setAttribute('cx', lastPoint.x);
   dot.setAttribute('cy', lastPoint.y);
-  dot.setAttribute('r', '2');
+  dot.setAttribute('r', '2.5');
   dot.setAttribute('class', 'line-dot');
-  svg.append(area, line, dot);
-  svg.title = `${lastPoint.date.toLocaleDateString()} • ${formatCurrency(lastPoint.value)}`;
+  const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${formatCurrency(lastPoint.value)}`;
+  svg.append(title, area, line, dot);
   el.appendChild(svg);
 }
 
@@ -797,30 +800,6 @@ function updateActiveTradesOverflow() {
   }
   const overflowing = list.scrollHeight > list.clientHeight + 1;
   showAll.classList.toggle('is-hidden', !overflowing);
-}
-
-function renderPortfolioTrend() {
-  const el = $('#portfolio-trend');
-  if (!el) return;
-  el.innerHTML = '';
-  const entries = getAllEntries();
-  const last = entries.slice(-12);
-  if (!last.length) {
-    el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
-    return;
-  }
-  const max = Math.max(...last.map(e => e.closing ?? e.opening ?? 0));
-  const min = Math.min(...last.map(e => e.closing ?? e.opening ?? 0));
-  const range = Math.max(max - min, 1);
-  last.forEach(entry => {
-    const val = entry.closing ?? entry.opening ?? 0;
-    const heightPct = ((val - min) / range) * 100;
-    const bar = document.createElement('div');
-    bar.className = 'mini-bar';
-    bar.style.height = `${Math.max(8, heightPct)}%`;
-    bar.title = `${entry.date.toLocaleDateString()} • ${formatCurrency(val)}`;
-    el.appendChild(bar);
-  });
 }
 
 function setMetricTrend(el, value) {
