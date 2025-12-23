@@ -224,6 +224,34 @@
     </div>
   </div>
 
+  <!-- Quick settings modal -->
+  <div id="quick-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="qs-risk-select">Default risk per trade</label>
+        <select id="qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="qs-currency-select">Default currency</label>
+        <select id="qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="save-qs-btn" class="primary">Save</button>
+        <button id="close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Profit edit modal -->
   <div id="profit-modal" class="modal hidden">
     <div class="modal-card">
