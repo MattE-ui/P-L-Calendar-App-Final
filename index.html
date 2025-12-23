@@ -9,17 +9,18 @@
 </head>
 <body>
   <header class="hero">
-    <div class="hero-left">
-      <h1>P&L Calendar</h1>
-      <p class="hero-sub">Trading journal & performance dashboard</p>
-    </div>
-    <div class="hero-center">
-      <div class="hero-card">
-        <p class="tool-overline">Portfolio value</p>
-        <div class="hero-value" id="header-portfolio-value">£0.00</div>
-        <div class="hero-subvalue" id="header-portfolio-sub"></div>
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1>P&L Calendar</h1>
+        <p class="hero-sub">Trading journal & performance dashboard</p>
       </div>
-    </div>
+      <div class="hero-center">
+        <div class="hero-card">
+          <p class="tool-overline">Portfolio value</p>
+          <div class="hero-value" id="header-portfolio-value">£0.00</div>
+          <div class="hero-subvalue" id="header-portfolio-sub"></div>
+        </div>
+      </div>
       <div class="hero-right">
         <div class="hero-actions">
           <button id="quick-settings-btn" class="ghost">Quick Settings</button>
@@ -28,7 +29,20 @@
           <button id="profile-btn" class="ghost">Profile</button>
           <button id="portfolio-btn" class="ghost">Portfolio</button>
           <button id="logout-btn" class="danger ghost">Logout</button>
+        </div>
       </div>
+    </div>
+    <div class="hero-metrics key-metrics">
+      <article class="metric-card" id="hero-net-deposits">
+        <h3>Net deposits</h3>
+        <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+        <div class="metric-sub" id="hero-net-deposits-sub"></div>
+      </article>
+      <article class="metric-card" id="hero-net-performance">
+        <h3>Net performance</h3>
+        <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+        <div class="metric-sub" id="hero-net-performance-sub"></div>
+      </article>
     </div>
   </header>
 
@@ -149,24 +163,6 @@
           <section class="title-wrap">
             <h2 id="title"></h2>
             <div id="avg" class="avg"></div>
-          </section>
-
-          <section id="key-metrics" class="key-metrics">
-            <article class="metric-card" id="metric-portfolio">
-              <h3>Current balance</h3>
-              <div class="metric-value" id="metric-portfolio-value">£0.00</div>
-              <div class="metric-sub" id="metric-portfolio-sub"></div>
-            </article>
-            <article class="metric-card" id="metric-net-deposits">
-              <h3>Net deposits</h3>
-              <div class="metric-value" id="metric-net-deposits-value">£0.00</div>
-              <div class="metric-sub" id="metric-net-deposits-sub"></div>
-            </article>
-            <article class="metric-card" id="metric-net-performance">
-              <h3>Net performance</h3>
-              <div class="metric-value" id="metric-net-performance-value">£0.00</div>
-              <div class="metric-sub" id="metric-net-performance-sub"></div>
-            </article>
           </section>
 
           <section id="grid" class="grid"></section>
