@@ -689,6 +689,90 @@ function renderActiveTrades() {
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
+    const editRow = document.createElement('div');
+    editRow.className = 'close-row edit-row hidden';
+    const editEntry = document.createElement('input');
+    editEntry.type = 'number';
+    editEntry.step = '0.0001';
+    editEntry.min = '0';
+    editEntry.value = Number.isFinite(trade.entry) ? trade.entry : '';
+    const editStop = document.createElement('input');
+    editStop.type = 'number';
+    editStop.step = '0.0001';
+    editStop.min = '0';
+    editStop.value = Number.isFinite(trade.stop) ? trade.stop : '';
+    const editUnits = document.createElement('input');
+    editUnits.type = 'number';
+    editUnits.step = '0.0001';
+    editUnits.min = '0';
+    editUnits.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
+    const editSave = document.createElement('button');
+    editSave.className = 'primary outline';
+    editSave.textContent = 'Save edits';
+    const editCancel = document.createElement('button');
+    editCancel.className = 'ghost';
+    editCancel.textContent = 'Cancel';
+    const editStatus = document.createElement('div');
+    editStatus.className = 'tool-note';
+    const editToggle = document.createElement('button');
+    editToggle.className = 'ghost';
+    editToggle.textContent = 'Edit trade';
+    editToggle.addEventListener('click', () => {
+      editRow.classList.toggle('hidden');
+    });
+    editCancel.addEventListener('click', () => {
+      editRow.classList.add('hidden');
+    });
+    editSave.addEventListener('click', async () => {
+      editStatus.textContent = '';
+      const entryVal = Number(editEntry.value);
+      const stopVal = Number(editStop.value);
+      const unitsVal = Number(editUnits.value);
+      if (!Number.isFinite(entryVal) || entryVal <= 0) {
+        editStatus.textContent = 'Enter a valid entry price.';
+        return;
+      }
+      if (!Number.isFinite(stopVal) || stopVal <= 0) {
+        editStatus.textContent = 'Enter a valid stop price.';
+        return;
+      }
+      const isShort = trade.direction === 'short';
+      if (!isShort && stopVal >= entryVal) {
+        editStatus.textContent = 'Stop must be below entry for long trades.';
+        return;
+      }
+      if (isShort && stopVal <= entryVal) {
+        editStatus.textContent = 'Stop must be above entry for short trades.';
+        return;
+      }
+      if (!Number.isFinite(unitsVal) || unitsVal <= 0) {
+        editStatus.textContent = 'Enter a valid unit size.';
+        return;
+      }
+      const perUnitRisk = isShort ? (stopVal - entryVal) : (entryVal - stopVal);
+      const riskAmount = perUnitRisk * unitsVal;
+      try {
+        await api(`/api/trades/${trade.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entry: entryVal,
+            stop: stopVal,
+            riskAmount
+          })
+        });
+        await loadData();
+        render();
+      } catch (e) {
+        editStatus.textContent = e?.message || 'Failed to update trade.';
+      }
+    });
+    editRow.append(editEntry, editStop, editUnits, editSave, editCancel, editStatus);
+    const editToggleWrap = document.createElement('div');
+    editToggleWrap.className = 'edit-toggle-row';
+    editToggleWrap.appendChild(editToggle);
+    pill.appendChild(editToggleWrap);
+    pill.appendChild(editRow);
     const closeRow = document.createElement('div');
     closeRow.className = 'close-row';
     const priceInput = document.createElement('input');
