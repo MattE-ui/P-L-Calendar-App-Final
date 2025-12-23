@@ -60,8 +60,8 @@ body {
 .hero {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: 8px;
+  padding: 10px 14px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -71,7 +71,7 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .hero-left { justify-self: start; }
 .hero-right { justify-self: end; }
@@ -87,21 +87,25 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
   flex-wrap: nowrap;
+}
+.hero-actions button {
+  padding: 6px 10px;
+  font-size: 12px;
 }
 .hero-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
   max-width: 720px;
   margin: 0 auto;
   justify-self: center;
   grid-column: 2;
 }
 .hero-metrics .metric-card {
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
 
 #view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 10px; }
