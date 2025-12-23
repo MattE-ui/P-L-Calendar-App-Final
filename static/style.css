@@ -222,6 +222,7 @@ select {
   padding: 4px;
   display: inline-flex;
   gap: 4px;
+  width: fit-content;
 }
 .chip-toggle button {
   border: none;

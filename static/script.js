@@ -8,6 +8,7 @@ const state = {
   firstEntryKey: null,
   currency: 'GBP',
   riskCurrency: 'GBP',
+  defaultRiskCurrency: 'GBP',
   rates: { GBP: 1 },
   liveOpenPnlGBP: 0,
   livePortfolioGBP: 0,
@@ -20,6 +21,7 @@ const state = {
     netPerformancePct: null
   },
   direction: 'long',
+  defaultRiskPct: 1,
   fees: 0,
   slippage: 0,
   rounding: 'fractional'
@@ -1607,6 +1609,40 @@ function bindControls() {
       renderRiskCalculator();
     });
   });
+  $('#quick-settings-btn')?.addEventListener('click', () => {
+    const modal = $('#quick-settings-modal');
+    const riskSel = $('#qs-risk-select');
+    const curSel = $('#qs-currency-select');
+    if (riskSel) riskSel.value = String(state.defaultRiskPct || 1);
+    if (curSel) curSel.value = state.defaultRiskCurrency || 'GBP';
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => $('#quick-settings-modal')?.classList.add('hidden');
+  $('#close-qs-btn')?.addEventListener('click', closeQs);
+  $('#save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = $('#qs-risk-select');
+    const curSel = $('#qs-currency-select');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    if (Number.isFinite(pct) && pct > 0) {
+      state.defaultRiskPct = pct;
+      state.riskPct = pct;
+    }
+    if (cur && ['GBP', 'USD'].includes(cur)) {
+      state.defaultRiskCurrency = cur;
+      state.riskCurrency = cur;
+    }
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify({
+        defaultRiskPct: state.defaultRiskPct,
+        defaultRiskCurrency: state.defaultRiskCurrency
+      }));
+    } catch (e) {
+      console.warn(e);
+    }
+    renderRiskCalculator();
+    closeQs();
+  });
   $$('#risk-currency-toggle button').forEach(btn => {
     btn.addEventListener('click', () => {
       const cur = btn.dataset.riskCurrency;
@@ -1699,6 +1735,18 @@ if (typeof module !== 'undefined') {
 
 async function init() {
   state.selected = startOfMonth(new Date());
+  try {
+    const saved = localStorage.getItem('plc-prefs');
+    if (saved) {
+      const prefs = JSON.parse(saved);
+      if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
+      if (prefs?.defaultRiskCurrency && ['GBP', 'USD'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      state.riskPct = state.defaultRiskPct;
+      state.riskCurrency = state.defaultRiskCurrency;
+    }
+  } catch (e) {
+    console.warn(e);
+  }
   bindControls();
   updatePeriodSelect();
   setActiveView();
