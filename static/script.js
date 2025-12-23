@@ -655,6 +655,7 @@ function renderRiskCalculator() {
 function renderActiveTrades() {
   const list = $('#active-trade-list');
   const empty = $('#active-trade-empty');
+  const showAll = $('#active-trade-show-all');
   const pnlEl = $('#live-pnl-display');
   if (!list) return;
   list.innerHTML = '';
@@ -662,6 +663,7 @@ function renderActiveTrades() {
   if (pnlEl) pnlEl.textContent = formatSignedCurrency(state.liveOpenPnlGBP, state.currency);
   if (!trades.length) {
     if (empty) empty.classList.remove('is-hidden');
+    if (showAll) showAll.classList.add('is-hidden');
     return;
   }
   if (empty) empty.classList.add('is-hidden');
@@ -725,6 +727,76 @@ function renderActiveTrades() {
     pill.appendChild(closeRow);
     list.appendChild(pill);
   });
+  updateActiveTradesOverflow();
+}
+
+function renderPortfolioTrend() {
+  const el = $('#portfolio-trend');
+  if (!el) return;
+  el.innerHTML = '';
+  const entries = getAllEntries();
+  const last = entries.slice(-12);
+  if (!last.length) {
+    el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
+    return;
+  }
+  const values = last.map(entry => entry.closing ?? entry.opening ?? 0);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = Math.max(max - min, 1);
+  const width = 100;
+  const height = 40;
+  const padding = 4;
+  const plotHeight = height - padding * 2;
+  const pointCount = values.length;
+  const points = values.map((val, index) => {
+    const x = pointCount === 1 ? width / 2 : (index / (pointCount - 1)) * width;
+    const normalized = (val - min) / range;
+    const y = height - padding - normalized * plotHeight;
+    return { x, y, value: val, date: last[index].date };
+  });
+  const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  area.setAttribute('d', areaPath);
+  area.setAttribute('class', 'line-area');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.setAttribute('d', linePath);
+  line.setAttribute('class', 'line-path');
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  const lastPoint = points[points.length - 1];
+  dot.setAttribute('cx', lastPoint.x);
+  dot.setAttribute('cy', lastPoint.y);
+  dot.setAttribute('r', '2');
+  dot.setAttribute('class', 'line-dot');
+  svg.append(area, line, dot);
+  svg.title = `${lastPoint.date.toLocaleDateString()} • ${formatCurrency(lastPoint.value)}`;
+  el.appendChild(svg);
+}
+
+function syncActiveTradesHeight() {
+  const riskCard = $('#risk-card');
+  const activeCard = $('#active-trades-card');
+  if (!riskCard || !activeCard) return;
+  activeCard.style.height = `${riskCard.offsetHeight}px`;
+  updateActiveTradesOverflow();
+}
+
+function updateActiveTradesOverflow() {
+  const list = $('#active-trade-list');
+  const showAll = $('#active-trade-show-all');
+  const empty = $('#active-trade-empty');
+  if (!list || !showAll) return;
+  const hasTrades = list.children.length > 0;
+  if (!hasTrades || (empty && !empty.classList.contains('is-hidden'))) {
+    showAll.classList.add('is-hidden');
+    return;
+  }
+  const overflowing = list.scrollHeight > list.clientHeight + 1;
+  showAll.classList.toggle('is-hidden', !overflowing);
 }
 
 function renderPortfolioTrend() {
@@ -1231,6 +1303,7 @@ function render() {
   renderPortfolioTrend();
   renderView();
   renderSummary();
+  syncActiveTradesHeight();
 }
 
 async function loadRates() {
@@ -1540,6 +1613,10 @@ function bindControls() {
     window.location.href = '/trades.html';
   });
 
+  $('#active-trade-show-all')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+
   $('#portfolio-btn')?.addEventListener('click', () => {
     const modalTitle = $('#portfolio-modal-title');
     if (modalTitle) modalTitle.textContent = `Portfolio value (${state.currency})`;
@@ -1719,6 +1796,9 @@ function bindControls() {
     if (e.key === 'Escape') {
       $('#profit-modal')?.classList.add('hidden');
     }
+  });
+  window.addEventListener('resize', () => {
+    syncActiveTradesHeight();
   });
 }
 

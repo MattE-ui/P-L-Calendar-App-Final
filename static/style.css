@@ -570,17 +570,36 @@ select {
 }
 .mini-chart-head { display: flex; align-items: center; justify-content: space-between; }
 .mini-chart-note { color: var(--muted); font-size: 12px; }
-.mini-bars {
-  display: flex;
-  gap: 4px;
-  align-items: flex-end;
+.mini-line {
+  width: 100%;
   height: 64px;
 }
-.mini-bars .mini-bar {
+.mini-line svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.mini-line .line-area {
+  fill: rgba(42,163,255,.2);
+}
+.mini-line .line-path {
+  fill: none;
+  stroke: rgba(42,163,255,.9);
+  stroke-width: 2;
+}
+.mini-line .line-dot {
+  fill: rgba(42,163,255,.95);
+}
+#active-trades-card {
+  min-height: 0;
+}
+#active-trades-card .trade-list {
   flex: 1;
-  min-width: 6px;
-  background: linear-gradient(180deg, rgba(42,163,255,.9), rgba(42,163,255,.4));
-  border-radius: 6px 6px 2px 2px;
+  overflow: hidden;
+  min-height: 0;
+}
+.show-all-btn {
+  align-self: flex-start;
 }
 
 .grid.view-week .list-row { cursor: default; }
