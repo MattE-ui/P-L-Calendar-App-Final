@@ -711,6 +711,12 @@ function renderActiveTrades() {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
+    const closeFillField = document.createElement('div');
+    closeFillField.className = 'close-fill-field';
+    const closeFillLabel = document.createElement('span');
+    closeFillLabel.className = 'close-fill-label';
+    closeFillLabel.textContent = 'Close Fill:';
+    closeFillField.append(closeFillLabel, priceInput);
     priceInput.placeholder = 'Close Fill:';
     const pnlPreview = document.createElement('div');
     pnlPreview.className = 'tool-note';
@@ -781,7 +787,7 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(priceInput, closeBtn, pnlPreview, status);
+    closeRow.append(closeFillField, closeBtn, pnlPreview, status);
     pill.append(editRow, closeRow);
     list.appendChild(pill);
   });
