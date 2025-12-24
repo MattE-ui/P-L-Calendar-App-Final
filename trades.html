@@ -10,6 +10,7 @@
   <header class="topbar">
     <h1>Trades</h1>
     <div class="spacer"></div>
+    <button id="add-trade-btn" class="primary add-trade-btn" aria-label="Add trade">+</button>
     <button id="calendar-btn" class="ghost">Calendar</button>
     <button id="analytics-btn" class="ghost">Analytics</button>
     <button id="profile-btn" class="ghost">Profile</button>
@@ -90,14 +91,41 @@
       </div>
     </section>
 
-    <section class="tool-card">
+    <section class="tool-card list-card">
       <div class="section-header">
         <div>
-          <p class="tool-overline">Trade form</p>
-          <h3 id="form-title">Log a trade</h3>
+          <p class="tool-overline">Trades</p>
+          <h3>Logged trades</h3>
         </div>
-        <div class="pill" id="form-status"></div>
+        <div class="pill" id="trade-count-pill"></div>
       </div>
+      <div class="table-wrapper">
+        <table id="trade-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th>Asset</th>
+              <th>Result (GBP)</th>
+              <th>Tags</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="tool-note" id="trade-empty">No trades match the current filters.</p>
+    </section>
+  </main>
+
+  <div id="trade-form-modal" class="modal hidden">
+    <div class="modal-card trade-form-modal">
+      <div class="modal-header">
+        <h3 id="form-title">Log a trade</h3>
+        <button id="close-trade-form-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <div class="pill" id="form-status"></div>
       <form id="trade-form">
         <input type="hidden" id="trade-id">
         <div class="grid two-col">
@@ -210,35 +238,8 @@
           <button type="button" class="ghost" id="reset-form-btn">Reset</button>
         </div>
       </form>
-    </section>
-
-    <section class="tool-card list-card">
-      <div class="section-header">
-        <div>
-          <p class="tool-overline">Trades</p>
-          <h3>Logged trades</h3>
-        </div>
-        <div class="pill" id="trade-count-pill"></div>
-      </div>
-      <div class="table-wrapper">
-        <table id="trade-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Symbol</th>
-              <th>Type</th>
-              <th>Asset</th>
-              <th>Result (GBP)</th>
-              <th>Tags</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="tool-note" id="trade-empty">No trades match the current filters.</p>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <script src="static/trades.js"></script>
 </body>

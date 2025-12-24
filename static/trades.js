@@ -188,6 +188,7 @@ function populateForm(trade) {
   document.querySelector('#form-notes').value = trade.note || '';
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Editing existing trade';
+  document.querySelector('#trade-form-modal')?.classList.remove('hidden');
 }
 
 function resetForm() {
@@ -253,6 +254,7 @@ async function saveTrade(event) {
     }
     await loadTrades();
     resetForm();
+    document.querySelector('#trade-form-modal')?.classList.add('hidden');
   } catch (e) {
     if (status) {
       status.textContent = e?.message || 'Unable to save trade';
@@ -323,6 +325,13 @@ function bindForm() {
   document.querySelector('#apply-filters-btn')?.addEventListener('click', applyFilters);
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
   document.querySelector('#export-csv-btn')?.addEventListener('click', exportCsv);
+  document.querySelector('#add-trade-btn')?.addEventListener('click', () => {
+    resetForm();
+    document.querySelector('#trade-form-modal')?.classList.remove('hidden');
+  });
+  document.querySelector('#close-trade-form-btn')?.addEventListener('click', () => {
+    document.querySelector('#trade-form-modal')?.classList.add('hidden');
+  });
 }
 
 async function init() {
@@ -337,4 +346,9 @@ async function init() {
 
 window.addEventListener('DOMContentLoaded', () => {
   init().catch(console.error);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      document.querySelector('#trade-form-modal')?.classList.add('hidden');
+    }
+  });
 });
