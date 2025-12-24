@@ -135,6 +135,19 @@ function renderTrades() {
     editBtn.addEventListener('click', () => populateForm(trade));
     wrap.appendChild(editBtn);
 
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'danger outline';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
+        await loadTrades();
+      } catch (e) {
+        alert(e?.message || 'Unable to delete trade');
+      }
+    });
+    wrap.appendChild(deleteBtn);
+
     if (trade.status !== 'closed') {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'primary';

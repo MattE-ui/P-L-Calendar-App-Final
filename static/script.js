@@ -1412,7 +1412,7 @@ async function refreshActiveTrades() {
   }
 }
 
-function renderTradeList(trades = []) {
+function renderTradeList(trades = [], dateStr = null) {
   const list = $('#trade-list');
   const sub = $('#trade-count-sub');
   if (!list || !sub) return;
@@ -1488,6 +1488,28 @@ function renderTradeList(trades = []) {
       }
       pill.appendChild(meta);
     }
+    if (trade.id) {
+      const actionRow = document.createElement('div');
+      actionRow.className = 'close-row';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'danger outline';
+      deleteBtn.textContent = 'Delete trade';
+      deleteBtn.addEventListener('click', async () => {
+        try {
+          await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
+          await loadData();
+          if (dateStr) {
+            const refreshed = getDailyEntry(new Date(dateStr));
+            renderTradeList(refreshed?.trades || [], dateStr);
+            render();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+      actionRow.appendChild(deleteBtn);
+      pill.appendChild(actionRow);
+    }
     list.appendChild(pill);
   });
 }
@@ -1552,7 +1574,7 @@ function openEntryModal(dateStr, existingEntry = null) {
   if (noteInput) {
     noteInput.value = noteText;
   }
-  renderTradeList(entry?.trades || []);
+  renderTradeList(entry?.trades || [], dateStr);
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
@@ -1926,13 +1948,6 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
-  window.addEventListener('resize', () => {
-    syncActiveTradesHeight();
-  });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
