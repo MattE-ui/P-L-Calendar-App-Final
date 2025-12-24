@@ -353,6 +353,9 @@ select {
 .trade-pill .trade-action-row {
   flex-wrap: nowrap;
 }
+.trade-pill .trade-action-row {
+  justify-content: space-between;
+}
 .trade-pill .close-row input[type="date"],
 .trade-pill .close-row input[type="number"] {
   flex: 1 1 150px;
