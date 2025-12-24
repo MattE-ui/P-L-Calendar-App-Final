@@ -2058,7 +2058,7 @@ async function init() {
   setInterval(() => {
     if (document.visibilityState === 'hidden') return;
     refreshActiveTrades();
-  }, 60000);
+  }, 30000);
 }
 
 if (typeof window !== 'undefined') {

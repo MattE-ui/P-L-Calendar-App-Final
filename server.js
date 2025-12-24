@@ -1819,7 +1819,7 @@ async function fetchMarketPrice(symbol) {
   const cacheKey = trimmed;
   const cached = marketCache.get(cacheKey);
   const now = Date.now();
-  if (cached && (now - cached.at) < 60 * 1000) {
+  if (cached && (now - cached.at) < 15 * 1000) {
     return cached.quote;
   }
   let normalized = null;
