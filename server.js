@@ -626,9 +626,10 @@ function filterTrades(trades = [], filters = {}) {
 function findTradeById(user, id) {
   const journal = ensureTradeJournal(user);
   for (const [dateKey, trades] of Object.entries(journal)) {
-    for (const trade of trades || []) {
+    for (let index = 0; index < (trades || []).length; index += 1) {
+      const trade = trades[index];
       if (trade && trade.id === id) {
-        return { trade, dateKey };
+        return { trade, dateKey, index };
       }
     }
   }
@@ -2276,6 +2277,24 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   }
   saveDB(db);
   res.json({ ok: true, trade });
+});
+
+app.delete('/api/trades/:id', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ error: 'Trade not found' });
+  const { dateKey, index } = found;
+  const journal = ensureTradeJournal(user);
+  journal[dateKey].splice(index, 1);
+  if (!journal[dateKey].length) {
+    delete journal[dateKey];
+  }
+  saveDB(db);
+  res.json({ ok: true });
 });
 
 app.post('/api/trades/close', auth, (req, res) => {

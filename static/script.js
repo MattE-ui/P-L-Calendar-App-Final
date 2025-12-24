@@ -711,8 +711,32 @@ function renderActiveTrades() {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
+    const pnlPreview = document.createElement('div');
+    pnlPreview.className = 'tool-note';
     const status = document.createElement('div');
     status.className = 'tool-note';
+    const updatePreview = () => {
+      const priceVal = Number(priceInput.value);
+      if (!Number.isFinite(priceVal) || priceVal <= 0) {
+        pnlPreview.textContent = '';
+        return;
+      }
+      const entryVal = Number(trade.entry);
+      const unitsVal = Number(trade.sizeUnits);
+      if (!Number.isFinite(entryVal) || !Number.isFinite(unitsVal)) {
+        pnlPreview.textContent = '';
+        return;
+      }
+      const isShort = trade.direction === 'short';
+      const pnlRaw = isShort
+        ? (entryVal - priceVal) * unitsVal
+        : (priceVal - entryVal) * unitsVal;
+      const fees = Number(trade.fees) || 0;
+      const pnlNet = pnlRaw - fees;
+      pnlPreview.textContent = `PnL if closed: ${formatSignedCurrency(pnlNet, trade.currency)}`;
+    };
+    priceInput.addEventListener('input', updatePreview);
+    updatePreview();
     closeBtn.addEventListener('click', async () => {
       status.textContent = '';
       const priceVal = Number(priceInput.value);
@@ -732,7 +756,7 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(dateInput, closeBtn, status);
+    closeRow.append(dateInput, closeBtn, pnlPreview, status);
     pill.append(editRow, closeRow);
     list.appendChild(pill);
   });
@@ -1372,6 +1396,22 @@ async function loadData() {
   }
 }
 
+async function refreshActiveTrades() {
+  try {
+    const activeRes = await api('/api/trades/active');
+    state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    if (Number.isFinite(activeRes?.liveOpenPnl)) {
+      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
+      state.livePortfolioGBP = (Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0) + activeRes.liveOpenPnl;
+    }
+    renderActiveTrades();
+    updatePortfolioPill();
+    renderMetrics();
+  } catch (e) {
+    console.warn('Failed to refresh active trades', e);
+  }
+}
+
 function renderTradeList(trades = []) {
   const list = $('#trade-list');
   const sub = $('#trade-count-sub');
@@ -1721,6 +1761,22 @@ function bindControls() {
       if (status) status.textContent = e?.message || 'Failed to update trade.';
     }
   });
+  $('#delete-edit-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#edit-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const status = $('#edit-trade-status');
+    if (status) status.textContent = '';
+    try {
+      await api(`/api/trades/${tradeId}`, { method: 'DELETE' });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to delete trade.';
+    }
+  });
   $('#cancel-edit-trade-btn')?.addEventListener('click', () => {
     $('#edit-trade-modal')?.classList.add('hidden');
   });
@@ -1870,6 +1926,13 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
+  window.addEventListener('resize', () => {
+    syncActiveTradesHeight();
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
@@ -1900,6 +1963,10 @@ async function init() {
   }
   await loadData();
   render();
+  setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
+    refreshActiveTrades();
+  }, 60000);
 }
 
 if (typeof window !== 'undefined') {
