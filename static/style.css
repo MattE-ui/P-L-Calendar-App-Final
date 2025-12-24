@@ -350,14 +350,17 @@ select {
   gap: 10px;
   align-items: center;
 }
+.trade-pill .trade-action-row {
+  flex-wrap: nowrap;
+}
 .trade-pill .close-row input[type="date"],
 .trade-pill .close-row input[type="number"] {
   flex: 1 1 150px;
 }
 .close-fill-field {
   position: relative;
-  flex: 1 1 200px;
-  min-width: 150px;
+  flex: 1 1 0;
+  min-width: 0;
 }
 .close-fill-field input {
   padding-left: 84px;

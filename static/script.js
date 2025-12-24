@@ -696,7 +696,7 @@ function renderActiveTrades() {
       openEditTradeModal(trade);
     });
     const closeRow = document.createElement('div');
-    closeRow.className = 'close-row';
+    closeRow.className = 'close-row trade-action-row';
     const priceInput = document.createElement('input');
     priceInput.type = 'number';
     priceInput.step = '0.0001';
