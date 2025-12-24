@@ -707,10 +707,13 @@ function renderActiveTrades() {
     dateInput.valueAsDate = new Date();
     const editRow = document.createElement('div');
     editRow.className = 'close-row';
-    editRow.append(priceInput, editToggle);
+    editRow.append(dateInput, editToggle);
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
+    const closeLabel = document.createElement('span');
+    closeLabel.className = 'tool-note';
+    closeLabel.textContent = 'Close Fill:';
     const pnlPreview = document.createElement('div');
     pnlPreview.className = 'tool-note';
     const status = document.createElement('div');
@@ -780,7 +783,7 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(dateInput, closeBtn, pnlPreview, status);
+    closeRow.append(closeLabel, priceInput, closeBtn, pnlPreview, status);
     pill.append(editRow, closeRow);
     list.appendChild(pill);
   });
