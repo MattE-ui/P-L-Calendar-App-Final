@@ -362,7 +362,7 @@ select {
   position: absolute;
   left: 12px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(calc(-50% + 2px));
   font-size: 12px;
   line-height: 1;
   color: var(--muted);
@@ -372,14 +372,11 @@ select {
   position: absolute;
   left: 70px;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(calc(-50% + 2px));
   font-size: 12px;
   line-height: 1;
   color: var(--muted);
   pointer-events: none;
-}
-.trade-pill .close-row .danger.outline {
-  margin-left: auto;
 }
 .trade-pill .close-row input[type="number"],
 .trade-pill .close-row input[type="date"] {

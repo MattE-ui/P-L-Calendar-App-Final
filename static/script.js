@@ -790,7 +790,7 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(closeFillField, closeBtn, pnlPreview, status);
+    closeRow.append(closeFillField, pnlPreview, closeBtn, status);
     pill.append(editRow, closeRow);
     list.appendChild(pill);
   });
