@@ -790,8 +790,11 @@ function renderActiveTrades() {
         status.textContent = e?.message || 'Failed to close trade.';
       }
     });
-    closeRow.append(closeFillField, pnlPreview, closeBtn, status);
-    pill.append(editRow, closeRow);
+    closeRow.append(closeFillField, closeBtn);
+    const previewRow = document.createElement('div');
+    previewRow.className = 'close-row';
+    previewRow.append(pnlPreview, status);
+    pill.append(editRow, closeRow, previewRow);
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
