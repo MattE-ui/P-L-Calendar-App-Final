@@ -804,7 +804,7 @@ function openCloseTradeModal(trade) {
   if (dateInput) {
     dateInput.valueAsDate = new Date();
   }
-  if (preview) preview.textContent = '';
+  if (preview) preview.textContent = 'PnL if closed: —';
   if (status) status.textContent = '';
   modal.dataset.tradeId = trade.id;
   modal.dataset.direction = trade.direction || 'long';
@@ -1730,13 +1730,13 @@ function bindControls() {
     if (!priceInput || !preview) return;
     const priceVal = Number(priceInput.value);
     if (!Number.isFinite(priceVal) || priceVal <= 0) {
-      preview.textContent = '';
+      preview.textContent = 'PnL if closed: —';
       return;
     }
     const entryVal = Number(modal.dataset.entry);
     const unitsVal = Number(modal.dataset.units);
     if (!Number.isFinite(entryVal) || !Number.isFinite(unitsVal)) {
-      preview.textContent = '';
+      preview.textContent = 'PnL if closed: —';
       return;
     }
     const direction = modal.dataset.direction === 'short' ? 'short' : 'long';
@@ -2022,10 +2022,6 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {

@@ -641,6 +641,25 @@ select {
 .modal-field.two-col > div { display:flex; flex-direction: column; gap:6px; }
 .modal-field.two-col > div input { margin-top:0; }
 .modal-field textarea { margin-top:0; }
+.close-trade-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+.close-trade-preview {
+  background: rgba(42,163,255,0.12);
+  border: 1px solid rgba(42,163,255,0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
 
 button { cursor:pointer; }
 button.primary { background: var(--primary); color:#001; border: none; border-radius: 10px; padding:10px 14px; font-weight:700; }
