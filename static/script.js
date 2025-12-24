@@ -633,7 +633,10 @@ function renderRiskCalculator() {
   const portfolioEl = $('#risk-portfolio-display');
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
-  if (pctInput && !pctInput.value) pctInput.value = '1';
+  if (pctInput) {
+    const pctVal = Number(state.riskPct) || Number(pctInput.value) || 1;
+    pctInput.value = String(pctVal);
+  }
   $$('#risk-percent-toggle button').forEach(btn => {
     btn.classList.toggle('active', Number(btn.dataset.riskPct) === Number(state.riskPct || pctInput?.value || 1));
   });
