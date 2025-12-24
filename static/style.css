@@ -167,6 +167,36 @@ select {
 .title-wrap h2 { font-size: 18px; }
 .avg { margin-top: 4px; }
 .title-wrap h2 { margin: 0; font-weight: 700; letter-spacing:.3px; }
+.trade-title-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+}
+.trade-title {
+  font-size: 26px;
+}
+.tab-bar {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.tab-btn {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.tab-btn.active {
+  background: rgba(42,163,255,0.18);
+  border-color: rgba(42,163,255,0.45);
+  color: #cde8ff;
+}
 .avg { margin-top: 6px; font-weight: 700; display:flex; flex-direction: column; gap: 4px; align-items: center; }
 .avg .summary-line { font-weight: 600; color: var(--muted); }
 .avg .summary-line strong { color: var(--text); font-weight: 700; }

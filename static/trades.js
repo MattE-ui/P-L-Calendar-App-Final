@@ -10,7 +10,15 @@ const state = {
     tags: '',
     winLoss: ''
   },
-  editingId: null
+  editingId: null,
+  defaults: {
+    tradeType: '',
+    assetClass: '',
+    strategyTag: '',
+    marketCondition: '',
+    setupTags: [],
+    emotionTags: []
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -45,6 +53,11 @@ function toQuery(params = {}) {
 
 function selectedTags(name) {
   return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(el => el.value);
+}
+
+function parseTagList(value) {
+  if (!value) return [];
+  return value.split(',').map(tag => tag.trim()).filter(Boolean);
 }
 
 function setCheckboxes(name, values = []) {
@@ -191,6 +204,27 @@ function populateForm(trade) {
   document.querySelector('#trade-form-modal')?.classList.remove('hidden');
 }
 
+function applyDefaultsToForm() {
+  if (state.defaults.tradeType) {
+    document.querySelector('#form-trade-type').value = state.defaults.tradeType;
+  }
+  if (state.defaults.assetClass) {
+    document.querySelector('#form-asset-class').value = state.defaults.assetClass;
+  }
+  if (state.defaults.strategyTag) {
+    document.querySelector('#form-strategy').value = state.defaults.strategyTag;
+  }
+  if (state.defaults.marketCondition) {
+    document.querySelector('#form-market-condition').value = state.defaults.marketCondition;
+  }
+  if (state.defaults.setupTags.length) {
+    setCheckboxes('form-setup', state.defaults.setupTags);
+  }
+  if (state.defaults.emotionTags.length) {
+    setCheckboxes('form-emotion', state.defaults.emotionTags);
+  }
+}
+
 function resetForm() {
   state.editingId = null;
   document.querySelector('#trade-id').value = '';
@@ -198,6 +232,7 @@ function resetForm() {
   document.querySelector('#trade-form').reset();
   setCheckboxes('form-setup', []);
   setCheckboxes('form-emotion', []);
+  applyDefaultsToForm();
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Ready to log a new trade';
 }
@@ -332,11 +367,53 @@ function bindForm() {
   document.querySelector('#close-trade-form-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-form-modal')?.classList.add('hidden');
   });
+  document.querySelector('#save-quick-settings-btn')?.addEventListener('click', () => {
+    state.defaults = {
+      tradeType: document.querySelector('#qs-trade-type')?.value || '',
+      assetClass: document.querySelector('#qs-asset-class')?.value || '',
+      strategyTag: document.querySelector('#qs-strategy')?.value || '',
+      marketCondition: document.querySelector('#qs-market-condition')?.value || '',
+      setupTags: parseTagList(document.querySelector('#qs-setup-tags')?.value || ''),
+      emotionTags: parseTagList(document.querySelector('#qs-emotion-tags')?.value || '')
+    };
+    localStorage.setItem('trade-defaults', JSON.stringify(state.defaults));
+    applyDefaultsToForm();
+  });
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelector('#filters-panel')?.classList.toggle('is-hidden', target !== 'filters');
+      document.querySelector('#quick-settings-panel')?.classList.toggle('is-hidden', target !== 'quick-settings');
+    });
+  });
 }
 
 async function init() {
   bindNav();
   bindForm();
+  try {
+    const saved = localStorage.getItem('trade-defaults');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      state.defaults = {
+        tradeType: parsed.tradeType || '',
+        assetClass: parsed.assetClass || '',
+        strategyTag: parsed.strategyTag || '',
+        marketCondition: parsed.marketCondition || '',
+        setupTags: Array.isArray(parsed.setupTags) ? parsed.setupTags : [],
+        emotionTags: Array.isArray(parsed.emotionTags) ? parsed.emotionTags : []
+      };
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+  document.querySelector('#qs-trade-type').value = state.defaults.tradeType || '';
+  document.querySelector('#qs-asset-class').value = state.defaults.assetClass || '';
+  document.querySelector('#qs-strategy').value = state.defaults.strategyTag || '';
+  document.querySelector('#qs-market-condition').value = state.defaults.marketCondition || '';
+  document.querySelector('#qs-setup-tags').value = state.defaults.setupTags.join(', ');
+  document.querySelector('#qs-emotion-tags').value = state.defaults.emotionTags.join(', ');
   const today = new Date().toISOString().slice(0, 10);
   const openInput = document.querySelector('#form-open-date');
   if (openInput && !openInput.value) openInput.value = today;
