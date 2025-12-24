@@ -1823,6 +1823,7 @@ function bindControls() {
       stop: Number(stopInput.value),
       riskPct: Number(riskPctInput.value),
       currency: state.riskCurrency,
+      baseCurrency: state.currency,
       symbol: symbolInput?.value,
       date: dateInput?.value,
       note: noteInput?.value || undefined,

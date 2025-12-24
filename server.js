@@ -460,6 +460,8 @@ function normalizeTradeJournal(user) {
       const perUnitRisk = Number(trade.perUnitRisk);
       const portfolioGBPAtCalc = Number(trade.portfolioGBPAtCalc);
       const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
+      const fxFeeEligible = trade.fxFeeEligible === true;
+      const fxFeeRate = Number(trade.fxFeeRate);
       if (
         !Number.isFinite(entry) || entry <= 0 ||
         !Number.isFinite(stop) || stop <= 0 ||
@@ -498,6 +500,12 @@ function normalizeTradeJournal(user) {
         portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
         createdAt
       };
+      if (fxFeeEligible) {
+        normalizedTrade.fxFeeEligible = true;
+        if (Number.isFinite(fxFeeRate) && fxFeeRate > 0) {
+          normalizedTrade.fxFeeRate = fxFeeRate;
+        }
+      }
       if (Number.isFinite(trade.riskAmountCurrency)) normalizedTrade.riskAmountCurrency = trade.riskAmountCurrency;
       if (Number.isFinite(trade.positionCurrency)) normalizedTrade.positionCurrency = trade.positionCurrency;
       if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
@@ -1871,6 +1879,8 @@ async function buildActiveTrades(user, rates = {}) {
     const direction = trade.direction === 'short' ? 'short' : 'long';
     const slippage = Number(trade.slippage) || 0;
     const feesCurrency = Number(trade.fees) || 0;
+    const fxFeeRate = Number(trade.fxFeeRate);
+    const fxFeeEligible = trade.fxFeeEligible === true;
     const positionCurrency = Number.isFinite(livePrice) ? livePrice * sizeUnits : null;
     const positionGBP = Number.isFinite(positionCurrency)
       ? convertToGBP(positionCurrency, liveCurrency, rates)
@@ -1892,8 +1902,15 @@ async function buildActiveTrades(user, rates = {}) {
     const feesGBP = Number.isFinite(feesCurrency)
       ? convertToGBP(feesCurrency, trade.currency || 'GBP', rates)
       : null;
+    let fxFeeGBP = null;
+    if (fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0 && entryValueGBP !== null) {
+      const entryFeeGBP = Math.abs(entryValueGBP) * fxFeeRate;
+      const exitBasisGBP = positionGBP !== null ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
+      const exitFeeGBP = exitBasisGBP * fxFeeRate;
+      fxFeeGBP = entryFeeGBP + exitFeeGBP;
+    }
     const unrealizedGBP = (pnlGBP !== null)
-      ? (feesGBP !== null ? pnlGBP - feesGBP : pnlGBP)
+      ? pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0)
       : null;
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;
@@ -1908,6 +1925,7 @@ async function buildActiveTrades(user, rates = {}) {
       riskPct: Number(trade.riskPct),
       direction: trade.direction || 'long',
       fees: Number(trade.fees) || 0,
+      fxFeeImpactGBP: fxFeeGBP !== null ? fxFeeGBP : undefined,
       livePrice: livePrice !== null ? livePrice : undefined,
       liveCurrency,
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
@@ -1995,6 +2013,7 @@ app.post('/api/trades', auth, async (req, res) => {
     riskPct,
     riskAmount,
     currency,
+    baseCurrency,
     note,
     symbol,
     direction,
@@ -2011,6 +2030,7 @@ app.post('/api/trades', auth, async (req, res) => {
     closeDate
   } = req.body || {};
   const tradeCurrency = currency === 'USD' ? 'USD' : 'GBP';
+  const tradeBaseCurrency = baseCurrency === 'USD' ? 'USD' : 'GBP';
   const entryNum = Number(entry);
   const stopNum = Number(stop);
   const pctNum = Number(riskPct);
@@ -2084,6 +2104,8 @@ app.post('/api/trades', auth, async (req, res) => {
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
+  const fxFeeRate = Number(process.env.FX_FEE_RATE ?? 0.005);
+  const fxFeeEligible = tradeCurrency === 'USD' && tradeBaseCurrency === 'GBP';
   const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
@@ -2112,7 +2134,9 @@ app.post('/api/trades', auth, async (req, res) => {
     setupTags,
     emotionTags,
     screenshotUrl,
-    note
+    note,
+    fxFeeEligible,
+    fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined
   });
   journal[targetDate] ||= [];
   journal[targetDate].push(trade);

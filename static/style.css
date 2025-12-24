@@ -655,11 +655,6 @@ button.danger.outline {
   color: #ff8aa0;
   border: 1px solid #ff8aa0;
 }
-button.danger.outline {
-  background: transparent;
-  color: #ff8aa0;
-  border: 1px solid #ff8aa0;
-}
 button.danger:hover {
   background: rgba(208, 52, 44, 0.28);
 }
