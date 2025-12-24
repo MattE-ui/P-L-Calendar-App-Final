@@ -716,8 +716,11 @@ function renderActiveTrades() {
     const closeFillLabel = document.createElement('span');
     closeFillLabel.className = 'close-fill-label';
     closeFillLabel.textContent = 'Close Fill:';
-    closeFillField.append(closeFillLabel, priceInput);
-    priceInput.placeholder = 'Close Fill:';
+    const closeFillPrefix = document.createElement('span');
+    closeFillPrefix.className = 'close-fill-prefix';
+    closeFillPrefix.textContent = '$';
+    closeFillField.append(closeFillLabel, closeFillPrefix, priceInput);
+    priceInput.placeholder = '';
     const pnlPreview = document.createElement('div');
     pnlPreview.className = 'tool-note';
     const status = document.createElement('div');
