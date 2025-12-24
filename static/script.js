@@ -715,6 +715,11 @@ function renderActiveTrades() {
     pnlPreview.className = 'tool-note';
     const status = document.createElement('div');
     status.className = 'tool-note';
+    const toGBPValue = (value, currency) => {
+      if (!Number.isFinite(value)) return null;
+      if (currency === 'GBP') return value;
+      return toGBP(value, currency);
+    };
     const updatePreview = () => {
       const priceVal = Number(priceInput.value);
       if (!Number.isFinite(priceVal) || priceVal <= 0) {
@@ -728,12 +733,31 @@ function renderActiveTrades() {
         return;
       }
       const isShort = trade.direction === 'short';
+      const slippage = Number(trade.slippage) || 0;
+      const effectivePrice = isShort ? priceVal + slippage : priceVal - slippage;
       const pnlRaw = isShort
-        ? (entryVal - priceVal) * unitsVal
-        : (priceVal - entryVal) * unitsVal;
+        ? (entryVal - effectivePrice) * unitsVal
+        : (effectivePrice - entryVal) * unitsVal;
       const fees = Number(trade.fees) || 0;
-      const pnlNet = pnlRaw - fees;
-      pnlPreview.textContent = `PnL if closed: ${formatSignedCurrency(pnlNet, trade.currency)}`;
+      const pnlGBP = toGBPValue(pnlRaw, trade.currency);
+      const feesGBP = toGBPValue(fees, trade.currency);
+      let fxFeeGBP = null;
+      if (trade.fxFeeEligible && Number.isFinite(trade.fxFeeRate) && trade.fxFeeRate > 0) {
+        const entryValueGBP = toGBPValue(entryVal * unitsVal, trade.currency);
+        const positionGBP = toGBPValue(priceVal * unitsVal, trade.currency);
+        if (entryValueGBP !== null) {
+          const entryFeeGBP = Math.abs(entryValueGBP) * trade.fxFeeRate;
+          const exitBasisGBP = positionGBP !== null ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
+          const exitFeeGBP = exitBasisGBP * trade.fxFeeRate;
+          fxFeeGBP = entryFeeGBP + exitFeeGBP;
+        }
+      }
+      const pnlNetGBP = pnlGBP === null
+        ? null
+        : pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0);
+      pnlPreview.textContent = pnlNetGBP === null
+        ? ''
+        : `PnL if closed: ${formatSignedCurrency(pnlNetGBP, state.currency)}`;
     };
     priceInput.addEventListener('input', updatePreview);
     updatePreview();
@@ -1495,6 +1519,9 @@ function renderTradeList(trades = [], dateStr = null) {
       deleteBtn.className = 'danger outline';
       deleteBtn.textContent = 'Delete trade';
       deleteBtn.addEventListener('click', async () => {
+        if (!window.confirm('Delete this trade? This cannot be undone.')) {
+          return;
+        }
         try {
           await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
           await loadData();
@@ -1790,6 +1817,9 @@ function bindControls() {
     if (!tradeId) return;
     const status = $('#edit-trade-status');
     if (status) status.textContent = '';
+    if (!window.confirm('Delete this trade? This cannot be undone.')) {
+      return;
+    }
     try {
       await api(`/api/trades/${tradeId}`, { method: 'DELETE' });
       modal.classList.add('hidden');

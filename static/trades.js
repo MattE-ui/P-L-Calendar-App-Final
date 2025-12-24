@@ -139,6 +139,9 @@ function renderTrades() {
     deleteBtn.className = 'danger outline';
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', async () => {
+      if (!window.confirm('Delete this trade? This cannot be undone.')) {
+        return;
+      }
       try {
         await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
         await loadTrades();
