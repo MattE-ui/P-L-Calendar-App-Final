@@ -1316,7 +1316,20 @@ app.post('/api/portfolio', auth, (req,res)=>{
     return res.status(400).json({ error: 'Bad portfolio value' });
   }
   const db = loadDB();
-  db.users[req.username].portfolio = portfolio;
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  user.portfolio = portfolio;
+  const history = ensurePortfolioHistory(user);
+  const dateKey = currentDateKey();
+  const ym = dateKey.slice(0, 7);
+  history[ym] ||= {};
+  const existing = history[ym][dateKey] || {};
+  history[ym][dateKey] = {
+    ...existing,
+    end: portfolio
+  };
+  refreshAnchors(user, history);
   saveDB(db);
   res.json({ ok: true, portfolio });
 });

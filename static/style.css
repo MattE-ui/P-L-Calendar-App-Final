@@ -906,6 +906,9 @@ textarea {
   color:var(--text);
   margin-top:6px;
 }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
 textarea {
   resize: vertical;
   min-height: 80px;
