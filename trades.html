@@ -18,10 +18,8 @@
 
   <main class="container">
     <section class="title-wrap trade-title-wrap">
-      <div>
-        <h2 class="trade-title">Trade Journal</h2>
-        <p id="trade-subtitle" class="avg"></p>
-      </div>
+      <h2 class="trade-title">Trade Journal</h2>
+      <p id="trade-subtitle" class="avg"></p>
       <button id="add-trade-btn" class="primary add-trade-btn" aria-label="Add trade">+</button>
     </section>
 
@@ -32,12 +30,9 @@
           <h3>Find trades</h3>
         </div>
         <div class="filter-actions">
+          <button id="trade-settings-btn" class="ghost">Quick settings</button>
           <button id="export-csv-btn" class="ghost">Export CSV</button>
         </div>
-      </div>
-      <div class="tab-bar">
-        <button class="tab-btn active" type="button" data-tab="filters">Filters</button>
-        <button class="tab-btn" type="button" data-tab="quick-settings">Quick settings</button>
       </div>
       <div id="filters-panel">
       <div class="filter-bar">
@@ -96,58 +91,6 @@
         <button id="apply-filters-btn" class="primary">Apply filters</button>
         <button id="reset-filters-btn" class="ghost">Reset</button>
       </div>
-      </div>
-      <div id="quick-settings-panel" class="is-hidden">
-        <div class="grid two-col">
-          <div class="tool-field">
-            <label for="qs-trade-type">Default trade type</label>
-            <select id="qs-trade-type">
-              <option value="">No default</option>
-              <option value="scalp">Scalp</option>
-              <option value="day">Day</option>
-              <option value="swing">Swing</option>
-              <option value="position">Position</option>
-            </select>
-          </div>
-          <div class="tool-field">
-            <label for="qs-asset-class">Default asset class</label>
-            <select id="qs-asset-class">
-              <option value="">No default</option>
-              <option value="stocks">Stocks</option>
-              <option value="options">Options</option>
-              <option value="forex">Forex</option>
-              <option value="crypto">Crypto</option>
-              <option value="futures">Futures</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div class="tool-field">
-            <label for="qs-strategy">Default strategy tag</label>
-            <input type="text" id="qs-strategy" placeholder="Breakout">
-          </div>
-          <div class="tool-field">
-            <label for="qs-market-condition">Default market condition</label>
-            <select id="qs-market-condition">
-              <option value="">No default</option>
-              <option value="bull">Bull</option>
-              <option value="bear">Bear</option>
-              <option value="range">Range</option>
-              <option value="volatile">Volatile</option>
-              <option value="news-driven">News-driven</option>
-            </select>
-          </div>
-          <div class="tool-field">
-            <label for="qs-setup-tags">Default setup tags (comma separated)</label>
-            <input type="text" id="qs-setup-tags" placeholder="breakout, trend">
-          </div>
-          <div class="tool-field">
-            <label for="qs-emotion-tags">Default emotion tags (comma separated)</label>
-            <input type="text" id="qs-emotion-tags" placeholder="disciplined, confident">
-          </div>
-        </div>
-        <div class="filter-actions" style="margin-top:12px;">
-          <button id="save-quick-settings-btn" class="primary">Save defaults</button>
-        </div>
       </div>
     </section>
 
@@ -298,6 +241,66 @@
           <button type="button" class="ghost" id="reset-form-btn">Reset</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="trade-settings-modal" class="modal hidden">
+    <div class="modal-card trade-form-modal">
+      <div class="modal-header">
+        <h3>Quick settings</h3>
+        <button id="close-trade-settings-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <div class="grid two-col">
+        <div class="tool-field">
+          <label for="qs-trade-type">Default trade type</label>
+          <select id="qs-trade-type">
+            <option value="">No default</option>
+            <option value="scalp">Scalp</option>
+            <option value="day">Day</option>
+            <option value="swing">Swing</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-asset-class">Default asset class</label>
+          <select id="qs-asset-class">
+            <option value="">No default</option>
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+            <option value="forex">Forex</option>
+            <option value="crypto">Crypto</option>
+            <option value="futures">Futures</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-strategy">Default strategy tag</label>
+          <input type="text" id="qs-strategy" placeholder="Breakout">
+        </div>
+        <div class="tool-field">
+          <label for="qs-market-condition">Default market condition</label>
+          <select id="qs-market-condition">
+            <option value="">No default</option>
+            <option value="bull">Bull</option>
+            <option value="bear">Bear</option>
+            <option value="range">Range</option>
+            <option value="volatile">Volatile</option>
+            <option value="news-driven">News-driven</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-setup-tags">Default setup tags (comma separated)</label>
+          <input type="text" id="qs-setup-tags" placeholder="breakout, trend">
+        </div>
+        <div class="tool-field">
+          <label for="qs-emotion-tags">Default emotion tags (comma separated)</label>
+          <input type="text" id="qs-emotion-tags" placeholder="disciplined, confident">
+        </div>
+      </div>
+      <div class="row">
+        <button id="save-quick-settings-btn" class="primary">Save defaults</button>
+        <button id="cancel-trade-settings-btn" class="ghost">Cancel</button>
+      </div>
     </div>
   </div>
 

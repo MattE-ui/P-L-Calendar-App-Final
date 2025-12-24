@@ -367,6 +367,15 @@ function bindForm() {
   document.querySelector('#close-trade-form-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-form-modal')?.classList.add('hidden');
   });
+  document.querySelector('#trade-settings-btn')?.addEventListener('click', () => {
+    document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
+  });
+  document.querySelector('#close-trade-settings-btn')?.addEventListener('click', () => {
+    document.querySelector('#trade-settings-modal')?.classList.add('hidden');
+  });
+  document.querySelector('#cancel-trade-settings-btn')?.addEventListener('click', () => {
+    document.querySelector('#trade-settings-modal')?.classList.add('hidden');
+  });
   document.querySelector('#save-quick-settings-btn')?.addEventListener('click', () => {
     state.defaults = {
       tradeType: document.querySelector('#qs-trade-type')?.value || '',
@@ -378,14 +387,7 @@ function bindForm() {
     };
     localStorage.setItem('trade-defaults', JSON.stringify(state.defaults));
     applyDefaultsToForm();
-  });
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-      document.querySelector('#filters-panel')?.classList.toggle('is-hidden', target !== 'filters');
-      document.querySelector('#quick-settings-panel')?.classList.toggle('is-hidden', target !== 'quick-settings');
-    });
+    document.querySelector('#trade-settings-modal')?.classList.add('hidden');
   });
 }
 
@@ -426,6 +428,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       document.querySelector('#trade-form-modal')?.classList.add('hidden');
+      document.querySelector('#trade-settings-modal')?.classList.add('hidden');
     }
   });
 });
