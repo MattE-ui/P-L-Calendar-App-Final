@@ -352,41 +352,11 @@ select {
 }
 .trade-pill .trade-action-row {
   flex-wrap: nowrap;
-}
-.trade-pill .trade-action-row {
   justify-content: space-between;
 }
 .trade-pill .close-row input[type="date"],
 .trade-pill .close-row input[type="number"] {
   flex: 1 1 150px;
-}
-.close-fill-field {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
-}
-.close-fill-field input {
-  padding-left: 84px;
-}
-.close-fill-label {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(calc(-50% + 2px));
-  font-size: 12px;
-  line-height: 1;
-  color: var(--muted);
-  pointer-events: none;
-}
-.close-fill-prefix {
-  position: absolute;
-  left: 70px;
-  top: 50%;
-  transform: translateY(calc(-50% + 2px));
-  font-size: 12px;
-  line-height: 1;
-  color: var(--muted);
-  pointer-events: none;
 }
 .trade-pill .close-row input[type="number"],
 .trade-pill .close-row input[type="date"] {

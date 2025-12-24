@@ -695,106 +695,16 @@ function renderActiveTrades() {
     editToggle.addEventListener('click', () => {
       openEditTradeModal(trade);
     });
-    const closeRow = document.createElement('div');
-    closeRow.className = 'close-row trade-action-row';
-    const priceInput = document.createElement('input');
-    priceInput.type = 'number';
-    priceInput.step = '0.0001';
-    priceInput.min = '0';
-    priceInput.value = livePrice ? livePrice : '';
-    const dateInput = document.createElement('input');
-    dateInput.type = 'date';
-    dateInput.valueAsDate = new Date();
-    const editRow = document.createElement('div');
-    editRow.className = 'close-row';
-    editRow.append(dateInput, editToggle);
+    const actionRow = document.createElement('div');
+    actionRow.className = 'close-row trade-action-row';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
-    const closeFillField = document.createElement('div');
-    closeFillField.className = 'close-fill-field';
-    const closeFillLabel = document.createElement('span');
-    closeFillLabel.className = 'close-fill-label';
-    closeFillLabel.textContent = 'Close Fill:';
-    const closeFillPrefix = document.createElement('span');
-    closeFillPrefix.className = 'close-fill-prefix';
-    closeFillPrefix.textContent = '$';
-    closeFillField.append(closeFillLabel, closeFillPrefix, priceInput);
-    priceInput.placeholder = '';
-    const pnlPreview = document.createElement('div');
-    pnlPreview.className = 'tool-note';
-    const status = document.createElement('div');
-    status.className = 'tool-note';
-    const toGBPValue = (value, currency) => {
-      if (!Number.isFinite(value)) return null;
-      if (currency === 'GBP') return value;
-      return toGBP(value, currency);
-    };
-    const updatePreview = () => {
-      const priceVal = Number(priceInput.value);
-      if (!Number.isFinite(priceVal) || priceVal <= 0) {
-        pnlPreview.textContent = '';
-        return;
-      }
-      const entryVal = Number(trade.entry);
-      const unitsVal = Number(trade.sizeUnits);
-      if (!Number.isFinite(entryVal) || !Number.isFinite(unitsVal)) {
-        pnlPreview.textContent = '';
-        return;
-      }
-      const isShort = trade.direction === 'short';
-      const slippage = Number(trade.slippage) || 0;
-      const effectivePrice = isShort ? priceVal + slippage : priceVal - slippage;
-      const pnlRaw = isShort
-        ? (entryVal - effectivePrice) * unitsVal
-        : (effectivePrice - entryVal) * unitsVal;
-      const fees = Number(trade.fees) || 0;
-      const pnlGBP = toGBPValue(pnlRaw, trade.currency);
-      const feesGBP = toGBPValue(fees, trade.currency);
-      let fxFeeGBP = null;
-      if (trade.fxFeeEligible && Number.isFinite(trade.fxFeeRate) && trade.fxFeeRate > 0) {
-        const entryValueGBP = toGBPValue(entryVal * unitsVal, trade.currency);
-        const positionGBP = toGBPValue(priceVal * unitsVal, trade.currency);
-        if (entryValueGBP !== null) {
-          const entryFeeGBP = Math.abs(entryValueGBP) * trade.fxFeeRate;
-          const exitBasisGBP = positionGBP !== null ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
-          const exitFeeGBP = exitBasisGBP * trade.fxFeeRate;
-          fxFeeGBP = entryFeeGBP + exitFeeGBP;
-        }
-      }
-      const pnlNetGBP = pnlGBP === null
-        ? null
-        : pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0);
-      pnlPreview.textContent = pnlNetGBP === null
-        ? ''
-        : `PnL if closed: ${formatSignedCurrency(pnlNetGBP, state.currency)}`;
-    };
-    priceInput.addEventListener('input', updatePreview);
-    updatePreview();
-    closeBtn.addEventListener('click', async () => {
-      status.textContent = '';
-      const priceVal = Number(priceInput.value);
-      if (!Number.isFinite(priceVal) || priceVal <= 0) {
-        status.textContent = 'Enter a valid closing price.';
-        return;
-      }
-      try {
-        await api('/api/trades/close', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: trade.id, price: priceVal, date: dateInput.value })
-        });
-        await loadData();
-        render();
-      } catch (e) {
-        status.textContent = e?.message || 'Failed to close trade.';
-      }
+    closeBtn.addEventListener('click', () => {
+      openCloseTradeModal(trade);
     });
-    closeRow.append(closeFillField, closeBtn);
-    const previewRow = document.createElement('div');
-    previewRow.className = 'close-row';
-    previewRow.append(pnlPreview, status);
-    pill.append(editRow, closeRow, previewRow);
+    actionRow.append(editToggle, closeBtn);
+    pill.appendChild(actionRow);
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
@@ -870,6 +780,42 @@ function updateActiveTradesOverflow() {
   }
   const overflowing = list.scrollHeight > list.clientHeight + 1;
   showAll.classList.toggle('is-hidden', !overflowing);
+}
+
+function openCloseTradeModal(trade) {
+  const modal = $('#close-trade-modal');
+  if (!modal) return;
+  const title = $('#close-trade-title');
+  const priceInput = $('#close-trade-price');
+  const dateInput = $('#close-trade-date');
+  const preview = $('#close-trade-preview');
+  const status = $('#close-trade-status');
+  const closeLabel = $('#close-trade-close-label');
+  if (title) {
+    const sym = trade.symbol || 'Trade';
+    title.textContent = `Close ${sym}`;
+  }
+  if (closeLabel) {
+    closeLabel.textContent = `Close Fill (${trade.currency || 'GBP'})`;
+  }
+  if (priceInput) {
+    priceInput.value = Number.isFinite(trade.livePrice) ? trade.livePrice : '';
+  }
+  if (dateInput) {
+    dateInput.valueAsDate = new Date();
+  }
+  if (preview) preview.textContent = '';
+  if (status) status.textContent = '';
+  modal.dataset.tradeId = trade.id;
+  modal.dataset.direction = trade.direction || 'long';
+  modal.dataset.currency = trade.currency || 'GBP';
+  modal.dataset.entry = Number.isFinite(trade.entry) ? trade.entry : '';
+  modal.dataset.units = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
+  modal.dataset.fees = Number.isFinite(trade.fees) ? trade.fees : '';
+  modal.dataset.slippage = Number.isFinite(trade.slippage) ? trade.slippage : '';
+  modal.dataset.fxFeeEligible = trade.fxFeeEligible ? 'true' : 'false';
+  modal.dataset.fxFeeRate = Number.isFinite(trade.fxFeeRate) ? trade.fxFeeRate : '';
+  modal.classList.remove('hidden');
 }
 
 function openEditTradeModal(trade) {
@@ -1772,6 +1718,90 @@ function bindControls() {
     $('#edit-trade-modal')?.classList.add('hidden');
   });
 
+  $('#close-close-trade-btn')?.addEventListener('click', () => {
+    $('#close-trade-modal')?.classList.add('hidden');
+  });
+
+  const updateCloseTradePreview = () => {
+    const modal = $('#close-trade-modal');
+    if (!modal) return;
+    const priceInput = $('#close-trade-price');
+    const preview = $('#close-trade-preview');
+    if (!priceInput || !preview) return;
+    const priceVal = Number(priceInput.value);
+    if (!Number.isFinite(priceVal) || priceVal <= 0) {
+      preview.textContent = '';
+      return;
+    }
+    const entryVal = Number(modal.dataset.entry);
+    const unitsVal = Number(modal.dataset.units);
+    if (!Number.isFinite(entryVal) || !Number.isFinite(unitsVal)) {
+      preview.textContent = '';
+      return;
+    }
+    const direction = modal.dataset.direction === 'short' ? 'short' : 'long';
+    const slippage = Number(modal.dataset.slippage) || 0;
+    const effectivePrice = direction === 'short' ? priceVal + slippage : priceVal - slippage;
+    const pnlRaw = direction === 'short'
+      ? (entryVal - effectivePrice) * unitsVal
+      : (effectivePrice - entryVal) * unitsVal;
+    const currency = modal.dataset.currency || 'GBP';
+    const fees = Number(modal.dataset.fees) || 0;
+    const pnlGBP = currency === 'GBP' ? pnlRaw : toGBP(pnlRaw, currency);
+    const feesGBP = currency === 'GBP' ? fees : toGBP(fees, currency);
+    let fxFeeGBP = null;
+    if (modal.dataset.fxFeeEligible === 'true') {
+      const fxRate = Number(modal.dataset.fxFeeRate);
+      if (Number.isFinite(fxRate) && fxRate > 0) {
+        const entryValueGBP = currency === 'GBP' ? entryVal * unitsVal : toGBP(entryVal * unitsVal, currency);
+        const positionGBP = currency === 'GBP' ? priceVal * unitsVal : toGBP(priceVal * unitsVal, currency);
+        if (Number.isFinite(entryValueGBP)) {
+          const entryFeeGBP = Math.abs(entryValueGBP) * fxRate;
+          const exitBasisGBP = Number.isFinite(positionGBP) ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
+          const exitFeeGBP = exitBasisGBP * fxRate;
+          fxFeeGBP = entryFeeGBP + exitFeeGBP;
+        }
+      }
+    }
+    const pnlNetGBP = pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0);
+    preview.textContent = `PnL if closed: ${formatSignedCurrency(pnlNetGBP, state.currency)}`;
+  };
+
+  $('#close-trade-price')?.addEventListener('input', updateCloseTradePreview);
+  $('#close-trade-price')?.addEventListener('change', updateCloseTradePreview);
+
+  $('#save-close-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#close-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const priceInput = $('#close-trade-price');
+    const dateInput = $('#close-trade-date');
+    const status = $('#close-trade-status');
+    if (status) status.textContent = '';
+    const priceVal = Number(priceInput?.value);
+    if (!Number.isFinite(priceVal) || priceVal <= 0) {
+      if (status) status.textContent = 'Enter a valid closing price.';
+      return;
+    }
+    try {
+      await api('/api/trades/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tradeId, price: priceVal, date: dateInput?.value })
+      });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to close trade.';
+    }
+  });
+
+  $('#cancel-close-trade-btn')?.addEventListener('click', () => {
+    $('#close-trade-modal')?.classList.add('hidden');
+  });
+
   $('#save-edit-trade-btn')?.addEventListener('click', async () => {
     const modal = $('#edit-trade-modal');
     if (!modal) return;
@@ -1986,11 +2016,16 @@ function bindControls() {
     if (e.key === 'Escape') {
       $('#profit-modal')?.classList.add('hidden');
       $('#edit-trade-modal')?.classList.add('hidden');
+      $('#close-trade-modal')?.classList.add('hidden');
     }
   });
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
