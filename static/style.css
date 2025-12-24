@@ -352,11 +352,11 @@ select {
 }
 .close-fill-field {
   position: relative;
-  flex: 1 1 180px;
-  min-width: 160px;
+  flex: 1 1 200px;
+  min-width: 180px;
 }
 .close-fill-field input {
-  padding-left: 104px;
+  padding-left: 84px;
 }
 .close-fill-label {
   position: absolute;
@@ -364,17 +364,22 @@ select {
   top: 50%;
   transform: translateY(-50%);
   font-size: 12px;
+  line-height: 1;
   color: var(--muted);
   pointer-events: none;
 }
 .close-fill-prefix {
   position: absolute;
-  left: 86px;
+  left: 70px;
   top: 50%;
   transform: translateY(-50%);
   font-size: 12px;
+  line-height: 1;
   color: var(--muted);
   pointer-events: none;
+}
+.trade-pill .close-row .danger.outline {
+  margin-left: auto;
 }
 .trade-pill .close-row input[type="number"],
 .trade-pill .close-row input[type="date"] {
