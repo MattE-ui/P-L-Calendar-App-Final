@@ -1701,6 +1701,7 @@ function bindControls() {
   });
 
   $('#portfolio-btn')?.addEventListener('click', () => {
+    setNavOpen(false);
     const modalTitle = $('#portfolio-modal-title');
     if (modalTitle) modalTitle.textContent = `Portfolio value (${state.currency})`;
     const input = $('#portfolio-input');
@@ -1925,6 +1926,7 @@ function bindControls() {
     });
   });
   $('#quick-settings-btn')?.addEventListener('click', () => {
+    setNavOpen(false);
     const modal = $('#quick-settings-modal');
     const riskSel = $('#qs-risk-select');
     const curSel = $('#qs-currency-select');

@@ -177,6 +177,18 @@ body {
 .hero-metrics .metric-card {
   padding: 10px 12px;
 }
+.page-title {
+  display: flex;
+  justify-content: center;
+  margin: 6px auto 18px;
+  text-align: center;
+}
+
+.page-title h2 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: 0.2px;
+}
 
 #view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 10px; }
 #view-controls .control-group { display:flex; gap:8px; flex-wrap: wrap; }

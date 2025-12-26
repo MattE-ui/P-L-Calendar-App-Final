@@ -13,6 +13,8 @@ const state = {
   }
 };
 
+const currencySymbols = { GBP: '£', USD: '$' };
+
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });
   const data = await res.json().catch(() => ({}));
@@ -26,6 +28,21 @@ async function api(path, opts = {}) {
     throw err;
   }
   return data;
+}
+
+function formatCurrency(value, currency = 'GBP') {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  const symbol = currencySymbols[currency] || '£';
+  return `${symbol}${num.toFixed(2)}`;
+}
+
+function formatSignedCurrency(value, currency = 'GBP') {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  const symbol = currencySymbols[currency] || '£';
+  const sign = num < 0 ? '-' : '';
+  return `${sign}${symbol}${Math.abs(num).toFixed(2)}`;
 }
 
 function toQuery(params = {}) {
@@ -80,6 +97,54 @@ function renderChart(id, config) {
     parent.querySelectorAll('.chart-empty').forEach(el => el.remove());
   }
   charts[id] = new Chart(ctx, config);
+}
+
+function setupNavDrawer() {
+  const navToggle = document.getElementById('nav-toggle-btn');
+  const navDrawer = document.getElementById('nav-drawer');
+  const navOverlay = document.getElementById('nav-drawer-overlay');
+  const navClose = document.getElementById('nav-close-btn');
+  const setNavOpen = open => {
+    if (!navDrawer || !navOverlay || !navToggle) return;
+    navDrawer.classList.toggle('hidden', !open);
+    navOverlay.classList.toggle('hidden', !open);
+    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  navToggle?.addEventListener('click', () => {
+    if (!navDrawer || !navOverlay) return;
+    const isOpen = !navDrawer.classList.contains('hidden');
+    setNavOpen(!isOpen);
+  });
+  navClose?.addEventListener('click', () => setNavOpen(false));
+  navOverlay?.addEventListener('click', () => setNavOpen(false));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    setNavOpen(false);
+  });
+  return setNavOpen;
+}
+
+async function loadHeroMetrics() {
+  try {
+    const res = await api('/api/portfolio');
+    const portfolio = Number(res?.portfolio);
+    const netDeposits = Number(res?.netDepositsTotal);
+    const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
+    const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
+    const netPerformance = portfolioValue - netDepositsValue;
+    const netPerfPct = netDepositsValue ? netPerformance / Math.abs(netDepositsValue) : 0;
+    const portfolioEl = document.getElementById('header-portfolio-value');
+    if (portfolioEl) portfolioEl.textContent = formatCurrency(portfolioValue);
+    const netDepositsEl = document.getElementById('hero-net-deposits-value');
+    if (netDepositsEl) netDepositsEl.textContent = formatSignedCurrency(netDepositsValue);
+    const netPerfEl = document.getElementById('hero-net-performance-value');
+    if (netPerfEl) netPerfEl.textContent = formatSignedCurrency(netPerformance);
+    const netPerfSub = document.getElementById('hero-net-performance-sub');
+    if (netPerfSub) netPerfSub.textContent = formatPercent(netPerfPct);
+  } catch (e) {
+    console.warn('Failed to load hero metrics', e);
+  }
 }
 
 function readFilters() {
@@ -289,12 +354,47 @@ function resetFilters() {
 }
 
 function bindNav() {
+  const closeNav = setupNavDrawer();
   document.querySelector('#calendar-btn')?.addEventListener('click', () => window.location.href = '/');
   document.querySelector('#trades-btn')?.addEventListener('click', () => window.location.href = '/trades.html');
   document.querySelector('#profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
   document.querySelector('#logout-btn')?.addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST' }).catch(() => {});
     window.location.href = '/login.html';
+  });
+  document.querySelector('#quick-settings-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    const modal = document.querySelector('#quick-settings-modal');
+    const riskSel = document.querySelector('#qs-risk-select');
+    const curSel = document.querySelector('#qs-currency-select');
+    try {
+      const saved = localStorage.getItem('plc-prefs');
+      if (saved) {
+        const prefs = JSON.parse(saved);
+        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => document.querySelector('#quick-settings-modal')?.classList.add('hidden');
+  document.querySelector('#close-qs-btn')?.addEventListener('click', closeQs);
+  document.querySelector('#save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = document.querySelector('#qs-risk-select');
+    const curSel = document.querySelector('#qs-currency-select');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    const prefs = {};
+    if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
+    if (cur && ['GBP', 'USD'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify(prefs));
+    } catch (e) {
+      console.warn(e);
+    }
+    closeQs();
   });
 }
 
@@ -306,6 +406,7 @@ function bindFilters() {
 function init() {
   bindNav();
   bindFilters();
+  loadHeroMetrics();
   refreshAnalytics().catch(console.error);
 }
 
