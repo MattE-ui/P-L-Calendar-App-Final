@@ -402,7 +402,7 @@ function bindNav() {
   });
   api('/api/profile')
     .then(profile => {
-      const show = profile?.username === 'mevs.0404@gmail.com';
+      const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
       document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
     })
     .catch(() => {

@@ -2124,6 +2124,20 @@ function bindControls() {
 async function updateDevtoolsNav() {
   try {
     const profile = await api('/api/profile');
+    const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
+    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+  } catch (e) {
+    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+  }
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
+}
+
+async function updateDevtoolsNav() {
+  try {
+    const profile = await api('/api/profile');
     const show = profile?.username === 'mevs.0404@gmail.com';
     $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {

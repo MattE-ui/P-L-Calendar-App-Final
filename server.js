@@ -887,6 +887,7 @@ async function requestTrading212Endpoint(url, headers) {
       data?.totalValue,
       data?.total?.portfolioValue,
       data?.portfolioValue,
+      data?.portfolio?.totalValue,
       data?.summary?.totalValue,
       data?.summary?.equity,
       data?.summary?.total?.value,
@@ -1222,7 +1223,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
       const txs = snapshot.transactions
         .map(tx => {
-          const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.processedAt || '');
+          const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
           return { tx, ts };
         })
         .filter(item => Number.isFinite(item.ts))
@@ -1244,16 +1245,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           tx.money
         );
         if (!Number.isFinite(amount) || amount === 0) continue;
+        const txCurrency = tx.currency || tx.amount?.currency || tx.money?.currency || 'GBP';
+        const amountGBP = txCurrency && txCurrency !== 'GBP'
+          ? convertToGBP(amount, txCurrency, rates)
+          : amount;
         const date = dateKeyInTimezone(timezone, new Date(item.ts));
         const monthKey = date.slice(0, 7);
         history[monthKey] ||= {};
         const entry = history[monthKey][date] || {};
         const entryCashIn = Number(entry.cashIn ?? 0);
         const entryCashOut = Number(entry.cashOut ?? 0);
-        if (amount > 0) {
-          entry.cashIn = entryCashIn + amount;
+        if (amountGBP > 0) {
+          entry.cashIn = entryCashIn + amountGBP;
         } else {
-          entry.cashOut = entryCashOut + Math.abs(amount);
+          entry.cashOut = entryCashOut + Math.abs(amountGBP);
         }
         history[monthKey][date] = entry;
         if (!newest || item.ts > newest) newest = item.ts;
@@ -1329,7 +1334,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
         const existingTrade = existingTradeEntry?.trade;
         const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
-        const entry = Number(raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
+        const entry = Number(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
+        const currentPrice = Number(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -1340,6 +1346,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
           existingTrade.direction = direction;
+          if (Number.isFinite(currentPrice) && currentPrice > 0) {
+            existingTrade.lastSyncPrice = currentPrice;
+          }
           if (Number.isFinite(stop) && stop > 0) {
             existingTrade.stop = stop;
             existingTrade.perUnitRisk = Math.abs(entry - stop);
@@ -1353,6 +1362,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           entry,
           stop: Number.isFinite(stop) && stop > 0 ? stop : undefined,
           sizeUnits,
+          lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           riskPct: 0,
           perUnitRisk: Number.isFinite(stop) ? Math.abs(entry - stop) : 0,
           riskAmountCurrency: 0,
@@ -1459,7 +1469,7 @@ app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analyt
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
-  if (req.username !== 'mevs.0404@gmail.com') {
+  if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
     return res.status(403).send('Forbidden');
   }
   res.sendFile(path.join(__dirname,'devtools.html'));
@@ -1821,7 +1831,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
 });
 
 app.get('/api/integrations/trading212/raw', auth, (req, res) => {
-  if (req.username !== 'mevs.0404@gmail.com') {
+  if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
     return res.status(403).json({ error: 'Forbidden' });
   }
   const db = loadDB();
