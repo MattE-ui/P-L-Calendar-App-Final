@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Devtools | P&L Calendar</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1>P&L Calendar</h1>
+        <p class="hero-sub">Trading journal & performance dashboard</p>
+      </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="analytics-btn" class="ghost">Analytics</button>
+      <button id="trades-btn" class="ghost">Trades</button>
+      <button id="profile-btn" class="ghost">Profile</button>
+      <button id="devtools-btn" class="ghost">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
+
+  <main class="container">
+    <section class="page-title">
+      <h2>Devtools</h2>
+    </section>
+    <section class="tool-card devtools-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Trading 212</p>
+          <h3>Raw integration payloads</h3>
+        </div>
+      </div>
+      <div class="devtools-grid">
+        <div>
+          <h4>Portfolio endpoint</h4>
+          <pre id="devtools-portfolio" class="raw-json"></pre>
+        </div>
+        <div>
+          <h4>Positions endpoint</h4>
+          <pre id="devtools-positions" class="raw-json"></pre>
+        </div>
+        <div>
+          <h4>Transactions endpoint</h4>
+          <pre id="devtools-transactions" class="raw-json"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="static/devtools.js"></script>
+</body>
+</html>
