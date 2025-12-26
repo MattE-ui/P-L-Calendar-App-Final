@@ -2115,13 +2115,6 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
-  window.addEventListener('resize', () => {
-    syncActiveTradesHeight();
-  });
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {
