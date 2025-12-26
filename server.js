@@ -1095,9 +1095,9 @@ async function fetchTrading212Snapshot(config) {
         const snapshot = await requestTrading212Endpoint(endpoint, headers);
         const root = deriveTrading212Root(pathSuffix);
         const positionsEndpoints = [
+          `${root}/equity/positions`,
           `${root}/equity/portfolio`,
           `${root}/equity/portfolio/positions`,
-          `${root}/equity/positions`,
           `${root}/equity/account/positions`,
           `${root}/portfolio/positions`
         ];
@@ -1819,32 +1819,12 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (typeof mode === 'string' && ['live', 'practice'].includes(mode)) {
     cfg.mode = mode;
   }
-  if (typeof timezone === 'string' && timezone.trim()) {
-    cfg.timezone = timezone.trim();
-  }
-  if (baseUrl !== undefined) {
-    if (typeof baseUrl === 'string' && baseUrl.trim()) {
-      cfg.baseUrl = baseUrl.trim();
-    } else if (baseUrl === '' || baseUrl === null) {
-      cfg.baseUrl = '';
-    }
-  }
-  if (endpoint !== undefined) {
-    if (typeof endpoint === 'string' && endpoint.trim()) {
-      cfg.endpoint = endpoint.startsWith('/')
-        ? endpoint.trim()
-        : `/${endpoint.trim().replace(/^\/+/, '')}`;
-    } else if (endpoint === '' || endpoint === null) {
-      cfg.endpoint = '/api/v0/equity/portfolio/summary';
-    }
-  }
-  if (snapshotTime !== undefined) {
-    const parsed = parseSnapshotTime(String(snapshotTime));
-    if (!parsed) {
-      return res.status(400).json({ error: 'Snapshot time must be HH:MM in 24-hour format' });
-    }
-    cfg.snapshotTime = `${parsed.hour}:${parsed.minute}`;
-  }
+  cfg.timezone = 'Europe/London';
+  cfg.snapshotTime = '21:00';
+  cfg.baseUrl = cfg.mode === 'practice'
+    ? 'https://demo.trading212.com'
+    : 'https://live.trading212.com';
+  cfg.endpoint = '/api/v0/equity/account/summary';
   if (apiKey !== undefined) {
     if (typeof apiKey === 'string' && apiKey.trim()) {
       cfg.apiKey = apiKey.trim();
@@ -1884,7 +1864,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     hasApiKey: !!responseCfg.apiKey,
     hasApiSecret: !!responseCfg.apiSecret,
     baseUrl: responseCfg.baseUrl || '',
-    endpoint: responseCfg.endpoint || '/api/v0/equity/portfolio/summary',
+    endpoint: responseCfg.endpoint || '/api/v0/equity/account/summary',
     lastBaseUrl: responseCfg.lastBaseUrl || null,
     lastEndpoint: responseCfg.lastEndpoint || null,
     lastSyncAt: responseCfg.lastSyncAt || null,

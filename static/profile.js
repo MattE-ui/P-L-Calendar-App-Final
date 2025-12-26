@@ -278,17 +278,11 @@ function setIntegrationFieldsDisabled(disabled) {
   const apiInput = document.getElementById('t212-api-key');
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
-  const timeInput = document.getElementById('t212-time');
-  const hostInput = document.getElementById('t212-host');
-  const endpointInput = document.getElementById('t212-endpoint');
   const runBtn = document.getElementById('t212-run-now');
   if (container) container.classList.toggle('is-hidden', disabled);
   if (apiInput) apiInput.disabled = disabled;
   if (secretInput) secretInput.disabled = disabled;
   if (modeSelect) modeSelect.disabled = disabled;
-  if (timeInput) timeInput.disabled = disabled;
-  if (hostInput) hostInput.disabled = disabled;
-  if (endpointInput) endpointInput.disabled = disabled;
   if (runBtn) runBtn.disabled = disabled;
 }
 
@@ -349,11 +343,11 @@ async function loadIntegration() {
     integrationState.hasApiKey = !!data.hasApiKey;
     integrationState.hasApiSecret = !!data.hasApiSecret;
     integrationState.enabled = !!data.enabled;
-    integrationState.snapshotTime = data.snapshotTime || '21:00';
-    integrationState.mode = data.mode || 'live';
-    integrationState.timezone = data.timezone || 'Europe/London';
-    integrationState.baseUrl = data.baseUrl || '';
-    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+  integrationState.snapshotTime = data.snapshotTime || '21:00';
+  integrationState.mode = data.mode || 'live';
+  integrationState.timezone = data.timezone || 'Europe/London';
+  integrationState.baseUrl = data.baseUrl || '';
+  integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
@@ -362,9 +356,6 @@ async function loadIntegration() {
     const apiInput = document.getElementById('t212-api-key');
     const secretInput = document.getElementById('t212-api-secret');
     const modeSelect = document.getElementById('t212-mode');
-    const timeInput = document.getElementById('t212-time');
-    const hostInput = document.getElementById('t212-host');
-    const endpointInput = document.getElementById('t212-endpoint');
     if (toggle) toggle.checked = integrationState.enabled;
     if (apiInput) {
       apiInput.value = '';
@@ -379,9 +370,6 @@ async function loadIntegration() {
         : 'Paste your API secret';
     }
     if (modeSelect) modeSelect.value = integrationState.mode;
-    if (timeInput) timeInput.value = integrationState.snapshotTime;
-    if (hostInput) hostInput.value = integrationState.baseUrl || '';
-    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
@@ -407,14 +395,10 @@ async function saveIntegration({ runNow = false } = {}) {
   const apiInput = document.getElementById('t212-api-key');
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
-  const timeInput = document.getElementById('t212-time');
-  const hostInput = document.getElementById('t212-host');
-  const endpointInput = document.getElementById('t212-endpoint');
   const enabled = !!toggle?.checked;
   const payload = {
     enabled,
-    mode: modeSelect?.value || integrationState.mode,
-    snapshotTime: timeInput?.value || integrationState.snapshotTime
+    mode: modeSelect?.value || integrationState.mode
   };
   const apiKeyValue = apiInput?.value.trim();
   if (apiKeyValue) {
@@ -427,12 +411,6 @@ async function saveIntegration({ runNow = false } = {}) {
     payload.apiSecret = apiSecretValue;
   } else if (!enabled && integrationState.hasApiSecret) {
     payload.apiSecret = '';
-  }
-  if (hostInput) {
-    payload.baseUrl = hostInput.value.trim();
-  }
-  if (endpointInput) {
-    payload.endpoint = endpointInput.value.trim();
   }
   if (runNow) payload.runNow = true;
   try {
@@ -448,7 +426,7 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.mode = data.mode || integrationState.mode;
     integrationState.timezone = data.timezone || integrationState.timezone;
     integrationState.baseUrl = data.baseUrl || '';
-    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+    integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
@@ -465,8 +443,6 @@ async function saveIntegration({ runNow = false } = {}) {
         ? 'Secret saved — paste a new secret to replace'
         : 'Paste your API secret';
     }
-    if (hostInput) hostInput.value = integrationState.baseUrl || '';
-    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     if (toggle) toggle.checked = integrationState.enabled;
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
