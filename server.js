@@ -1796,9 +1796,12 @@ async function fetchYahooQuote(symbol) {
     const data = await res.json();
     const quote = data?.quoteResponse?.result?.[0];
     if (!quote) continue;
-    const price = quote?.regularMarketPrice
-      ?? quote?.postMarketPrice
+    const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
+    const price = (marketState === 'pre' ? quote?.preMarketPrice : null)
+      ?? (marketState === 'post' ? quote?.postMarketPrice : null)
       ?? quote?.preMarketPrice
+      ?? quote?.postMarketPrice
+      ?? quote?.regularMarketPrice
       ?? quote?.regularMarketPreviousClose;
     const currency = quote?.currency || 'GBP';
     if (!Number.isFinite(price) || price <= 0) continue;
@@ -1842,9 +1845,12 @@ async function fetchMarketPrice(symbol) {
     if (res.ok) {
       const data = await res.json();
       const quote = data?.quoteResponse?.result?.[0];
-      const price = quote?.regularMarketPrice
-        ?? quote?.postMarketPrice
+      const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
+      const price = (marketState === 'pre' ? quote?.preMarketPrice : null)
+        ?? (marketState === 'post' ? quote?.postMarketPrice : null)
         ?? quote?.preMarketPrice
+        ?? quote?.postMarketPrice
+        ?? quote?.regularMarketPrice
         ?? quote?.regularMarketPreviousClose;
       const currency = quote?.currency || 'GBP';
       if (Number.isFinite(price) && price > 0) {
