@@ -811,6 +811,17 @@ function parseTradingNumber(value) {
   return null;
 }
 
+function deriveTrading212Root(endpointPath) {
+  if (typeof endpointPath !== 'string') return '/api/v0';
+  const trimmed = endpointPath.trim();
+  if (!trimmed) return '/api/v0';
+  const match = trimmed.match(/(\/api\/v\d+)/i);
+  if (match && match[1]) {
+    return match[1].toLowerCase();
+  }
+  return '/api/v0';
+}
+
 async function requestTrading212Endpoint(url, headers) {
   const maxAttempts = 3;
   let attempt = 0;
@@ -1082,18 +1093,20 @@ async function fetchTrading212Snapshot(config) {
       const endpoint = `${base}${pathSuffix}`;
       try {
         const snapshot = await requestTrading212Endpoint(endpoint, headers);
+        const root = deriveTrading212Root(pathSuffix);
         const positionsEndpoints = [
-          '/api/v0/equity/portfolio',
-          '/api/v0/equity/portfolio/positions',
-          '/api/v0/equity/positions',
-          '/api/v0/equity/account/positions',
-          '/api/v0/portfolio/positions'
+          `${root}/equity/portfolio`,
+          `${root}/equity/portfolio/positions`,
+          `${root}/equity/positions`,
+          `${root}/equity/account/positions`,
+          `${root}/portfolio/positions`
         ];
         const transactionEndpoints = [
-          '/api/v0/history/transactions',
-          '/api/v0/history/transactions?type=CASH',
-          '/api/v0/history/cash',
-          '/api/v0/transactions'
+          `${root}/history/transactions`,
+          `${root}/history/transactions?type=CASH`,
+          `${root}/history/cash`,
+          `${root}/transactions`,
+          `${root}/cash/transactions`
         ];
         let positions = null;
         let transactions = null;
