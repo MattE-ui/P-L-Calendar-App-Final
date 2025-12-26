@@ -1158,6 +1158,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   ensureUserShape(user, username);
   const cfg = user.trading212;
   if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  const rates = await fetchRates();
   const now = Date.now();
   if (cfg.cooldownUntil) {
     const cooldownTs = Date.parse(cfg.cooldownUntil);
