@@ -325,6 +325,10 @@ select {
   color: var(--muted);
   font-size: 14px;
 }
+.tool-note.lod-note {
+  font-size: 11px;
+  margin: 2px 0 6px;
+}
 .tool-portfolio {
   background: rgba(42,163,255,.12);
   border: 1px solid rgba(42,163,255,.4);
