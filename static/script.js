@@ -24,7 +24,10 @@ const state = {
   defaultRiskPct: 1,
   fees: 0,
   slippage: 0,
-  rounding: 'fractional'
+  rounding: 'fractional',
+  autoStopSymbol: '',
+  autoStopValue: null,
+  manualStopOverride: false
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -653,6 +656,28 @@ function renderRiskCalculator() {
     btn.classList.toggle('active', btn.dataset.riskCurrency === safeCurrency);
   });
   calculateRiskPosition(false);
+}
+
+async function fetchDailyLow(symbol) {
+  if (!symbol) return null;
+  const res = await api(`/api/market/low?symbol=${encodeURIComponent(symbol)}`);
+  const low = Number(res?.low);
+  return Number.isFinite(low) && low > 0 ? low : null;
+}
+
+async function updateAutoStop(symbol, stopInput, markAuto) {
+  if (!symbol || !stopInput || state.manualStopOverride) return;
+  try {
+    const low = await fetchDailyLow(symbol);
+    if (low === null) return;
+    state.autoStopValue = low;
+    markAuto(true);
+    stopInput.value = low.toFixed(2);
+    markAuto(false);
+    calculateRiskPosition(false);
+  } catch (e) {
+    console.warn('Failed to fetch daily low', e);
+  }
 }
 
 function renderActiveTrades() {
@@ -1917,9 +1942,44 @@ function bindControls() {
     window.location.href = '/login.html';
   });
 
+  let isAutoStopUpdate = false;
+  const markAuto = value => {
+    isAutoStopUpdate = value;
+  };
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
   });
+  const stopInput = $('#risk-stop-input');
+  if (stopInput) {
+    stopInput.addEventListener('input', () => {
+      if (isAutoStopUpdate) return;
+      state.manualStopOverride = true;
+    });
+  }
+  const symbolInput = $('#risk-symbol-input');
+  if (symbolInput) {
+    let autoStopTimer = null;
+    const scheduleAutoStop = () => {
+      if (autoStopTimer) clearTimeout(autoStopTimer);
+      const rawSymbol = symbolInput.value.trim();
+      if (!rawSymbol) return;
+      const normalized = rawSymbol.toUpperCase();
+      autoStopTimer = setTimeout(() => {
+        if (state.autoStopSymbol !== normalized) {
+          state.autoStopSymbol = normalized;
+          state.manualStopOverride = false;
+          state.autoStopValue = null;
+        }
+        updateAutoStop(normalized, stopInput, markAuto);
+      }, 400);
+    };
+    symbolInput.addEventListener('input', scheduleAutoStop);
+    symbolInput.addEventListener('blur', scheduleAutoStop);
+    setInterval(() => {
+      if (!symbolInput.value.trim() || state.manualStopOverride) return;
+      updateAutoStop(symbolInput.value.trim().toUpperCase(), stopInput, markAuto);
+    }, 5 * 60 * 1000);
+  }
   $$('#risk-percent-toggle button').forEach(btn => {
     btn.addEventListener('click', () => {
       const pct = Number(btn.dataset.riskPct);
@@ -2055,6 +2115,13 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
+  window.addEventListener('resize', () => {
+    syncActiveTradesHeight();
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 if (typeof module !== 'undefined') {

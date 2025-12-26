@@ -1778,6 +1778,21 @@ function normalizeTradeMeta(trade = {}) {
 }
 
 const marketCache = new Map();
+const dailyLowCache = new Map();
+
+function getNyDateKey() {
+  const nyNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hours = nyNow.getHours();
+  const minutes = nyNow.getMinutes();
+  const date = new Date(nyNow);
+  if (hours < 9 || (hours === 9 && minutes < 30)) {
+    date.setDate(date.getDate() - 1);
+  }
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 async function fetchYahooQuote(symbol) {
   const baseUrls = [
     'https://query1.finance.yahoo.com/v7/finance/quote',
@@ -1855,6 +1870,34 @@ async function fetchYahooChartQuote(symbol) {
     currency,
     isExtended: true,
     marketState
+  };
+}
+
+async function fetchYahooDayLow(symbol) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=true`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'application/json,text/plain,*/*'
+    }
+  });
+  if (!res.ok) throw new Error('Yahoo chart not available');
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  const lows = result?.indicators?.quote?.[0]?.low;
+  if (!Array.isArray(lows) || lows.length === 0) throw new Error('Yahoo chart missing low');
+  let min = null;
+  for (const value of lows) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (min === null || value < min) min = value;
+  }
+  if (!Number.isFinite(min) || min <= 0) throw new Error('Yahoo chart missing low');
+  return {
+    symbol: trimmed,
+    low: min,
+    currency: result?.meta?.currency || 'USD'
   };
 }
 
@@ -1941,6 +1984,18 @@ async function fetchMarketPrice(symbol) {
   }
   marketCache.set(cacheKey, { quote: normalized, at: now });
   return normalized;
+}
+
+async function fetchDailyLow(symbol) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const dateKey = getNyDateKey();
+  const cacheKey = `${trimmed}:${dateKey}`;
+  const cached = dailyLowCache.get(cacheKey);
+  if (cached) return cached;
+  const low = await fetchYahooDayLow(trimmed);
+  dailyLowCache.set(cacheKey, low);
+  return low;
 }
 
 async function buildActiveTrades(user, rates = {}) {
@@ -2438,6 +2493,18 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP } = await buildActiveTrades(user, rates);
   res.json({ trades, liveOpenPnl: liveOpenPnlGBP });
+});
+
+app.get('/api/market/low', auth, async (req, res) => {
+  const symbol = typeof req.query?.symbol === 'string' ? req.query.symbol.trim() : '';
+  if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+  try {
+    const low = await fetchDailyLow(symbol);
+    res.json(low);
+  } catch (e) {
+    console.error('Failed to fetch daily low', e);
+    res.status(502).json({ error: 'Unable to fetch daily low' });
+  }
 });
 
 async function loadFilteredTrades(username, query = {}) {
