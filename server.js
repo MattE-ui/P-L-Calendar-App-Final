@@ -906,12 +906,23 @@ async function requestTrading212Endpoint(url, headers) {
       data?.cashFlows?.net?.amount,
       data?.netCash
     ];
-    const portfolioValue = portfolioCandidates
+    let portfolioValue = portfolioCandidates
       .map(parseTradingNumber)
       .find(value => Number.isFinite(value));
     const netDeposits = netDepositsCandidates
       .map(parseTradingNumber)
       .find(value => Number.isFinite(value));
+    if (!Number.isFinite(portfolioValue)) {
+      const account = data?.account || data?.portfolio || data?.summary || data?.total || data?.overall;
+      if (account && typeof account === 'object') {
+        const numericValues = Object.values(account)
+          .map(parseTradingNumber)
+          .filter(value => Number.isFinite(value));
+        if (numericValues.length) {
+          portfolioValue = Math.max(...numericValues);
+        }
+      }
+    }
     if (!Number.isFinite(portfolioValue)) {
       throw new Trading212Error('Trading 212 payload was missing a portfolio value.', {
         status,
