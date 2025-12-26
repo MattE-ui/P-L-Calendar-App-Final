@@ -335,6 +335,16 @@ select {
 }
 .tool-portfolio span { display: block; color: var(--muted); font-size: 13px; }
 .tool-portfolio strong { display: block; font-size: 18px; margin-top: 4px; }
+.tool-portfolio.positive {
+  border-color: rgba(29,185,84,.6);
+  background: rgba(29,185,84,.12);
+}
+.tool-portfolio.negative {
+  border-color: rgba(255,59,92,.6);
+  background: rgba(255,59,92,.12);
+}
+.tool-portfolio.positive strong { color: var(--positive); }
+.tool-portfolio.negative strong { color: var(--negative); }
 .tool-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

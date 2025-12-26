@@ -660,10 +660,16 @@ function renderActiveTrades() {
   const empty = $('#active-trade-empty');
   const showAll = $('#active-trade-show-all');
   const pnlEl = $('#live-pnl-display');
+  const pnlCard = pnlEl?.closest('.tool-portfolio');
   if (!list) return;
   list.innerHTML = '';
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
-  if (pnlEl) pnlEl.textContent = formatSignedCurrency(state.liveOpenPnlGBP, state.currency);
+  const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+  if (pnlEl) pnlEl.textContent = formatSignedCurrency(livePnl, state.currency);
+  if (pnlCard) {
+    pnlCard.classList.toggle('positive', livePnl > 0);
+    pnlCard.classList.toggle('negative', livePnl < 0);
+  }
   if (!trades.length) {
     if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.classList.add('is-hidden');
@@ -1356,8 +1362,7 @@ async function loadData() {
       ? totalVal
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
-    const livePortfolio = Number.isFinite(res?.livePortfolio) ? res.livePortfolio : state.portfolioGBP;
-    state.livePortfolioGBP = livePortfolio;
+    state.livePortfolioGBP = state.portfolioGBP;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
       return;
@@ -1374,7 +1379,7 @@ async function loadData() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = (Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0) + activeRes.liveOpenPnl;
+      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
   } catch (e) {
     console.warn('Failed to load active trades', e);
@@ -1388,7 +1393,7 @@ async function refreshActiveTrades() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = (Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0) + activeRes.liveOpenPnl;
+      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
     renderActiveTrades();
     updatePortfolioPill();

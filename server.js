@@ -1297,7 +1297,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const anchors = refreshAnchors(user, history);
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP } = await buildActiveTrades(user, rates);
-  const livePortfolio = (Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0) + liveOpenPnlGBP;
+  const livePortfolio = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
   if (mutated || normalized || anchors.mutated) saveDB(db);
   res.json({
     portfolio: Number.isFinite(user.portfolio) ? user.portfolio : 0,
