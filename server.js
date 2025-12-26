@@ -1229,15 +1229,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         : Array.isArray(snapshot.transactionsRaw)
           ? snapshot.transactionsRaw
           : inlineTransactions;
-    if (snapshot.netDeposits !== null) {
-      const delta = snapshot.netDeposits - previousNet;
-      if (delta > 0) {
-        cashIn += delta;
-      } else if (delta < 0) {
-        cashOut += Math.abs(delta);
-      }
-      cfg.lastNetDeposits = snapshot.netDeposits;
-    } else if (Array.isArray(effectiveTransactions)) {
+    let transactionsApplied = false;
+    if (Array.isArray(effectiveTransactions)) {
       const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
       const txs = effectiveTransactions
         .map(tx => {
@@ -1283,6 +1276,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           entry.cashOut = entryCashOut + Math.abs(amountGBP);
         }
         history[monthKey][date] = entry;
+        transactionsApplied = true;
         if (reference) {
           cfg.processedReferences.push(reference);
           if (cfg.processedReferences.length > 500) {
@@ -1294,8 +1288,21 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       if (newest) {
         cfg.lastTransactionAt = new Date(newest).toISOString();
       }
-      const { total: updatedTotal } = computeNetDepositsTotals(user, history);
-      cfg.lastNetDeposits = updatedTotal;
+      if (transactionsApplied) {
+        const { total: updatedTotal } = computeNetDepositsTotals(user, history);
+        cfg.lastNetDeposits = updatedTotal;
+      }
+    }
+    if (snapshot.netDeposits !== null) {
+      const delta = snapshot.netDeposits - previousNet;
+      if (delta > 0) {
+        cashIn += delta;
+      } else if (delta < 0) {
+        cashOut += Math.abs(delta);
+      }
+      if (!transactionsApplied) {
+        cfg.lastNetDeposits = snapshot.netDeposits;
+      }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
@@ -1359,10 +1366,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         : Array.isArray(snapshot.positionsRaw)
           ? snapshot.positionsRaw
           : inlinePositions;
+    let positionsMutated = false;
     if (Array.isArray(effectivePositions) && effectivePositions.length) {
       const journal = ensureTradeJournal(user);
-      const normalizedDate = dateKey;
-      journal[normalizedDate] ||= [];
       const openTrades = [];
       for (const [tradeDate, items] of Object.entries(journal)) {
         for (const trade of items || []) {
@@ -1385,6 +1391,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const entry = Number(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
         const currentPrice = Number(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
+        const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
+        const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
+        const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
+        journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
@@ -1401,6 +1411,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
           existingTrade.direction = direction;
+          existingTrade.status = 'open';
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1409,6 +1420,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             existingTrade.stop = nextStop;
             existingTrade.perUnitRisk = Math.abs(entry - nextStop);
           }
+          positionsMutated = true;
           continue;
         }
         const trade = normalizeTradeMeta({
@@ -1427,7 +1439,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           positionGBP: convertToGBP(entry * sizeUnits, tradeCurrency, rates),
           portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
           portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
-          createdAt: new Date().toISOString(),
+          createdAt: createdAtDate.toISOString(),
           direction,
           status: 'open',
           tradeType: 'day',
@@ -1435,6 +1447,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           trading212Id: raw?.id
         });
         journal[normalizedDate].push(trade);
+        positionsMutated = true;
       }
     }
     cfg.lastSyncAt = new Date().toISOString();
