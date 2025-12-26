@@ -8,6 +8,7 @@ const state = {
   firstEntryKey: null,
   currency: 'GBP',
   riskCurrency: 'GBP',
+  defaultRiskCurrency: 'GBP',
   rates: { GBP: 1 },
   liveOpenPnlGBP: 0,
   livePortfolioGBP: 0,
@@ -18,7 +19,12 @@ const state = {
     netDepositsGBP: 0,
     netPerformanceGBP: 0,
     netPerformancePct: null
-  }
+  },
+  direction: 'long',
+  defaultRiskPct: 1,
+  fees: 0,
+  slippage: 0,
+  rounding: 'fractional'
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -110,6 +116,42 @@ function formatShares(value) {
   return value.toFixed(4);
 }
 
+function computeRiskPlan({
+  entry,
+  stop,
+  portfolio,
+  riskPct,
+  fees = 0,
+  slippage = 0,
+  direction = 'long',
+  allowFractional = true
+}) {
+  if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(portfolio) || portfolio <= 0) {
+    return { error: 'Missing prices or portfolio value.' };
+  }
+  const dir = direction === 'short' ? 'short' : 'long';
+  if (dir === 'long' && stop >= entry) return { error: 'Stop must be below entry for long trades.' };
+  if (dir === 'short' && stop <= entry) return { error: 'Stop must be above entry for short trades.' };
+  if (!Number.isFinite(riskPct) || riskPct <= 0) return { error: 'Enter a risk percentage above 0.' };
+  const perShareRiskBase = dir === 'long' ? (entry - stop) : (stop - entry);
+  const perShareRisk = perShareRiskBase + (slippage > 0 ? slippage : 0);
+  if (perShareRisk <= 0) return { error: 'Entry and stop-loss cannot match.' };
+  const riskAmount = portfolio * (riskPct / 100);
+  const spendable = Math.max(riskAmount - fees, 0);
+  const sharesRaw = spendable / perShareRisk;
+  const shares = allowFractional ? sharesRaw : Math.floor(sharesRaw);
+  const positionValue = shares * entry;
+  const unusedRisk = allowFractional ? 0 : (spendable - shares * perShareRisk);
+  return {
+    riskAmount,
+    perShareRisk,
+    shares,
+    positionValue,
+    unusedRisk,
+    fees
+  };
+}
+
 function formatPrice(value, currency = state.currency) {
   const symbol = currencySymbols[currency] || '';
   if (!Number.isFinite(value)) return '—';
@@ -124,7 +166,7 @@ function toGBP(value, currency = state.currency) {
 }
 
 function signPrefix(num) {
-  return num > 0 ? '+' : '';
+  return num > 0 ? '+' : num < 0 ? '-' : '';
 }
 
 function getMonthData(date) {
@@ -136,6 +178,20 @@ function formatPercent(value) {
   if (value === null || value === undefined) return '—';
   if (value === 0) return '0.00%';
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
+}
+
+function summarizeWeek(entries = []) {
+  const totalChange = entries.reduce((sum, e) => sum + (e.change ?? 0), 0);
+  const totalCashFlow = entries.reduce((sum, e) => sum + (e.cashFlow ?? 0), 0);
+  const totalTrades = entries.reduce((sum, e) => sum + (e.tradesCount ?? 0), 0);
+  const realized = entries
+    .filter(e => e.change !== null && e.change !== undefined)
+    .reduce((sum, e) => sum + e.change, 0);
+  return { totalChange, totalCashFlow, totalTrades, realized };
+}
+
+function getSelectedTags(name) {
+  return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(el => el.value);
 }
 
 function normalizeTradeRecords(trades) {
@@ -161,6 +217,17 @@ function normalizeTradeRecords(trades) {
     const positionCurrency = Number(trade.positionCurrency);
     const note = typeof trade.note === 'string' ? trade.note.trim() : '';
     const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : '';
+    const tradeType = typeof trade.tradeType === 'string' ? trade.tradeType : 'day';
+    const assetClass = typeof trade.assetClass === 'string' ? trade.assetClass : 'stocks';
+    const strategyTag = typeof trade.strategyTag === 'string' ? trade.strategyTag : '';
+    const marketCondition = typeof trade.marketCondition === 'string' ? trade.marketCondition : '';
+    const setupTags = Array.isArray(trade.setupTags) ? trade.setupTags : [];
+    const emotionTags = Array.isArray(trade.emotionTags) ? trade.emotionTags : [];
+    const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl : '';
+    const direction = trade.direction === 'short' ? 'short' : 'long';
+    const fees = Number(trade.fees);
+    const slippage = Number(trade.slippage);
+    const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
@@ -180,6 +247,17 @@ function normalizeTradeRecords(trades) {
       closePrice: Number.isFinite(trade.closePrice) ? trade.closePrice : null,
       closeDate: typeof trade.closeDate === 'string' ? trade.closeDate : null,
       note,
+      tradeType,
+      assetClass,
+      strategyTag,
+      marketCondition,
+      setupTags,
+      emotionTags,
+      screenshotUrl,
+      direction,
+      fees: Number.isFinite(fees) ? fees : 0,
+      slippage: Number.isFinite(slippage) ? slippage : 0,
+      rounding,
       createdAt
     };
   }).filter(Boolean);
@@ -201,13 +279,17 @@ function getDailyEntry(date) {
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
-  const hasOpening = Number.isFinite(opening);
   const netCash = cashIn - cashOut;
-  const change = hasOpening && hasClosing ? closing - opening - netCash : null;
-  const pct = hasOpening && hasClosing && opening !== 0 ? (change / opening) * 100 : null;
+  const base = (Number.isFinite(opening) ? opening : 0) + netCash;
+  let change = hasClosing ? closing - base : null;
+  let pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
+  if (hasClosing && netCash > 0 && Number.isFinite(opening) && opening === closing) {
+    change = 0;
+    pct = 0;
+  }
   return {
     date,
-    opening: hasOpening ? opening : null,
+    opening: Number.isFinite(opening) ? opening : null,
     closing: hasClosing ? closing : null,
     hasClosing,
     change,
@@ -260,6 +342,7 @@ function getWeeksInMonth(date) {
     const pct = !changeEntries.length || baseline === null || baseline === 0
       ? null
       : (totalChange / baseline) * 100;
+    const trades = days.flatMap(d => d.trades || []);
     weeks.push({
       totalChange,
       pct,
@@ -267,6 +350,8 @@ function getWeeksInMonth(date) {
       totalCashFlow,
       totalTrades,
       recordedDays: days.length,
+      entries: days,
+      trades,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     });
@@ -440,7 +525,7 @@ function setRiskOutputs(values = null) {
     return;
   }
 
-  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency } = values;
+  const { riskAmountGBP, positionGBP, shares, perShareRiskGBP, riskPct, entryGBP, riskAmountCurrency, positionCurrency, unusedRisk } = values;
   const riskCurrency = state.riskCurrency || state.currency;
   riskAmountEl && (riskAmountEl.textContent = formatCurrency(riskAmountGBP, riskCurrency));
   positionEl && (positionEl.textContent = formatCurrency(positionGBP, riskCurrency));
@@ -451,7 +536,10 @@ function setRiskOutputs(values = null) {
     ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${riskCurrency !== 'GBP' && Number.isFinite(positionCurrency) ? ` (${formatCurrency(positionCurrency, 'GBP')})` : ''}`
     : 'Position too small for the chosen risk');
   shareNote && (shareNote.textContent = shares > 0 ? 'Fractional units allowed for sizing' : '');
-  perShareNote && (perShareNote.textContent = 'Difference between entry and stop-loss');
+  perShareNote && (perShareNote.textContent = `Difference between entry and stop-loss${state.direction === 'short' ? ' (short)' : ''}`);
+  if (unusedRisk && unusedRisk > 0) {
+    amountNote && (amountNote.textContent += ` • Unused risk: ${formatCurrency(unusedRisk, riskCurrency)}`);
+  }
 }
 
 function calculateRiskPosition(showErrors = false) {
@@ -463,30 +551,31 @@ function calculateRiskPosition(showErrors = false) {
 
   const entryRaw = Number(entryInput.value);
   const stopRaw = Number(stopInput.value);
-  const riskPct = Number(riskPctInput.value);
+  const riskPct = Number(state.riskPct ?? riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
+  const direction = state.direction || 'long';
+  const fees = 0;
+  const slippage = 0;
+  const allowFractional = true;
 
   let error = '';
-  if (!Number.isFinite(portfolioGBP) || portfolioGBP <= 0) {
-    error = 'Add your portfolio value first.';
-  } else if (!Number.isFinite(entryRaw) || entryRaw <= 0) {
-    error = 'Enter a valid entry price.';
-  } else if (!Number.isFinite(stopRaw) || stopRaw <= 0) {
-    error = 'Enter a valid stop-loss price.';
-  } else if (!Number.isFinite(riskPct) || riskPct <= 0) {
-    error = 'Enter a risk percentage above 0.';
-  }
-
   const entryGBP = toGBP(entryRaw, riskCurrency);
   const stopGBP = toGBP(stopRaw, riskCurrency);
   const portfolioInRiskCurrency = currencyAmount(portfolioGBP, riskCurrency);
+  const computed = computeRiskPlan({
+    entry: entryRaw,
+    stop: stopRaw,
+    portfolio: portfolioInRiskCurrency,
+    riskPct,
+    fees,
+    slippage,
+    direction,
+    allowFractional
+  });
+  if (computed.error) error = computed.error;
   if (!Number.isFinite(portfolioInRiskCurrency)) {
     error = 'Missing exchange rate to convert your portfolio.';
-  }
-  const perShareRiskGBP = Math.abs(entryGBP - stopGBP);
-  if (!error && perShareRiskGBP === 0) {
-    error = 'Entry and stop-loss cannot be the same.';
   }
 
   if (errorEl) {
@@ -498,22 +587,22 @@ function calculateRiskPosition(showErrors = false) {
     return;
   }
 
-  const riskAmountGBP = portfolioGBP * (riskPct / 100);
-  const riskAmountInCurrency = currencyAmount(riskAmountGBP, riskCurrency) ?? riskAmountGBP;
-  const perShareRiskInCurrency = Math.abs(entryRaw - stopRaw);
-  const shares = perShareRiskInCurrency > 0 ? (riskAmountInCurrency / perShareRiskInCurrency) : 0;
-  const positionInCurrency = shares * entryRaw;
+  const riskAmountInCurrency = currencyAmount(portfolioGBP * (riskPct / 100), riskCurrency) ?? (portfolioGBP * (riskPct/100));
+  const shares = computed.shares;
+  const positionInCurrency = computed.positionValue;
   const positionGBP = toGBP(positionInCurrency, riskCurrency);
+  const perShareRiskInCurrency = computed.perShareRisk;
 
   setRiskOutputs({
-    riskAmountGBP,
+    riskAmountGBP: toGBP(riskAmountInCurrency, riskCurrency),
     positionGBP,
     shares,
     perShareRiskGBP: toGBP(perShareRiskInCurrency, riskCurrency),
     riskPct: Number.isFinite(riskPct) ? riskPct : 0,
     entryGBP,
     riskAmountCurrency: riskAmountInCurrency,
-    positionCurrency: positionInCurrency
+    positionCurrency: positionInCurrency,
+    unusedRisk: computed.unusedRisk
   });
 }
 
@@ -521,22 +610,47 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
+  const safeDirection = ['long', 'short'].includes(state.direction) ? state.direction : 'long';
+  state.direction = safeDirection;
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.direction === safeDirection);
+  });
+  const tradeTypeInput = $('#trade-type-input');
+  if (tradeTypeInput && !tradeTypeInput.value) tradeTypeInput.value = 'day';
+  const assetClassInput = $('#asset-class-input');
+  if (assetClassInput && !assetClassInput.value) assetClassInput.value = 'stocks';
+  const marketConditionInput = $('#market-condition-input');
+  if (marketConditionInput && !marketConditionInput.value) marketConditionInput.value = '';
   const entryLabel = $('#risk-entry-label');
-  if (entryLabel) entryLabel.textContent = `Entry price (${state.riskCurrency})`;
+  const symbol = currencySymbols[state.riskCurrency] || '£';
+  if (entryLabel) entryLabel.textContent = 'Entry price';
   const stopLabel = $('#risk-stop-label');
-  if (stopLabel) stopLabel.textContent = `Stop-loss price (${state.riskCurrency})`;
+  if (stopLabel) stopLabel.textContent = 'Stop price';
+  const entryInput = $('#risk-entry-input');
+  if (entryInput) entryInput.placeholder = symbol;
+  const stopInput = $('#risk-stop-input');
+  if (stopInput) stopInput.placeholder = symbol;
   const portfolioEl = $('#risk-portfolio-display');
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
-  if (pctInput && !pctInput.value) pctInput.value = '1';
+  if (pctInput) {
+    const pctVal = Number(state.riskPct) || Number(pctInput.value) || 1;
+    pctInput.value = String(pctVal);
+  }
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.classList.toggle('active', Number(btn.dataset.riskPct) === Number(state.riskPct || pctInput?.value || 1));
+  });
   const dateInput = $('#risk-date-input');
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
   }
   const symbolInput = $('#risk-symbol-input');
   if (symbolInput && !symbolInput.value) symbolInput.value = '';
+  const allowedCurrencies = ['GBP', 'USD'];
+  const safeCurrency = allowedCurrencies.includes(state.riskCurrency) ? state.riskCurrency : 'GBP';
+  state.riskCurrency = safeCurrency;
   $$('#risk-currency-toggle button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.riskCurrency === state.riskCurrency);
+    btn.classList.toggle('active', btn.dataset.riskCurrency === safeCurrency);
   });
   calculateRiskPosition(false);
 }
@@ -544,6 +658,7 @@ function renderRiskCalculator() {
 function renderActiveTrades() {
   const list = $('#active-trade-list');
   const empty = $('#active-trade-empty');
+  const showAll = $('#active-trade-show-all');
   const pnlEl = $('#live-pnl-display');
   if (!list) return;
   list.innerHTML = '';
@@ -551,6 +666,7 @@ function renderActiveTrades() {
   if (pnlEl) pnlEl.textContent = formatSignedCurrency(state.liveOpenPnlGBP, state.currency);
   if (!trades.length) {
     if (empty) empty.classList.remove('is-hidden');
+    if (showAll) showAll.classList.add('is-hidden');
     return;
   }
   if (empty) empty.classList.add('is-hidden');
@@ -561,7 +677,7 @@ function renderActiveTrades() {
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    priceLine.textContent = `${sym} @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
+    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
     pill.appendChild(priceLine);
     const badges = document.createElement('div');
     badges.className = 'trade-meta';
@@ -573,46 +689,157 @@ function renderActiveTrades() {
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
+      ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
-    const closeRow = document.createElement('div');
-    closeRow.className = 'close-row';
-    const priceInput = document.createElement('input');
-    priceInput.type = 'number';
-    priceInput.step = '0.0001';
-    priceInput.min = '0';
-    priceInput.value = livePrice ? livePrice : '';
-    const dateInput = document.createElement('input');
-    dateInput.type = 'date';
-    dateInput.valueAsDate = new Date();
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'primary outline';
-    closeBtn.textContent = 'Close trade';
-    const status = document.createElement('div');
-    status.className = 'tool-note';
-    closeBtn.addEventListener('click', async () => {
-      status.textContent = '';
-      const priceVal = Number(priceInput.value);
-      if (!Number.isFinite(priceVal) || priceVal <= 0) {
-        status.textContent = 'Enter a valid closing price.';
-        return;
-      }
-      try {
-        await api('/api/trades/close', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: trade.id, price: priceVal, date: dateInput.value })
-        });
-        await loadData();
-        render();
-      } catch (e) {
-        status.textContent = e?.message || 'Failed to close trade.';
-      }
+    const editToggle = document.createElement('button');
+    editToggle.className = 'primary outline';
+    editToggle.textContent = 'Edit trade';
+    editToggle.addEventListener('click', () => {
+      openEditTradeModal(trade);
     });
-    closeRow.append(priceInput, dateInput, closeBtn, status);
-    pill.appendChild(closeRow);
+    const actionRow = document.createElement('div');
+    actionRow.className = 'close-row trade-action-row';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'danger outline';
+    closeBtn.textContent = 'Close trade';
+    closeBtn.addEventListener('click', () => {
+      openCloseTradeModal(trade);
+    });
+    actionRow.append(editToggle, closeBtn);
+    pill.appendChild(actionRow);
     list.appendChild(pill);
   });
+  updateActiveTradesOverflow();
+}
+
+function renderPortfolioTrend() {
+  const el = $('#portfolio-trend');
+  if (!el) return;
+  el.innerHTML = '';
+  const entries = getAllEntries();
+  const last = entries.slice(-12);
+  if (!last.length) {
+    el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
+    return;
+  }
+  const values = last.map(entry => entry.closing ?? entry.opening ?? 0);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = Math.max(max - min, 1);
+  const width = 100;
+  const height = 48;
+  const padding = 6;
+  const plotHeight = height - padding * 2;
+  const pointCount = values.length;
+  const points = values.map((val, index) => {
+    const x = pointCount === 1 ? width / 2 : (index / (pointCount - 1)) * width;
+    const normalized = (val - min) / range;
+    const y = height - padding - normalized * plotHeight;
+    return { x, y, value: val, date: last[index].date };
+  });
+  const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(height));
+  const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  area.setAttribute('d', areaPath);
+  area.setAttribute('class', 'line-area');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.setAttribute('d', linePath);
+  line.setAttribute('class', 'line-path');
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  const lastPoint = points[points.length - 1];
+  dot.setAttribute('cx', lastPoint.x);
+  dot.setAttribute('cy', lastPoint.y);
+  dot.setAttribute('r', '2.5');
+  dot.setAttribute('class', 'line-dot');
+  const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${formatCurrency(lastPoint.value)}`;
+  svg.append(title, area, line, dot);
+  el.appendChild(svg);
+}
+
+function syncActiveTradesHeight() {
+  const riskCard = $('#risk-card');
+  const activeCard = $('#active-trades-card');
+  if (!riskCard || !activeCard) return;
+  activeCard.style.height = `${riskCard.offsetHeight}px`;
+  updateActiveTradesOverflow();
+}
+
+function updateActiveTradesOverflow() {
+  const list = $('#active-trade-list');
+  const showAll = $('#active-trade-show-all');
+  const empty = $('#active-trade-empty');
+  if (!list || !showAll) return;
+  const hasTrades = list.children.length > 0;
+  if (!hasTrades || (empty && !empty.classList.contains('is-hidden'))) {
+    showAll.classList.add('is-hidden');
+    return;
+  }
+  const overflowing = list.scrollHeight > list.clientHeight + 1;
+  showAll.classList.toggle('is-hidden', !overflowing);
+}
+
+function openCloseTradeModal(trade) {
+  const modal = $('#close-trade-modal');
+  if (!modal) return;
+  const title = $('#close-trade-title');
+  const priceInput = $('#close-trade-price');
+  const dateInput = $('#close-trade-date');
+  const preview = $('#close-trade-preview');
+  const status = $('#close-trade-status');
+  const closeLabel = $('#close-trade-close-label');
+  if (title) {
+    const sym = trade.symbol || 'Trade';
+    title.textContent = `Close ${sym}`;
+  }
+  if (closeLabel) {
+    closeLabel.textContent = `Close Fill (${trade.currency || 'GBP'})`;
+  }
+  if (priceInput) {
+    priceInput.value = Number.isFinite(trade.livePrice) ? trade.livePrice : '';
+  }
+  if (dateInput) {
+    dateInput.valueAsDate = new Date();
+  }
+  if (preview) preview.textContent = 'PnL if closed: —';
+  if (status) status.textContent = '';
+  modal.dataset.tradeId = trade.id;
+  modal.dataset.direction = trade.direction || 'long';
+  modal.dataset.currency = trade.currency || 'GBP';
+  modal.dataset.entry = Number.isFinite(trade.entry) ? trade.entry : '';
+  modal.dataset.units = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
+  modal.dataset.fees = Number.isFinite(trade.fees) ? trade.fees : '';
+  modal.dataset.slippage = Number.isFinite(trade.slippage) ? trade.slippage : '';
+  modal.dataset.fxFeeEligible = trade.fxFeeEligible ? 'true' : 'false';
+  modal.dataset.fxFeeRate = Number.isFinite(trade.fxFeeRate) ? trade.fxFeeRate : '';
+  modal.classList.remove('hidden');
+}
+
+function openEditTradeModal(trade) {
+  const modal = $('#edit-trade-modal');
+  if (!modal) return;
+  const title = $('#edit-trade-title');
+  const entryInput = $('#edit-trade-entry');
+  const stopInput = $('#edit-trade-stop');
+  const unitsInput = $('#edit-trade-units');
+  const status = $('#edit-trade-status');
+  if (title) {
+    const sym = trade.symbol || 'Trade';
+    title.textContent = `Edit ${sym}`;
+  }
+  if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
+  if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
+  if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
+  if (status) status.textContent = '';
+  modal.dataset.tradeId = trade.id;
+  modal.dataset.direction = trade.direction || 'long';
+  modal.classList.remove('hidden');
 }
 
 function setMetricTrend(el, value) {
@@ -654,11 +881,11 @@ function renderMetrics() {
     portfolioSubEl.textContent = pieces.join(' • ');
   }
 
-  const netDepositsEl = $('#metric-net-deposits-value');
+  const netDepositsEl = $('#hero-net-deposits-value');
   if (netDepositsEl) {
     netDepositsEl.textContent = formatSignedCurrency(netDepositsGBP);
   }
-  const netDepositsSub = $('#metric-net-deposits-sub');
+  const netDepositsSub = $('#hero-net-deposits-sub');
   if (netDepositsSub) {
     if (altCurrency) {
       const altDeposits = formatSignedCurrency(netDepositsGBP, altCurrency);
@@ -667,16 +894,16 @@ function renderMetrics() {
       netDepositsSub.textContent = '';
     }
   }
-  const netCard = $('#metric-net-deposits');
+  const netCard = $('#hero-net-deposits');
   if (netCard) {
     netCard.classList.remove('positive', 'negative');
   }
 
-  const netPerfEl = $('#metric-net-performance-value');
+  const netPerfEl = $('#hero-net-performance-value');
   if (netPerfEl) {
     netPerfEl.textContent = formatSignedCurrency(netPerformanceGBP);
   }
-  const netPerfSub = $('#metric-net-performance-sub');
+  const netPerfSub = $('#hero-net-performance-sub');
   if (netPerfSub) {
     const pieces = [];
     if (altCurrency) {
@@ -688,9 +915,9 @@ function renderMetrics() {
     }
     netPerfSub.textContent = pieces.join(' • ');
   }
-  setMetricTrend($('#metric-net-performance'), netPerformanceGBP);
+  setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
 
-  const portfolioCard = $('#metric-portfolio');
+  const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
     const deltaFromBaseline = Number.isFinite(metrics.baselineGBP)
       ? latestGBP - metrics.baselineGBP
@@ -702,6 +929,7 @@ function renderMetrics() {
 function setActiveView() {
   $$('#view-controls button[data-view]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
+    btn.setAttribute('aria-pressed', btn.dataset.view === state.view ? 'true' : 'false');
   });
 }
 
@@ -721,21 +949,31 @@ function updateCurrencySelect() {
 
 function updatePortfolioPill() {
   const el = $('#portfolio-display');
-  if (!el) return;
+  const heroVal = $('#header-portfolio-value');
+  const heroSub = $('#header-portfolio-sub');
   const latestGBP = Number.isFinite(state.livePortfolioGBP)
     ? state.livePortfolioGBP
     : (Number.isFinite(state.metrics?.latestGBP)
       ? state.metrics.latestGBP
       : state.portfolioGBP);
   const base = formatCurrency(latestGBP);
-  if (state.currency === 'USD') {
-    const alt = formatCurrency(latestGBP, 'GBP');
-    el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-  } else if (state.rates.USD) {
-    const alt = formatCurrency(latestGBP, 'USD');
-    el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-  } else {
-    el.textContent = `Portfolio: ${base}`;
+  const alt = state.currency === 'USD'
+    ? formatCurrency(latestGBP, 'GBP')
+    : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
+  if (el) {
+    if (state.currency === 'USD') {
+      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
+    } else if (state.rates.USD) {
+      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
+    } else {
+      el.textContent = `Portfolio: ${base}`;
+    }
+  }
+  if (heroVal) {
+    heroVal.textContent = base;
+  }
+  if (heroSub) {
+    heroSub.textContent = alt ? `≈ ${alt}` : '';
   }
 }
 
@@ -854,8 +1092,6 @@ function renderDay() {
     const entry = getDailyEntry(date);
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
-    const pct = entry?.pct ?? null;
-    const cashFlow = entry?.cashFlow ?? 0;
     const tradeCount = entry?.tradesCount ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
@@ -863,7 +1099,7 @@ function renderDay() {
     if (change < 0) row.classList.add('loss');
     const changeText = change === null
       ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+      : `Δ ${formatSignedCurrency(change)}`;
     const cashHtml = cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
@@ -904,7 +1140,7 @@ function renderWeek() {
   const weeks = getWeeksInMonth(state.selected);
   weeks.forEach(week => {
     const row = document.createElement('div');
-    row.className = 'list-row';
+    row.className = 'list-row week-row';
     if (week.totalChange > 0) row.classList.add('profit');
     if (week.totalChange < 0) row.classList.add('loss');
     const hasEntries = week.recordedDays > 0;
@@ -924,18 +1160,47 @@ function renderWeek() {
     const subLabel = hasEntries
       ? `${week.recordedDays} recorded day${week.recordedDays === 1 ? '' : 's'}`
       : 'No entries recorded';
-    row.innerHTML = `
-      <div class="row-main">
-        <div class="row-title">${rangeLabel}</div>
-        <div class="row-sub">${subLabel}</div>
-      </div>
-      <div class="row-value">
-        <strong>${changeText}</strong>
-        <span>${pctText}</span>
-        ${cashHtml}
-        ${tradesHtml}
-      </div>
+    const toggle = document.createElement('button');
+    toggle.className = 'collapse-btn';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = '▸';
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = `
+      <div class="row-title">${rangeLabel}</div>
+      <div class="row-sub">${subLabel}</div>
     `;
+    const value = document.createElement('div');
+    value.className = 'row-value';
+    value.innerHTML = `
+      <strong>${changeText}</strong>
+      <span>${pctText}</span>
+      ${cashHtml}
+      ${tradesHtml}
+    `;
+    row.append(toggle, main, value);
+
+    const detail = document.createElement('div');
+    detail.className = 'week-detail hidden';
+    const summary = summarizeWeek(week.entries || []);
+    const tradeList = (week.trades || []).map(t => `${t.symbol || '—'} ${t.tradeType || ''} ${t.status || ''}`.trim());
+    detail.innerHTML = `
+      <div class="week-detail-grid">
+        <div><strong>Cash flow</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
+        <div><strong>Realized P&L</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
+        <div><strong>Trades</strong><span>${summary.totalTrades || 0}</span></div>
+      </div>
+      ${tradeList.length
+        ? `<div class="week-trades">${tradeList.map(t => `<span class="tag-chip">${t}</span>`).join('')}</div>`
+        : `<p class="tool-note">No trades recorded this week.</p>`}
+    `;
+    row.appendChild(detail);
+
+    toggle.addEventListener('click', () => {
+      const nowHidden = detail.classList.toggle('hidden');
+      toggle.setAttribute('aria-expanded', String(!nowHidden));
+      toggle.textContent = nowHidden ? '▸' : '▾';
+    });
     grid.appendChild(row);
   });
 }
@@ -986,27 +1251,13 @@ function renderMonth() {
     const changeText = change === null
       ? 'Δ —'
       : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
-    const cashHtml = cashFlow === 0
-      ? ''
-      : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
-    const tradeHtml = tradeCount
-      ? `<div class="trade-count">Trades: ${tradeCount}</div>`
-      : '';
+    const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
     cell.innerHTML = `
       <div class="date">${day}</div>
       <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
       <div class="pct">${changeText}</div>
-      ${cashHtml}
       ${tradeHtml}
     `;
-    if (entry?.note) {
-      const noteEl = document.createElement('div');
-      noteEl.className = 'note';
-      noteEl.textContent = entry.note;
-      noteEl.insertAdjacentText('afterbegin', '📝 ');
-      noteEl.title = entry.note;
-      cell.appendChild(noteEl);
-    }
     cell.addEventListener('click', () => openEntryModal(key, entry));
     grid.appendChild(cell);
   }
@@ -1068,8 +1319,10 @@ function render() {
   renderMetrics();
   renderRiskCalculator();
   renderActiveTrades();
+  renderPortfolioTrend();
   renderView();
   renderSummary();
+  syncActiveTradesHeight();
 }
 
 async function loadRates() {
@@ -1129,7 +1382,23 @@ async function loadData() {
   }
 }
 
-function renderTradeList(trades = []) {
+async function refreshActiveTrades() {
+  try {
+    const activeRes = await api('/api/trades/active');
+    state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    if (Number.isFinite(activeRes?.liveOpenPnl)) {
+      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
+      state.livePortfolioGBP = (Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0) + activeRes.liveOpenPnl;
+    }
+    renderActiveTrades();
+    updatePortfolioPill();
+    renderMetrics();
+  } catch (e) {
+    console.warn('Failed to refresh active trades', e);
+  }
+}
+
+function renderTradeList(trades = [], dateStr = null) {
   const list = $('#trade-list');
   const sub = $('#trade-count-sub');
   if (!list || !sub) return;
@@ -1167,6 +1436,23 @@ function renderTradeList(trades = []) {
       <span class="trade-badge">Risk/share ${perShareDisplay}</span>
     `;
     pill.appendChild(badges);
+    const tags = document.createElement('div');
+    tags.className = 'tag-chips';
+    const addChip = (label, tone = '') => {
+      const chip = document.createElement('span');
+      chip.className = `tag-chip ${tone}`;
+      chip.textContent = label;
+      tags.appendChild(chip);
+    };
+    if (trade.tradeType) addChip(trade.tradeType);
+    if (trade.assetClass) addChip(trade.assetClass);
+    if (trade.strategyTag) addChip(trade.strategyTag);
+    if (trade.marketCondition) addChip(trade.marketCondition);
+    (trade.setupTags || []).forEach(tag => addChip(tag));
+    (trade.emotionTags || []).forEach(tag => addChip(tag));
+    if (tags.childElementCount) {
+      pill.appendChild(tags);
+    }
     if (trade.status === 'closed' && Number.isFinite(trade.closePrice)) {
       const closed = document.createElement('div');
       closed.className = 'trade-meta';
@@ -1187,6 +1473,31 @@ function renderTradeList(trades = []) {
         meta.textContent = `Logged ${dt.toLocaleString()}`;
       }
       pill.appendChild(meta);
+    }
+    if (trade.id) {
+      const actionRow = document.createElement('div');
+      actionRow.className = 'close-row';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'danger outline';
+      deleteBtn.textContent = 'Delete trade';
+      deleteBtn.addEventListener('click', async () => {
+        if (!window.confirm('Delete this trade? This cannot be undone.')) {
+          return;
+        }
+        try {
+          await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
+          await loadData();
+          if (dateStr) {
+            const refreshed = getDailyEntry(new Date(dateStr));
+            renderTradeList(refreshed?.trades || [], dateStr);
+            render();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      });
+      actionRow.appendChild(deleteBtn);
+      pill.appendChild(actionRow);
     }
     list.appendChild(pill);
   });
@@ -1252,7 +1563,7 @@ function openEntryModal(dateStr, existingEntry = null) {
   if (noteInput) {
     noteInput.value = noteText;
   }
-  renderTradeList(entry?.trades || []);
+  renderTradeList(entry?.trades || [], dateStr);
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
   if (saveBtn) {
@@ -1305,6 +1616,13 @@ function openEntryModal(dateStr, existingEntry = null) {
       }
     };
   }
+  const closeBtn = $('#profit-close-btn');
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      modal.classList.add('hidden');
+    };
+    closeBtn.focus();
+  }
 }
 
 function bindControls() {
@@ -1347,7 +1665,43 @@ function bindControls() {
     window.location.href = '/profile.html';
   });
 
+  $('#analytics-btn')?.addEventListener('click', () => {
+    window.location.href = '/analytics.html';
+  });
+
+  $('#trades-btn')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+
+  const navToggle = $('#nav-toggle-btn');
+  const navDrawer = $('#nav-drawer');
+  const navOverlay = $('#nav-drawer-overlay');
+  const navClose = $('#nav-close-btn');
+  const setNavOpen = open => {
+    if (!navDrawer || !navOverlay || !navToggle) return;
+    navDrawer.classList.toggle('hidden', !open);
+    navOverlay.classList.toggle('hidden', !open);
+    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  navToggle?.addEventListener('click', () => {
+    if (!navDrawer || !navOverlay) return;
+    const isOpen = !navDrawer.classList.contains('hidden');
+    setNavOpen(!isOpen);
+  });
+  navClose?.addEventListener('click', () => setNavOpen(false));
+  navOverlay?.addEventListener('click', () => setNavOpen(false));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    setNavOpen(false);
+  });
+
+  $('#active-trade-show-all')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+
   $('#portfolio-btn')?.addEventListener('click', () => {
+    setNavOpen(false);
     const modalTitle = $('#portfolio-modal-title');
     if (modalTitle) modalTitle.textContent = `Portfolio value (${state.currency})`;
     const input = $('#portfolio-input');
@@ -1387,6 +1741,168 @@ function bindControls() {
     $('#profit-modal')?.classList.add('hidden');
   });
 
+  $('#close-edit-trade-btn')?.addEventListener('click', () => {
+    $('#edit-trade-modal')?.classList.add('hidden');
+  });
+
+  $('#close-close-trade-btn')?.addEventListener('click', () => {
+    $('#close-trade-modal')?.classList.add('hidden');
+  });
+
+  const updateCloseTradePreview = () => {
+    const modal = $('#close-trade-modal');
+    if (!modal) return;
+    const priceInput = $('#close-trade-price');
+    const preview = $('#close-trade-preview');
+    if (!priceInput || !preview) return;
+    const priceVal = Number(priceInput.value);
+    if (!Number.isFinite(priceVal) || priceVal <= 0) {
+      preview.textContent = 'PnL if closed: —';
+      return;
+    }
+    const entryVal = Number(modal.dataset.entry);
+    const unitsVal = Number(modal.dataset.units);
+    if (!Number.isFinite(entryVal) || !Number.isFinite(unitsVal)) {
+      preview.textContent = 'PnL if closed: —';
+      return;
+    }
+    const direction = modal.dataset.direction === 'short' ? 'short' : 'long';
+    const slippage = Number(modal.dataset.slippage) || 0;
+    const effectivePrice = direction === 'short' ? priceVal + slippage : priceVal - slippage;
+    const pnlRaw = direction === 'short'
+      ? (entryVal - effectivePrice) * unitsVal
+      : (effectivePrice - entryVal) * unitsVal;
+    const currency = modal.dataset.currency || 'GBP';
+    const fees = Number(modal.dataset.fees) || 0;
+    const pnlGBP = currency === 'GBP' ? pnlRaw : toGBP(pnlRaw, currency);
+    const feesGBP = currency === 'GBP' ? fees : toGBP(fees, currency);
+    let fxFeeGBP = null;
+    if (modal.dataset.fxFeeEligible === 'true') {
+      const fxRate = Number(modal.dataset.fxFeeRate);
+      if (Number.isFinite(fxRate) && fxRate > 0) {
+        const entryValueGBP = currency === 'GBP' ? entryVal * unitsVal : toGBP(entryVal * unitsVal, currency);
+        const positionGBP = currency === 'GBP' ? priceVal * unitsVal : toGBP(priceVal * unitsVal, currency);
+        if (Number.isFinite(entryValueGBP)) {
+          const entryFeeGBP = Math.abs(entryValueGBP) * fxRate;
+          const exitBasisGBP = Number.isFinite(positionGBP) ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
+          const exitFeeGBP = exitBasisGBP * fxRate;
+          fxFeeGBP = entryFeeGBP + exitFeeGBP;
+        }
+      }
+    }
+    const pnlNetGBP = pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0);
+    preview.textContent = `PnL if closed: ${formatSignedCurrency(pnlNetGBP, state.currency)}`;
+  };
+
+  $('#close-trade-price')?.addEventListener('input', updateCloseTradePreview);
+  $('#close-trade-price')?.addEventListener('change', updateCloseTradePreview);
+
+  $('#save-close-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#close-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const priceInput = $('#close-trade-price');
+    const dateInput = $('#close-trade-date');
+    const status = $('#close-trade-status');
+    if (status) status.textContent = '';
+    const priceVal = Number(priceInput?.value);
+    if (!Number.isFinite(priceVal) || priceVal <= 0) {
+      if (status) status.textContent = 'Enter a valid closing price.';
+      return;
+    }
+    try {
+      await api('/api/trades/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tradeId, price: priceVal, date: dateInput?.value })
+      });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to close trade.';
+    }
+  });
+
+  $('#cancel-close-trade-btn')?.addEventListener('click', () => {
+    $('#close-trade-modal')?.classList.add('hidden');
+  });
+
+  $('#save-edit-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#edit-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const entryInput = $('#edit-trade-entry');
+    const stopInput = $('#edit-trade-stop');
+    const unitsInput = $('#edit-trade-units');
+    const status = $('#edit-trade-status');
+    if (status) status.textContent = '';
+    const entryVal = Number(entryInput?.value);
+    const stopVal = Number(stopInput?.value);
+    const unitsVal = Number(unitsInput?.value);
+    if (!Number.isFinite(entryVal) || entryVal <= 0) {
+      if (status) status.textContent = 'Enter a valid entry price.';
+      return;
+    }
+    if (!Number.isFinite(stopVal) || stopVal <= 0) {
+      if (status) status.textContent = 'Enter a valid stop price.';
+      return;
+    }
+    if (!Number.isFinite(unitsVal) || unitsVal <= 0) {
+      if (status) status.textContent = 'Enter a valid unit size.';
+      return;
+    }
+    const direction = modal.dataset.direction === 'short' ? 'short' : 'long';
+    if (direction === 'long' && stopVal >= entryVal) {
+      if (status) status.textContent = 'Stop must be below entry for long trades.';
+      return;
+    }
+    if (direction === 'short' && stopVal <= entryVal) {
+      if (status) status.textContent = 'Stop must be above entry for short trades.';
+      return;
+    }
+    try {
+      await api(`/api/trades/${tradeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entry: entryVal,
+          stop: stopVal,
+          sizeUnits: unitsVal
+        })
+      });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to update trade.';
+    }
+  });
+  $('#delete-edit-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#edit-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    if (!tradeId) return;
+    const status = $('#edit-trade-status');
+    if (status) status.textContent = '';
+    if (!window.confirm('Delete this trade? This cannot be undone.')) {
+      return;
+    }
+    try {
+      await api(`/api/trades/${tradeId}`, { method: 'DELETE' });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to delete trade.';
+    }
+  });
+  $('#cancel-edit-trade-btn')?.addEventListener('click', () => {
+    $('#edit-trade-modal')?.classList.add('hidden');
+  });
+
   $('#logout-btn')?.addEventListener('click', async () => {
     try {
       await api('/api/logout', { method: 'POST' });
@@ -1396,9 +1912,69 @@ function bindControls() {
     window.location.href = '/login.html';
   });
 
-  $('#risk-calc-btn')?.addEventListener('click', () => calculateRiskPosition(true));
   ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
+  });
+  $$('#risk-percent-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pct = Number(btn.dataset.riskPct);
+      if (!Number.isFinite(pct) || pct <= 0) return;
+      state.riskPct = pct;
+      const pctInput = $('#risk-percent-input');
+      if (pctInput) pctInput.value = String(pct);
+      renderRiskCalculator();
+    });
+  });
+  $('#quick-settings-btn')?.addEventListener('click', () => {
+    setNavOpen(false);
+    const modal = $('#quick-settings-modal');
+    const riskSel = $('#qs-risk-select');
+    const curSel = $('#qs-currency-select');
+    if (riskSel) riskSel.value = String(state.defaultRiskPct || 1);
+    if (curSel) curSel.value = state.defaultRiskCurrency || 'GBP';
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => $('#quick-settings-modal')?.classList.add('hidden');
+  $('#close-qs-btn')?.addEventListener('click', closeQs);
+  $('#save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = $('#qs-risk-select');
+    const curSel = $('#qs-currency-select');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    if (Number.isFinite(pct) && pct > 0) {
+      state.defaultRiskPct = pct;
+      state.riskPct = pct;
+    }
+    if (cur && ['GBP', 'USD'].includes(cur)) {
+      state.defaultRiskCurrency = cur;
+      state.riskCurrency = cur;
+    }
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify({
+        defaultRiskPct: state.defaultRiskPct,
+        defaultRiskCurrency: state.defaultRiskCurrency
+      }));
+    } catch (e) {
+      console.warn(e);
+    }
+    renderRiskCalculator();
+    closeQs();
+  });
+  $$('#risk-currency-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cur = btn.dataset.riskCurrency;
+      if (!cur || !['GBP', 'USD'].includes(cur)) return;
+      state.riskCurrency = cur;
+      renderRiskCalculator();
+    });
+  });
+  $$('#risk-direction-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dir = btn.dataset.direction;
+      if (!dir || !['long', 'short'].includes(dir)) return;
+      state.direction = dir;
+      renderRiskCalculator();
+    });
   });
   $('#risk-log-btn')?.addEventListener('click', async () => {
     calculateRiskPosition(true);
@@ -1410,6 +1986,11 @@ function bindControls() {
     const dateInput = $('#risk-date-input');
     const noteInput = $('#risk-trade-note');
     const symbolInput = $('#risk-symbol-input');
+    const tradeTypeInput = $('#trade-type-input');
+    const assetClassInput = $('#asset-class-input');
+    const strategyTagInput = $('#strategy-tag-input');
+    const marketConditionInput = $('#market-condition-input');
+    const screenshotInput = $('#screenshot-url-input');
     const statusEl = $('#risk-log-status');
     if (statusEl) {
       statusEl.textContent = '';
@@ -1421,9 +2002,21 @@ function bindControls() {
       stop: Number(stopInput.value),
       riskPct: Number(riskPctInput.value),
       currency: state.riskCurrency,
+      baseCurrency: state.currency,
       symbol: symbolInput?.value,
       date: dateInput?.value,
-      note: noteInput?.value || undefined
+      note: noteInput?.value || undefined,
+      direction: state.direction,
+      fees: 0,
+      slippage: 0,
+      rounding: 'fractional',
+      tradeType: tradeTypeInput?.value,
+      assetClass: assetClassInput?.value,
+      strategyTag: strategyTagInput?.value,
+      marketCondition: marketConditionInput?.value,
+      setupTags: getSelectedTags('setup-tag'),
+      emotionTags: getSelectedTags('emotion-tag'),
+      screenshotUrl: screenshotInput?.value || undefined
     };
     try {
       await api('/api/trades', {
@@ -1447,18 +2040,36 @@ function bindControls() {
       }
     }
   });
-  $$('#risk-currency-toggle button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const cur = btn.dataset.riskCurrency;
-      if (!cur || !['GBP', 'USD'].includes(cur)) return;
-      state.riskCurrency = cur;
-      renderRiskCalculator();
-    });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      $('#profit-modal')?.classList.add('hidden');
+      $('#edit-trade-modal')?.classList.add('hidden');
+      $('#close-trade-modal')?.classList.add('hidden');
+    }
   });
+  window.addEventListener('resize', () => {
+    syncActiveTradesHeight();
+  });
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 async function init() {
   state.selected = startOfMonth(new Date());
+  try {
+    const saved = localStorage.getItem('plc-prefs');
+    if (saved) {
+      const prefs = JSON.parse(saved);
+      if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
+      if (prefs?.defaultRiskCurrency && ['GBP', 'USD'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      state.riskPct = state.defaultRiskPct;
+      state.riskCurrency = state.defaultRiskCurrency;
+    }
+  } catch (e) {
+    console.warn(e);
+  }
   bindControls();
   updatePeriodSelect();
   setActiveView();
@@ -1469,6 +2080,12 @@ async function init() {
   }
   await loadData();
   render();
+  setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
+    refreshActiveTrades();
+  }, 30000);
 }
 
-window.addEventListener('DOMContentLoaded', init);
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', init);
+}
