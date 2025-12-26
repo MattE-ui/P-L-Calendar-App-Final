@@ -1328,7 +1328,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           openTrades.push({ tradeDate, trade });
         }
       }
-      for (const raw of snapshot.positions) {
+      const sortedPositions = snapshot.positions.slice().sort((a, b) => {
+        const aSymbol = String(a?.instrument?.ticker ?? a?.ticker ?? a?.symbol ?? '').toUpperCase();
+        const bSymbol = String(b?.instrument?.ticker ?? b?.ticker ?? b?.symbol ?? '').toUpperCase();
+        return aSymbol.localeCompare(bSymbol);
+      });
+      for (const raw of sortedPositions) {
         const symbol = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
         if (!symbol) continue;
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
