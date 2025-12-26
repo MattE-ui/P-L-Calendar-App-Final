@@ -1790,7 +1790,7 @@ async function fetchYahooQuote(symbol) {
     'Accept': 'application/json,text/plain,*/*'
   };
   for (const baseUrl of baseUrls) {
-    const url = `${baseUrl}?symbols=${encodeURIComponent(trimmed)}`;
+    const url = `${baseUrl}?symbols=${encodeURIComponent(trimmed)}&includePrePost=true`;
     const res = await fetch(url, { headers });
     if (!res.ok) continue;
     const data = await res.json();
@@ -1837,7 +1837,7 @@ async function fetchMarketPrice(symbol) {
   }
   let normalized = null;
   if (process.env.MARKET_DATA_URL) {
-    const url = `${process.env.MARKET_DATA_URL}?symbols=${encodeURIComponent(trimmed)}`;
+    const url = `${process.env.MARKET_DATA_URL}?symbols=${encodeURIComponent(trimmed)}&includePrePost=true`;
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
