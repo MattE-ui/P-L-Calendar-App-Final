@@ -461,20 +461,24 @@ function normalizeTradeJournal(user) {
       const riskAmountGBP = Number(trade.riskAmountGBP);
       const positionGBP = Number(trade.positionGBP);
       const sizeUnits = Number(trade.sizeUnits);
-      const perUnitRisk = Number(trade.perUnitRisk);
+      const perUnitRiskRaw = Number(trade.perUnitRisk);
+      const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
+      const feesRaw = Number(trade.fees);
+      const slippageRaw = Number(trade.slippage);
+      const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
       const portfolioGBPAtCalc = Number(trade.portfolioGBPAtCalc);
       const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
       const fxFeeEligible = trade.fxFeeEligible === true;
       const fxFeeRate = Number(trade.fxFeeRate);
-      if (
-        !Number.isFinite(entry) || entry <= 0 ||
-        !Number.isFinite(stop) || stop <= 0 ||
-        !Number.isFinite(riskPct) || riskPct <= 0 ||
-        !Number.isFinite(perUnitRisk) || perUnitRisk <= 0 ||
-        !Number.isFinite(sizeUnits) || sizeUnits <= 0
-      ) {
+      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sizeUnits) || sizeUnits <= 0) {
         mutated = true;
         continue;
+      }
+      const stopValue = Number.isFinite(stop) && stop > 0 ? stop : undefined;
+      let perUnitRisk = Number.isFinite(perUnitRiskRaw) && perUnitRiskRaw > 0 ? perUnitRiskRaw : undefined;
+      if (stopValue !== undefined) {
+        const calculatedRisk = Math.abs(entry - stopValue);
+        perUnitRisk = calculatedRisk > 0 ? calculatedRisk : perUnitRisk;
       }
       const id = typeof trade.id === 'string' && trade.id ? trade.id : crypto.randomBytes(8).toString('hex');
       const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : new Date().toISOString();
@@ -484,10 +488,10 @@ function normalizeTradeJournal(user) {
       const normalizedTrade = {
         id,
         entry,
-        stop,
+        stop: stopValue,
         symbol: symbol || undefined,
         currency,
-        riskPct,
+        riskPct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : 0,
         perUnitRisk,
         sizeUnits,
         status,
@@ -495,6 +499,10 @@ function normalizeTradeJournal(user) {
         assetClass: ASSET_CLASSES.includes(assetRaw) ? assetRaw : 'stocks',
         strategyTag,
         marketCondition: MARKET_CONDITIONS.includes(conditionRaw) ? conditionRaw : '',
+        direction: DIRECTIONS.includes(directionRaw) ? directionRaw : 'long',
+        fees: Number.isFinite(feesRaw) && feesRaw >= 0 ? feesRaw : 0,
+        slippage: Number.isFinite(slippageRaw) && slippageRaw >= 0 ? slippageRaw : 0,
+        rounding,
         setupTags,
         emotionTags,
         screenshotUrl: screenshotUrl || undefined,
@@ -504,6 +512,12 @@ function normalizeTradeJournal(user) {
         portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
         createdAt
       };
+      if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
+        normalizedTrade.trading212Id = trade.trading212Id;
+      }
+      if (Number.isFinite(trade.lastSyncPrice)) {
+        normalizedTrade.lastSyncPrice = trade.lastSyncPrice;
+      }
       if (fxFeeEligible) {
         normalizedTrade.fxFeeEligible = true;
         if (Number.isFinite(fxFeeRate) && fxFeeRate > 0) {
