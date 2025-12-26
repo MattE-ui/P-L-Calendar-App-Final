@@ -851,26 +851,57 @@ async function requestTrading212Endpoint(url, headers) {
         });
       }
     }
-    const portfolioValue = Number(
-      data?.totalValue?.value ??
-      data?.totalValue ??
-      data?.total?.portfolioValue ??
-      data?.portfolioValue ??
-      data?.summary?.totalValue ??
-      data?.overall?.portfolioValue ??
-      data?.overall?.totalValue ??
-      data?.accountValue ??
-      data?.netLiq
-    );
-    const netDeposits = Number(
-      data?.totalNetDeposits ??
-      data?.netDeposits ??
-      data?.total?.netDeposits ??
-      data?.summary?.netDeposits ??
-      data?.overall?.netDeposits ??
-      data?.cashFlows?.net ??
+    const parseTradingNumber = (value) => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+      if (typeof value === 'string') {
+        const cleaned = value.replace(/[^0-9.-]/g, '');
+        const parsed = Number.parseFloat(cleaned);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      if (typeof value === 'object') {
+        if (typeof value.value === 'number' || typeof value.value === 'string') {
+          return parseTradingNumber(value.value);
+        }
+        if (typeof value.amount === 'number' || typeof value.amount === 'string') {
+          return parseTradingNumber(value.amount);
+        }
+      }
+      return null;
+    };
+    const portfolioCandidates = [
+      data?.totalValue?.value,
+      data?.totalValue?.amount,
+      data?.totalValue,
+      data?.total?.portfolioValue,
+      data?.portfolioValue,
+      data?.summary?.totalValue,
+      data?.summary?.equity,
+      data?.overall?.portfolioValue,
+      data?.overall?.totalValue,
+      data?.accountValue,
+      data?.netLiq,
+      data?.equity?.value,
+      data?.equity?.amount,
+      data?.equityValue,
+      data?.portfolio?.value,
+      data?.portfolio?.amount
+    ];
+    const netDepositsCandidates = [
+      data?.totalNetDeposits,
+      data?.netDeposits,
+      data?.total?.netDeposits,
+      data?.summary?.netDeposits,
+      data?.overall?.netDeposits,
+      data?.cashFlows?.net,
       data?.netCash
-    );
+    ];
+    const portfolioValue = portfolioCandidates
+      .map(parseTradingNumber)
+      .find(value => Number.isFinite(value));
+    const netDeposits = netDepositsCandidates
+      .map(parseTradingNumber)
+      .find(value => Number.isFinite(value));
     if (!Number.isFinite(portfolioValue)) {
       throw new Trading212Error('Trading 212 payload was missing a portfolio value.', {
         status,
