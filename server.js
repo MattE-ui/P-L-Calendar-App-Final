@@ -1211,6 +1211,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       : currentTotal;
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
+    const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
+      ? snapshot.raw.transactions.items
+      : Array.isArray(snapshot.raw?.transactions?.records)
+        ? snapshot.raw.transactions.records
+        : Array.isArray(snapshot.raw?.transactions)
+          ? snapshot.raw.transactions
+          : null;
+    const effectiveTransactions = Array.isArray(snapshot.transactions)
+      ? snapshot.transactions
+      : Array.isArray(snapshot.transactionsRaw?.items)
+        ? snapshot.transactionsRaw.items
+        : Array.isArray(snapshot.transactionsRaw)
+          ? snapshot.transactionsRaw
+          : inlineTransactions;
     if (snapshot.netDeposits !== null) {
       const delta = snapshot.netDeposits - previousNet;
       if (delta > 0) {
@@ -1219,9 +1233,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         cashOut += Math.abs(delta);
       }
       cfg.lastNetDeposits = snapshot.netDeposits;
-    } else if (Array.isArray(snapshot.transactions)) {
+    } else if (Array.isArray(effectiveTransactions)) {
       const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
-      const txs = snapshot.transactions
+      const txs = effectiveTransactions
         .map(tx => {
           const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
           return { tx, ts };
@@ -1317,7 +1331,21 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       positions: snapshot.positionsRaw || null,
       transactions: snapshot.transactionsRaw || null
     };
-    if (Array.isArray(snapshot.positions) && snapshot.positions.length) {
+    const inlinePositions = Array.isArray(snapshot.raw?.positions)
+      ? snapshot.raw.positions
+      : Array.isArray(snapshot.raw?.positions?.items)
+        ? snapshot.raw.positions.items
+        : Array.isArray(snapshot.raw?.portfolio?.positions)
+          ? snapshot.raw.portfolio.positions
+          : null;
+    const effectivePositions = Array.isArray(snapshot.positions)
+      ? snapshot.positions
+      : Array.isArray(snapshot.positionsRaw?.items)
+        ? snapshot.positionsRaw.items
+        : Array.isArray(snapshot.positionsRaw)
+          ? snapshot.positionsRaw
+          : inlinePositions;
+    if (Array.isArray(effectivePositions) && effectivePositions.length) {
       const journal = ensureTradeJournal(user);
       const normalizedDate = dateKey;
       journal[normalizedDate] ||= [];
@@ -1328,7 +1356,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           openTrades.push({ tradeDate, trade });
         }
       }
-      const sortedPositions = snapshot.positions.slice().sort((a, b) => {
+      const sortedPositions = effectivePositions.slice().sort((a, b) => {
         const aSymbol = String(a?.instrument?.ticker ?? a?.ticker ?? a?.symbol ?? '').toUpperCase();
         const bSymbol = String(b?.instrument?.ticker ?? b?.ticker ?? b?.symbol ?? '').toUpperCase();
         return aSymbol.localeCompare(bSymbol);
