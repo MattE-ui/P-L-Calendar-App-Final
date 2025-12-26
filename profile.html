@@ -114,7 +114,10 @@
     </section>
     <section class="card profile-card automation-card">
       <header class="profile-automation-header">
-        <h2>Trading 212 automation</h2>
+        <div class="profile-automation-title">
+          <h2>Trading 212 automation</h2>
+          <button id="t212-help-btn" class="ghost info-btn" type="button" aria-label="How to set up Trading 212 integration">i</button>
+        </div>
         <p class="helper">Automatically pull your daily portfolio value and cash movements from Trading 212 so your calendar updates itself.</p>
       </header>
       <div class="profile-field toggle-field">
@@ -132,6 +135,7 @@
         <div class="profile-field">
           <label for="t212-api-secret">Trading 212 API secret</label>
           <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
+          <p class="helper">Optional for token-only keys. Leave blank if Trading 212 issued a single API key.</p>
           <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
         </div>
         <div class="profile-field">
@@ -211,6 +215,24 @@
         <button id="save-qs-btn" class="primary">Save</button>
         <button id="close-qs-btn" class="ghost">Close</button>
       </div>
+    </div>
+  </div>
+  <div id="t212-help-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 setup steps</h3>
+        <button id="t212-help-close" class="ghost close-btn" aria-label="Close Trading 212 help">✕</button>
+      </div>
+      <ol class="helper-list">
+        <li>Log in to Trading 212 on web and open <strong>Settings → API</strong>.</li>
+        <li>Create a new API key and enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong>.</li>
+        <li>Copy the API key (and secret, if shown). Paste them into the fields above.</li>
+        <li>Select <strong>Live</strong> or <strong>Practice</strong> to match your Trading 212 account.</li>
+        <li>Keep the base URL blank unless Trading 212 instructs otherwise. Use the default endpoint unless they provide a different path.</li>
+        <li>Pick a snapshot time (Europe/London). The app will sync daily at that time.</li>
+        <li>Toggle <strong>Enable Trading 212 sync</strong> on, then click <strong>Save Trading 212 settings</strong>.</li>
+        <li>Use <strong>Run sync now</strong> to test the connection and confirm the status message updates.</li>
+      </ol>
     </div>
   </div>
   <script src="static/profile.js"></script>

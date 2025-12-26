@@ -958,6 +958,30 @@ button:disabled {
 .profile-actions button { flex: 1; min-width: 160px; }
 .automation-card { gap: 16px; }
 .profile-automation-header h2 { margin: 0; font-size: 20px; }
+.profile-automation-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.info-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  padding: 0;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: lowercase;
+}
+.helper-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.helper-list li + li {
+  margin-top: 6px;
+}
 .toggle-field { align-items: center; }
 .toggle { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; font-size: 15px; }
 .toggle input[type="checkbox"] { width: 48px; height: 24px; accent-color: var(--accent); }

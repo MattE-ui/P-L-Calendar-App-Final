@@ -887,7 +887,7 @@ async function requestTrading212Endpoint(url, headers) {
 }
 
 async function fetchTrading212Snapshot(config) {
-  if (!config.apiKey || !config.apiSecret) {
+  if (!config.apiKey) {
     throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
   }
   const baseCandidates = [];
@@ -925,12 +925,17 @@ async function fetchTrading212Snapshot(config) {
   if (!baseCandidates.length) {
     throw new Trading212Error('Trading 212 base URL could not be determined.');
   }
-  const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
   const headers = {
-    'Authorization': `Basic ${encodedCredentials}`,
     'Accept': 'application/json',
     'User-Agent': 'PL-Calendar-App/1.0'
   };
+  if (config.apiKey && config.apiSecret) {
+    const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
+    headers.Authorization = `Basic ${encodedCredentials}`;
+  } else if (config.apiKey) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
+    headers['X-Api-Key'] = config.apiKey;
+  }
   const endpointCandidates = [];
   const seenEndpoints = new Set();
   const appendEndpoint = (value) => {
@@ -1551,8 +1556,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
       cfg.apiSecret = '';
     }
   }
-  if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
-    return res.status(400).json({ error: 'Provide your Trading 212 API credentials to enable automation.' });
+  if (cfg.enabled && !cfg.apiKey) {
+    return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
   }
   if (cfg.enabled && cfg.lastNetDeposits === undefined) {
     cfg.lastNetDeposits = totals.total;

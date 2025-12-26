@@ -565,6 +565,13 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadProfile();
   loadIntegration();
+  const helpModal = document.getElementById('t212-help-modal');
+  document.getElementById('t212-help-btn')?.addEventListener('click', () => {
+    helpModal?.classList.remove('hidden');
+  });
+  document.getElementById('t212-help-close')?.addEventListener('click', () => {
+    helpModal?.classList.add('hidden');
+  });
   document.getElementById('profile-save')?.addEventListener('click', saveProfile);
   document.getElementById('profile-logout')?.addEventListener('click', logout);
   document.getElementById('profile-net-deposits-delta')?.addEventListener('input', (ev) => {
@@ -595,4 +602,9 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      helpModal?.classList.add('hidden');
+    }
+  });
 });
