@@ -792,6 +792,25 @@ function parseSnapshotTime(value) {
   return { hour: match[1], minute: match[2] };
 }
 
+function parseTradingNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const cleaned = value.replace(/[^0-9.-]/g, '');
+    const parsed = Number.parseFloat(cleaned);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === 'object') {
+    if (typeof value.value === 'number' || typeof value.value === 'string') {
+      return parseTradingNumber(value.value);
+    }
+    if (typeof value.amount === 'number' || typeof value.amount === 'string') {
+      return parseTradingNumber(value.amount);
+    }
+  }
+  return null;
+}
+
 async function requestTrading212Endpoint(url, headers) {
   const maxAttempts = 3;
   let attempt = 0;
@@ -851,24 +870,6 @@ async function requestTrading212Endpoint(url, headers) {
         });
       }
     }
-    const parseTradingNumber = (value) => {
-      if (value === null || value === undefined) return null;
-      if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-      if (typeof value === 'string') {
-        const cleaned = value.replace(/[^0-9.-]/g, '');
-        const parsed = Number.parseFloat(cleaned);
-        return Number.isFinite(parsed) ? parsed : null;
-      }
-      if (typeof value === 'object') {
-        if (typeof value.value === 'number' || typeof value.value === 'string') {
-          return parseTradingNumber(value.value);
-        }
-        if (typeof value.amount === 'number' || typeof value.amount === 'string') {
-          return parseTradingNumber(value.amount);
-        }
-      }
-      return null;
-    };
     const portfolioCandidates = [
       data?.totalValue?.value,
       data?.totalValue?.amount,
@@ -1157,7 +1158,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   if (!user) return;
   ensureUserShape(user, username);
   const cfg = user.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
   const rates = await fetchRates();
   const now = Date.now();
   if (cfg.cooldownUntil) {
@@ -1211,7 +1212,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       for (const item of txs) {
         if (lastTxAt && item.ts <= lastTxAt) continue;
         const tx = item.tx || {};
-        const amount = Number(
+        const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
+        if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash')) {
+          continue;
+        }
+        const amount = parseTradingNumber(
           tx.amount?.value ??
           tx.amount?.amount ??
           tx.amount ??
@@ -1237,6 +1242,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       if (newest) {
         cfg.lastTransactionAt = new Date(newest).toISOString();
       }
+      const { total: updatedTotal } = computeNetDepositsTotals(user, history);
+      cfg.lastNetDeposits = updatedTotal;
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
@@ -1353,7 +1360,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
 function stopTrading212Job(username) {
   const job = trading212Jobs.get(username);
   if (job) {
-    job.stop();
+    if (job.type === 'cron') {
+      job.handle.stop();
+    } else {
+      clearInterval(job.handle);
+    }
     trading212Jobs.delete(username);
   }
 }
@@ -1361,15 +1372,22 @@ function stopTrading212Job(username) {
 function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
   const parsed = parseSnapshotTime(cfg.snapshotTime);
+  const timezone = cfg.timezone || 'Europe/London';
+  if (cfg.lastSyncAt) {
+    const handle = setInterval(() => {
+      syncTrading212ForUser(username, new Date());
+    }, 60 * 1000);
+    trading212Jobs.set(username, { type: 'interval', handle });
+    return;
+  }
   if (!parsed) return;
   const expression = `${parsed.minute} ${parsed.hour} * * *`;
-  const timezone = cfg.timezone || 'Europe/London';
-  const job = cron.schedule(expression, async () => {
+  const handle = cron.schedule(expression, async () => {
     await syncTrading212ForUser(username, new Date());
   }, { timezone });
-  trading212Jobs.set(username, job);
+  trading212Jobs.set(username, { type: 'cron', handle });
 }
 
 app.use(bodyParser.json());
