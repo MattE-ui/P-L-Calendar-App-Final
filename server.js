@@ -248,6 +248,10 @@ function ensureTrading212Config(user) {
     delete cfg.lastNetDeposits;
     mutated = true;
   }
+  if (!Array.isArray(cfg.processedReferences)) {
+    cfg.processedReferences = [];
+    mutated = true;
+  }
   return { mutated, config: cfg };
 }
 
@@ -1246,6 +1250,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       for (const item of txs) {
         if (lastTxAt && item.ts <= lastTxAt) continue;
         const tx = item.tx || {};
+        const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
+        if (reference && cfg.processedReferences.includes(reference)) {
+          continue;
+        }
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
         if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
           continue;
@@ -1275,6 +1283,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           entry.cashOut = entryCashOut + Math.abs(amountGBP);
         }
         history[monthKey][date] = entry;
+        if (reference) {
+          cfg.processedReferences.push(reference);
+          if (cfg.processedReferences.length > 500) {
+            cfg.processedReferences = cfg.processedReferences.slice(-500);
+          }
+        }
         if (!newest || item.ts > newest) newest = item.ts;
       }
       if (newest) {
@@ -1362,7 +1376,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         return aSymbol.localeCompare(bSymbol);
       });
       for (const raw of sortedPositions) {
-        const symbol = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        const rawTicker = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        const symbol = rawTicker.split('_')[0] || rawTicker;
         if (!symbol) continue;
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
         const existingTrade = existingTradeEntry?.trade;
@@ -1374,6 +1389,13 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
         const tradeCurrency = raw?.currency ?? raw?.instrument?.currency ?? 'USD';
+        let lowStop = null;
+        try {
+          const lowQuote = await fetchDailyLow(symbol);
+          lowStop = Number(lowQuote?.low);
+        } catch (e) {
+          lowStop = null;
+        }
         if (existingTrade) {
           existingTrade.entry = entry;
           existingTrade.sizeUnits = sizeUnits;
@@ -1382,9 +1404,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
-          if (Number.isFinite(stop) && stop > 0) {
-            existingTrade.stop = stop;
-            existingTrade.perUnitRisk = Math.abs(entry - stop);
+          const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
+          if (Number.isFinite(nextStop) && nextStop > 0) {
+            existingTrade.stop = nextStop;
+            existingTrade.perUnitRisk = Math.abs(entry - nextStop);
           }
           continue;
         }
@@ -1393,7 +1416,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           symbol,
           currency: tradeCurrency,
           entry,
-          stop: Number.isFinite(stop) && stop > 0 ? stop : undefined,
+          stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
           sizeUnits,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           riskPct: 0,
