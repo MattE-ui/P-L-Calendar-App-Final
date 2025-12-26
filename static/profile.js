@@ -72,6 +72,10 @@ function bindNav() {
   document.getElementById('trades-btn')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  document.getElementById('devtools-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    window.location.href = '/devtools.html';
+  });
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     try {
       await api('/api/logout', { method: 'POST' });
@@ -114,6 +118,14 @@ function bindNav() {
     }
     closeQs();
   });
+  api('/api/profile')
+    .then(profile => {
+      const show = profile?.username === 'mevs.0404@gmail.com';
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+    })
+    .catch(() => {
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+    });
 }
 
 async function loadProfile() {

@@ -1702,6 +1702,10 @@ function bindControls() {
   $('#trades-btn')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  $('#devtools-btn')?.addEventListener('click', () => {
+    setNavOpen(false);
+    window.location.href = '/devtools.html';
+  });
 
   const navToggle = $('#nav-toggle-btn');
   const navDrawer = $('#nav-drawer');
@@ -2117,6 +2121,20 @@ function bindControls() {
   });
 }
 
+async function updateDevtoolsNav() {
+  try {
+    const profile = await api('/api/profile');
+    const show = profile?.username === 'mevs.0404@gmail.com';
+    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+  } catch (e) {
+    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+  }
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = { computeRiskPlan, summarizeWeek };
 }
@@ -2144,6 +2162,7 @@ async function init() {
     console.warn(e);
   }
   await loadData();
+  updateDevtoolsNav();
   render();
   setInterval(() => {
     if (document.visibilityState === 'hidden') return;

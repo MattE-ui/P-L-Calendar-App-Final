@@ -982,6 +982,13 @@ button:disabled {
 .helper-list li + li {
   margin-top: 6px;
 }
+.devtools-card h4 {
+  margin: 16px 0 8px;
+}
+.devtools-grid {
+  display: grid;
+  gap: 16px;
+}
 .raw-json {
   background: #0f1218;
   border: 1px solid var(--border);

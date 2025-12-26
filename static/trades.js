@@ -401,6 +401,10 @@ function bindNav() {
   document.querySelector('#calendar-btn')?.addEventListener('click', () => window.location.href = '/');
   document.querySelector('#analytics-btn')?.addEventListener('click', () => window.location.href = '/analytics.html');
   document.querySelector('#profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
+  document.querySelector('#devtools-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    window.location.href = '/devtools.html';
+  });
   document.querySelector('#logout-btn')?.addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST' }).catch(() => {});
     window.location.href = '/login.html';
@@ -409,6 +413,14 @@ function bindNav() {
     closeNav?.(false);
     document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
   });
+  api('/api/profile')
+    .then(profile => {
+      const show = profile?.username === 'mevs.0404@gmail.com';
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+    })
+    .catch(() => {
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+    });
 }
 
 function bindForm() {

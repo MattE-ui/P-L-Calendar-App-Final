@@ -1109,13 +1109,16 @@ async function fetchTrading212Snapshot(config) {
           `${root}/cash/transactions`
         ];
         let positions = null;
+        let positionsRaw = null;
         let transactions = null;
+        let transactionsRaw = null;
         for (const candidate of positionsEndpoints) {
           try {
             const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
             const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
             if (Array.isArray(list)) {
               positions = list;
+              positionsRaw = payload;
               break;
             }
           } catch (e) {
@@ -1128,6 +1131,7 @@ async function fetchTrading212Snapshot(config) {
             const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
             if (Array.isArray(list)) {
               transactions = list;
+              transactionsRaw = payload;
               break;
             }
           } catch (e) {
@@ -1139,7 +1143,9 @@ async function fetchTrading212Snapshot(config) {
           baseUrl: base,
           endpoint: pathSuffix,
           positions,
-          transactions
+          positionsRaw,
+          transactions,
+          transactionsRaw
         };
       } catch (error) {
         if (error instanceof Trading212Error && error.status === 404) {
@@ -1301,6 +1307,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         cfg.endpoint = snapshot.endpoint;
       }
     }
+    cfg.lastRaw = {
+      portfolio: snapshot.raw || null,
+      positions: snapshot.positionsRaw || null,
+      transactions: snapshot.transactionsRaw || null
+    };
     if (Array.isArray(snapshot.positions) && snapshot.positions.length) {
       const journal = ensureTradeJournal(user);
       const normalizedDate = dateKey;
@@ -1447,6 +1458,12 @@ app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.
 app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
+app.get('/devtools.html', auth, (req, res) => {
+  if (req.username !== 'mevs.0404@gmail.com') {
+    return res.status(403).send('Forbidden');
+  }
+  res.sendFile(path.join(__dirname,'devtools.html'));
+});
 
 // --- auth api ---
 function currentDateKey() {
@@ -1801,6 +1818,18 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     lastRaw: cfg.lastRaw || null,
     cooldownUntil: cfg.cooldownUntil || null
   });
+});
+
+app.get('/api/integrations/trading212/raw', auth, (req, res) => {
+  if (req.username !== 'mevs.0404@gmail.com') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.trading212 || {};
+  res.json(cfg.lastRaw || { portfolio: null, positions: null, transactions: null });
 });
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
