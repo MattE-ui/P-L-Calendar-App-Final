@@ -1799,18 +1799,63 @@ async function fetchYahooQuote(symbol) {
     const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
     const preferPre = marketState.startsWith('pre');
     const preferPost = marketState.startsWith('post');
-    const price = (preferPre ? quote?.preMarketPrice : null)
+    const preferredExtended = (preferPre ? quote?.preMarketPrice : null)
       ?? (preferPost ? quote?.postMarketPrice : null)
       ?? quote?.extendedMarketPrice
       ?? quote?.preMarketPrice
-      ?? quote?.postMarketPrice
+      ?? quote?.postMarketPrice;
+    const price = preferredExtended
       ?? quote?.regularMarketPrice
       ?? quote?.regularMarketPreviousClose;
     const currency = quote?.currency || 'GBP';
     if (!Number.isFinite(price) || price <= 0) continue;
-    return { symbol: trimmed, price, currency };
+    const isExtended = Number.isFinite(preferredExtended) && preferredExtended > 0;
+    return {
+      symbol: trimmed,
+      price,
+      currency,
+      isExtended,
+      marketState
+    };
   }
   throw new Error('Yahoo quote not available');
+}
+
+async function fetchYahooChartQuote(symbol) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=true`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'application/json,text/plain,*/*'
+    }
+  });
+  if (!res.ok) throw new Error('Yahoo chart not available');
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (!Array.isArray(closes) || closes.length === 0) throw new Error('Yahoo chart missing data');
+  let last = null;
+  for (let i = closes.length - 1; i >= 0; i -= 1) {
+    const value = closes[i];
+    if (Number.isFinite(value) && value > 0) {
+      last = value;
+      break;
+    }
+  }
+  if (!Number.isFinite(last) || last <= 0) throw new Error('Yahoo chart missing price');
+  const currency = result?.meta?.currency || 'GBP';
+  const marketState = typeof result?.meta?.marketState === 'string'
+    ? result.meta.marketState.toLowerCase()
+    : '';
+  return {
+    symbol: trimmed,
+    price: last,
+    currency,
+    isExtended: true,
+    marketState
+  };
 }
 
 async function fetchStooqQuote(symbol) {
@@ -1842,6 +1887,8 @@ async function fetchMarketPrice(symbol) {
     return cached.quote;
   }
   let normalized = null;
+  let yahooQuote = null;
+  let yahooChart = null;
   if (process.env.MARKET_DATA_URL) {
     const url = `${process.env.MARKET_DATA_URL}?symbols=${encodeURIComponent(trimmed)}&includePrePost=true`;
     const res = await fetch(url);
@@ -1851,23 +1898,44 @@ async function fetchMarketPrice(symbol) {
       const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
       const preferPre = marketState.startsWith('pre');
       const preferPost = marketState.startsWith('post');
-      const price = (preferPre ? quote?.preMarketPrice : null)
+      const preferredExtended = (preferPre ? quote?.preMarketPrice : null)
         ?? (preferPost ? quote?.postMarketPrice : null)
         ?? quote?.extendedMarketPrice
         ?? quote?.preMarketPrice
-        ?? quote?.postMarketPrice
+        ?? quote?.postMarketPrice;
+      const price = preferredExtended
         ?? quote?.regularMarketPrice
         ?? quote?.regularMarketPreviousClose;
       const currency = quote?.currency || 'GBP';
       if (Number.isFinite(price) && price > 0) {
-        normalized = { symbol: trimmed, price, currency };
+        normalized = {
+          symbol: trimmed,
+          price,
+          currency,
+          isExtended: Number.isFinite(preferredExtended) && preferredExtended > 0,
+          marketState
+        };
       }
     }
   }
   if (!normalized) {
     try {
-      normalized = await fetchYahooQuote(trimmed);
+      yahooQuote = await fetchYahooQuote(trimmed);
     } catch (e) {
+    }
+    try {
+      yahooChart = await fetchYahooChartQuote(trimmed);
+    } catch (e) {
+      // ignore chart failures
+    }
+    if (yahooQuote?.isExtended) {
+      normalized = yahooQuote;
+    } else if (yahooChart?.price && (!yahooQuote?.price || Math.abs(yahooChart.price - yahooQuote.price) > 0.0001)) {
+      normalized = yahooChart;
+    } else if (yahooQuote) {
+      normalized = yahooQuote;
+    }
+    if (!normalized) {
       normalized = await fetchStooqQuote(trimmed);
     }
   }
