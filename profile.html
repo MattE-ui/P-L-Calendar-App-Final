@@ -8,12 +8,65 @@
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-  <div class="profile-container">
-    <header class="profile-header">
-      <h1>Finish setting up your profile</h1>
-      <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
-    </header>
-    <section class="card profile-card">
+  <header class="hero">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1>P&L Calendar</h1>
+        <p class="hero-sub">Trading journal & performance dashboard</p>
+      </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="analytics-btn" class="ghost">Analytics</button>
+      <button id="trades-btn" class="ghost">Trades</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
+
+  <main class="container">
+    <section class="page-title">
+      <h2>Profile</h2>
+    </section>
+    <div class="profile-container">
+      <header class="profile-header">
+        <h1>Finish setting up your profile</h1>
+        <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
+      </header>
+      <section class="card profile-card">
       <p class="profile-date" id="profile-date"></p>
       <div class="profile-field">
         <label for="profile-portfolio">Current portfolio value (£)</label>
@@ -62,7 +115,10 @@
     </section>
     <section class="card profile-card automation-card">
       <header class="profile-automation-header">
-        <h2>Trading 212 automation</h2>
+        <div class="profile-automation-title">
+          <h2>Trading 212 automation</h2>
+          <button id="t212-help-btn" class="ghost info-btn" type="button" aria-label="How to set up Trading 212 integration">i</button>
+        </div>
         <p class="helper">Automatically pull your daily portfolio value and cash movements from Trading 212 so your calendar updates itself.</p>
       </header>
       <div class="profile-field toggle-field">
@@ -80,17 +136,8 @@
         <div class="profile-field">
           <label for="t212-api-secret">Trading 212 API secret</label>
           <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
+          <p class="helper">Optional for token-only keys. Leave blank if Trading 212 issued a single API key.</p>
           <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
-        </div>
-        <div class="profile-field">
-          <label for="t212-host">API base URL (optional)</label>
-          <input id="t212-host" type="text" placeholder="https://api.trading212.com" autocomplete="off">
-          <p class="helper">Trading 212 usually works with <code>https://api.trading212.com</code> (live) or <code>https://demo.trading212.com</code> (practice). Override this only if their docs instruct otherwise.</p>
-        </div>
-        <div class="profile-field">
-          <label for="t212-endpoint">Portfolio endpoint path</label>
-          <input id="t212-endpoint" type="text" value="/api/v0/equity/portfolio/summary" autocomplete="off">
-          <p class="helper">Keep <code>/api/v0/equity/portfolio/summary</code> unless Trading 212 specifies a different path for your account type.</p>
         </div>
         <div class="profile-field">
           <label for="t212-mode">Account</label>
@@ -99,20 +146,15 @@
             <option value="practice">Practice (Invest/ISA demo)</option>
           </select>
         </div>
-        <div class="profile-field">
-          <label for="t212-time">Snapshot time</label>
-          <input id="t212-time" type="time" value="21:00" required>
-          <p class="helper">Choose the time of day (Europe/London) to capture your portfolio value and net deposits.</p>
-        </div>
       </div>
       <section class="integration-instructions">
         <h3>How to set it up</h3>
-        <p>This integration records your Trading 212 closing balance at the scheduled time and applies any new deposits or withdrawals to your calendar automatically.</p>
+        <p>This integration pulls portfolio value, open positions, and deposit/withdrawal history from Trading 212.</p>
         <ol>
           <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
-          <li>Enable the toggles for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key. Trading 212 will show you an API key (username) and API secret (password) &mdash; copy both.</li>
-          <li>Paste the key and secret above, pick your snapshot time, then save. Update the base URL or endpoint only if Trading 212 provides alternate values.</li>
-          <li>Leave your browser or device off &mdash; we will call the API at the chosen time each day and backfill your calendar.</li>
+          <li>Enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key.</li>
+          <li>Paste the API key (and secret if provided) above, select <strong>Live</strong> or <strong>Practice</strong>, then save.</li>
+          <li>Use <strong>Run sync now</strong> to confirm the connection.</li>
         </ol>
       </section>
       <div class="profile-actions integration-actions">
@@ -121,8 +163,9 @@
       </div>
       <div id="t212-error" class="error"></div>
       <p id="t212-status" class="status-line"></p>
+      <button id="t212-raw-btn" class="ghost info-btn is-hidden" type="button">View raw JSON</button>
     </section>
-    <section class="card profile-card danger-zone">
+      <section class="card profile-card danger-zone">
       <header class="profile-automation-header">
         <h2>Reset your data</h2>
         <p class="helper">Remove your account, portfolio history, deposits, and integration settings from this server.</p>
@@ -133,6 +176,60 @@
       </div>
       <div id="profile-reset-error" class="error"></div>
     </section>
+    </div>
+  </main>
+  <div id="quick-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="qs-risk-select">Default risk per trade</label>
+        <select id="qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="qs-currency-select">Default currency</label>
+        <select id="qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="save-qs-btn" class="primary">Save</button>
+        <button id="close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="t212-help-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 setup steps</h3>
+        <button id="t212-help-close" class="ghost close-btn" aria-label="Close Trading 212 help">✕</button>
+      </div>
+      <ol class="helper-list">
+        <li>Log in to Trading 212 on web and open <strong>Settings → API</strong>.</li>
+        <li>Create a new API key and enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong>.</li>
+        <li>Copy the API key (and secret, if shown). Paste them into the fields above.</li>
+        <li>Select <strong>Live</strong> or <strong>Practice</strong> to match your Trading 212 account.</li>
+        <li>Keep the base URL blank unless Trading 212 instructs otherwise. Use the default endpoint unless they provide a different path.</li>
+        <li>Pick a snapshot time (Europe/London). The app will sync daily at that time.</li>
+        <li>Toggle <strong>Enable Trading 212 sync</strong> on, then click <strong>Save Trading 212 settings</strong>.</li>
+        <li>Use <strong>Run sync now</strong> to test the connection and confirm the status message updates.</li>
+      </ol>
+    </div>
+  </div>
+  <div id="t212-raw-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 raw response</h3>
+        <button id="t212-raw-close" class="ghost close-btn" aria-label="Close raw JSON">✕</button>
+      </div>
+      <pre id="t212-raw-content" class="raw-json"></pre>
+    </div>
   </div>
   <script src="static/profile.js"></script>
 </body>
