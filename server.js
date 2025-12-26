@@ -924,10 +924,12 @@ async function requestTrading212Endpoint(url, headers) {
       }
     }
     if (!Number.isFinite(portfolioValue)) {
-      throw new Trading212Error('Trading 212 payload was missing a portfolio value.', {
+      const err = new Trading212Error('Trading 212 payload was missing a portfolio value.', {
         status,
         code: 'invalid_payload'
       });
+      err.raw = data;
+      throw err;
     }
     return {
       portfolioValue,
@@ -1149,6 +1151,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       retryAfter: retryAfter !== null && retryAfter !== undefined ? retryAfter : undefined,
       message: e && e.message ? e.message : 'Unknown Trading 212 error'
     };
+    if (e instanceof Trading212Error && e.raw) {
+      cfg.lastRaw = e.raw;
+    }
     saveDB(db);
     console.error(`Trading 212 sync failed for ${username}`, e);
   }
@@ -1548,6 +1553,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     lastEndpoint: cfg.lastEndpoint || null,
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
+    lastRaw: cfg.lastRaw || null,
     cooldownUntil: cfg.cooldownUntil || null
   });
 });
@@ -1638,6 +1644,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     lastEndpoint: responseCfg.lastEndpoint || null,
     lastSyncAt: responseCfg.lastSyncAt || null,
     lastStatus: responseCfg.lastStatus || null,
+    lastRaw: responseCfg.lastRaw || null,
     cooldownUntil: responseCfg.cooldownUntil || null
   });
 });

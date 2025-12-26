@@ -177,6 +177,7 @@
       </div>
       <div id="t212-error" class="error"></div>
       <p id="t212-status" class="status-line"></p>
+      <button id="t212-raw-btn" class="ghost info-btn is-hidden" type="button">View raw JSON</button>
     </section>
       <section class="card profile-card danger-zone">
       <header class="profile-automation-header">
@@ -233,6 +234,15 @@
         <li>Toggle <strong>Enable Trading 212 sync</strong> on, then click <strong>Save Trading 212 settings</strong>.</li>
         <li>Use <strong>Run sync now</strong> to test the connection and confirm the status message updates.</li>
       </ol>
+    </div>
+  </div>
+  <div id="t212-raw-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 raw response</h3>
+        <button id="t212-raw-close" class="ghost close-btn" aria-label="Close raw JSON">✕</button>
+      </div>
+      <pre id="t212-raw-content" class="raw-json"></pre>
     </div>
   </div>
   <script src="static/profile.js"></script>

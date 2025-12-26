@@ -269,7 +269,8 @@ const integrationState = {
   endpoint: '/api/v0/equity/portfolio/summary',
   lastBaseUrl: null,
   lastEndpoint: null,
-  cooldownUntil: null
+  cooldownUntil: null,
+  lastRaw: null
 };
 
 function setIntegrationFieldsDisabled(disabled) {
@@ -293,8 +294,12 @@ function setIntegrationFieldsDisabled(disabled) {
 
 function renderIntegrationStatus(data) {
   const statusEl = document.getElementById('t212-status');
+  const rawBtn = document.getElementById('t212-raw-btn');
   if (!statusEl) return;
   statusEl.classList.remove('is-error');
+  if (rawBtn) {
+    rawBtn.classList.toggle('is-hidden', !data.lastRaw);
+  }
   if (!data.enabled) {
     statusEl.textContent = 'Automation is currently switched off.';
     return;
@@ -352,6 +357,7 @@ async function loadIntegration() {
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
+    integrationState.lastRaw = data.lastRaw || null;
     const toggle = document.getElementById('t212-enabled');
     const apiInput = document.getElementById('t212-api-key');
     const secretInput = document.getElementById('t212-api-secret');
@@ -384,7 +390,8 @@ async function loadIntegration() {
       timezone: integrationState.timezone,
       cooldownUntil: integrationState.cooldownUntil,
       lastBaseUrl: integrationState.lastBaseUrl,
-      lastEndpoint: integrationState.lastEndpoint
+      lastEndpoint: integrationState.lastEndpoint,
+      lastRaw: integrationState.lastRaw
     });
   } catch (e) {
     console.error('Unable to load Trading 212 settings', e);
@@ -445,6 +452,7 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
+    integrationState.lastRaw = data.lastRaw || null;
     if (apiInput) {
       apiInput.value = '';
       apiInput.placeholder = integrationState.hasApiKey
@@ -468,8 +476,15 @@ async function saveIntegration({ runNow = false } = {}) {
       timezone: integrationState.timezone,
       cooldownUntil: integrationState.cooldownUntil,
       lastBaseUrl: integrationState.lastBaseUrl,
-      lastEndpoint: integrationState.lastEndpoint
+      lastEndpoint: integrationState.lastEndpoint,
+      lastRaw: integrationState.lastRaw
     });
+    if (data.lastStatus && !data.lastStatus.ok && data.lastRaw) {
+      const rawModal = document.getElementById('t212-raw-modal');
+      const rawContent = document.getElementById('t212-raw-content');
+      if (rawContent) rawContent.textContent = JSON.stringify(data.lastRaw, null, 2);
+      rawModal?.classList.remove('hidden');
+    }
     if (errorEl) {
       if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
         const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
@@ -565,6 +580,17 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadProfile();
   loadIntegration();
+  const rawModal = document.getElementById('t212-raw-modal');
+  const rawContent = document.getElementById('t212-raw-content');
+  document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
+    if (rawContent) rawContent.textContent = integrationState.lastRaw
+      ? JSON.stringify(integrationState.lastRaw, null, 2)
+      : '';
+    rawModal?.classList.remove('hidden');
+  });
+  document.getElementById('t212-raw-close')?.addEventListener('click', () => {
+    rawModal?.classList.add('hidden');
+  });
   const helpModal = document.getElementById('t212-help-modal');
   document.getElementById('t212-help-btn')?.addEventListener('click', () => {
     helpModal?.classList.remove('hidden');
@@ -605,6 +631,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       helpModal?.classList.add('hidden');
+      rawModal?.classList.add('hidden');
     }
   });
 });
