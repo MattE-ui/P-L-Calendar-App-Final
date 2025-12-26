@@ -460,7 +460,7 @@ function normalizeTradeJournal(user) {
       const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
       const riskAmountGBP = Number(trade.riskAmountGBP);
       const positionGBP = Number(trade.positionGBP);
-      const sizeUnits = Number(trade.sizeUnits);
+      const sizeUnits = Number(trade.sizeUnits ?? trade.quantity ?? trade.units ?? trade.shares);
       const perUnitRiskRaw = Number(trade.perUnitRisk);
       const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
       const feesRaw = Number(trade.fees);
