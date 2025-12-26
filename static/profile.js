@@ -25,6 +25,97 @@ const profileState = {
   username: ''
 };
 
+const currencySymbols = { GBP: '£', USD: '$' };
+
+function formatSignedCurrency(value, currency = 'GBP') {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  const sign = num < 0 ? '-' : '';
+  const symbol = currencySymbols[currency] || '£';
+  return `${sign}${symbol}${Math.abs(num).toFixed(2)}`;
+}
+
+function setupNavDrawer() {
+  const navToggle = document.getElementById('nav-toggle-btn');
+  const navDrawer = document.getElementById('nav-drawer');
+  const navOverlay = document.getElementById('nav-drawer-overlay');
+  const navClose = document.getElementById('nav-close-btn');
+  const setNavOpen = open => {
+    if (!navDrawer || !navOverlay || !navToggle) return;
+    navDrawer.classList.toggle('hidden', !open);
+    navOverlay.classList.toggle('hidden', !open);
+    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  navToggle?.addEventListener('click', () => {
+    if (!navDrawer || !navOverlay) return;
+    const isOpen = !navDrawer.classList.contains('hidden');
+    setNavOpen(!isOpen);
+  });
+  navClose?.addEventListener('click', () => setNavOpen(false));
+  navOverlay?.addEventListener('click', () => setNavOpen(false));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    setNavOpen(false);
+  });
+  return setNavOpen;
+}
+
+function bindNav() {
+  const closeNav = setupNavDrawer();
+  document.getElementById('calendar-btn')?.addEventListener('click', () => {
+    window.location.href = '/';
+  });
+  document.getElementById('analytics-btn')?.addEventListener('click', () => {
+    window.location.href = '/analytics.html';
+  });
+  document.getElementById('trades-btn')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+    try {
+      await api('/api/logout', { method: 'POST' });
+    } catch (e) {
+      console.warn(e);
+    }
+    window.location.href = '/login.html';
+  });
+  document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    const modal = document.getElementById('quick-settings-modal');
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    try {
+      const saved = localStorage.getItem('plc-prefs');
+      if (saved) {
+        const prefs = JSON.parse(saved);
+        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => document.getElementById('quick-settings-modal')?.classList.add('hidden');
+  document.getElementById('close-qs-btn')?.addEventListener('click', closeQs);
+  document.getElementById('save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    const prefs = {};
+    if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
+    if (cur && ['GBP', 'USD'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify(prefs));
+    } catch (e) {
+      console.warn(e);
+    }
+    closeQs();
+  });
+}
+
 async function loadProfile() {
   try {
     const data = await api('/api/profile');
@@ -84,6 +175,18 @@ async function loadProfile() {
     if (helperExisting) {
       helperExisting.classList.toggle('is-hidden', !profileState.complete);
     }
+    const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
+    const netDepositsValue = Number.isFinite(profileState.netDeposits) ? profileState.netDeposits : 0;
+    const netPerformance = portfolioValue - netDepositsValue;
+    const netPerfPct = netDepositsValue ? netPerformance / Math.abs(netDepositsValue) : 0;
+    const heroPortfolio = document.getElementById('header-portfolio-value');
+    if (heroPortfolio) heroPortfolio.textContent = formatSignedCurrency(portfolioValue);
+    const heroDeposits = document.getElementById('hero-net-deposits-value');
+    if (heroDeposits) heroDeposits.textContent = formatSignedCurrency(netDepositsValue);
+    const heroPerformance = document.getElementById('hero-net-performance-value');
+    if (heroPerformance) heroPerformance.textContent = formatSignedCurrency(netPerformance);
+    const heroPerfSub = document.getElementById('hero-net-performance-sub');
+    if (heroPerfSub) heroPerfSub.textContent = `${(netPerfPct * 100).toFixed(1)}%`;
     renderSecurityState();
   } catch (e) {
     console.error('Unable to load profile details', e);
@@ -459,8 +562,16 @@ async function logout() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  bindNav();
   loadProfile();
   loadIntegration();
+  const helpModal = document.getElementById('t212-help-modal');
+  document.getElementById('t212-help-btn')?.addEventListener('click', () => {
+    helpModal?.classList.remove('hidden');
+  });
+  document.getElementById('t212-help-close')?.addEventListener('click', () => {
+    helpModal?.classList.add('hidden');
+  });
   document.getElementById('profile-save')?.addEventListener('click', saveProfile);
   document.getElementById('profile-logout')?.addEventListener('click', logout);
   document.getElementById('profile-net-deposits-delta')?.addEventListener('input', (ev) => {
@@ -491,4 +602,9 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      helpModal?.classList.add('hidden');
+    }
+  });
 });
