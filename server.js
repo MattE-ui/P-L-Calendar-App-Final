@@ -1226,7 +1226,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         if (lastTxAt && item.ts <= lastTxAt) continue;
         const tx = item.tx || {};
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
-        if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash')) {
+        if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
           continue;
         }
         const amount = parseTradingNumber(
@@ -1305,11 +1305,18 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       const journal = ensureTradeJournal(user);
       const normalizedDate = dateKey;
       journal[normalizedDate] ||= [];
+      const openTrades = [];
+      for (const [tradeDate, items] of Object.entries(journal)) {
+        for (const trade of items || []) {
+          if (!trade || trade.status === 'closed') continue;
+          openTrades.push({ tradeDate, trade });
+        }
+      }
       for (const raw of snapshot.positions) {
         const symbol = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
         if (!symbol) continue;
-        const existingTrade = journal[normalizedDate].find(t => t?.status !== 'closed' && (t?.trading212Id === raw?.id || t?.symbol === symbol));
-        if (existingTrade) continue;
+        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
+        const existingTrade = existingTradeEntry?.trade;
         const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
         const entry = Number(raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
@@ -1317,6 +1324,17 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
         const tradeCurrency = raw?.currency ?? raw?.instrument?.currency ?? 'USD';
+        if (existingTrade) {
+          existingTrade.entry = entry;
+          existingTrade.sizeUnits = sizeUnits;
+          existingTrade.currency = tradeCurrency;
+          existingTrade.direction = direction;
+          if (Number.isFinite(stop) && stop > 0) {
+            existingTrade.stop = stop;
+            existingTrade.perUnitRisk = Math.abs(entry - stop);
+          }
+          continue;
+        }
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
           symbol,
@@ -1341,6 +1359,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         });
         journal[normalizedDate].push(trade);
       }
+    }
+    cfg.lastSyncAt = new Date().toISOString();
+    if (!cfg.minuteSync) {
+      cfg.minuteSync = true;
+      scheduleTrading212Job(username, user);
     }
     delete cfg.cooldownUntil;
     saveDB(db);
