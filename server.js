@@ -877,6 +877,8 @@ async function requestTrading212Endpoint(url, headers) {
       data?.portfolioValue,
       data?.summary?.totalValue,
       data?.summary?.equity,
+      data?.summary?.total?.value,
+      data?.summary?.total?.amount,
       data?.overall?.portfolioValue,
       data?.overall?.totalValue,
       data?.accountValue,
@@ -885,15 +887,23 @@ async function requestTrading212Endpoint(url, headers) {
       data?.equity?.amount,
       data?.equityValue,
       data?.portfolio?.value,
-      data?.portfolio?.amount
+      data?.portfolio?.amount,
+      data?.portfolio?.total?.value,
+      data?.portfolio?.total?.amount,
+      data?.portfolio?.equity?.value,
+      data?.portfolio?.equity?.amount
     ];
     const netDepositsCandidates = [
       data?.totalNetDeposits,
       data?.netDeposits,
       data?.total?.netDeposits,
       data?.summary?.netDeposits,
+      data?.summary?.netDeposits?.value,
+      data?.summary?.netDeposits?.amount,
       data?.overall?.netDeposits,
       data?.cashFlows?.net,
+      data?.cashFlows?.net?.value,
+      data?.cashFlows?.net?.amount,
       data?.netCash
     ];
     const portfolioValue = portfolioCandidates
