@@ -940,6 +940,67 @@ async function requestTrading212Endpoint(url, headers) {
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
+async function requestTrading212RawEndpoint(url, headers) {
+  const maxAttempts = 3;
+  let attempt = 0;
+  let lastError = null;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    let res;
+    try {
+      res = await fetch(url, { method: 'GET', headers });
+    } catch (networkErr) {
+      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      await sleep(Math.min(1000 * attempt, 3000));
+      continue;
+    }
+    const status = res.status;
+    if (status === 429) {
+      const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+        status,
+        retryAfter
+      });
+      const wait = retryAfter !== null ? Math.min(retryAfter * 1000, 5000) : Math.min(1000 * attempt, 5000);
+      if (attempt < maxAttempts) {
+        await sleep(wait);
+        continue;
+      }
+      throw lastError;
+    }
+    if (status === 401 || status === 403) {
+      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
+        status,
+        code: 'unauthorised'
+      });
+    }
+    if (status === 404) {
+      throw new Trading212Error('Trading 212 could not find the requested endpoint.', {
+        status,
+        code: 'not_found'
+      });
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+    }
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return await res.json();
+    }
+    const raw = await res.text();
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw new Trading212Error('Trading 212 returned an unexpected response format.', {
+        status,
+        code: 'invalid_payload'
+      });
+    }
+  }
+  throw lastError || new Trading212Error('Trading 212 request failed.');
+}
+
 async function fetchTrading212Snapshot(config) {
   if (!config.apiKey) {
     throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
@@ -1020,7 +1081,52 @@ async function fetchTrading212Snapshot(config) {
       const endpoint = `${base}${pathSuffix}`;
       try {
         const snapshot = await requestTrading212Endpoint(endpoint, headers);
-        return { ...snapshot, baseUrl: base, endpoint: pathSuffix };
+        const positionsEndpoints = [
+          '/api/v0/equity/portfolio',
+          '/api/v0/equity/portfolio/positions',
+          '/api/v0/equity/positions',
+          '/api/v0/equity/account/positions',
+          '/api/v0/portfolio/positions'
+        ];
+        const transactionEndpoints = [
+          '/api/v0/history/transactions',
+          '/api/v0/history/transactions?type=CASH',
+          '/api/v0/history/cash',
+          '/api/v0/transactions'
+        ];
+        let positions = null;
+        let transactions = null;
+        for (const candidate of positionsEndpoints) {
+          try {
+            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
+            const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
+            if (Array.isArray(list)) {
+              positions = list;
+              break;
+            }
+          } catch (e) {
+            if (e instanceof Trading212Error && e.status === 404) continue;
+          }
+        }
+        for (const candidate of transactionEndpoints) {
+          try {
+            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
+            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+            if (Array.isArray(list)) {
+              transactions = list;
+              break;
+            }
+          } catch (e) {
+            if (e instanceof Trading212Error && e.status === 404) continue;
+          }
+        }
+        return {
+          ...snapshot,
+          baseUrl: base,
+          endpoint: pathSuffix,
+          positions,
+          transactions
+        };
       } catch (error) {
         if (error instanceof Trading212Error && error.status === 404) {
           const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
@@ -1091,6 +1197,45 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         cashOut += Math.abs(delta);
       }
       cfg.lastNetDeposits = snapshot.netDeposits;
+    } else if (Array.isArray(snapshot.transactions)) {
+      const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
+      const txs = snapshot.transactions
+        .map(tx => {
+          const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.processedAt || '');
+          return { tx, ts };
+        })
+        .filter(item => Number.isFinite(item.ts))
+        .sort((a, b) => a.ts - b.ts);
+      let newest = lastTxAt;
+      for (const item of txs) {
+        if (lastTxAt && item.ts <= lastTxAt) continue;
+        const tx = item.tx || {};
+        const amount = Number(
+          tx.amount?.value ??
+          tx.amount?.amount ??
+          tx.amount ??
+          tx.cash ??
+          tx.value ??
+          tx.money
+        );
+        if (!Number.isFinite(amount) || amount === 0) continue;
+        const date = dateKeyInTimezone(timezone, new Date(item.ts));
+        const monthKey = date.slice(0, 7);
+        history[monthKey] ||= {};
+        const entry = history[monthKey][date] || {};
+        const entryCashIn = Number(entry.cashIn ?? 0);
+        const entryCashOut = Number(entry.cashOut ?? 0);
+        if (amount > 0) {
+          entry.cashIn = entryCashIn + amount;
+        } else {
+          entry.cashOut = entryCashOut + Math.abs(amount);
+        }
+        history[monthKey][date] = entry;
+        if (!newest || item.ts > newest) newest = item.ts;
+      }
+      if (newest) {
+        cfg.lastTransactionAt = new Date(newest).toISOString();
+      }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
@@ -1105,6 +1250,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       payload.note = existingNote;
     }
     history[ym][dateKey] = payload;
+    user.portfolio = snapshot.portfolioValue;
+    if (user.initialPortfolio === undefined) {
+      user.initialPortfolio = snapshot.portfolioValue;
+    }
     user.profileComplete = true;
     const { total: updatedTotal } = computeNetDepositsTotals(user, history);
     cfg.lastNetDeposits = Number.isFinite(Number(cfg.lastNetDeposits))
@@ -1129,6 +1278,47 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       cfg.lastEndpoint = snapshot.endpoint;
       if (!cfg.endpoint) {
         cfg.endpoint = snapshot.endpoint;
+      }
+    }
+    if (Array.isArray(snapshot.positions) && snapshot.positions.length) {
+      const journal = ensureTradeJournal(user);
+      const normalizedDate = dateKey;
+      journal[normalizedDate] ||= [];
+      for (const raw of snapshot.positions) {
+        const symbol = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        if (!symbol) continue;
+        const existingTrade = journal[normalizedDate].find(t => t?.status !== 'closed' && (t?.trading212Id === raw?.id || t?.symbol === symbol));
+        if (existingTrade) continue;
+        const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
+        const entry = Number(raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
+        if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
+        const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
+        const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
+        const sizeUnits = Math.abs(quantity);
+        const tradeCurrency = raw?.currency ?? raw?.instrument?.currency ?? 'USD';
+        const trade = normalizeTradeMeta({
+          id: crypto.randomBytes(8).toString('hex'),
+          symbol,
+          currency: tradeCurrency,
+          entry,
+          stop: Number.isFinite(stop) && stop > 0 ? stop : undefined,
+          sizeUnits,
+          riskPct: 0,
+          perUnitRisk: Number.isFinite(stop) ? Math.abs(entry - stop) : 0,
+          riskAmountCurrency: 0,
+          positionCurrency: entry * sizeUnits,
+          riskAmountGBP: 0,
+          positionGBP: convertToGBP(entry * sizeUnits, tradeCurrency, rates),
+          portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
+          portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
+          createdAt: new Date().toISOString(),
+          direction,
+          status: 'open',
+          tradeType: 'day',
+          assetClass: 'stocks',
+          trading212Id: raw?.id
+        });
+        journal[normalizedDate].push(trade);
       }
     }
     delete cfg.cooldownUntil;
