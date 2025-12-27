@@ -482,6 +482,7 @@ function normalizeTradeJournal(user) {
       const positionGBP = Number(trade.positionGBP);
       const sizeUnits = Number(trade.sizeUnits ?? trade.quantity ?? trade.units ?? trade.shares);
       const perUnitRiskRaw = Number(trade.perUnitRisk);
+      const currentStopRaw = Number(trade.currentStop);
       const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
       const feesRaw = Number(trade.fees);
       const slippageRaw = Number(trade.slippage);
@@ -542,6 +543,9 @@ function normalizeTradeJournal(user) {
         portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
         createdAt
       };
+      if (Number.isFinite(currentStopRaw) && currentStopRaw > 0) {
+        normalizedTrade.currentStop = currentStopRaw;
+      }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
       }
@@ -614,6 +618,22 @@ function computeRealizedPnl(trade, rates = {}) {
   return { realizedPnlGBP, realizedPnlCurrency: netPnlCurrency, rMultiple };
 }
 
+function computeGuaranteedPnl(trade, rates = {}) {
+  if (!trade) return null;
+  const currentStop = Number(trade.currentStop);
+  const entry = Number(trade.entry);
+  const sizeUnits = Number(trade.sizeUnits);
+  if (!Number.isFinite(currentStop) || currentStop <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
+    return null;
+  }
+  const direction = trade.direction === 'short' ? 'short' : 'long';
+  const pnlCurrency = direction === 'long'
+    ? (currentStop - entry) * sizeUnits
+    : (entry - currentStop) * sizeUnits;
+  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  return Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
+}
+
 function flattenTrades(user, rates = {}) {
   const journal = ensureTradeJournal(user);
   const trades = [];
@@ -632,6 +652,10 @@ function flattenTrades(user, rates = {}) {
         base.realizedPnlGBP = pnl.realizedPnlGBP;
         base.realizedPnlCurrency = pnl.realizedPnlCurrency;
         base.rMultiple = pnl.rMultiple;
+      }
+      const guaranteedPnlGBP = computeGuaranteedPnl(base, rates);
+      if (guaranteedPnlGBP !== null) {
+        base.guaranteedPnlGBP = guaranteedPnlGBP;
       }
       const closeDate = typeof base.closeDate === 'string' ? base.closeDate : null;
       base.closeDate = closeDate || base.close_at || base.openDate;
@@ -2626,6 +2650,7 @@ async function buildActiveTrades(user, rates = {}) {
     const fxFeeEligible = trade.fxFeeEligible === true;
     const syncPpl = parseTradingNumber(trade.ppl);
     if (isTrading212 && Number.isFinite(syncPpl)) {
+      const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
       liveOpenPnlGBP += syncPpl;
       providerTrades += 1;
       if (providerCurrency === null) {
@@ -2651,6 +2676,7 @@ async function buildActiveTrades(user, rates = {}) {
         livePrice: liveFromProvider !== null ? liveFromProvider : undefined,
         liveCurrency: tradeCurrency,
         unrealizedGBP: syncPpl,
+        guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
       });
@@ -2697,6 +2723,7 @@ async function buildActiveTrades(user, rates = {}) {
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;
     }
+    const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
     manualTrades += 1;
     const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
       ? Number(trade.perUnitRisk)
@@ -2727,6 +2754,8 @@ async function buildActiveTrades(user, rates = {}) {
       livePrice: livePrice !== null ? livePrice : undefined,
       liveCurrency,
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
+      guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
+      currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
       source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
       note: trade.note
     });
@@ -2765,9 +2794,9 @@ app.get('/api/trades/export', auth, async (req, res) => {
   const rates = await fetchRates();
   const trades = filterTrades(flattenTrades(user, rates), req.query || {});
   const headers = [
-    'id', 'symbol', 'status', 'openDate', 'closeDate', 'entry', 'stop', 'closePrice',
+    'id', 'symbol', 'status', 'openDate', 'closeDate', 'entry', 'stop', 'currentStop', 'closePrice',
     'currency', 'sizeUnits', 'riskPct', 'riskAmountGBP', 'positionGBP', 'realizedPnlGBP',
-    'rMultiple', 'tradeType', 'assetClass', 'strategyTag', 'marketCondition',
+    'guaranteedPnlGBP', 'rMultiple', 'tradeType', 'assetClass', 'strategyTag', 'marketCondition',
     'setupTags', 'emotionTags', 'note', 'screenshotUrl'
   ];
   const escape = (val) => {
@@ -2786,6 +2815,7 @@ app.get('/api/trades/export', auth, async (req, res) => {
     trade.closeDate || '',
     Number(trade.entry) || '',
     Number(trade.stop) || '',
+    Number(trade.currentStop) || '',
     Number(trade.closePrice) || '',
     trade.currency || 'GBP',
     Number(trade.sizeUnits) || '',
@@ -2793,6 +2823,7 @@ app.get('/api/trades/export', auth, async (req, res) => {
     Number(trade.riskAmountGBP) || '',
     Number(trade.positionGBP) || '',
     Number(trade.realizedPnlGBP) || '',
+    Number(trade.guaranteedPnlGBP) || '',
     Number(trade.rMultiple) || '',
     trade.tradeType || '',
     trade.assetClass || '',
@@ -2814,6 +2845,7 @@ app.post('/api/trades', auth, async (req, res) => {
     date,
     entry,
     stop,
+    currentStop,
     riskPct,
     riskAmount,
     sizeUnits: sizeUnitsInput,
@@ -2838,8 +2870,9 @@ app.post('/api/trades', auth, async (req, res) => {
   const tradeBaseCurrency = baseCurrency === 'USD' ? 'USD' : 'GBP';
   const entryNum = Number(entry);
   const stopNum = Number(stop);
+  const currentStopNum = Number(currentStop);
   const pctNum = Number(riskPct);
-  const riskAmountNum = Number(riskAmount);
+    const riskAmountNum = Number(riskAmount);
   const sizeUnitsNum = Number(sizeUnitsInput);
   const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
@@ -2920,6 +2953,7 @@ app.post('/api/trades', auth, async (req, res) => {
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
     stop: stopNum,
+    currentStop: Number.isFinite(currentStopNum) && currentStopNum > 0 ? currentStopNum : undefined,
     symbol: symbolClean || undefined,
     currency: tradeCurrency,
     riskPct: pctToUse || pctNum || 0,
@@ -2993,6 +3027,16 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (typeof updates.symbol === 'string') {
     trade.symbol = updates.symbol.trim().toUpperCase() || undefined;
   }
+  if (updates.currentStop !== undefined) {
+    const stopVal = Number(updates.currentStop);
+    if (updates.currentStop === '' || updates.currentStop === null) {
+      delete trade.currentStop;
+    } else if (!Number.isFinite(stopVal) || stopVal <= 0) {
+      return res.status(400).json({ error: 'Enter a valid current stop price' });
+    } else {
+      trade.currentStop = stopVal;
+    }
+  }
   if (wantsRiskUpdate && trade.status !== 'closed') {
     const entryNum = Number(updates.entry ?? trade.entry);
     const stopNum = Number(updates.stop ?? trade.stop);
@@ -3064,7 +3108,8 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     emotionTags: updates.emotionTags ?? trade.emotionTags,
     screenshotUrl: updates.screenshotUrl ?? trade.screenshotUrl,
     note: updates.note !== undefined ? updates.note : trade.note,
-    rounding: updates.rounding ?? trade.rounding
+    rounding: updates.rounding ?? trade.rounding,
+    currentStop: trade.currentStop
   });
   trade.tradeType = meta.tradeType;
   trade.assetClass = meta.assetClass;

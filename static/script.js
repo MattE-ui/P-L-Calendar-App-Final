@@ -1260,9 +1260,9 @@ function renderWeek() {
     const tradeList = (week.trades || []).map(t => `${t.symbol || '—'} ${t.tradeType || ''} ${t.status || ''}`.trim());
     detail.innerHTML = `
       <div class="week-detail-grid">
-        <div><strong>Cash flow</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
-        <div><strong>Realized P&L</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
-        <div><strong>Trades</strong><span>${summary.totalTrades || 0}</span></div>
+        <div><strong>Cash flow:</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
+        <div><strong>Realized P&L:</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
+        <div><strong>Trades:</strong><span>${summary.totalTrades || 0}</span></div>
       </div>
       ${tradeList.length
         ? `<div class="week-trades">${tradeList.map(t => `<span class="tag-chip">${t}</span>`).join('')}</div>`
