@@ -766,6 +766,12 @@ function renderActiveTrades() {
       <span class="trade-pnl-label">Live PnL</span>
       <strong class="trade-pnl-value">${formatSignedCurrency(pnl)}</strong>
     `;
+    if (guaranteed !== null) {
+      const guaranteedEl = document.createElement('span');
+      guaranteedEl.className = `trade-pnl-guaranteed ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
+      guaranteedEl.textContent = `Guaranteed ${formatSignedCurrency(guaranteed)}`;
+      pnlCard.appendChild(guaranteedEl);
+    }
     bodyRow.appendChild(pnlCard);
 
     const details = document.createElement('dl');
@@ -788,27 +794,13 @@ function renderActiveTrades() {
 
     const badges = document.createElement('div');
     badges.className = 'trade-meta trade-badges';
-    const badgeItems = [];
-    if (guaranteed !== null) {
-      badgeItems.push({
-        label: `Guaranteed ${formatSignedCurrency(guaranteed)}`,
-        className: guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''
-      });
-    }
-    badgeItems.push({
+    const badgeItems = [{
       label: `Units ${formatShares(trade.sizeUnits)}`,
       className: ''
-    });
-    badgeItems.push({
+    }, {
       label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%`,
       className: ''
-    });
-    if (Number.isFinite(trade.fees) && trade.fees > 0) {
-      badgeItems.push({
-        label: `Fees ${formatCurrency(trade.fees, trade.currency)}`,
-        className: ''
-      });
-    }
+    }];
     badgeItems.forEach(item => {
       const badge = document.createElement('span');
       badge.className = `trade-badge ${item.className}`.trim();
