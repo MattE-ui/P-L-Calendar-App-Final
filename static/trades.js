@@ -176,6 +176,10 @@ function renderTrades() {
     pnlCell.className = trade.realizedPnlGBP > 0 ? 'positive' : trade.realizedPnlGBP < 0 ? 'negative' : '';
     tr.appendChild(pnlCell);
 
+    const sourceCell = document.createElement('td');
+    sourceCell.textContent = trade.source === 'trading212' ? 'Trading 212' : 'Manual';
+    tr.appendChild(sourceCell);
+
     const tagsCell = document.createElement('td');
     const chips = document.createElement('div');
     chips.className = 'tag-chips';

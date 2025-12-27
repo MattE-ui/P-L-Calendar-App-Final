@@ -512,6 +512,7 @@ function normalizeTradeJournal(user) {
         fees: Number.isFinite(feesRaw) && feesRaw >= 0 ? feesRaw : 0,
         slippage: Number.isFinite(slippageRaw) && slippageRaw >= 0 ? slippageRaw : 0,
         rounding,
+        source: trade.source === 'trading212' ? 'trading212' : 'manual',
         setupTags,
         emotionTags,
         screenshotUrl: screenshotUrl || undefined,
@@ -1455,6 +1456,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.currency = tradeCurrency;
           existingTrade.direction = direction;
           existingTrade.status = 'open';
+          existingTrade.source = 'trading212';
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1493,6 +1495,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           status: 'open',
           tradeType: 'day',
           assetClass: 'stocks',
+          source: 'trading212',
           trading212Id: raw?.id,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           fxPpl: Number.isFinite(fxPpl) ? fxPpl : undefined,
@@ -2209,6 +2212,8 @@ function normalizeTradeMeta(trade = {}) {
   const feesRaw = Number(trade.fees);
   const slippageRaw = Number(trade.slippage);
   const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
+  const sourceRaw = typeof trade.source === 'string' ? trade.source.trim().toLowerCase() : '';
+  const source = sourceRaw === 'trading212' ? 'trading212' : 'manual';
   return {
     ...trade,
     tradeType: TRADE_TYPES.includes(type) ? type : 'day',
@@ -2218,6 +2223,7 @@ function normalizeTradeMeta(trade = {}) {
     fees: Number.isFinite(feesRaw) && feesRaw >= 0 ? feesRaw : 0,
     slippage: Number.isFinite(slippageRaw) && slippageRaw >= 0 ? slippageRaw : 0,
     rounding,
+    source,
     strategyTag: strategy,
     setupTags: sanitizeTagList(trade.setupTags ?? trade.tags ?? [], 15),
     emotionTags: sanitizeTagList(trade.emotionTags ?? [], 15),
@@ -2498,12 +2504,10 @@ async function buildActiveTrades(user, rates = {}) {
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
+    const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     const syncPpl = Number(trade.ppl);
-    const syncFxPpl = Number(trade.fxPpl);
-    if (Number.isFinite(syncPpl)) {
+    if (isTrading212 && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
-    } else if (Number.isFinite(syncFxPpl) && pnlCurrency !== null) {
-      pnlCurrency += syncFxPpl;
     }
     const pnlGBP = pnlCurrency !== null
       ? convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates)
@@ -2553,6 +2557,7 @@ async function buildActiveTrades(user, rates = {}) {
       livePrice: livePrice !== null ? livePrice : undefined,
       liveCurrency,
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
+      source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
       note: trade.note
     });
   }
@@ -2762,12 +2767,13 @@ app.post('/api/trades', auth, async (req, res) => {
     strategyTag,
     marketCondition,
     setupTags,
-    emotionTags,
-    screenshotUrl,
-    note,
-    fxFeeEligible,
-    fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined
-  });
+      emotionTags,
+      screenshotUrl,
+      note,
+      fxFeeEligible,
+      fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined,
+      source: 'manual'
+    });
   journal[targetDate] ||= [];
   journal[targetDate].push(trade);
   if (journal[targetDate].length > 50) {

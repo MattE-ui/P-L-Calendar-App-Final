@@ -720,6 +720,7 @@ function renderActiveTrades() {
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
+      ${trade.source === 'trading212' ? '<span class="trade-badge">Trading 212</span>' : ''}
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
