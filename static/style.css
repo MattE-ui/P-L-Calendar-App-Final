@@ -524,7 +524,7 @@ select {
   color: var(--muted);
 }
 .trade-pill .trade-pnl-value {
-  font-size: 36px;
+  font-size: 28px;
   margin-top: 8px;
   color: var(--positive);
 }
@@ -534,6 +534,26 @@ select {
 .trade-pill .trade-pnl-guaranteed {
   margin-top: 10px;
   font-size: 14px;
+  font-weight: 700;
+  color: var(--positive);
+}
+.trade-pill .trade-pnl-guaranteed.negative {
+  color: var(--negative);
+}
+.trade-pill .trade-details {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  align-content: center;
+  font-size: 15px;
+}
+.trade-pill .trade-details dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+.trade-pill .trade-details dd {
+  margin: 0;
   font-weight: 700;
   color: var(--positive);
 }
@@ -625,6 +645,21 @@ select {
     flex: 1 1 140px;
   }
 }
+.trade-pill .trade-badges {
+  gap: 14px;
+}
+@media (max-width: 720px) {
+  .trade-pill .trade-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trade-pill .trade-actions {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .trade-pill .trade-actions button {
+    flex: 1 1 140px;
+  }
+}
 .trade-pill .trade-note {
   color: var(--muted);
   font-size: 13px;
@@ -644,7 +679,9 @@ select {
   margin-top: 2px;
 }
 .trade-pill .trade-actions button {
-  min-width: 160px;
+  min-width: 130px;
+  padding: 8px 14px;
+  font-size: 13px;
 }
 .trade-pill .close-row input[type="date"],
 .trade-pill .close-row input[type="number"] {
