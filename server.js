@@ -354,12 +354,6 @@ function normalizePortfolioHistory(user) {
           mutated = true;
           continue;
         }
-        const end = Number(record.end);
-        if (!Number.isFinite(end) || end < 0) {
-          delete days[dateKey];
-          mutated = true;
-          continue;
-        }
         const cashInRaw = Number(record.cashIn ?? 0);
         const cashOutRaw = Number(record.cashOut ?? 0);
         const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -369,6 +363,32 @@ function normalizePortfolioHistory(user) {
         const preBaselineRaw = record.preBaseline === true;
         const shouldBePreBaseline = anchor && dateKey < anchor;
         const preBaseline = preBaselineRaw || shouldBePreBaseline;
+        const end = Number(record.end);
+        if (!Number.isFinite(end) || end < 0) {
+          if (cashIn > 0 || cashOut > 0 || note) {
+            const cashPayload = preBaseline
+              ? { cashIn, cashOut, preBaseline: true }
+              : { cashIn, cashOut };
+            if (note) {
+              cashPayload.note = note;
+            }
+            if (
+              record.end !== undefined ||
+              cashIn !== cashInRaw ||
+              cashOut !== cashOutRaw ||
+              (!!record.preBaseline !== preBaseline) ||
+              (note && note !== noteRaw) ||
+              (!note && record.note !== undefined)
+            ) {
+              mutated = true;
+            }
+            days[dateKey] = cashPayload;
+          } else {
+            delete days[dateKey];
+            mutated = true;
+          }
+          continue;
+        }
         if (
           cashIn !== cashInRaw ||
           cashOut !== cashOutRaw ||
