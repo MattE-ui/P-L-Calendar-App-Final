@@ -1360,7 +1360,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           : inlineTransactions;
     let transactionsApplied = false;
     if (Array.isArray(effectiveTransactions)) {
-      const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
       const txs = effectiveTransactions
         .map(tx => {
           const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
@@ -1368,14 +1367,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         })
         .filter(item => Number.isFinite(item.ts))
         .sort((a, b) => a.ts - b.ts);
-      let newest = lastTxAt;
+      let newest = null;
+      let totalDeposits = 0;
+      let totalWithdrawals = 0;
+      const seenRefs = new Set();
       for (const item of txs) {
-        if (lastTxAt && item.ts <= lastTxAt) continue;
         const tx = item.tx || {};
         const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-        if (reference && cfg.processedReferences.includes(reference)) {
-          continue;
-        }
+        if (reference && seenRefs.has(reference)) continue;
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
         if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
           continue;
@@ -1393,33 +1392,24 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const amountGBP = txCurrency && txCurrency !== 'GBP'
           ? convertToGBP(amount, txCurrency, rates)
           : amount;
-        const date = dateKeyInTimezone(timezone, new Date(item.ts));
-        const monthKey = date.slice(0, 7);
-        history[monthKey] ||= {};
-        const entry = history[monthKey][date] || {};
-        const entryCashIn = Number(entry.cashIn ?? 0);
-        const entryCashOut = Number(entry.cashOut ?? 0);
         if (amountGBP > 0) {
-          entry.cashIn = entryCashIn + amountGBP;
+          totalDeposits += amountGBP;
         } else {
-          entry.cashOut = entryCashOut + Math.abs(amountGBP);
+          totalWithdrawals += Math.abs(amountGBP);
         }
-        history[monthKey][date] = entry;
-        transactionsApplied = true;
         if (reference) {
-          cfg.processedReferences.push(reference);
-          if (cfg.processedReferences.length > 500) {
-            cfg.processedReferences = cfg.processedReferences.slice(-500);
-          }
+          seenRefs.add(reference);
         }
         if (!newest || item.ts > newest) newest = item.ts;
       }
       if (newest) {
         cfg.lastTransactionAt = new Date(newest).toISOString();
       }
+      transactionsApplied = totalDeposits !== 0 || totalWithdrawals !== 0;
       if (transactionsApplied) {
-        const { total: updatedTotal } = computeNetDepositsTotals(user, history);
-        cfg.lastNetDeposits = updatedTotal;
+        user.initialNetDeposits = totalDeposits - totalWithdrawals;
+        cfg.lastNetDeposits = user.initialNetDeposits;
+        user.netDepositsAnchor = dateKey;
       }
     }
     if (!transactionsApplied && snapshot.netDeposits !== null) {
