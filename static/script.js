@@ -746,7 +746,8 @@ function renderActiveTrades() {
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    const currentStop = Number.isFinite(trade.currentStop) ? trade.currentStop : null;
+    const currentStopValue = Number(trade.currentStop);
+    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
     const stopDisplay = currentStop !== null
       ? `Stop ${formatPrice(trade.stop, trade.currency, 2)} • Current Stop ${formatPrice(currentStop, trade.currency, 2)}`
       : `Stop ${formatPrice(trade.stop, trade.currency, 2)}`;

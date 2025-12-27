@@ -2739,6 +2739,7 @@ async function buildActiveTrades(user, rates = {}) {
         liveCurrency: tradeCurrency,
         unrealizedGBP: syncPpl,
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
+        currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
       });
