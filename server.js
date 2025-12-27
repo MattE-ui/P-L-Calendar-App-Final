@@ -527,6 +527,12 @@ function normalizeTradeJournal(user) {
       if (Number.isFinite(trade.lastSyncPrice)) {
         normalizedTrade.lastSyncPrice = trade.lastSyncPrice;
       }
+      if (Number.isFinite(trade.fxPpl)) {
+        normalizedTrade.fxPpl = trade.fxPpl;
+      }
+      if (Number.isFinite(trade.ppl)) {
+        normalizedTrade.ppl = trade.ppl;
+      }
       if (fxFeeEligible) {
         normalizedTrade.fxFeeEligible = true;
         if (Number.isFinite(fxFeeRate) && fxFeeRate > 0) {
@@ -1424,6 +1430,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
         const entry = Number(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
         const currentPrice = Number(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
+        const fxPpl = parseTradingNumber(raw?.fxPpl ?? raw?.fxPnl ?? raw?.fxProfitLoss ?? raw?.fxGainLoss);
+        const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
@@ -1449,6 +1457,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.status = 'open';
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
+          }
+          if (Number.isFinite(fxPpl)) {
+            existingTrade.fxPpl = fxPpl;
+          }
+          if (Number.isFinite(ppl)) {
+            existingTrade.ppl = ppl;
           }
           const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
           if (Number.isFinite(nextStop) && nextStop > 0) {
@@ -1479,7 +1493,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           status: 'open',
           tradeType: 'day',
           assetClass: 'stocks',
-          trading212Id: raw?.id
+          trading212Id: raw?.id,
+          lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
+          fxPpl: Number.isFinite(fxPpl) ? fxPpl : undefined,
+          ppl: Number.isFinite(ppl) ? ppl : undefined
         });
         journal[normalizedDate].push(trade);
         positionsMutated = true;
@@ -2447,8 +2464,11 @@ async function buildActiveTrades(user, rates = {}) {
     const quoteSymbol = normalizeTrading212Symbol(symbol);
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
+    const tradeCurrency = trade.currency || 'GBP';
     try {
-      if (quoteSymbol) {
+      if (trade.trading212Id && Number.isFinite(Number(trade.lastSyncPrice))) {
+        livePrice = Number(trade.lastSyncPrice);
+      } else if (quoteSymbol) {
         const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
         liveCurrency = quote.currency || liveCurrency;
@@ -2468,21 +2488,28 @@ async function buildActiveTrades(user, rates = {}) {
       ? convertToGBP(positionCurrency, liveCurrency, rates)
       : null;
     const entryValueGBP = Number.isFinite(entry) && Number.isFinite(sizeUnits)
-      ? convertToGBP(entry * sizeUnits, trade.currency || 'GBP', rates)
+      ? convertToGBP(entry * sizeUnits, tradeCurrency, rates)
       : null;
     const effectiveLive = Number.isFinite(livePrice)
       ? (direction === 'short' ? livePrice + slippage : livePrice - slippage)
       : null;
-    const pnlCurrency = (Number.isFinite(effectiveLive) && Number.isFinite(entry) && Number.isFinite(sizeUnits))
+    let pnlCurrency = (Number.isFinite(effectiveLive) && Number.isFinite(entry) && Number.isFinite(sizeUnits))
       ? (direction === 'short'
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
+    const syncPpl = Number(trade.ppl);
+    const syncFxPpl = Number(trade.fxPpl);
+    if (Number.isFinite(syncPpl)) {
+      pnlCurrency = syncPpl;
+    } else if (Number.isFinite(syncFxPpl) && pnlCurrency !== null) {
+      pnlCurrency += syncFxPpl;
+    }
     const pnlGBP = pnlCurrency !== null
-      ? convertToGBP(pnlCurrency, trade.currency || liveCurrency || 'GBP', rates)
+      ? convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates)
       : null;
     const feesGBP = Number.isFinite(feesCurrency)
-      ? convertToGBP(feesCurrency, trade.currency || 'GBP', rates)
+      ? convertToGBP(feesCurrency, tradeCurrency, rates)
       : null;
     let fxFeeGBP = null;
     if (fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0 && entryValueGBP !== null) {
@@ -2514,7 +2541,7 @@ async function buildActiveTrades(user, rates = {}) {
       symbol: quoteSymbol || symbol,
       entry,
       stop: Number(trade.stop),
-      currency: trade.currency || 'GBP',
+      currency: tradeCurrency,
       sizeUnits,
       riskPct: Number.isFinite(derivedRiskPct) ? derivedRiskPct : 0,
       direction: trade.direction || 'long',
