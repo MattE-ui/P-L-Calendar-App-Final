@@ -2524,7 +2524,7 @@ async function buildActiveTrades(user, rates = {}) {
       fxFeeGBP = entryFeeGBP + exitFeeGBP;
     }
     const unrealizedGBP = (pnlGBP !== null)
-      ? pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0)
+      ? (isTrading212 ? pnlGBP : pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0))
       : null;
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;
