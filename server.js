@@ -1427,9 +1427,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         if (!symbol) continue;
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
         const existingTrade = existingTradeEntry?.trade;
-        const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
-        const entry = Number(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
-        const currentPrice = Number(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
+        const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
+        const entry = parseTradingNumber(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
+        const currentPrice = parseTradingNumber(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
         const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
