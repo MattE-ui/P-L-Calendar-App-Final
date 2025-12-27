@@ -790,12 +790,14 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
     ? Number(user.initialNetDeposits)
     : 0;
   let total = baseline;
-  const entries = listChronologicalEntries(history);
-  for (const entry of entries) {
-    if (entry.preBaseline) continue;
-    const cashIn = Number.isFinite(entry.cashIn) ? entry.cashIn : 0;
-    const cashOut = Number.isFinite(entry.cashOut) ? entry.cashOut : 0;
-    total += cashIn - cashOut;
+  for (const days of Object.values(history || {})) {
+    for (const record of Object.values(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (record.preBaseline === true) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
+    }
   }
   return { baseline, total };
 }
