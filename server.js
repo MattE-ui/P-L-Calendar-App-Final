@@ -480,6 +480,13 @@ function normalizeTradeJournal(user) {
         const calculatedRisk = Math.abs(entry - stopValue);
         perUnitRisk = calculatedRisk > 0 ? calculatedRisk : perUnitRisk;
       }
+      const riskAmountCurrencyRaw = Number(trade.riskAmountCurrency);
+      const derivedRiskAmountCurrency = Number.isFinite(riskAmountCurrencyRaw) && riskAmountCurrencyRaw > 0
+        ? riskAmountCurrencyRaw
+        : (Number.isFinite(perUnitRisk) && Number.isFinite(sizeUnits) ? perUnitRisk * sizeUnits : undefined);
+      const derivedRiskPct = Number.isFinite(portfolioCurrencyAtCalc) && portfolioCurrencyAtCalc > 0 && Number.isFinite(derivedRiskAmountCurrency)
+        ? (derivedRiskAmountCurrency / portfolioCurrencyAtCalc) * 100
+        : undefined;
       const id = typeof trade.id === 'string' && trade.id ? trade.id : crypto.randomBytes(8).toString('hex');
       const createdAt = typeof trade.createdAt === 'string' ? trade.createdAt : new Date().toISOString();
       const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
@@ -491,7 +498,9 @@ function normalizeTradeJournal(user) {
         stop: stopValue,
         symbol: symbol || undefined,
         currency,
-        riskPct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : 0,
+        riskPct: Number.isFinite(riskPct) && riskPct > 0
+          ? riskPct
+          : (Number.isFinite(derivedRiskPct) && derivedRiskPct > 0 ? derivedRiskPct : 0),
         perUnitRisk,
         sizeUnits,
         status,
@@ -525,6 +534,9 @@ function normalizeTradeJournal(user) {
         }
       }
       if (Number.isFinite(trade.riskAmountCurrency)) normalizedTrade.riskAmountCurrency = trade.riskAmountCurrency;
+      if (!Number.isFinite(normalizedTrade.riskAmountCurrency) && Number.isFinite(derivedRiskAmountCurrency)) {
+        normalizedTrade.riskAmountCurrency = derivedRiskAmountCurrency;
+      }
       if (Number.isFinite(trade.positionCurrency)) normalizedTrade.positionCurrency = trade.positionCurrency;
       if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
         normalizedTrade.closePrice = closePrice;
@@ -2475,6 +2487,18 @@ async function buildActiveTrades(user, rates = {}) {
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;
     }
+    const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
+      ? Number(trade.perUnitRisk)
+      : (Number.isFinite(entry) && Number.isFinite(Number(trade.stop)) ? Math.abs(entry - Number(trade.stop)) : null);
+    const riskAmountCurrency = Number.isFinite(Number(trade.riskAmountCurrency)) && Number(trade.riskAmountCurrency) > 0
+      ? Number(trade.riskAmountCurrency)
+      : (Number.isFinite(perUnitRisk) && Number.isFinite(sizeUnits) ? perUnitRisk * sizeUnits : null);
+    const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
+    const derivedRiskPct = Number.isFinite(Number(trade.riskPct)) && Number(trade.riskPct) > 0
+      ? Number(trade.riskPct)
+      : (Number.isFinite(portfolioCurrencyAtCalc) && portfolioCurrencyAtCalc > 0 && Number.isFinite(riskAmountCurrency)
+        ? (riskAmountCurrency / portfolioCurrencyAtCalc) * 100
+        : null);
     enriched.push({
       id: trade.id,
       symbol,
@@ -2482,7 +2506,7 @@ async function buildActiveTrades(user, rates = {}) {
       stop: Number(trade.stop),
       currency: trade.currency || 'GBP',
       sizeUnits,
-      riskPct: Number(trade.riskPct),
+      riskPct: Number.isFinite(derivedRiskPct) ? derivedRiskPct : 0,
       direction: trade.direction || 'long',
       fees: Number(trade.fees) || 0,
       slippage: Number(trade.slippage) || 0,
