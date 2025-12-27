@@ -124,9 +124,6 @@ function formatSignedRaw(value, currency = state.currency) {
 }
 
 function formatLiveOpenPnl(value) {
-  if (state.liveOpenPnlMode === 'provider') {
-    return formatSignedRaw(value, state.liveOpenPnlCurrency || 'GBP');
-  }
   return formatSignedCurrency(value, state.currency);
 }
 
@@ -732,9 +729,7 @@ function renderActiveTrades() {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const pnlBadge = document.createElement('span');
     pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlBadge.textContent = `PnL ${trade.source === 'trading212'
-      ? formatSignedRaw(pnl, trade.currency)
-      : formatSignedCurrency(pnl)}`;
+    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
     badges.appendChild(pnlBadge);
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>

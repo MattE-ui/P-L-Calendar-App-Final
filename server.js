@@ -1482,7 +1482,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = 'GBP';
+        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
