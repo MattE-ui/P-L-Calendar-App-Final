@@ -1230,9 +1230,16 @@ async function fetchTrading212Snapshot(config) {
               const nextRaw = payload?.nextPagePath || payload?.nextPage?.path || payload?.next;
               if (!nextRaw) break;
               if (typeof nextRaw === 'string') {
-                nextPath = nextRaw.startsWith('http')
-                  ? nextRaw.replace(base, '')
-                  : nextRaw.startsWith('/') ? nextRaw : `/${nextRaw}`;
+                if (nextRaw.startsWith('http')) {
+                  nextPath = nextRaw.replace(base, '');
+                } else if (nextRaw.startsWith('/')) {
+                  nextPath = nextRaw;
+                } else if (nextRaw.startsWith('?') || nextRaw.includes('cursor=')) {
+                  const basePath = candidate.split('?')[0];
+                  nextPath = `${basePath}${nextRaw.startsWith('?') ? '' : '?'}${nextRaw}`;
+                } else {
+                  nextPath = `/${nextRaw}`;
+                }
               } else {
                 nextPath = null;
               }
