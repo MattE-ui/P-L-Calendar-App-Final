@@ -113,6 +113,14 @@ function formatSignedCurrency(valueGBP, currency = state.currency) {
   return `${sign}${currencySymbols[currency]}${amount.toFixed(2)}`;
 }
 
+function formatSignedRaw(value, currency = state.currency) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '—';
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  const symbol = currencySymbols[currency] || '';
+  return `${sign}${symbol}${Math.abs(amount).toFixed(2)}`;
+}
+
 function formatShares(value) {
   if (!Number.isFinite(value)) return '—';
   if (Math.abs(value) >= 1) return value.toFixed(2);
@@ -715,7 +723,9 @@ function renderActiveTrades() {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const pnlBadge = document.createElement('span');
     pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
+    pnlBadge.textContent = `PnL ${trade.source === 'trading212'
+      ? formatSignedRaw(pnl, trade.currency)
+      : formatSignedCurrency(pnl)}`;
     badges.appendChild(pnlBadge);
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
