@@ -1216,44 +1216,11 @@ async function fetchTrading212Snapshot(config) {
         }
         for (const candidate of transactionEndpoints) {
           try {
-            let nextPath = candidate;
-            const aggregated = [];
-            const rawPages = [];
-            let pageCount = 0;
-            while (nextPath && pageCount < 25) {
-              pageCount += 1;
-              const payload = await requestTrading212RawEndpoint(`${base}${nextPath}`, headers);
-              rawPages.push(payload);
-              const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
-              if (Array.isArray(list)) {
-                aggregated.push(...list);
-              }
-              const nextRaw = payload?.nextPagePath || payload?.nextPage?.path || payload?.next;
-              if (!nextRaw) break;
-              if (typeof nextRaw === 'string') {
-                if (nextRaw.startsWith('http')) {
-                  nextPath = nextRaw.replace(base, '');
-                } else if (nextRaw.startsWith('/')) {
-                  nextPath = nextRaw;
-                } else if (nextRaw.startsWith('?') || nextRaw.includes('cursor=')) {
-                  const basePath = candidate.split('?')[0];
-                  nextPath = `${basePath}${nextRaw.startsWith('?') ? '' : '?'}${nextRaw}`;
-                } else {
-                  nextPath = `/${nextRaw}`;
-                }
-              } else {
-                nextPath = null;
-              }
-            }
-            if (rawPages.length) {
-              if (aggregated.length) {
-                transactions = aggregated;
-              }
-              if (rawPages.length === 1) {
-                transactionsRaw = rawPages[0] ?? { items: [] };
-              } else {
-                transactionsRaw = { items: aggregated, pages: rawPages };
-              }
+            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
+            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+            if (Array.isArray(list)) {
+              transactions = list;
+              transactionsRaw = payload ?? { items: [] };
               break;
             }
           } catch (e) {
@@ -1327,8 +1294,95 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
-    const cashIn = Number(existing.cashIn ?? 0);
-    const cashOut = Number(existing.cashOut ?? 0);
+    let cashIn = Number(existing.cashIn ?? 0);
+    let cashOut = Number(existing.cashOut ?? 0);
+    const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
+      ? snapshot.raw.transactions.items
+      : Array.isArray(snapshot.raw?.transactions?.records)
+        ? snapshot.raw.transactions.records
+        : Array.isArray(snapshot.raw?.transactions)
+          ? snapshot.raw.transactions
+          : null;
+    const effectiveTransactions = Array.isArray(snapshot.transactions)
+      ? snapshot.transactions
+      : Array.isArray(snapshot.transactionsRaw?.items)
+        ? snapshot.transactionsRaw.items
+        : Array.isArray(snapshot.transactionsRaw)
+          ? snapshot.transactionsRaw
+          : inlineTransactions;
+    if (Array.isArray(effectiveTransactions)) {
+      const enabledAtTs = cfg.integrationEnabledAt ? Date.parse(cfg.integrationEnabledAt) : null;
+      const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
+      const portfolioValue = Number.isFinite(snapshot.portfolioValue)
+        ? snapshot.portfolioValue
+        : (Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0);
+      const minDeposit = Number.isFinite(portfolioValue) ? portfolioValue * 0.00015 : 0;
+      const txs = effectiveTransactions
+        .map(tx => {
+          const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
+          return { tx, ts };
+        })
+        .filter(item => Number.isFinite(item.ts))
+        .sort((a, b) => a.ts - b.ts);
+      let newest = lastTxAt;
+      for (const item of txs) {
+        if (lastTxAt && item.ts <= lastTxAt) continue;
+        if (enabledAtTs && item.ts < enabledAtTs) continue;
+        const tx = item.tx || {};
+        const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
+        if (reference && cfg.processedReferences.includes(reference)) {
+          continue;
+        }
+        const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
+        if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
+          continue;
+        }
+        const amount = parseTradingNumber(
+          tx.amount?.value ??
+          tx.amount?.amount ??
+          tx.amount ??
+          tx.cash ??
+          tx.value ??
+          tx.money
+        );
+        if (!Number.isFinite(amount) || amount === 0) continue;
+        const txCurrency = tx.currency || tx.amount?.currency || tx.money?.currency || 'GBP';
+        const amountGBP = txCurrency && txCurrency !== 'GBP'
+          ? convertToGBP(amount, txCurrency, rates)
+          : amount;
+        if (amountGBP > 0 && minDeposit > 0 && amountGBP < minDeposit) {
+          continue;
+        }
+        const date = dateKeyInTimezone(timezone, new Date(item.ts));
+        const monthKey = date.slice(0, 7);
+        history[monthKey] ||= {};
+        const entry = history[monthKey][date] || {};
+        const entryCashIn = Number(entry.cashIn ?? 0);
+        const entryCashOut = Number(entry.cashOut ?? 0);
+        if (amountGBP > 0) {
+          entry.cashIn = entryCashIn + amountGBP;
+          if (date === dateKey) {
+            cashIn += amountGBP;
+          }
+        } else {
+          entry.cashOut = entryCashOut + Math.abs(amountGBP);
+          if (date === dateKey) {
+            cashOut += Math.abs(amountGBP);
+          }
+        }
+        history[monthKey][date] = entry;
+        if (reference) {
+          cfg.processedReferences.push(reference);
+          if (cfg.processedReferences.length > 500) {
+            cfg.processedReferences = cfg.processedReferences.slice(-500);
+          }
+        }
+        if (!newest || item.ts > newest) newest = item.ts;
+      }
+      if (newest) {
+        cfg.lastTransactionAt = new Date(newest).toISOString();
+      }
+    }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
       end: snapshot.portfolioValue,
@@ -2053,6 +2107,9 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   }
   if (cfg.enabled) {
     delete cfg.authoritativeSyncAt;
+    cfg.integrationEnabledAt = new Date().toISOString();
+    cfg.lastTransactionAt = null;
+    cfg.processedReferences = [];
   }
   if (cfg.enabled && cfg.lastNetDeposits === undefined) {
     cfg.lastNetDeposits = totals.total;
