@@ -1422,15 +1422,57 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         return aSymbol.localeCompare(bSymbol);
       });
       for (const raw of sortedPositions) {
-        const rawTicker = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        const instrument = raw?.instrument || {};
+        const walletImpact = raw?.walletImpact || {};
+        const rawTicker = String(
+          raw?.ticker ??
+          raw?.symbol ??
+          instrument?.ticker ??
+          instrument?.symbol ??
+          instrument?.isin ??
+          ''
+        ).trim().toUpperCase();
         const symbol = normalizeTrading212Symbol(rawTicker);
         if (!symbol) continue;
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
         const existingTrade = existingTradeEntry?.trade;
-        const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
-        const entry = parseTradingNumber(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
-        const currentPrice = parseTradingNumber(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
-        const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
+        const quantity = parseTradingNumber(
+          raw?.quantity ??
+          raw?.qty ??
+          raw?.units ??
+          raw?.size ??
+          raw?.shares ??
+          raw?.quantityAvailableForTrading ??
+          raw?.availableQuantity
+        );
+        const entry = parseTradingNumber(
+          raw?.averagePricePaid ??
+          raw?.averagePrice ??
+          raw?.avgPrice ??
+          raw?.openPrice ??
+          raw?.price ??
+          raw?.averagePrice?.value ??
+          raw?.averagePrice?.amount
+        );
+        const currentPrice = parseTradingNumber(
+          raw?.currentPrice ??
+          raw?.lastPrice ??
+          raw?.price ??
+          raw?.marketPrice ??
+          instrument?.currentPrice ??
+          instrument?.price
+        );
+        const ppl = parseTradingNumber(
+          raw?.ppl ??
+          raw?.profitLoss ??
+          raw?.unrealizedPnl ??
+          raw?.pnl ??
+          raw?.openPnl ??
+          walletImpact?.unrealizedProfitLoss ??
+          walletImpact?.unrealizedPnl ??
+          walletImpact?.profitLoss ??
+          walletImpact?.pnl
+        );
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
@@ -1439,7 +1481,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = raw?.instrument?.currency ?? raw?.currency ?? 'USD';
+        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'USD';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
