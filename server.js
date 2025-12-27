@@ -1241,7 +1241,11 @@ async function fetchTrading212Snapshot(config) {
               if (aggregated.length) {
                 transactions = aggregated;
               }
-              transactionsRaw = rawPages.length === 1 ? rawPages[0] : { items: aggregated, pages: rawPages };
+              if (rawPages.length === 1) {
+                transactionsRaw = rawPages[0] ?? { items: [] };
+              } else {
+                transactionsRaw = { items: aggregated, pages: rawPages };
+              }
               break;
             }
           } catch (e) {
