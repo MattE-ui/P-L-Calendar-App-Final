@@ -545,6 +545,11 @@ select {
 .grid.view-year { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .grid.view-day,
 .grid.view-week { display: flex; flex-direction: column; }
+.grid.view-year-list { display: flex; flex-direction: column; gap: 16px; }
+.grid.view-year-list .year-group { display: flex; flex-direction: column; gap: 12px; }
+.grid.view-year-list .year-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.grid.view-year-list .year-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.grid.view-year-list .year-grid .cell { min-height: 96px; }
 
 .grid.view-month .dow { text-align:center; font-weight:700; color: var(--muted); padding: 2px 0; font-size: 12px; }
 

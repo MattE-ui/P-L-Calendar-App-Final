@@ -1,5 +1,5 @@
 const state = {
-  view: 'month',
+  view: 'day',
   selected: new Date(),
   data: {},
   portfolioGBP: 0,
@@ -33,7 +33,7 @@ const state = {
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
-const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Daily', year: 'Monthly' };
+const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -407,12 +407,29 @@ function getYearMonths(date) {
 }
 
 function getValuesForSummary() {
-  if (state.view === 'year') {
+  if (state.view === 'month') {
     return getYearMonths(state.selected).map(item => ({
       change: item.hasChange ? item.totalChange : null,
       pct: item.hasChange ? item.pct : null,
       cashFlow: item.totalCashFlow ?? 0
     }));
+  }
+  if (state.view === 'year') {
+    const entries = getAllEntries();
+    if (!entries.length) return [];
+    const firstYear = entries[0].date.getFullYear();
+    const lastYear = entries[entries.length - 1].date.getFullYear();
+    const summaries = [];
+    for (let year = firstYear; year <= lastYear; year++) {
+      const yearEntries = entries.filter(entry => entry.date.getFullYear() === year);
+      if (!yearEntries.length) continue;
+      const totalChange = yearEntries.reduce((sum, entry) => sum + (entry.change ?? 0), 0);
+      const totalCashFlow = yearEntries.reduce((sum, entry) => sum + (entry.cashFlow ?? 0), 0);
+      const baseline = yearEntries[0]?.opening ?? yearEntries[0]?.closing ?? null;
+      const pct = baseline ? (totalChange / baseline) * 100 : null;
+      summaries.push({ change: totalChange, pct, cashFlow: totalCashFlow });
+    }
+    return summaries;
   }
   if (state.view === 'week') {
     return getWeeksInMonth(state.selected).map(item => ({
@@ -1032,7 +1049,8 @@ function updatePortfolioPill() {
 function updatePeriodSelect() {
   const sel = $('#period-select');
   if (!sel) return;
-  const desired = state.view === 'year'
+  const isYearPicker = state.view === 'month' || state.view === 'year';
+  const desired = isYearPicker
     ? String(state.selected.getFullYear())
     : startOfMonth(state.selected).toISOString();
 
@@ -1045,7 +1063,7 @@ function updatePeriodSelect() {
   if (needsRebuild) {
     sel.dataset.view = state.view;
     sel.innerHTML = '';
-    if (state.view === 'year') {
+    if (isYearPicker) {
       const now = new Date();
       for (let i = 0; i < 10; i++) {
         const year = now.getFullYear() - i;
@@ -1072,7 +1090,7 @@ function updatePeriodSelect() {
   } else if (sel.options.length) {
     sel.selectedIndex = 0;
     const value = sel.value;
-    if (state.view === 'year') {
+    if (isYearPicker) {
       state.selected = new Date(Number(value), 0, 1);
     } else {
       state.selected = startOfMonth(new Date(value));
@@ -1085,13 +1103,18 @@ function renderTitle() {
   if (!title) return;
   const monthFormatter = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' });
   if (state.view === 'year') {
-    title.textContent = `${state.selected.getFullYear()} Performance`;
+    const entries = getAllEntries();
+    const firstYear = entries.length ? entries[0].date.getFullYear() : state.selected.getFullYear();
+    const lastYear = entries.length ? entries[entries.length - 1].date.getFullYear() : state.selected.getFullYear();
+    title.textContent = firstYear === lastYear
+      ? `${firstYear} Performance`
+      : `${firstYear}–${lastYear} Performance`;
   } else if (state.view === 'month') {
-    title.textContent = monthFormatter.format(state.selected);
+    title.textContent = `${state.selected.getFullYear()} Performance`;
   } else if (state.view === 'week') {
     title.textContent = `${monthFormatter.format(state.selected)} Weekly View`;
   } else {
-    title.textContent = `${monthFormatter.format(state.selected)} Daily View`;
+    title.textContent = monthFormatter.format(state.selected);
   }
 }
 
@@ -1115,7 +1138,7 @@ function renderSummary() {
     }
     cashSum += item?.cashFlow ?? 0;
   });
-  const periodLabel = state.view === 'year' ? 'year' : 'month';
+  const periodLabel = state.view === 'month' || state.view === 'year' ? 'year' : 'month';
   const cashClass = cashSum > 0 ? 'positive' : cashSum < 0 ? 'negative' : '';
   const cashValue = formatSignedCurrency(cashSum);
   const cashClassName = cashClass ? ` ${cashClass}` : '';
@@ -1257,8 +1280,7 @@ function renderWeek() {
   });
 }
 
-function renderMonth() {
-  const grid = $('#grid');
+function renderMonthGrid(targetDate, grid) {
   if (!grid) return;
   grid.innerHTML = '';
   const headers = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -1269,7 +1291,7 @@ function renderMonth() {
     grid.appendChild(h);
   });
 
-  const first = startOfMonth(state.selected);
+  const first = startOfMonth(targetDate);
   const startDay = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   const firstEntryKey = state.firstEntryKey;
@@ -1288,7 +1310,6 @@ function renderMonth() {
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
-    const cashFlow = entry?.cashFlow ?? 0;
     const tradeCount = entry?.tradesCount ?? 0;
     const cell = document.createElement('div');
     cell.className = 'cell';
@@ -1315,11 +1336,16 @@ function renderMonth() {
   }
 }
 
-function renderYear() {
+function renderMonth() {
   const grid = $('#grid');
   if (!grid) return;
+  renderYearGrid(state.selected, grid);
+}
+
+function renderYearGrid(targetDate, grid) {
+  if (!grid) return;
   grid.innerHTML = '';
-  const months = getYearMonths(state.selected);
+  const months = getYearMonths(targetDate);
   months.forEach(item => {
     const cell = document.createElement('div');
     cell.className = 'cell';
@@ -1343,7 +1369,7 @@ function renderYear() {
       <div class="meta">${metaText}</div>
     `;
     cell.addEventListener('click', () => {
-      state.view = 'month';
+      state.view = 'day';
       state.selected = startOfMonth(item.monthDate);
       updatePeriodSelect();
       render();
@@ -1352,13 +1378,40 @@ function renderYear() {
   });
 }
 
+function renderYear() {
+  const grid = $('#grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const entries = getAllEntries();
+  const firstYear = entries.length ? entries[0].date.getFullYear() : state.selected.getFullYear();
+  const lastYear = entries.length ? entries[entries.length - 1].date.getFullYear() : state.selected.getFullYear();
+  for (let year = firstYear; year <= lastYear; year++) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'year-group';
+    const heading = document.createElement('div');
+    heading.className = 'year-title';
+    heading.textContent = String(year);
+    const yearGrid = document.createElement('div');
+    yearGrid.className = 'grid year-grid';
+    renderYearGrid(new Date(year, 0, 1), yearGrid);
+    wrapper.append(heading, yearGrid);
+    grid.appendChild(wrapper);
+  }
+}
+
 function renderView() {
   const grid = $('#grid');
   if (!grid) return;
-  grid.className = `grid view-${state.view}`;
-  if (state.view === 'day') return renderDay();
+  if (state.view === 'day') {
+    grid.className = 'grid view-month';
+    return renderMonthGrid(state.selected, grid);
+  }
   if (state.view === 'week') return renderWeek();
-  if (state.view === 'month') return renderMonth();
+  if (state.view === 'month') {
+    grid.className = 'grid view-year';
+    return renderMonth();
+  }
+  grid.className = 'grid view-year view-year-list';
   return renderYear();
 }
 
@@ -1689,7 +1742,7 @@ function bindControls() {
   const periodSelect = $('#period-select');
   if (periodSelect) {
     periodSelect.addEventListener('change', () => {
-      if (state.view === 'year') {
+      if (state.view === 'month' || state.view === 'year') {
         state.selected = new Date(Number(periodSelect.value), 0, 1);
       } else {
         state.selected = startOfMonth(new Date(periodSelect.value));
@@ -1711,7 +1764,7 @@ function bindControls() {
       const view = btn.dataset.view;
       if (!view || state.view === view) return;
       state.view = view;
-      if (view === 'year') {
+      if (view === 'month' || view === 'year') {
         state.selected = new Date(state.selected.getFullYear(), 0, 1);
       } else {
         state.selected = startOfMonth(state.selected);
