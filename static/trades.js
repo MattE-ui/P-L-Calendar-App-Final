@@ -240,6 +240,7 @@ function populateForm(trade) {
   document.querySelector('#form-stop').value = trade.stop ?? '';
   document.querySelector('#form-risk-pct').value = trade.riskPct ?? '';
   document.querySelector('#form-risk-amount').value = trade.riskAmountCurrency ?? '';
+  document.querySelector('#form-units').value = trade.sizeUnits ?? '';
   document.querySelector('#form-open-date').value = trade.openDate || '';
   document.querySelector('#form-close-date').value = trade.closeDate || '';
   document.querySelector('#form-close-price').value = trade.closePrice ?? '';
@@ -303,6 +304,7 @@ function collectFormData() {
     stop: numberOrUndefined('#form-stop'),
     riskPct: numberOrUndefined('#form-risk-pct'),
     riskAmount: numberOrUndefined('#form-risk-amount'),
+    sizeUnits: numberOrUndefined('#form-units'),
     date: document.querySelector('#form-open-date')?.value,
     closeDate: document.querySelector('#form-close-date')?.value,
     closePrice: numberOrUndefined('#form-close-price'),

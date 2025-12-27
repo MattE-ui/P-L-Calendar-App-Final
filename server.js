@@ -2575,6 +2575,7 @@ app.post('/api/trades', auth, async (req, res) => {
     stop,
     riskPct,
     riskAmount,
+    sizeUnits,
     currency,
     baseCurrency,
     note,
@@ -2598,6 +2599,7 @@ app.post('/api/trades', auth, async (req, res) => {
   const stopNum = Number(stop);
   const pctNum = Number(riskPct);
   const riskAmountNum = Number(riskAmount);
+  const sizeUnitsNum = Number(sizeUnits);
   const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
@@ -2648,15 +2650,19 @@ app.post('/api/trades', auth, async (req, res) => {
   let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0
     ? riskAmountNum
     : null;
-  if (!riskAmountCurrency && pctToUse) {
+  let unitsToUse = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
+  if (unitsToUse) {
+    riskAmountCurrency = perUnitRisk * unitsToUse;
+    pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
+  } else if (!riskAmountCurrency && pctToUse) {
     riskAmountCurrency = portfolioInCurrency * (pctToUse / 100);
   } else if (riskAmountCurrency && !pctToUse) {
     pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
   }
   if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
-    return res.status(400).json({ error: 'Enter a valid risk percentage or amount' });
+    return res.status(400).json({ error: 'Enter a valid risk percentage, amount, or units' });
   }
-  const sizeUnits = riskAmountCurrency / perUnitRisk;
+  const sizeUnits = unitsToUse || (riskAmountCurrency / perUnitRisk);
   const positionCurrency = sizeUnits * entryNum;
   const riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
   const positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
