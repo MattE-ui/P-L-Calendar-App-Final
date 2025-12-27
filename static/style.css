@@ -457,6 +457,25 @@ select {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
+}
+.trade-pill .trade-source-logo {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.trade-pill .trade-source-logo img {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 .trade-pill .trade-meta {
   display: flex;
