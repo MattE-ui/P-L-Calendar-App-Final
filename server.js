@@ -2485,6 +2485,42 @@ async function buildActiveTrades(user, rates = {}) {
     const feesCurrency = Number(trade.fees) || 0;
     const fxFeeRate = Number(trade.fxFeeRate);
     const fxFeeEligible = trade.fxFeeEligible === true;
+    const syncPpl = parseTradingNumber(trade.ppl);
+    if (isTrading212 && Number.isFinite(syncPpl)) {
+      liveOpenPnlGBP += syncPpl;
+      const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
+        ? Number(trade.perUnitRisk)
+        : (Number.isFinite(entry) && Number.isFinite(Number(trade.stop)) ? Math.abs(entry - Number(trade.stop)) : null);
+      const riskAmountCurrency = Number.isFinite(Number(trade.riskAmountCurrency)) && Number(trade.riskAmountCurrency) > 0
+        ? Number(trade.riskAmountCurrency)
+        : (Number.isFinite(perUnitRisk) && Number.isFinite(sizeUnits) ? perUnitRisk * sizeUnits : null);
+      const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
+      const derivedRiskPct = Number.isFinite(Number(trade.riskPct)) && Number(trade.riskPct) > 0
+        ? Number(trade.riskPct)
+        : (Number.isFinite(portfolioCurrencyAtCalc) && portfolioCurrencyAtCalc > 0 && Number.isFinite(riskAmountCurrency)
+          ? (riskAmountCurrency / portfolioCurrencyAtCalc) * 100
+          : null);
+      enriched.push({
+        id: trade.id,
+        symbol: quoteSymbol || symbol,
+        entry,
+        stop: Number(trade.stop),
+        currency: tradeCurrency,
+        sizeUnits,
+        riskPct: Number.isFinite(derivedRiskPct) ? derivedRiskPct : 0,
+        direction: trade.direction || 'long',
+        fees: Number(trade.fees) || 0,
+        slippage: Number(trade.slippage) || 0,
+        fxFeeEligible,
+        fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined,
+        livePrice: livePrice !== null ? livePrice : undefined,
+        liveCurrency,
+        unrealizedGBP: syncPpl,
+        source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
+        note: trade.note
+      });
+      continue;
+    }
     const positionCurrency = Number.isFinite(livePrice) ? livePrice * sizeUnits : null;
     const positionGBP = Number.isFinite(positionCurrency)
       ? convertToGBP(positionCurrency, liveCurrency, rates)
@@ -2500,7 +2536,6 @@ async function buildActiveTrades(user, rates = {}) {
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
-    const syncPpl = parseTradingNumber(trade.ppl);
     if (isTrading212 && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
     }
@@ -2510,10 +2545,11 @@ async function buildActiveTrades(user, rates = {}) {
     } else if (pnlCurrency !== null) {
       pnlGBP = convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates);
     }
-    const feesGBP = (!isTrading212 && Number.isFinite(feesCurrency))
-      ? convertToGBP(feesCurrency, tradeCurrency, rates)
-      : null;
+    let feesGBP = null;
     let fxFeeGBP = null;
+    if (!isTrading212 && Number.isFinite(feesCurrency)) {
+      feesGBP = convertToGBP(feesCurrency, tradeCurrency, rates);
+    }
     if (!isTrading212 && fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0 && entryValueGBP !== null) {
       const entryFeeGBP = Math.abs(entryValueGBP) * fxFeeRate;
       const exitBasisGBP = positionGBP !== null ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
