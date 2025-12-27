@@ -841,6 +841,14 @@ function parseTradingNumber(value) {
   return null;
 }
 
+function normalizeTrading212Symbol(raw) {
+  const base = String(raw || '').trim().toUpperCase();
+  if (!base) return '';
+  const core = base.split('_')[0] || base;
+  if (core === 'FB') return 'META';
+  return core;
+}
+
 function deriveTrading212Root(endpointPath) {
   if (typeof endpointPath !== 'string') return '/api/v0';
   const trimmed = endpointPath.trim();
@@ -1409,7 +1417,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       });
       for (const raw of sortedPositions) {
         const rawTicker = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
-        const symbol = rawTicker.split('_')[0] || rawTicker;
+        const symbol = normalizeTrading212Symbol(rawTicker);
         if (!symbol) continue;
         const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
         const existingTrade = existingTradeEntry?.trade;
@@ -1424,7 +1432,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = raw?.currency ?? raw?.instrument?.currency ?? 'USD';
+        const tradeCurrency = raw?.instrument?.currency ?? raw?.currency ?? 'USD';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
@@ -1433,6 +1441,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           lowStop = null;
         }
         if (existingTrade) {
+          existingTrade.symbol = symbol;
           existingTrade.entry = entry;
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
@@ -2435,11 +2444,12 @@ async function buildActiveTrades(user, rates = {}) {
   const enriched = [];
   for (const trade of trades) {
     const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
+    const quoteSymbol = normalizeTrading212Symbol(symbol);
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
     try {
-      if (symbol) {
-        const quote = await fetchMarketPrice(symbol);
+      if (quoteSymbol) {
+        const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
         liveCurrency = quote.currency || liveCurrency;
       }
@@ -2501,7 +2511,7 @@ async function buildActiveTrades(user, rates = {}) {
         : null);
     enriched.push({
       id: trade.id,
-      symbol,
+      symbol: quoteSymbol || symbol,
       entry,
       stop: Number(trade.stop),
       currency: trade.currency || 'GBP',

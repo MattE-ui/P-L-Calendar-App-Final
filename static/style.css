@@ -751,8 +751,9 @@ select {
 }
 #active-trades-card .trade-list {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
   min-height: 0;
+  padding-right: 6px;
 }
 .show-all-btn {
   align-self: flex-start;
