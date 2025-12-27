@@ -25,6 +25,109 @@ const profileState = {
   username: ''
 };
 
+const currencySymbols = { GBP: '£', USD: '$' };
+
+function formatSignedCurrency(value, currency = 'GBP') {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  const sign = num < 0 ? '-' : '';
+  const symbol = currencySymbols[currency] || '£';
+  return `${sign}${symbol}${Math.abs(num).toFixed(2)}`;
+}
+
+function setupNavDrawer() {
+  const navToggle = document.getElementById('nav-toggle-btn');
+  const navDrawer = document.getElementById('nav-drawer');
+  const navOverlay = document.getElementById('nav-drawer-overlay');
+  const navClose = document.getElementById('nav-close-btn');
+  const setNavOpen = open => {
+    if (!navDrawer || !navOverlay || !navToggle) return;
+    navDrawer.classList.toggle('hidden', !open);
+    navOverlay.classList.toggle('hidden', !open);
+    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  navToggle?.addEventListener('click', () => {
+    if (!navDrawer || !navOverlay) return;
+    const isOpen = !navDrawer.classList.contains('hidden');
+    setNavOpen(!isOpen);
+  });
+  navClose?.addEventListener('click', () => setNavOpen(false));
+  navOverlay?.addEventListener('click', () => setNavOpen(false));
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    setNavOpen(false);
+  });
+  return setNavOpen;
+}
+
+function bindNav() {
+  const closeNav = setupNavDrawer();
+  document.getElementById('calendar-btn')?.addEventListener('click', () => {
+    window.location.href = '/';
+  });
+  document.getElementById('analytics-btn')?.addEventListener('click', () => {
+    window.location.href = '/analytics.html';
+  });
+  document.getElementById('trades-btn')?.addEventListener('click', () => {
+    window.location.href = '/trades.html';
+  });
+  document.getElementById('devtools-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    window.location.href = '/devtools.html';
+  });
+  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+    try {
+      await api('/api/logout', { method: 'POST' });
+    } catch (e) {
+      console.warn(e);
+    }
+    window.location.href = '/login.html';
+  });
+  document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
+    const modal = document.getElementById('quick-settings-modal');
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    try {
+      const saved = localStorage.getItem('plc-prefs');
+      if (saved) {
+        const prefs = JSON.parse(saved);
+        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => document.getElementById('quick-settings-modal')?.classList.add('hidden');
+  document.getElementById('close-qs-btn')?.addEventListener('click', closeQs);
+  document.getElementById('save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    const prefs = {};
+    if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
+    if (cur && ['GBP', 'USD'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify(prefs));
+    } catch (e) {
+      console.warn(e);
+    }
+    closeQs();
+  });
+  api('/api/profile')
+    .then(profile => {
+      const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+    })
+    .catch(() => {
+      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+    });
+}
+
 async function loadProfile() {
   try {
     const data = await api('/api/profile');
@@ -84,6 +187,18 @@ async function loadProfile() {
     if (helperExisting) {
       helperExisting.classList.toggle('is-hidden', !profileState.complete);
     }
+    const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
+    const netDepositsValue = Number.isFinite(profileState.netDeposits) ? profileState.netDeposits : 0;
+    const netPerformance = portfolioValue - netDepositsValue;
+    const netPerfPct = netDepositsValue ? netPerformance / Math.abs(netDepositsValue) : 0;
+    const heroPortfolio = document.getElementById('header-portfolio-value');
+    if (heroPortfolio) heroPortfolio.textContent = formatSignedCurrency(portfolioValue);
+    const heroDeposits = document.getElementById('hero-net-deposits-value');
+    if (heroDeposits) heroDeposits.textContent = formatSignedCurrency(netDepositsValue);
+    const heroPerformance = document.getElementById('hero-net-performance-value');
+    if (heroPerformance) heroPerformance.textContent = formatSignedCurrency(netPerformance);
+    const heroPerfSub = document.getElementById('hero-net-performance-sub');
+    if (heroPerfSub) heroPerfSub.textContent = `${(netPerfPct * 100).toFixed(1)}%`;
     renderSecurityState();
   } catch (e) {
     console.error('Unable to load profile details', e);
@@ -166,7 +281,8 @@ const integrationState = {
   endpoint: '/api/v0/equity/portfolio/summary',
   lastBaseUrl: null,
   lastEndpoint: null,
-  cooldownUntil: null
+  cooldownUntil: null,
+  lastRaw: null
 };
 
 function setIntegrationFieldsDisabled(disabled) {
@@ -174,24 +290,22 @@ function setIntegrationFieldsDisabled(disabled) {
   const apiInput = document.getElementById('t212-api-key');
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
-  const timeInput = document.getElementById('t212-time');
-  const hostInput = document.getElementById('t212-host');
-  const endpointInput = document.getElementById('t212-endpoint');
   const runBtn = document.getElementById('t212-run-now');
   if (container) container.classList.toggle('is-hidden', disabled);
   if (apiInput) apiInput.disabled = disabled;
   if (secretInput) secretInput.disabled = disabled;
   if (modeSelect) modeSelect.disabled = disabled;
-  if (timeInput) timeInput.disabled = disabled;
-  if (hostInput) hostInput.disabled = disabled;
-  if (endpointInput) endpointInput.disabled = disabled;
   if (runBtn) runBtn.disabled = disabled;
 }
 
 function renderIntegrationStatus(data) {
   const statusEl = document.getElementById('t212-status');
+  const rawBtn = document.getElementById('t212-raw-btn');
   if (!statusEl) return;
   statusEl.classList.remove('is-error');
+  if (rawBtn) {
+    rawBtn.classList.toggle('is-hidden', !data.lastRaw);
+  }
   if (!data.enabled) {
     statusEl.textContent = 'Automation is currently switched off.';
     return;
@@ -241,21 +355,19 @@ async function loadIntegration() {
     integrationState.hasApiKey = !!data.hasApiKey;
     integrationState.hasApiSecret = !!data.hasApiSecret;
     integrationState.enabled = !!data.enabled;
-    integrationState.snapshotTime = data.snapshotTime || '21:00';
-    integrationState.mode = data.mode || 'live';
-    integrationState.timezone = data.timezone || 'Europe/London';
-    integrationState.baseUrl = data.baseUrl || '';
-    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+  integrationState.snapshotTime = data.snapshotTime || '21:00';
+  integrationState.mode = data.mode || 'live';
+  integrationState.timezone = data.timezone || 'Europe/London';
+  integrationState.baseUrl = data.baseUrl || '';
+  integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
+    integrationState.lastRaw = data.lastRaw || null;
     const toggle = document.getElementById('t212-enabled');
     const apiInput = document.getElementById('t212-api-key');
     const secretInput = document.getElementById('t212-api-secret');
     const modeSelect = document.getElementById('t212-mode');
-    const timeInput = document.getElementById('t212-time');
-    const hostInput = document.getElementById('t212-host');
-    const endpointInput = document.getElementById('t212-endpoint');
     if (toggle) toggle.checked = integrationState.enabled;
     if (apiInput) {
       apiInput.value = '';
@@ -270,9 +382,6 @@ async function loadIntegration() {
         : 'Paste your API secret';
     }
     if (modeSelect) modeSelect.value = integrationState.mode;
-    if (timeInput) timeInput.value = integrationState.snapshotTime;
-    if (hostInput) hostInput.value = integrationState.baseUrl || '';
-    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
@@ -281,7 +390,8 @@ async function loadIntegration() {
       timezone: integrationState.timezone,
       cooldownUntil: integrationState.cooldownUntil,
       lastBaseUrl: integrationState.lastBaseUrl,
-      lastEndpoint: integrationState.lastEndpoint
+      lastEndpoint: integrationState.lastEndpoint,
+      lastRaw: integrationState.lastRaw
     });
   } catch (e) {
     console.error('Unable to load Trading 212 settings', e);
@@ -297,14 +407,10 @@ async function saveIntegration({ runNow = false } = {}) {
   const apiInput = document.getElementById('t212-api-key');
   const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
-  const timeInput = document.getElementById('t212-time');
-  const hostInput = document.getElementById('t212-host');
-  const endpointInput = document.getElementById('t212-endpoint');
   const enabled = !!toggle?.checked;
   const payload = {
     enabled,
-    mode: modeSelect?.value || integrationState.mode,
-    snapshotTime: timeInput?.value || integrationState.snapshotTime
+    mode: modeSelect?.value || integrationState.mode
   };
   const apiKeyValue = apiInput?.value.trim();
   if (apiKeyValue) {
@@ -317,12 +423,6 @@ async function saveIntegration({ runNow = false } = {}) {
     payload.apiSecret = apiSecretValue;
   } else if (!enabled && integrationState.hasApiSecret) {
     payload.apiSecret = '';
-  }
-  if (hostInput) {
-    payload.baseUrl = hostInput.value.trim();
-  }
-  if (endpointInput) {
-    payload.endpoint = endpointInput.value.trim();
   }
   if (runNow) payload.runNow = true;
   try {
@@ -338,10 +438,11 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.mode = data.mode || integrationState.mode;
     integrationState.timezone = data.timezone || integrationState.timezone;
     integrationState.baseUrl = data.baseUrl || '';
-    integrationState.endpoint = data.endpoint || '/api/v0/equity/portfolio/summary';
+    integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
+    integrationState.lastRaw = data.lastRaw || null;
     if (apiInput) {
       apiInput.value = '';
       apiInput.placeholder = integrationState.hasApiKey
@@ -354,8 +455,6 @@ async function saveIntegration({ runNow = false } = {}) {
         ? 'Secret saved — paste a new secret to replace'
         : 'Paste your API secret';
     }
-    if (hostInput) hostInput.value = integrationState.baseUrl || '';
-    if (endpointInput) endpointInput.value = integrationState.endpoint || '/api/v0/equity/portfolio/summary';
     if (toggle) toggle.checked = integrationState.enabled;
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
@@ -365,8 +464,15 @@ async function saveIntegration({ runNow = false } = {}) {
       timezone: integrationState.timezone,
       cooldownUntil: integrationState.cooldownUntil,
       lastBaseUrl: integrationState.lastBaseUrl,
-      lastEndpoint: integrationState.lastEndpoint
+      lastEndpoint: integrationState.lastEndpoint,
+      lastRaw: integrationState.lastRaw
     });
+    if (data.lastStatus && !data.lastStatus.ok && data.lastRaw) {
+      const rawModal = document.getElementById('t212-raw-modal');
+      const rawContent = document.getElementById('t212-raw-content');
+      if (rawContent) rawContent.textContent = JSON.stringify(data.lastRaw, null, 2);
+      rawModal?.classList.remove('hidden');
+    }
     if (errorEl) {
       if (data.lastStatus && !data.lastStatus.ok && data.lastStatus.message) {
         const statusCode = data.lastStatus.status ? ` (HTTP ${data.lastStatus.status})` : '';
@@ -459,8 +565,27 @@ async function logout() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  bindNav();
   loadProfile();
   loadIntegration();
+  const rawModal = document.getElementById('t212-raw-modal');
+  const rawContent = document.getElementById('t212-raw-content');
+  document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
+    if (rawContent) rawContent.textContent = integrationState.lastRaw
+      ? JSON.stringify(integrationState.lastRaw, null, 2)
+      : '';
+    rawModal?.classList.remove('hidden');
+  });
+  document.getElementById('t212-raw-close')?.addEventListener('click', () => {
+    rawModal?.classList.add('hidden');
+  });
+  const helpModal = document.getElementById('t212-help-modal');
+  document.getElementById('t212-help-btn')?.addEventListener('click', () => {
+    helpModal?.classList.remove('hidden');
+  });
+  document.getElementById('t212-help-close')?.addEventListener('click', () => {
+    helpModal?.classList.add('hidden');
+  });
   document.getElementById('profile-save')?.addEventListener('click', saveProfile);
   document.getElementById('profile-logout')?.addEventListener('click', logout);
   document.getElementById('profile-net-deposits-delta')?.addEventListener('input', (ev) => {
@@ -491,4 +616,10 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      helpModal?.classList.add('hidden');
+      rawModal?.classList.add('hidden');
+    }
+  });
 });
