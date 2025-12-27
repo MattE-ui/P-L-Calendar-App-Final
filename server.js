@@ -1293,29 +1293,29 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
-    if (!cfg.authoritativeSyncAt) {
+    const isFirstAuthoritativeSync = !cfg.authoritativeSyncAt;
+    if (isFirstAuthoritativeSync) {
       for (const [monthKey, days] of Object.entries(history)) {
         for (const [dayKey, record] of Object.entries(days || {})) {
           if (!record || typeof record !== 'object') continue;
           const end = Number(record.end);
-          if (Number.isFinite(end) && end >= 0) {
-            record.cashIn = 0;
-            record.cashOut = 0;
+          if (!Number.isFinite(end) || end < 0) {
+            delete days[dayKey];
             continue;
           }
-          delete days[dayKey];
+          record.cashIn = 0;
+          record.cashOut = 0;
         }
         if (!Object.keys(days).length) {
           delete history[monthKey];
         }
       }
-      const authoritativeNet = Number.isFinite(snapshot.netDeposits) ? snapshot.netDeposits : 0;
-      user.initialNetDeposits = authoritativeNet;
-      user.netDepositsAnchor = dateKey;
-      cfg.lastNetDeposits = authoritativeNet;
+      user.initialNetDeposits = 0;
+      user.netDepositsAnchor = null;
+      cfg.lastNetDeposits = 0;
+      cfg.authoritativeSyncAt = new Date().toISOString();
       cfg.lastTransactionAt = null;
       cfg.processedReferences = [];
-      cfg.authoritativeSyncAt = new Date().toISOString();
     }
     const previousNet = Number.isFinite(Number(cfg.lastNetDeposits))
       ? Number(cfg.lastNetDeposits)
@@ -1400,16 +1400,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         cfg.lastNetDeposits = updatedTotal;
       }
     }
-    if (snapshot.netDeposits !== null) {
+    if (!transactionsApplied && snapshot.netDeposits !== null) {
       const delta = snapshot.netDeposits - previousNet;
       if (delta > 0) {
         cashIn += delta;
       } else if (delta < 0) {
         cashOut += Math.abs(delta);
       }
-      if (!transactionsApplied) {
-        cfg.lastNetDeposits = snapshot.netDeposits;
-      }
+      cfg.lastNetDeposits = snapshot.netDeposits;
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
