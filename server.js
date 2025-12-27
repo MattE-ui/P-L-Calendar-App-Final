@@ -2575,7 +2575,7 @@ app.post('/api/trades', auth, async (req, res) => {
     stop,
     riskPct,
     riskAmount,
-    sizeUnits,
+    sizeUnits: sizeUnitsInput,
     currency,
     baseCurrency,
     note,
@@ -2599,7 +2599,7 @@ app.post('/api/trades', auth, async (req, res) => {
   const stopNum = Number(stop);
   const pctNum = Number(riskPct);
   const riskAmountNum = Number(riskAmount);
-  const sizeUnitsNum = Number(sizeUnits);
+  const sizeUnitsNum = Number(sizeUnitsInput);
   const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
