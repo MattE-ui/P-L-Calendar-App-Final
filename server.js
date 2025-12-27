@@ -2497,18 +2497,8 @@ async function buildActiveTrades(user, rates = {}) {
       } else if (providerCurrency !== tradeCurrency) {
         providerCurrency = null;
       }
-      const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
-        ? Number(trade.perUnitRisk)
-        : (Number.isFinite(entry) && Number.isFinite(Number(trade.stop)) ? Math.abs(entry - Number(trade.stop)) : null);
-      const riskAmountCurrency = Number.isFinite(Number(trade.riskAmountCurrency)) && Number(trade.riskAmountCurrency) > 0
-        ? Number(trade.riskAmountCurrency)
-        : (Number.isFinite(perUnitRisk) && Number.isFinite(sizeUnits) ? perUnitRisk * sizeUnits : null);
-      const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
-      const derivedRiskPct = Number.isFinite(Number(trade.riskPct)) && Number(trade.riskPct) > 0
-        ? Number(trade.riskPct)
-        : (Number.isFinite(portfolioCurrencyAtCalc) && portfolioCurrencyAtCalc > 0 && Number.isFinite(riskAmountCurrency)
-          ? (riskAmountCurrency / portfolioCurrencyAtCalc) * 100
-          : null);
+      const liveFromProvider = Number.isFinite(Number(trade.lastSyncPrice)) ? Number(trade.lastSyncPrice) : null;
+      const riskPct = Number.isFinite(Number(trade.riskPct)) ? Number(trade.riskPct) : 0;
       enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
@@ -2516,14 +2506,14 @@ async function buildActiveTrades(user, rates = {}) {
         stop: Number(trade.stop),
         currency: tradeCurrency,
         sizeUnits,
-        riskPct: Number.isFinite(derivedRiskPct) ? derivedRiskPct : 0,
+        riskPct,
         direction: trade.direction || 'long',
         fees: Number(trade.fees) || 0,
         slippage: Number(trade.slippage) || 0,
         fxFeeEligible,
         fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined,
-        livePrice: livePrice !== null ? livePrice : undefined,
-        liveCurrency,
+        livePrice: liveFromProvider !== null ? liveFromProvider : undefined,
+        liveCurrency: tradeCurrency,
         unrealizedGBP: syncPpl,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
@@ -3031,95 +3021,6 @@ app.get('/api/trades/active', auth, async (req, res) => {
     liveOpenPnlMode,
     liveOpenPnlCurrency
   });
-});
-
-app.get('/api/market/low', auth, async (req, res) => {
-  const symbol = typeof req.query?.symbol === 'string' ? req.query.symbol.trim() : '';
-  if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
-  try {
-    const low = await fetchDailyLow(symbol);
-    res.json(low);
-  } catch (e) {
-    console.error('Failed to fetch daily low', e);
-    res.status(502).json({ error: 'Unable to fetch daily low' });
-  }
-});
-
-async function loadFilteredTrades(username, query = {}) {
-  const db = loadDB();
-  const user = db.users[username];
-  if (!user) return { trades: [], user: null, rates: {} };
-  ensureUserShape(user, username);
-  normalizeTradeJournal(user);
-  const rates = await fetchRates();
-  const trades = filterTrades(flattenTrades(user, rates), query);
-  return { trades, user, rates };
-}
-
-app.get('/api/analytics/summary', auth, async (req, res) => {
-  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const closed = trades.filter(t => t.status === 'closed');
-  const summary = analytics.summarizeTrades(closed);
-  const curve = analytics.equityCurve(closed);
-  const dd = analytics.drawdowns(curve);
-  const dist = analytics.distribution(closed);
-  const streak = analytics.streaks(closed);
-  const breakdown = analytics.breakdowns(closed);
-  res.json({
-    range: {
-      from: req.query?.from || null,
-      to: req.query?.to || null
-    },
-    summary,
-    drawdown: {
-      maxDrawdown: dd.maxDrawdown,
-      durationDays: dd.durationDays,
-      peakDate: dd.peakDate,
-      troughDate: dd.troughDate
-    },
-    distribution: {
-      median: dist.median,
-      stddev: dist.stddev,
-      best: dist.best,
-      worst: dist.worst
-    },
-    breakdowns: breakdown,
-    streaks: streak
-  });
-});
-
-app.get('/api/analytics/equity-curve', auth, async (req, res) => {
-  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const closed = trades.filter(t => t.status === 'closed');
-  const curve = analytics.equityCurve(closed);
-  res.json({ curve });
-});
-
-app.get('/api/analytics/drawdown', auth, async (req, res) => {
-  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const closed = trades.filter(t => t.status === 'closed');
-  const curve = analytics.equityCurve(closed);
-  const dd = analytics.drawdowns(curve);
-  res.json({ drawdown: dd });
-});
-
-app.get('/api/analytics/distribution', auth, async (req, res) => {
-  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const closed = trades.filter(t => t.status === 'closed');
-  const dist = analytics.distribution(closed);
-  res.json({ distribution: dist });
-});
-
-app.get('/api/analytics/streaks', auth, async (req, res) => {
-  const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  const closed = trades.filter(t => t.status === 'closed');
-  const streak = analytics.streaks(closed);
-  res.json({ streaks: streak });
 });
 
 app.get('/api/market/low', auth, async (req, res) => {
