@@ -630,7 +630,22 @@ function computeGuaranteedPnl(trade, rates = {}) {
   const pnlCurrency = direction === 'long'
     ? (currentStop - entry) * sizeUnits
     : (entry - currentStop) * sizeUnits;
-  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  let pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const fxFeeEligible = trade.fxFeeEligible === true;
+  const fxFeeRate = Number(trade.fxFeeRate);
+  if (fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0) {
+    const entryValueGBP = convertToGBP(entry * sizeUnits, trade.currency || 'GBP', rates);
+    const stopValueGBP = convertToGBP(currentStop * sizeUnits, trade.currency || 'GBP', rates);
+    if (Number.isFinite(entryValueGBP)) {
+      const entryFeeGBP = Math.abs(entryValueGBP) * fxFeeRate;
+      const exitBasisGBP = Number.isFinite(stopValueGBP) ? Math.abs(stopValueGBP) : Math.abs(entryValueGBP);
+      const exitFeeGBP = exitBasisGBP * fxFeeRate;
+      const fxFeeGBP = entryFeeGBP + exitFeeGBP;
+      if (Number.isFinite(pnlGBP)) {
+        pnlGBP -= fxFeeGBP;
+      }
+    }
+  }
   return Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
 }
 
