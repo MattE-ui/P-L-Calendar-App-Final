@@ -296,6 +296,7 @@ function getDailyEntry(date) {
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
+  if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
   const base = (Number.isFinite(opening) ? opening : 0) + netCash;
   let change = hasClosing ? closing - base : null;
@@ -1620,12 +1621,9 @@ function openEntryModal(dateStr, existingEntry = null) {
   renderTradeList(entry?.trades || [], dateStr);
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
-  if (saveBtn) {
+    if (saveBtn) {
     saveBtn.onclick = async () => {
       const rawStr = $('#edit-profit-input').value.trim();
-      if (rawStr === '') return;
-      const raw = Number(rawStr);
-      if (Number.isNaN(raw) || raw < 0) return;
       const depositStr = depositInput ? depositInput.value.trim() : '';
       const withdrawalStr = withdrawalInput ? withdrawalInput.value.trim() : '';
       const depositVal = depositStr === '' ? 0 : Number(depositStr);
@@ -1633,13 +1631,21 @@ function openEntryModal(dateStr, existingEntry = null) {
       if (Number.isNaN(depositVal) || depositVal < 0) return;
       if (Number.isNaN(withdrawalVal) || withdrawalVal < 0) return;
       const noteVal = noteInput ? noteInput.value.trim() : '';
+      let valuePayload = null;
+      if (rawStr !== '') {
+        const raw = Number(rawStr);
+        if (Number.isNaN(raw) || raw < 0) return;
+        valuePayload = toGBP(raw);
+      } else if (!depositVal && !withdrawalVal && !noteVal) {
+        return;
+      }
       try {
         await api('/api/pl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             date: dateStr,
-            value: toGBP(raw),
+            value: valuePayload,
             cashIn: toGBP(depositVal),
             cashOut: toGBP(withdrawalVal),
             note: noteVal

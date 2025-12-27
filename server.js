@@ -763,6 +763,27 @@ function buildSnapshots(history, initial, tradeJournal = {}) {
     snapshots[monthKey][entry.date] = payload;
     baseline = entry.end;
   }
+  for (const [monthKey, days] of Object.entries(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const end = Number(record.end);
+      if (Number.isFinite(end) && end >= 0) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      const noteRaw = typeof record.note === 'string' ? record.note : '';
+      const note = noteRaw.trim();
+      if ((!Number.isFinite(cashIn) || cashIn <= 0) && (!Number.isFinite(cashOut) || cashOut <= 0) && !note) {
+        continue;
+      }
+      if (!snapshots[monthKey]) snapshots[monthKey] = {};
+      if (!snapshots[monthKey][dateKey]) snapshots[monthKey][dateKey] = {};
+      const payload = snapshots[monthKey][dateKey];
+      if (Number.isFinite(cashIn) && cashIn >= 0) payload.cashIn = cashIn;
+      if (Number.isFinite(cashOut) && cashOut >= 0) payload.cashOut = cashOut;
+      if (record.preBaseline === true) payload.preBaseline = true;
+      if (note) payload.note = note;
+    }
+  }
   for (const [dateKey, trades] of Object.entries(tradeJournal)) {
     const monthKey = dateKey.slice(0, 7);
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
@@ -2139,36 +2160,59 @@ app.post('/api/pl', auth, (req,res)=>{
   history[ym] ||= {};
   const existingRecord = history[ym][date];
   const anchorDate = user.netDepositsAnchor || null;
+  const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
+  const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
+  if (!Number.isFinite(deposit) || deposit < 0) {
+    return res.status(400).json({ error: 'Invalid deposit value' });
+  }
+  if (!Number.isFinite(withdrawal) || withdrawal < 0) {
+    return res.status(400).json({ error: 'Invalid withdrawal value' });
+  }
+  let normalizedNote;
+  if (note !== undefined) {
+    if (note === null) {
+      normalizedNote = '';
+    } else if (typeof note === 'string') {
+      normalizedNote = note.trim();
+    } else {
+      return res.status(400).json({ error: 'Invalid note value' });
+    }
+  }
+  const existingPreBaseline = existingRecord?.preBaseline === true;
+  const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
   if (value === null || value === '') {
-    delete history[ym][date];
-    if (!Object.keys(history[ym]).length) {
-      delete history[ym];
+    const hasCash = deposit > 0 || withdrawal > 0;
+    const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existingRecord?.note;
+    if (hasCash || hasNote) {
+      const entryPayload = {
+        cashIn: deposit,
+        cashOut: withdrawal
+      };
+      if (shouldFlagPreBaseline) {
+        entryPayload.preBaseline = true;
+      }
+      if (normalizedNote !== undefined) {
+        if (normalizedNote) {
+          entryPayload.note = normalizedNote;
+        }
+      } else if (existingRecord && typeof existingRecord.note === 'string') {
+        const carryNote = existingRecord.note.trim();
+        if (carryNote) {
+          entryPayload.note = carryNote;
+        }
+      }
+      history[ym][date] = entryPayload;
+    } else {
+      delete history[ym][date];
+      if (!Object.keys(history[ym]).length) {
+        delete history[ym];
+      }
     }
   } else {
     const num = Number(value);
     if (!Number.isFinite(num) || num < 0) {
       return res.status(400).json({ error: 'Invalid portfolio value' });
     }
-    const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
-    const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
-    if (!Number.isFinite(deposit) || deposit < 0) {
-      return res.status(400).json({ error: 'Invalid deposit value' });
-    }
-    if (!Number.isFinite(withdrawal) || withdrawal < 0) {
-      return res.status(400).json({ error: 'Invalid withdrawal value' });
-    }
-    let normalizedNote;
-    if (note !== undefined) {
-      if (note === null) {
-        normalizedNote = '';
-      } else if (typeof note === 'string') {
-        normalizedNote = note.trim();
-      } else {
-        return res.status(400).json({ error: 'Invalid note value' });
-      }
-    }
-    const existingPreBaseline = existingRecord?.preBaseline === true;
-    const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
     const entryPayload = {
       end: num,
       cashIn: deposit,
