@@ -895,7 +895,8 @@ function normalizeTrading212Symbol(raw) {
   if (!base) return '';
   const core = base.split('_')[0] || base;
   if (core === 'FB') return 'META';
-  return core;
+  const cleaned = core.replace(/\d+/g, '');
+  return cleaned || '';
 }
 
 function deriveTrading212Root(endpointPath) {
