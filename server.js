@@ -1434,8 +1434,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         ).trim().toUpperCase();
         const symbol = normalizeTrading212Symbol(rawTicker);
         if (!symbol) continue;
-        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
-        const existingTrade = existingTradeEntry?.trade;
         const quantity = parseTradingNumber(
           raw?.quantity ??
           raw?.qty ??
@@ -1477,11 +1475,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
+        const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
+        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === trading212Id || entry.trade?.symbol === symbol);
+        const existingTrade = existingTradeEntry?.trade;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'USD';
+        const tradeCurrency = 'GBP';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
@@ -1497,6 +1498,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.direction = direction;
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
+          existingTrade.trading212Id = trading212Id;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1533,7 +1535,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           tradeType: 'day',
           assetClass: 'stocks',
           source: 'trading212',
-          trading212Id: raw?.id,
+          trading212Id,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
