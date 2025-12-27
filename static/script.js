@@ -124,9 +124,6 @@ function formatSignedRaw(value, currency = state.currency) {
 }
 
 function formatLiveOpenPnl(value) {
-  if (state.liveOpenPnlMode === 'provider') {
-    return formatSignedRaw(value, state.liveOpenPnlCurrency || 'GBP');
-  }
   return formatSignedCurrency(value, state.currency);
 }
 
@@ -299,6 +296,7 @@ function getDailyEntry(date) {
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
+  if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
   const base = (Number.isFinite(opening) ? opening : 0) + netCash;
   let change = hasClosing ? closing - base : null;
@@ -721,6 +719,12 @@ function renderActiveTrades() {
   trades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.source === 'trading212') {
+      const sourceLogo = document.createElement('div');
+      sourceLogo.className = 'trade-source-logo';
+      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      pill.appendChild(sourceLogo);
+    }
     const priceLine = document.createElement('div');
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
@@ -732,14 +736,11 @@ function renderActiveTrades() {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const pnlBadge = document.createElement('span');
     pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlBadge.textContent = `PnL ${trade.source === 'trading212'
-      ? formatSignedRaw(pnl, trade.currency)
-      : formatSignedCurrency(pnl)}`;
+    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
     badges.appendChild(pnlBadge);
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
-      ${trade.source === 'trading212' ? '<span class="trade-badge">Trading 212</span>' : ''}
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
@@ -1620,12 +1621,9 @@ function openEntryModal(dateStr, existingEntry = null) {
   renderTradeList(entry?.trades || [], dateStr);
   modal.classList.remove('hidden');
   const saveBtn = $('#save-profit-btn');
-  if (saveBtn) {
+    if (saveBtn) {
     saveBtn.onclick = async () => {
       const rawStr = $('#edit-profit-input').value.trim();
-      if (rawStr === '') return;
-      const raw = Number(rawStr);
-      if (Number.isNaN(raw) || raw < 0) return;
       const depositStr = depositInput ? depositInput.value.trim() : '';
       const withdrawalStr = withdrawalInput ? withdrawalInput.value.trim() : '';
       const depositVal = depositStr === '' ? 0 : Number(depositStr);
@@ -1633,13 +1631,21 @@ function openEntryModal(dateStr, existingEntry = null) {
       if (Number.isNaN(depositVal) || depositVal < 0) return;
       if (Number.isNaN(withdrawalVal) || withdrawalVal < 0) return;
       const noteVal = noteInput ? noteInput.value.trim() : '';
+      let valuePayload = null;
+      if (rawStr !== '') {
+        const raw = Number(rawStr);
+        if (Number.isNaN(raw) || raw < 0) return;
+        valuePayload = toGBP(raw);
+      } else if (!depositVal && !withdrawalVal && !noteVal) {
+        return;
+      }
       try {
         await api('/api/pl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             date: dateStr,
-            value: toGBP(raw),
+            value: valuePayload,
             cashIn: toGBP(depositVal),
             cashOut: toGBP(withdrawalVal),
             note: noteVal
