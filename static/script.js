@@ -718,6 +718,12 @@ function renderActiveTrades() {
   trades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.source === 'trading212') {
+      const sourceLogo = document.createElement('div');
+      sourceLogo.className = 'trade-source-logo';
+      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      pill.appendChild(sourceLogo);
+    }
     const priceLine = document.createElement('div');
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
@@ -734,7 +740,6 @@ function renderActiveTrades() {
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
-      ${trade.source === 'trading212' ? '<span class="trade-badge">Trading 212</span>' : ''}
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
