@@ -1215,11 +1215,31 @@ async function fetchTrading212Snapshot(config) {
         }
         for (const candidate of transactionEndpoints) {
           try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
-            if (Array.isArray(list)) {
-              transactions = list;
-              transactionsRaw = payload;
+            let nextPath = candidate;
+            const aggregated = [];
+            const rawPages = [];
+            let pageCount = 0;
+            while (nextPath && pageCount < 25) {
+              pageCount += 1;
+              const payload = await requestTrading212RawEndpoint(`${base}${nextPath}`, headers);
+              rawPages.push(payload);
+              const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+              if (Array.isArray(list)) {
+                aggregated.push(...list);
+              }
+              const nextRaw = payload?.nextPagePath || payload?.nextPage?.path || payload?.next;
+              if (!nextRaw) break;
+              if (typeof nextRaw === 'string') {
+                nextPath = nextRaw.startsWith('http')
+                  ? nextRaw.replace(base, '')
+                  : nextRaw.startsWith('/') ? nextRaw : `/${nextRaw}`;
+              } else {
+                nextPath = null;
+              }
+            }
+            if (aggregated.length) {
+              transactions = aggregated;
+              transactionsRaw = rawPages.length === 1 ? rawPages[0] : { items: aggregated, pages: rawPages };
               break;
             }
           } catch (e) {
