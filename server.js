@@ -1450,15 +1450,15 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           ? snapshot.positionsRaw
           : inlinePositions;
     let positionsMutated = false;
-    if (Array.isArray(effectivePositions) && effectivePositions.length) {
-      const journal = ensureTradeJournal(user);
-      const openTrades = [];
-      for (const [tradeDate, items] of Object.entries(journal)) {
-        for (const trade of items || []) {
-          if (!trade || trade.status === 'closed') continue;
-          openTrades.push({ tradeDate, trade });
-        }
+    const journal = ensureTradeJournal(user);
+    const openTrades = [];
+    for (const [tradeDate, items] of Object.entries(journal)) {
+      for (const trade of items || []) {
+        if (!trade || trade.status === 'closed') continue;
+        openTrades.push({ tradeDate, trade });
       }
+    }
+    if (Array.isArray(effectivePositions) && effectivePositions.length) {
       const sortedPositions = effectivePositions.slice().sort((a, b) => {
         const aSymbol = String(a?.instrument?.ticker ?? a?.ticker ?? a?.symbol ?? '').toUpperCase();
         const bSymbol = String(b?.instrument?.ticker ?? b?.ticker ?? b?.symbol ?? '').toUpperCase();
@@ -1583,6 +1583,19 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
         journal[normalizedDate].push(trade);
+        positionsMutated = true;
+      }
+    } else if (Array.isArray(effectivePositions)) {
+      const closeDate = new Date(runDate).toISOString();
+      for (const entry of openTrades) {
+        const trade = entry.trade;
+        if (!trade || (!trade.trading212Id && trade.source !== 'trading212')) continue;
+        trade.status = 'closed';
+        trade.closeDate = trade.closeDate || dateKeyInTimezone(timezone, runDate);
+        trade.closedAt = trade.closedAt || closeDate;
+        if (!Number.isFinite(Number(trade.closePrice)) && Number.isFinite(Number(trade.lastSyncPrice))) {
+          trade.closePrice = Number(trade.lastSyncPrice);
+        }
         positionsMutated = true;
       }
     }
