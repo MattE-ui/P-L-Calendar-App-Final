@@ -1926,15 +1926,16 @@ app.post('/api/profile', auth, (req,res)=>{
   normalizePortfolioHistory(user);
   const { baseline: previousBaseline, total: previousTotal } = computeNetDepositsTotals(user, history);
   let netDepositsNumber;
+  const netDepositsProvided = !(netDeposits === '' || netDeposits === null || netDeposits === undefined);
   if (!wasComplete) {
-    if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+    if (!netDepositsProvided) {
       return res.status(400).json({ error: 'Net deposits value is required' });
     }
     netDepositsNumber = Number(netDeposits);
     if (!Number.isFinite(netDepositsNumber)) {
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
-  } else if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+  } else if (!netDepositsProvided) {
     netDepositsNumber = previousTotal;
   } else {
     netDepositsNumber = Number(netDeposits);
@@ -1942,11 +1943,14 @@ app.post('/api/profile', auth, (req,res)=>{
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
   }
-  const netDelta = netDepositsNumber - (wasComplete ? previousTotal : previousBaseline);
+  const resetNetDeposits = wasComplete && netDepositsProvided && netDepositsNumber !== previousTotal;
+  const netDelta = resetNetDeposits
+    ? 0
+    : netDepositsNumber - (wasComplete ? previousTotal : previousBaseline);
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
-  if (!user.netDepositsAnchor) {
+  if (!user.netDepositsAnchor || resetNetDeposits) {
     user.netDepositsAnchor = targetDate;
   }
   const ym = targetDate.slice(0, 7);
@@ -1954,7 +1958,10 @@ app.post('/api/profile', auth, (req,res)=>{
   const existing = history[ym][targetDate] || {};
   let cashIn = Number.isFinite(existing.cashIn) ? Number(existing.cashIn) : 0;
   let cashOut = Number.isFinite(existing.cashOut) ? Number(existing.cashOut) : 0;
-  if (wasComplete && netDelta !== 0) {
+  if (resetNetDeposits) {
+    cashIn = 0;
+    cashOut = 0;
+  } else if (wasComplete && netDelta !== 0) {
     if (netDelta > 0) {
       cashIn += netDelta;
     } else {
@@ -1966,11 +1973,14 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
-  if (!wasComplete) {
+  if (!wasComplete || resetNetDeposits) {
     user.initialNetDeposits = netDepositsNumber;
   }
   user.profileComplete = true;
   const { config: tradingCfg } = ensureTrading212Config(user);
+  if (resetNetDeposits) {
+    normalizePortfolioHistory(user);
+  }
   const totals = computeNetDepositsTotals(user, history);
   tradingCfg.lastNetDeposits = totals.total;
   refreshAnchors(user, history);
