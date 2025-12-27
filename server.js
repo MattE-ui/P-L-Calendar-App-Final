@@ -1368,6 +1368,21 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           : inlineTransactions;
     let transactionsApplied = false;
     if (Array.isArray(effectiveTransactions)) {
+      for (const [monthKey, days] of Object.entries(history)) {
+        for (const [dayKey, record] of Object.entries(days || {})) {
+          if (!record || typeof record !== 'object') continue;
+          const end = Number(record.end);
+          if (!Number.isFinite(end) || end < 0) {
+            delete days[dayKey];
+            continue;
+          }
+          record.cashIn = 0;
+          record.cashOut = 0;
+        }
+        if (!Object.keys(days).length) {
+          delete history[monthKey];
+        }
+      }
       const txs = effectiveTransactions
         .map(tx => {
           const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
@@ -1378,11 +1393,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       let newest = null;
       let totalDeposits = 0;
       let totalWithdrawals = 0;
-      const seenRefs = new Set();
       for (const item of txs) {
         const tx = item.tx || {};
-        const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-        if (reference && seenRefs.has(reference)) continue;
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
         if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
           continue;
@@ -1401,13 +1413,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           ? convertToGBP(amount, txCurrency, rates)
           : amount;
         if (amountGBP > 0) {
+          entry.cashIn = entryCashIn + amountGBP;
           totalDeposits += amountGBP;
         } else {
+          entry.cashOut = entryCashOut + Math.abs(amountGBP);
           totalWithdrawals += Math.abs(amountGBP);
         }
-        if (reference) {
-          seenRefs.add(reference);
-        }
+        history[monthKey][date] = entry;
+        transactionsApplied = true;
         if (!newest || item.ts > newest) newest = item.ts;
       }
       if (newest) {
