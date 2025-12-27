@@ -354,12 +354,6 @@ function normalizePortfolioHistory(user) {
           mutated = true;
           continue;
         }
-        const end = Number(record.end);
-        if (!Number.isFinite(end) || end < 0) {
-          delete days[dateKey];
-          mutated = true;
-          continue;
-        }
         const cashInRaw = Number(record.cashIn ?? 0);
         const cashOutRaw = Number(record.cashOut ?? 0);
         const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -369,6 +363,32 @@ function normalizePortfolioHistory(user) {
         const preBaselineRaw = record.preBaseline === true;
         const shouldBePreBaseline = anchor && dateKey < anchor;
         const preBaseline = preBaselineRaw || shouldBePreBaseline;
+        const end = Number(record.end);
+        if (!Number.isFinite(end) || end < 0) {
+          if (cashIn > 0 || cashOut > 0 || note) {
+            const cashPayload = preBaseline
+              ? { cashIn, cashOut, preBaseline: true }
+              : { cashIn, cashOut };
+            if (note) {
+              cashPayload.note = note;
+            }
+            if (
+              record.end !== undefined ||
+              cashIn !== cashInRaw ||
+              cashOut !== cashOutRaw ||
+              (!!record.preBaseline !== preBaseline) ||
+              (note && note !== noteRaw) ||
+              (!note && record.note !== undefined)
+            ) {
+              mutated = true;
+            }
+            days[dateKey] = cashPayload;
+          } else {
+            delete days[dateKey];
+            mutated = true;
+          }
+          continue;
+        }
         if (
           cashIn !== cashInRaw ||
           cashOut !== cashOutRaw ||
@@ -790,12 +810,14 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
     ? Number(user.initialNetDeposits)
     : 0;
   let total = baseline;
-  const entries = listChronologicalEntries(history);
-  for (const entry of entries) {
-    if (entry.preBaseline) continue;
-    const cashIn = Number.isFinite(entry.cashIn) ? entry.cashIn : 0;
-    const cashOut = Number.isFinite(entry.cashOut) ? entry.cashOut : 0;
-    total += cashIn - cashOut;
+  for (const days of Object.values(history || {})) {
+    for (const record of Object.values(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (record.preBaseline === true) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
+    }
   }
   return { baseline, total };
 }
@@ -1422,24 +1444,67 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         return aSymbol.localeCompare(bSymbol);
       });
       for (const raw of sortedPositions) {
-        const rawTicker = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        const instrument = raw?.instrument || {};
+        const walletImpact = raw?.walletImpact || {};
+        const rawTicker = String(
+          raw?.ticker ??
+          raw?.symbol ??
+          instrument?.ticker ??
+          instrument?.symbol ??
+          instrument?.isin ??
+          ''
+        ).trim().toUpperCase();
         const symbol = normalizeTrading212Symbol(rawTicker);
         if (!symbol) continue;
-        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
-        const existingTrade = existingTradeEntry?.trade;
-        const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
-        const entry = parseTradingNumber(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
-        const currentPrice = parseTradingNumber(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
-        const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
+        const quantity = parseTradingNumber(
+          raw?.quantity ??
+          raw?.qty ??
+          raw?.units ??
+          raw?.size ??
+          raw?.shares ??
+          raw?.quantityAvailableForTrading ??
+          raw?.availableQuantity
+        );
+        const entry = parseTradingNumber(
+          raw?.averagePricePaid ??
+          raw?.averagePrice ??
+          raw?.avgPrice ??
+          raw?.openPrice ??
+          raw?.price ??
+          raw?.averagePrice?.value ??
+          raw?.averagePrice?.amount
+        );
+        const currentPrice = parseTradingNumber(
+          raw?.currentPrice ??
+          raw?.lastPrice ??
+          raw?.price ??
+          raw?.marketPrice ??
+          instrument?.currentPrice ??
+          instrument?.price
+        );
+        const ppl = parseTradingNumber(
+          raw?.ppl ??
+          raw?.profitLoss ??
+          raw?.unrealizedPnl ??
+          raw?.pnl ??
+          raw?.openPnl ??
+          walletImpact?.unrealizedProfitLoss ??
+          walletImpact?.unrealizedPnl ??
+          walletImpact?.profitLoss ??
+          walletImpact?.pnl
+        );
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
+        const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
+        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === trading212Id || entry.trade?.symbol === symbol);
+        const existingTrade = existingTradeEntry?.trade;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = raw?.instrument?.currency ?? raw?.currency ?? 'USD';
+        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
@@ -1455,6 +1520,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.direction = direction;
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
+          existingTrade.trading212Id = trading212Id;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1491,7 +1557,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           tradeType: 'day',
           assetClass: 'stocks',
           source: 'trading212',
-          trading212Id: raw?.id,
+          trading212Id,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });

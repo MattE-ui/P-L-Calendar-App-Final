@@ -124,9 +124,6 @@ function formatSignedRaw(value, currency = state.currency) {
 }
 
 function formatLiveOpenPnl(value) {
-  if (state.liveOpenPnlMode === 'provider') {
-    return formatSignedRaw(value, state.liveOpenPnlCurrency || 'GBP');
-  }
   return formatSignedCurrency(value, state.currency);
 }
 
@@ -721,6 +718,12 @@ function renderActiveTrades() {
   trades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.source === 'trading212') {
+      const sourceLogo = document.createElement('div');
+      sourceLogo.className = 'trade-source-logo';
+      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      pill.appendChild(sourceLogo);
+    }
     const priceLine = document.createElement('div');
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
@@ -732,14 +735,11 @@ function renderActiveTrades() {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const pnlBadge = document.createElement('span');
     pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlBadge.textContent = `PnL ${trade.source === 'trading212'
-      ? formatSignedRaw(pnl, trade.currency)
-      : formatSignedCurrency(pnl)}`;
+    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
     badges.appendChild(pnlBadge);
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
-      ${trade.source === 'trading212' ? '<span class="trade-badge">Trading 212</span>' : ''}
       ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
     `);
     pill.appendChild(badges);
