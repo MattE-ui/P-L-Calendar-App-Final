@@ -13,6 +13,8 @@ const state = {
   liveOpenPnlGBP: 0,
   livePortfolioGBP: 0,
   activeTrades: [],
+  liveOpenPnlMode: 'computed',
+  liveOpenPnlCurrency: 'GBP',
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -119,6 +121,13 @@ function formatSignedRaw(value, currency = state.currency) {
   const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
   const symbol = currencySymbols[currency] || '';
   return `${sign}${symbol}${Math.abs(amount).toFixed(2)}`;
+}
+
+function formatLiveOpenPnl(value) {
+  if (state.liveOpenPnlMode === 'provider') {
+    return formatSignedRaw(value, state.liveOpenPnlCurrency || 'GBP');
+  }
+  return formatSignedCurrency(value, state.currency);
 }
 
 function formatShares(value) {
@@ -698,7 +707,7 @@ function renderActiveTrades() {
   list.innerHTML = '';
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-  if (pnlEl) pnlEl.textContent = formatSignedCurrency(livePnl, state.currency);
+  if (pnlEl) pnlEl.textContent = formatLiveOpenPnl(livePnl);
   if (pnlCard) {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
@@ -919,7 +928,7 @@ function renderMetrics() {
       if (altValue !== '—') pieces.push(`≈ ${altValue}`);
     }
     const openPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-    if (openPnl !== 0) pieces.push(`Live PnL: ${formatSignedCurrency(openPnl)}`);
+    if (openPnl !== 0) pieces.push(`Live PnL: ${formatLiveOpenPnl(openPnl)}`);
     portfolioSubEl.textContent = pieces.join(' • ');
   }
 
@@ -1417,6 +1426,8 @@ async function loadData() {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
+    state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
+    state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
@@ -1431,6 +1442,8 @@ async function refreshActiveTrades() {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
+    state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
+    state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
     renderActiveTrades();
     updatePortfolioPill();
     renderMetrics();
@@ -2130,6 +2143,23 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
+  window.addEventListener('resize', () => {
+    syncActiveTradesHeight();
+  });
+}
+
+async function updateDevtoolsNav() {
+  try {
+    const profile = await api('/api/profile');
+    const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
+    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+  } catch (e) {
+    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+  }
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { computeRiskPlan, summarizeWeek };
 }
 
 async function updateDevtoolsNav() {
