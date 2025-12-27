@@ -1412,12 +1412,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const amountGBP = txCurrency && txCurrency !== 'GBP'
           ? convertToGBP(amount, txCurrency, rates)
           : amount;
-        const date = dateKeyInTimezone(timezone, new Date(item.ts));
-        const monthKey = date.slice(0, 7);
-        history[monthKey] ||= {};
-        const entry = history[monthKey][date] || {};
-        const entryCashIn = Number(entry.cashIn ?? 0);
-        const entryCashOut = Number(entry.cashOut ?? 0);
         if (amountGBP > 0) {
           entry.cashIn = entryCashIn + amountGBP;
           totalDeposits += amountGBP;
@@ -1432,6 +1426,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       if (newest) {
         cfg.lastTransactionAt = new Date(newest).toISOString();
       }
+      transactionsApplied = totalDeposits !== 0 || totalWithdrawals !== 0;
       if (transactionsApplied) {
         user.initialNetDeposits = totalDeposits - totalWithdrawals;
         cfg.lastNetDeposits = user.initialNetDeposits;
