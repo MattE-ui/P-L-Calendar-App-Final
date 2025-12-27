@@ -171,6 +171,11 @@ function renderTrades() {
     assetCell.textContent = trade.assetClass || '—';
     tr.appendChild(assetCell);
 
+    const guaranteedCell = document.createElement('td');
+    guaranteedCell.textContent = formatCurrency(trade.guaranteedPnlGBP);
+    guaranteedCell.className = trade.guaranteedPnlGBP > 0 ? 'positive' : trade.guaranteedPnlGBP < 0 ? 'negative' : '';
+    tr.appendChild(guaranteedCell);
+
     const pnlCell = document.createElement('td');
     pnlCell.textContent = formatCurrency(trade.realizedPnlGBP);
     pnlCell.className = trade.realizedPnlGBP > 0 ? 'positive' : trade.realizedPnlGBP < 0 ? 'negative' : '';
@@ -242,6 +247,8 @@ function populateForm(trade) {
   document.querySelector('#form-currency').value = trade.currency || 'GBP';
   document.querySelector('#form-entry').value = trade.entry ?? '';
   document.querySelector('#form-stop').value = trade.stop ?? '';
+  const currentStopInput = document.querySelector('#form-current-stop');
+  if (currentStopInput) currentStopInput.value = trade.currentStop ?? '';
   document.querySelector('#form-risk-pct').value = trade.riskPct ?? '';
   document.querySelector('#form-risk-amount').value = trade.riskAmountCurrency ?? '';
   document.querySelector('#form-units').value = trade.sizeUnits ?? '';
@@ -306,6 +313,7 @@ function collectFormData() {
     currency: document.querySelector('#form-currency')?.value || 'GBP',
     entry: numberOrUndefined('#form-entry'),
     stop: numberOrUndefined('#form-stop'),
+    currentStop: numberOrUndefined('#form-current-stop'),
     riskPct: numberOrUndefined('#form-risk-pct'),
     riskAmount: numberOrUndefined('#form-risk-amount'),
     sizeUnits: numberOrUndefined('#form-units'),

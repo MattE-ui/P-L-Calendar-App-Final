@@ -751,10 +751,17 @@ function renderActiveTrades() {
     const badges = document.createElement('div');
     badges.className = 'trade-meta';
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+    const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const pnlBadge = document.createElement('span');
     pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
     pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
     badges.appendChild(pnlBadge);
+    if (guaranteed !== null) {
+      const guaranteedBadge = document.createElement('span');
+      guaranteedBadge.className = `trade-badge ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
+      guaranteedBadge.textContent = `Guaranteed ${formatSignedCurrency(guaranteed)}`;
+      badges.appendChild(guaranteedBadge);
+    }
     badges.insertAdjacentHTML('beforeend', `
       <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
       <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
@@ -896,6 +903,7 @@ function openEditTradeModal(trade) {
   const title = $('#edit-trade-title');
   const entryInput = $('#edit-trade-entry');
   const stopInput = $('#edit-trade-stop');
+  const currentStopInput = $('#edit-trade-current-stop');
   const unitsInput = $('#edit-trade-units');
   const status = $('#edit-trade-status');
   if (title) {
@@ -904,6 +912,7 @@ function openEditTradeModal(trade) {
   }
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
+  if (currentStopInput) currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
   if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
   if (status) status.textContent = '';
   modal.dataset.tradeId = trade.id;
@@ -1983,11 +1992,13 @@ function bindControls() {
     if (!tradeId) return;
     const entryInput = $('#edit-trade-entry');
     const stopInput = $('#edit-trade-stop');
+    const currentStopInput = $('#edit-trade-current-stop');
     const unitsInput = $('#edit-trade-units');
     const status = $('#edit-trade-status');
     if (status) status.textContent = '';
     const entryVal = Number(entryInput?.value);
     const stopVal = Number(stopInput?.value);
+    const currentStopVal = currentStopInput?.value.trim() ?? '';
     const unitsVal = Number(unitsInput?.value);
     if (!Number.isFinite(entryVal) || entryVal <= 0) {
       if (status) status.textContent = 'Enter a valid entry price.';
@@ -2010,6 +2021,15 @@ function bindControls() {
       if (status) status.textContent = 'Stop must be above entry for short trades.';
       return;
     }
+    let currentStopPayload;
+    if (currentStopVal) {
+      const parsedCurrentStop = Number(currentStopVal);
+      if (!Number.isFinite(parsedCurrentStop) || parsedCurrentStop <= 0) {
+        if (status) status.textContent = 'Enter a valid current stop price.';
+        return;
+      }
+      currentStopPayload = parsedCurrentStop;
+    }
     try {
       await api(`/api/trades/${tradeId}`, {
         method: 'PUT',
@@ -2017,6 +2037,7 @@ function bindControls() {
         body: JSON.stringify({
           entry: entryVal,
           stop: stopVal,
+          currentStop: currentStopPayload ?? null,
           sizeUnits: unitsVal
         })
       });
