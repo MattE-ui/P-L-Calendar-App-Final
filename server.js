@@ -1190,6 +1190,7 @@ async function fetchTrading212Snapshot(config) {
           `${root}/portfolio/positions`
         ];
         const transactionEndpoints = [
+          `${root}/equity/history/transactions?limit=50`,
           `${root}/history/transactions`,
           `${root}/history/transactions?type=CASH`,
           `${root}/history/cash`,
