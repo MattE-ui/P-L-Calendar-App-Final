@@ -417,19 +417,19 @@ function getValuesForSummary() {
   if (state.view === 'year') {
     const entries = getAllEntries();
     if (!entries.length) return [];
-    const firstYear = entries[0].date.getFullYear();
-    const lastYear = entries[entries.length - 1].date.getFullYear();
-    const summaries = [];
-    for (let year = firstYear; year <= lastYear; year++) {
-      const yearEntries = entries.filter(entry => entry.date.getFullYear() === year);
-      if (!yearEntries.length) continue;
+    const years = entries.reduce((acc, entry) => {
+      const year = entry.date.getFullYear();
+      if (!acc[year]) acc[year] = [];
+      acc[year].push(entry);
+      return acc;
+    }, {});
+    return Object.values(years).map(yearEntries => {
       const totalChange = yearEntries.reduce((sum, entry) => sum + (entry.change ?? 0), 0);
       const totalCashFlow = yearEntries.reduce((sum, entry) => sum + (entry.cashFlow ?? 0), 0);
       const baseline = yearEntries[0]?.opening ?? yearEntries[0]?.closing ?? null;
       const pct = baseline ? (totalChange / baseline) * 100 : null;
-      summaries.push({ change: totalChange, pct, cashFlow: totalCashFlow });
-    }
-    return summaries;
+      return { change: totalChange, pct, cashFlow: totalCashFlow };
+    });
   }
   if (state.view === 'week') {
     return getWeeksInMonth(state.selected).map(item => ({
@@ -1386,16 +1386,44 @@ function renderYear() {
   const firstYear = entries.length ? entries[0].date.getFullYear() : state.selected.getFullYear();
   const lastYear = entries.length ? entries[entries.length - 1].date.getFullYear() : state.selected.getFullYear();
   for (let year = firstYear; year <= lastYear; year++) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'year-group';
-    const heading = document.createElement('div');
-    heading.className = 'year-title';
-    heading.textContent = String(year);
-    const yearGrid = document.createElement('div');
-    yearGrid.className = 'grid year-grid';
-    renderYearGrid(new Date(year, 0, 1), yearGrid);
-    wrapper.append(heading, yearGrid);
-    grid.appendChild(wrapper);
+    const yearDate = new Date(year, 0, 1);
+    const months = getYearMonths(yearDate);
+    const totalChange = months.reduce((sum, item) => sum + (item.hasChange ? item.totalChange : 0), 0);
+    const totalCashFlow = months.reduce((sum, item) => sum + (item.totalCashFlow ?? 0), 0);
+    const yearEntries = entries.filter(entry => entry.date.getFullYear() === year);
+    const baselineVal = yearEntries.length
+      ? (yearEntries[0].opening ?? yearEntries[0].closing ?? null)
+      : null;
+    const pct = baselineVal ? (totalChange / baselineVal) * 100 : null;
+    const hasChange = months.some(item => item.hasChange);
+    const row = document.createElement('div');
+    row.className = 'list-row year-row';
+    if (totalChange > 0) row.classList.add('profit');
+    if (totalChange < 0) row.classList.add('loss');
+    const changeText = hasChange ? `Δ ${formatSignedCurrency(totalChange)}` : 'Δ —';
+    const pctText = hasChange && pct !== null ? formatPercent(pct) : '—';
+    const cashHtml = totalCashFlow === 0
+      ? ''
+      : `<span class="cashflow">Cash flow: ${formatSignedCurrency(totalCashFlow)}</span>`;
+    const recordedDays = months.reduce((sum, item) => sum + (item.recordedDays ?? 0), 0);
+    row.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${year}</div>
+        <div class="row-sub">${recordedDays ? `${recordedDays} recorded day${recordedDays === 1 ? '' : 's'}` : 'No entries recorded'}</div>
+      </div>
+      <div class="row-value">
+        <strong>${changeText}</strong>
+        <span>${pctText}</span>
+        ${cashHtml}
+      </div>
+    `;
+    row.addEventListener('click', () => {
+      state.view = 'month';
+      state.selected = new Date(year, 0, 1);
+      updatePeriodSelect();
+      render();
+    });
+    grid.appendChild(row);
   }
 }
 
@@ -1406,7 +1434,10 @@ function renderView() {
     grid.className = 'grid view-month';
     return renderMonthGrid(state.selected, grid);
   }
-  if (state.view === 'week') return renderWeek();
+  if (state.view === 'week') {
+    grid.className = 'grid view-week';
+    return renderWeek();
+  }
   if (state.view === 'month') {
     grid.className = 'grid view-year';
     return renderMonth();
