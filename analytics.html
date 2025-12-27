@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics | P&L Calendar</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1>P&L Calendar</h1>
+        <p class="hero-sub">Trading journal & performance dashboard</p>
+      </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="trades-btn" class="ghost">Trades</button>
+      <button id="profile-btn" class="ghost">Profile</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
+
+  <main class="container">
+    <section class="page-title">
+      <h2>Analytics</h2>
+    </section>
+    <section class="title-wrap">
+      <h2>Performance analytics</h2>
+      <p class="avg" id="analytics-range"></p>
+    </section>
+
+    <section class="tool-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Filters</p>
+          <h3>Date & trade filters</h3>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <div class="tool-field">
+          <label for="filter-from">From</label>
+          <input type="date" id="filter-from">
+        </div>
+        <div class="tool-field">
+          <label for="filter-to">To</label>
+          <input type="date" id="filter-to">
+        </div>
+        <div class="tool-field">
+          <label for="filter-symbol">Symbol</label>
+          <input type="text" id="filter-symbol" placeholder="AAPL">
+        </div>
+        <div class="tool-field">
+          <label for="filter-trade-type">Trade type</label>
+          <select id="filter-trade-type">
+            <option value="">Any</option>
+            <option value="scalp">Scalp</option>
+            <option value="day">Day</option>
+            <option value="swing">Swing</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-asset-class">Asset class</label>
+          <select id="filter-asset-class">
+            <option value="">Any</option>
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+            <option value="forex">Forex</option>
+            <option value="crypto">Crypto</option>
+            <option value="futures">Futures</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-strategy">Strategy tag</label>
+          <input type="text" id="filter-strategy" placeholder="Breakout">
+        </div>
+        <div class="tool-field">
+          <label for="filter-tags">Tags</label>
+          <input type="text" id="filter-tags" placeholder="disciplined, breakout">
+        </div>
+        <div class="tool-field">
+          <label for="filter-winloss">Result</label>
+          <select id="filter-winloss">
+            <option value="">Any</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+          </select>
+        </div>
+      </div>
+      <div class="filter-actions" style="margin-top:12px;">
+        <button id="apply-filters-btn" class="primary">Apply</button>
+        <button id="reset-filters-btn" class="ghost">Reset</button>
+      </div>
+    </section>
+
+    <section class="kpi-grid" id="kpi-grid">
+      <article class="kpi-card">
+        <p class="tool-overline">Win rate</p>
+        <h3 id="kpi-win-rate">0%</h3>
+        <p class="tool-note">Loss rate: <span id="kpi-loss-rate">0%</span></p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Average win</p>
+        <h3 id="kpi-avg-win">£0.00</h3>
+        <p class="tool-note">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Expectancy per trade</p>
+        <h3 id="kpi-expectancy">£0.00</h3>
+        <p class="tool-note">Profit factor: <span id="kpi-profit-factor">—</span></p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Average R multiple</p>
+        <h3 id="kpi-r-multiple">—</h3>
+        <p class="tool-note">Closed trades only</p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Max drawdown</p>
+        <h3 id="kpi-drawdown">£0.00</h3>
+        <p class="tool-note">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Distribution</p>
+        <h3 id="kpi-median">£0.00 median</h3>
+        <p class="tool-note">Std dev: <span id="kpi-stddev">—</span></p>
+      </article>
+      <article class="kpi-card">
+        <p class="tool-overline">Streaks</p>
+        <h3 id="kpi-streaks">—</h3>
+        <p class="tool-note">Wins / losses</p>
+      </article>
+    </section>
+
+    <section class="chart-card">
+      <div class="section-header">
+        <h3>Equity curve</h3>
+      </div>
+      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
+    </section>
+
+    <section class="chart-card">
+      <div class="section-header">
+        <h3>Drawdown</h3>
+      </div>
+      <canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas>
+    </section>
+
+    <section class="chart-card">
+      <div class="section-header">
+        <h3>P&L distribution</h3>
+      </div>
+      <canvas id="distribution-chart" aria-label="Distribution chart"></canvas>
+    </section>
+
+    <section class="analytics-grid">
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>P&L by trade type</h3>
+        </div>
+        <canvas id="type-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>P&L by strategy tag</h3>
+        </div>
+        <canvas id="strategy-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>Win rate by trade type</h3>
+        </div>
+        <canvas id="winrate-type-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-card">
+      <div class="section-header">
+        <h3>Monthly heatmap</h3>
+      </div>
+      <div id="heatmap-grid" class="heatmap"></div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="static/analytics.js"></script>
+
+  <div id="quick-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="qs-risk-select">Default risk per trade</label>
+        <select id="qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="qs-currency-select">Default currency</label>
+        <select id="qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="save-qs-btn" class="primary">Save</button>
+        <button id="close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
