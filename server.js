@@ -2471,9 +2471,11 @@ async function buildActiveTrades(user, rates = {}) {
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
     const tradeCurrency = trade.currency || 'GBP';
+    const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     try {
-      if (trade.trading212Id && Number.isFinite(Number(trade.lastSyncPrice))) {
+      if (isTrading212 && Number.isFinite(Number(trade.lastSyncPrice))) {
         livePrice = Number(trade.lastSyncPrice);
+        liveCurrency = tradeCurrency;
       } else if (quoteSymbol) {
         const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
@@ -2504,7 +2506,6 @@ async function buildActiveTrades(user, rates = {}) {
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
-    const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     const syncPpl = Number(trade.ppl);
     if (isTrading212 && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
@@ -2512,11 +2513,11 @@ async function buildActiveTrades(user, rates = {}) {
     const pnlGBP = pnlCurrency !== null
       ? convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates)
       : null;
-    const feesGBP = Number.isFinite(feesCurrency)
+    const feesGBP = (!isTrading212 && Number.isFinite(feesCurrency))
       ? convertToGBP(feesCurrency, tradeCurrency, rates)
       : null;
     let fxFeeGBP = null;
-    if (fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0 && entryValueGBP !== null) {
+    if (!isTrading212 && fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0 && entryValueGBP !== null) {
       const entryFeeGBP = Math.abs(entryValueGBP) * fxFeeRate;
       const exitBasisGBP = positionGBP !== null ? Math.abs(positionGBP) : Math.abs(entryValueGBP);
       const exitFeeGBP = exitBasisGBP * fxFeeRate;
