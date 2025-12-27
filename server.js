@@ -526,13 +526,9 @@ function normalizeTradeJournal(user) {
         normalizedTrade.trading212Id = trade.trading212Id;
       }
       const lastSyncPrice = parseTradingNumber(trade.lastSyncPrice);
-      const fxPpl = parseTradingNumber(trade.fxPpl);
       const ppl = parseTradingNumber(trade.ppl);
       if (Number.isFinite(lastSyncPrice)) {
         normalizedTrade.lastSyncPrice = lastSyncPrice;
-      }
-      if (Number.isFinite(fxPpl)) {
-        normalizedTrade.fxPpl = fxPpl;
       }
       if (Number.isFinite(ppl)) {
         normalizedTrade.ppl = ppl;
@@ -1434,7 +1430,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const quantity = Number(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
         const entry = Number(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
         const currentPrice = Number(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
-        const fxPpl = parseTradingNumber(raw?.fxPpl ?? raw?.fxPnl ?? raw?.fxProfitLoss ?? raw?.fxGainLoss);
         const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
@@ -1462,9 +1457,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.source = 'trading212';
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
-          }
-          if (Number.isFinite(fxPpl)) {
-            existingTrade.fxPpl = fxPpl;
           }
           if (Number.isFinite(ppl)) {
             existingTrade.ppl = ppl;
@@ -1501,7 +1493,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           source: 'trading212',
           trading212Id: raw?.id,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
-          fxPpl: Number.isFinite(fxPpl) ? fxPpl : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
         journal[normalizedDate].push(trade);
