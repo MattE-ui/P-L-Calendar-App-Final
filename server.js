@@ -2510,9 +2510,12 @@ async function buildActiveTrades(user, rates = {}) {
     if (isTrading212 && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
     }
-    const pnlGBP = pnlCurrency !== null
-      ? convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates)
-      : null;
+    let pnlGBP = null;
+    if (isTrading212 && Number.isFinite(syncPpl)) {
+      pnlGBP = syncPpl;
+    } else if (pnlCurrency !== null) {
+      pnlGBP = convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates);
+    }
     const feesGBP = (!isTrading212 && Number.isFinite(feesCurrency))
       ? convertToGBP(feesCurrency, tradeCurrency, rates)
       : null;
