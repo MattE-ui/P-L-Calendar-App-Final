@@ -169,10 +169,10 @@ function computeRiskPlan({
   };
 }
 
-function formatPrice(value, currency = state.currency) {
+function formatPrice(value, currency = state.currency, decimals = 4) {
   const symbol = currencySymbols[currency] || '';
   if (!Number.isFinite(value)) return '—';
-  return `${symbol}${value.toFixed(4)}`;
+  return `${symbol}${value.toFixed(decimals)}`;
 }
 
 function toGBP(value, currency = state.currency) {
@@ -746,7 +746,11 @@ function renderActiveTrades() {
     priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency)} • Stop ${formatPrice(trade.stop, trade.currency)} • Live ${formatPrice(livePrice, trade.currency)}`;
+    const currentStop = Number.isFinite(trade.currentStop) ? trade.currentStop : null;
+    const stopDisplay = currentStop !== null
+      ? `Stop ${formatPrice(trade.stop, trade.currency, 2)} • Current Stop ${formatPrice(currentStop, trade.currency, 2)}`
+      : `Stop ${formatPrice(trade.stop, trade.currency, 2)}`;
+    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency, 2)} • ${stopDisplay} • Live ${formatPrice(livePrice, trade.currency, 2)}`;
     pill.appendChild(priceLine);
     const badges = document.createElement('div');
     badges.className = 'trade-meta';
