@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trades | P&L Calendar</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1>P&L Calendar</h1>
+        <p class="hero-sub">Trading journal & performance dashboard</p>
+      </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="analytics-btn" class="ghost">Analytics</button>
+      <button id="profile-btn" class="ghost">Profile</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
+
+  <main class="container">
+    <section class="page-title">
+      <h2>Trades</h2>
+    </section>
+    <section class="title-wrap trade-title-wrap">
+      <h2 class="trade-title">Trade Journal</h2>
+      <p id="trade-subtitle" class="avg"></p>
+      <button id="add-trade-btn" class="primary add-trade-btn" aria-label="Add trade">+</button>
+    </section>
+
+    <section class="tool-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Filters</p>
+          <h3>Find trades</h3>
+        </div>
+        <div class="filter-actions">
+          <button id="trade-settings-btn" class="ghost">Quick settings</button>
+          <button id="export-csv-btn" class="ghost">Export CSV</button>
+        </div>
+      </div>
+      <div id="filters-panel">
+      <div class="filter-bar">
+        <div class="tool-field">
+          <label for="filter-from">From</label>
+          <input type="date" id="filter-from">
+        </div>
+        <div class="tool-field">
+          <label for="filter-to">To</label>
+          <input type="date" id="filter-to">
+        </div>
+        <div class="tool-field">
+          <label for="filter-symbol">Symbol</label>
+          <input type="text" id="filter-symbol" placeholder="AAPL">
+        </div>
+        <div class="tool-field">
+          <label for="filter-trade-type">Trade type</label>
+          <select id="filter-trade-type">
+            <option value="">Any</option>
+            <option value="scalp">Scalp</option>
+            <option value="day">Day</option>
+            <option value="swing">Swing</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-asset-class">Asset class</label>
+          <select id="filter-asset-class">
+            <option value="">Any</option>
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+            <option value="forex">Forex</option>
+            <option value="crypto">Crypto</option>
+            <option value="futures">Futures</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-strategy">Strategy tag</label>
+          <input type="text" id="filter-strategy" placeholder="Breakout">
+        </div>
+        <div class="tool-field">
+          <label for="filter-tags">Tags (comma separated)</label>
+          <input type="text" id="filter-tags" placeholder="breakout, disciplined">
+        </div>
+        <div class="tool-field">
+          <label for="filter-winloss">Result</label>
+          <select id="filter-winloss">
+            <option value="">Any</option>
+            <option value="win">Win</option>
+            <option value="loss">Loss</option>
+          </select>
+        </div>
+      </div>
+      <div class="filter-actions" style="margin-top:12px;">
+        <button id="apply-filters-btn" class="primary">Apply filters</button>
+        <button id="reset-filters-btn" class="ghost">Reset</button>
+      </div>
+      </div>
+    </section>
+
+    <section class="tool-card list-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Trades</p>
+          <h3>Logged trades</h3>
+        </div>
+        <div class="pill" id="trade-count-pill"></div>
+      </div>
+      <div class="table-wrapper">
+        <table id="trade-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th>Asset</th>
+              <th>Result (GBP)</th>
+              <th>Source</th>
+              <th>Tags</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="tool-note" id="trade-empty">No trades match the current filters.</p>
+    </section>
+  </main>
+
+  <div id="trade-form-modal" class="modal hidden">
+    <div class="modal-card trade-form-modal">
+      <div class="modal-header">
+        <h3 id="form-title">Log a trade</h3>
+        <button id="close-trade-form-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <div class="pill" id="form-status"></div>
+      <form id="trade-form">
+        <input type="hidden" id="trade-id">
+        <div class="grid two-col">
+          <div class="tool-field">
+            <label for="form-symbol">Symbol</label>
+            <input type="text" id="form-symbol" required placeholder="AAPL">
+          </div>
+          <div class="tool-field">
+            <label for="form-currency">Currency</label>
+            <select id="form-currency">
+              <option value="GBP">GBP</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label for="form-entry">Entry</label>
+            <input type="number" id="form-entry" step="0.0001" min="0" required>
+          </div>
+          <div class="tool-field">
+            <label for="form-stop">Stop</label>
+            <input type="number" id="form-stop" step="0.0001" min="0" required>
+          </div>
+          <div class="tool-field">
+            <label for="form-risk-pct">Risk % of portfolio</label>
+            <input type="number" id="form-risk-pct" step="0.01" min="0">
+          </div>
+          <div class="tool-field">
+            <label for="form-risk-amount">or Risk amount (in trade currency)</label>
+            <input type="number" id="form-risk-amount" step="0.01" min="0">
+          </div>
+          <div class="tool-field">
+            <label for="form-units">Units</label>
+            <input type="number" id="form-units" step="0.0001" min="0">
+          </div>
+          <div class="tool-field">
+            <label for="form-open-date">Open date</label>
+            <input type="date" id="form-open-date">
+          </div>
+          <div class="tool-field">
+            <label for="form-close-date">Close date (optional)</label>
+            <input type="date" id="form-close-date">
+          </div>
+          <div class="tool-field">
+            <label for="form-close-price">Close price (optional)</label>
+            <input type="number" id="form-close-price" step="0.0001" min="0">
+          </div>
+          <div class="tool-field">
+            <label for="form-trade-type">Trade type</label>
+            <select id="form-trade-type">
+              <option value="day">Day</option>
+              <option value="scalp">Scalp</option>
+              <option value="swing">Swing</option>
+              <option value="position">Position</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label for="form-asset-class">Asset class</label>
+            <select id="form-asset-class">
+              <option value="stocks">Stocks</option>
+              <option value="options">Options</option>
+              <option value="forex">Forex</option>
+              <option value="crypto">Crypto</option>
+              <option value="futures">Futures</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label for="form-strategy">Strategy tag</label>
+            <input type="text" id="form-strategy" placeholder="Breakout, pullback...">
+          </div>
+          <div class="tool-field">
+            <label for="form-market-condition">Market condition</label>
+            <select id="form-market-condition">
+              <option value="">Select</option>
+              <option value="bull">Bull</option>
+              <option value="bear">Bear</option>
+              <option value="range">Range</option>
+              <option value="volatile">Volatile</option>
+              <option value="news-driven">News-driven</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label>Setup tags</label>
+            <div class="checkbox-grid" id="form-setup-tags">
+              <label><input type="checkbox" name="form-setup" value="breakout"> Breakout</label>
+              <label><input type="checkbox" name="form-setup" value="pullback"> Pullback</label>
+              <label><input type="checkbox" name="form-setup" value="mean reversion"> Mean reversion</label>
+              <label><input type="checkbox" name="form-setup" value="trend"> Trend</label>
+              <label><input type="checkbox" name="form-setup" value="news"> News</label>
+              <label><input type="checkbox" name="form-setup" value="momentum"> Momentum</label>
+            </div>
+          </div>
+          <div class="tool-field">
+            <label>Emotion tags</label>
+            <div class="checkbox-grid" id="form-emotion-tags">
+              <label><input type="checkbox" name="form-emotion" value="FOMO"> FOMO</label>
+              <label><input type="checkbox" name="form-emotion" value="revenge"> Revenge</label>
+              <label><input type="checkbox" name="form-emotion" value="disciplined"> Disciplined</label>
+              <label><input type="checkbox" name="form-emotion" value="hesitant"> Hesitant</label>
+              <label><input type="checkbox" name="form-emotion" value="confident"> Confident</label>
+            </div>
+          </div>
+          <div class="tool-field">
+            <label for="form-screenshot">Screenshot URL</label>
+            <input type="url" id="form-screenshot" placeholder="https://...">
+          </div>
+        </div>
+        <div class="tool-field">
+          <label for="form-notes">Notes</label>
+          <textarea id="form-notes" rows="3" placeholder="Setup, execution, lessons learned"></textarea>
+        </div>
+        <div class="tool-actions">
+          <button type="submit" class="primary" id="save-trade-btn">Save trade</button>
+          <button type="button" class="ghost" id="reset-form-btn">Reset</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="trade-settings-modal" class="modal hidden">
+    <div class="modal-card trade-form-modal">
+      <div class="modal-header">
+        <h3>Quick settings</h3>
+        <button id="close-trade-settings-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <div class="grid two-col">
+        <div class="tool-field">
+          <label for="qs-trade-type">Default trade type</label>
+          <select id="qs-trade-type">
+            <option value="">No default</option>
+            <option value="scalp">Scalp</option>
+            <option value="day">Day</option>
+            <option value="swing">Swing</option>
+            <option value="position">Position</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-asset-class">Default asset class</label>
+          <select id="qs-asset-class">
+            <option value="">No default</option>
+            <option value="stocks">Stocks</option>
+            <option value="options">Options</option>
+            <option value="forex">Forex</option>
+            <option value="crypto">Crypto</option>
+            <option value="futures">Futures</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-strategy">Default strategy tag</label>
+          <input type="text" id="qs-strategy" placeholder="Breakout">
+        </div>
+        <div class="tool-field">
+          <label for="qs-market-condition">Default market condition</label>
+          <select id="qs-market-condition">
+            <option value="">No default</option>
+            <option value="bull">Bull</option>
+            <option value="bear">Bear</option>
+            <option value="range">Range</option>
+            <option value="volatile">Volatile</option>
+            <option value="news-driven">News-driven</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="qs-setup-tags">Default setup tags (comma separated)</label>
+          <input type="text" id="qs-setup-tags" placeholder="breakout, trend">
+        </div>
+        <div class="tool-field">
+          <label for="qs-emotion-tags">Default emotion tags (comma separated)</label>
+          <input type="text" id="qs-emotion-tags" placeholder="disciplined, confident">
+        </div>
+      </div>
+      <div class="row">
+        <button id="save-quick-settings-btn" class="primary">Save defaults</button>
+        <button id="cancel-trade-settings-btn" class="ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/trades.js"></script>
+</body>
+</html>
