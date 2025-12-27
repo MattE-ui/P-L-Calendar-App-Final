@@ -2473,7 +2473,7 @@ async function fetchYahooQuote(symbol) {
 async function fetchYahooChartQuote(symbol) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=true`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=false`;
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0',
@@ -2629,7 +2629,7 @@ async function fetchYahooDayLowForDate(symbol, dateKey) {
   const offsetMinutes = getTimezoneOffset(baseUtc, 'America/New_York');
   const start = baseUtc.getTime() + offsetMinutes * 60000;
   const end = start + 24 * 60 * 60 * 1000;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&period1=${Math.floor(start / 1000)}&period2=${Math.floor(end / 1000)}&includePrePost=true`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&period1=${Math.floor(start / 1000)}&period2=${Math.floor(end / 1000)}&includePrePost=false`;
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0',
