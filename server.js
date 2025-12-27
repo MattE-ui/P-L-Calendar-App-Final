@@ -354,12 +354,6 @@ function normalizePortfolioHistory(user) {
           mutated = true;
           continue;
         }
-        const end = Number(record.end);
-        if (!Number.isFinite(end) || end < 0) {
-          delete days[dateKey];
-          mutated = true;
-          continue;
-        }
         const cashInRaw = Number(record.cashIn ?? 0);
         const cashOutRaw = Number(record.cashOut ?? 0);
         const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -369,6 +363,32 @@ function normalizePortfolioHistory(user) {
         const preBaselineRaw = record.preBaseline === true;
         const shouldBePreBaseline = anchor && dateKey < anchor;
         const preBaseline = preBaselineRaw || shouldBePreBaseline;
+        const end = Number(record.end);
+        if (!Number.isFinite(end) || end < 0) {
+          if (cashIn > 0 || cashOut > 0 || note) {
+            const cashPayload = preBaseline
+              ? { cashIn, cashOut, preBaseline: true }
+              : { cashIn, cashOut };
+            if (note) {
+              cashPayload.note = note;
+            }
+            if (
+              record.end !== undefined ||
+              cashIn !== cashInRaw ||
+              cashOut !== cashOutRaw ||
+              (!!record.preBaseline !== preBaseline) ||
+              (note && note !== noteRaw) ||
+              (!note && record.note !== undefined)
+            ) {
+              mutated = true;
+            }
+            days[dateKey] = cashPayload;
+          } else {
+            delete days[dateKey];
+            mutated = true;
+          }
+          continue;
+        }
         if (
           cashIn !== cashInRaw ||
           cashOut !== cashOutRaw ||
@@ -743,6 +763,27 @@ function buildSnapshots(history, initial, tradeJournal = {}) {
     snapshots[monthKey][entry.date] = payload;
     baseline = entry.end;
   }
+  for (const [monthKey, days] of Object.entries(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const end = Number(record.end);
+      if (Number.isFinite(end) && end >= 0) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      const noteRaw = typeof record.note === 'string' ? record.note : '';
+      const note = noteRaw.trim();
+      if ((!Number.isFinite(cashIn) || cashIn <= 0) && (!Number.isFinite(cashOut) || cashOut <= 0) && !note) {
+        continue;
+      }
+      if (!snapshots[monthKey]) snapshots[monthKey] = {};
+      if (!snapshots[monthKey][dateKey]) snapshots[monthKey][dateKey] = {};
+      const payload = snapshots[monthKey][dateKey];
+      if (Number.isFinite(cashIn) && cashIn >= 0) payload.cashIn = cashIn;
+      if (Number.isFinite(cashOut) && cashOut >= 0) payload.cashOut = cashOut;
+      if (record.preBaseline === true) payload.preBaseline = true;
+      if (note) payload.note = note;
+    }
+  }
   for (const [dateKey, trades] of Object.entries(tradeJournal)) {
     const monthKey = dateKey.slice(0, 7);
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
@@ -790,12 +831,14 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
     ? Number(user.initialNetDeposits)
     : 0;
   let total = baseline;
-  const entries = listChronologicalEntries(history);
-  for (const entry of entries) {
-    if (entry.preBaseline) continue;
-    const cashIn = Number.isFinite(entry.cashIn) ? entry.cashIn : 0;
-    const cashOut = Number.isFinite(entry.cashOut) ? entry.cashOut : 0;
-    total += cashIn - cashOut;
+  for (const days of Object.values(history || {})) {
+    for (const record of Object.values(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (record.preBaseline === true) continue;
+      const cashIn = Number(record.cashIn ?? 0);
+      const cashOut = Number(record.cashOut ?? 0);
+      total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
+    }
   }
   return { baseline, total };
 }
@@ -1147,6 +1190,7 @@ async function fetchTrading212Snapshot(config) {
           `${root}/portfolio/positions`
         ];
         const transactionEndpoints = [
+          `${root}/equity/history/transactions?limit=50`,
           `${root}/history/transactions`,
           `${root}/history/transactions?type=CASH`,
           `${root}/history/cash`,
@@ -1172,11 +1216,44 @@ async function fetchTrading212Snapshot(config) {
         }
         for (const candidate of transactionEndpoints) {
           try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
-            if (Array.isArray(list)) {
-              transactions = list;
-              transactionsRaw = payload;
+            let nextPath = candidate;
+            const aggregated = [];
+            const rawPages = [];
+            let pageCount = 0;
+            while (nextPath && pageCount < 25) {
+              pageCount += 1;
+              const payload = await requestTrading212RawEndpoint(`${base}${nextPath}`, headers);
+              rawPages.push(payload);
+              const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+              if (Array.isArray(list)) {
+                aggregated.push(...list);
+              }
+              const nextRaw = payload?.nextPagePath || payload?.nextPage?.path || payload?.next;
+              if (!nextRaw) break;
+              if (typeof nextRaw === 'string') {
+                if (nextRaw.startsWith('http')) {
+                  nextPath = nextRaw.replace(base, '');
+                } else if (nextRaw.startsWith('/')) {
+                  nextPath = nextRaw;
+                } else if (nextRaw.startsWith('?') || nextRaw.includes('cursor=')) {
+                  const basePath = candidate.split('?')[0];
+                  nextPath = `${basePath}${nextRaw.startsWith('?') ? '' : '?'}${nextRaw}`;
+                } else {
+                  nextPath = `/${nextRaw}`;
+                }
+              } else {
+                nextPath = null;
+              }
+            }
+            if (rawPages.length) {
+              if (aggregated.length) {
+                transactions = aggregated;
+              }
+              if (rawPages.length === 1) {
+                transactionsRaw = rawPages[0] ?? { items: [] };
+              } else {
+                transactionsRaw = { items: aggregated, pages: rawPages };
+              }
               break;
             }
           } catch (e) {
@@ -1250,9 +1327,29 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
-    const previousNet = Number.isFinite(Number(cfg.lastNetDeposits))
-      ? Number(cfg.lastNetDeposits)
-      : currentTotal;
+    if (!cfg.authoritativeSyncAt) {
+      for (const [monthKey, days] of Object.entries(history)) {
+        for (const [dayKey, record] of Object.entries(days || {})) {
+          if (!record || typeof record !== 'object') continue;
+          const end = Number(record.end);
+          if (!Number.isFinite(end) || end < 0) {
+            delete days[dayKey];
+            continue;
+          }
+          record.cashIn = 0;
+          record.cashOut = 0;
+        }
+        if (!Object.keys(days).length) {
+          delete history[monthKey];
+        }
+      }
+      user.initialNetDeposits = 0;
+      user.netDepositsAnchor = null;
+      cfg.lastNetDeposits = 0;
+      cfg.authoritativeSyncAt = new Date().toISOString();
+      cfg.lastTransactionAt = null;
+      cfg.processedReferences = [];
+    }
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
     const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
@@ -1271,7 +1368,21 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           : inlineTransactions;
     let transactionsApplied = false;
     if (Array.isArray(effectiveTransactions)) {
-      const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
+      for (const [monthKey, days] of Object.entries(history)) {
+        for (const [dayKey, record] of Object.entries(days || {})) {
+          if (!record || typeof record !== 'object') continue;
+          const end = Number(record.end);
+          if (!Number.isFinite(end) || end < 0) {
+            delete days[dayKey];
+            continue;
+          }
+          record.cashIn = 0;
+          record.cashOut = 0;
+        }
+        if (!Object.keys(days).length) {
+          delete history[monthKey];
+        }
+      }
       const txs = effectiveTransactions
         .map(tx => {
           const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
@@ -1279,14 +1390,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         })
         .filter(item => Number.isFinite(item.ts))
         .sort((a, b) => a.ts - b.ts);
-      let newest = lastTxAt;
+      let newest = null;
+      let totalDeposits = 0;
+      let totalWithdrawals = 0;
       for (const item of txs) {
-        if (lastTxAt && item.ts <= lastTxAt) continue;
         const tx = item.tx || {};
-        const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-        if (reference && cfg.processedReferences.includes(reference)) {
-          continue;
-        }
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
         if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
           continue;
@@ -1312,37 +1420,28 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const entryCashOut = Number(entry.cashOut ?? 0);
         if (amountGBP > 0) {
           entry.cashIn = entryCashIn + amountGBP;
+          totalDeposits += amountGBP;
         } else {
           entry.cashOut = entryCashOut + Math.abs(amountGBP);
+          totalWithdrawals += Math.abs(amountGBP);
         }
         history[monthKey][date] = entry;
         transactionsApplied = true;
-        if (reference) {
-          cfg.processedReferences.push(reference);
-          if (cfg.processedReferences.length > 500) {
-            cfg.processedReferences = cfg.processedReferences.slice(-500);
-          }
-        }
         if (!newest || item.ts > newest) newest = item.ts;
       }
       if (newest) {
         cfg.lastTransactionAt = new Date(newest).toISOString();
       }
       if (transactionsApplied) {
-        const { total: updatedTotal } = computeNetDepositsTotals(user, history);
-        cfg.lastNetDeposits = updatedTotal;
+        user.initialNetDeposits = totalDeposits - totalWithdrawals;
+        cfg.lastNetDeposits = user.initialNetDeposits;
+        user.netDepositsAnchor = dateKey;
       }
     }
-    if (snapshot.netDeposits !== null) {
-      const delta = snapshot.netDeposits - previousNet;
-      if (delta > 0) {
-        cashIn += delta;
-      } else if (delta < 0) {
-        cashOut += Math.abs(delta);
-      }
-      if (!transactionsApplied) {
-        cfg.lastNetDeposits = snapshot.netDeposits;
-      }
+    if (!transactionsApplied && snapshot.netDeposits !== null) {
+      user.initialNetDeposits = snapshot.netDeposits;
+      cfg.lastNetDeposits = snapshot.netDeposits;
+      user.netDepositsAnchor = dateKey;
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const payload = {
@@ -1407,39 +1506,82 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           ? snapshot.positionsRaw
           : inlinePositions;
     let positionsMutated = false;
-    if (Array.isArray(effectivePositions) && effectivePositions.length) {
-      const journal = ensureTradeJournal(user);
-      const openTrades = [];
-      for (const [tradeDate, items] of Object.entries(journal)) {
-        for (const trade of items || []) {
-          if (!trade || trade.status === 'closed') continue;
-          openTrades.push({ tradeDate, trade });
-        }
+    const journal = ensureTradeJournal(user);
+    const openTrades = [];
+    for (const [tradeDate, items] of Object.entries(journal)) {
+      for (const trade of items || []) {
+        if (!trade || trade.status === 'closed') continue;
+        openTrades.push({ tradeDate, trade });
       }
+    }
+    if (Array.isArray(effectivePositions) && effectivePositions.length) {
       const sortedPositions = effectivePositions.slice().sort((a, b) => {
         const aSymbol = String(a?.instrument?.ticker ?? a?.ticker ?? a?.symbol ?? '').toUpperCase();
         const bSymbol = String(b?.instrument?.ticker ?? b?.ticker ?? b?.symbol ?? '').toUpperCase();
         return aSymbol.localeCompare(bSymbol);
       });
       for (const raw of sortedPositions) {
-        const rawTicker = String(raw?.ticker ?? raw?.symbol ?? raw?.instrument?.ticker ?? raw?.instrument?.symbol ?? '').trim().toUpperCase();
+        const instrument = raw?.instrument || {};
+        const walletImpact = raw?.walletImpact || {};
+        const rawTicker = String(
+          raw?.ticker ??
+          raw?.symbol ??
+          instrument?.ticker ??
+          instrument?.symbol ??
+          instrument?.isin ??
+          ''
+        ).trim().toUpperCase();
         const symbol = normalizeTrading212Symbol(rawTicker);
         if (!symbol) continue;
-        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === raw?.id || entry.trade?.symbol === symbol);
-        const existingTrade = existingTradeEntry?.trade;
-        const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
-        const entry = parseTradingNumber(raw?.averagePricePaid ?? raw?.averagePrice ?? raw?.avgPrice ?? raw?.openPrice ?? raw?.price);
-        const currentPrice = parseTradingNumber(raw?.currentPrice ?? raw?.lastPrice ?? raw?.price);
-        const ppl = parseTradingNumber(raw?.ppl ?? raw?.profitLoss ?? raw?.unrealizedPnl ?? raw?.pnl ?? raw?.openPnl);
+        const quantity = parseTradingNumber(
+          raw?.quantity ??
+          raw?.qty ??
+          raw?.units ??
+          raw?.size ??
+          raw?.shares ??
+          raw?.quantityAvailableForTrading ??
+          raw?.availableQuantity
+        );
+        const entry = parseTradingNumber(
+          raw?.averagePricePaid ??
+          raw?.averagePrice ??
+          raw?.avgPrice ??
+          raw?.openPrice ??
+          raw?.price ??
+          raw?.averagePrice?.value ??
+          raw?.averagePrice?.amount
+        );
+        const currentPrice = parseTradingNumber(
+          raw?.currentPrice ??
+          raw?.lastPrice ??
+          raw?.price ??
+          raw?.marketPrice ??
+          instrument?.currentPrice ??
+          instrument?.price
+        );
+        const ppl = parseTradingNumber(
+          raw?.ppl ??
+          raw?.profitLoss ??
+          raw?.unrealizedPnl ??
+          raw?.pnl ??
+          raw?.openPnl ??
+          walletImpact?.unrealizedProfitLoss ??
+          walletImpact?.unrealizedPnl ??
+          walletImpact?.profitLoss ??
+          walletImpact?.pnl
+        );
         if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
+        const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
+        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === trading212Id || entry.trade?.symbol === symbol);
+        const existingTrade = existingTradeEntry?.trade;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = raw?.instrument?.currency ?? raw?.currency ?? 'USD';
+        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         let lowStop = null;
         try {
           const lowQuote = await fetchDailyLow(symbol);
@@ -1455,6 +1597,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.direction = direction;
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
+          existingTrade.trading212Id = trading212Id;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1491,11 +1634,24 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           tradeType: 'day',
           assetClass: 'stocks',
           source: 'trading212',
-          trading212Id: raw?.id,
+          trading212Id,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
         journal[normalizedDate].push(trade);
+        positionsMutated = true;
+      }
+    } else if (Array.isArray(effectivePositions)) {
+      const closeDate = new Date(runDate).toISOString();
+      for (const entry of openTrades) {
+        const trade = entry.trade;
+        if (!trade || (!trade.trading212Id && trade.source !== 'trading212')) continue;
+        trade.status = 'closed';
+        trade.closeDate = trade.closeDate || dateKeyInTimezone(timezone, runDate);
+        trade.closedAt = trade.closedAt || closeDate;
+        if (!Number.isFinite(Number(trade.closePrice)) && Number.isFinite(Number(trade.lastSyncPrice))) {
+          trade.closePrice = Number(trade.lastSyncPrice);
+        }
         positionsMutated = true;
       }
     }
@@ -1826,15 +1982,16 @@ app.post('/api/profile', auth, (req,res)=>{
   normalizePortfolioHistory(user);
   const { baseline: previousBaseline, total: previousTotal } = computeNetDepositsTotals(user, history);
   let netDepositsNumber;
+  const netDepositsProvided = !(netDeposits === '' || netDeposits === null || netDeposits === undefined);
   if (!wasComplete) {
-    if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+    if (!netDepositsProvided) {
       return res.status(400).json({ error: 'Net deposits value is required' });
     }
     netDepositsNumber = Number(netDeposits);
     if (!Number.isFinite(netDepositsNumber)) {
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
-  } else if (netDeposits === '' || netDeposits === null || netDeposits === undefined) {
+  } else if (!netDepositsProvided) {
     netDepositsNumber = previousTotal;
   } else {
     netDepositsNumber = Number(netDeposits);
@@ -1842,11 +1999,14 @@ app.post('/api/profile', auth, (req,res)=>{
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
   }
-  const netDelta = netDepositsNumber - (wasComplete ? previousTotal : previousBaseline);
+  const resetNetDeposits = wasComplete && netDepositsProvided && netDepositsNumber !== previousTotal;
+  const netDelta = resetNetDeposits
+    ? 0
+    : netDepositsNumber - (wasComplete ? previousTotal : previousBaseline);
   const targetDate = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
     ? date
     : currentDateKey();
-  if (!user.netDepositsAnchor) {
+  if (!user.netDepositsAnchor || resetNetDeposits) {
     user.netDepositsAnchor = targetDate;
   }
   const ym = targetDate.slice(0, 7);
@@ -1854,7 +2014,10 @@ app.post('/api/profile', auth, (req,res)=>{
   const existing = history[ym][targetDate] || {};
   let cashIn = Number.isFinite(existing.cashIn) ? Number(existing.cashIn) : 0;
   let cashOut = Number.isFinite(existing.cashOut) ? Number(existing.cashOut) : 0;
-  if (wasComplete && netDelta !== 0) {
+  if (resetNetDeposits) {
+    cashIn = 0;
+    cashOut = 0;
+  } else if (wasComplete && netDelta !== 0) {
     if (netDelta > 0) {
       cashIn += netDelta;
     } else {
@@ -1866,11 +2029,14 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
-  if (!wasComplete) {
+  if (!wasComplete || resetNetDeposits) {
     user.initialNetDeposits = netDepositsNumber;
   }
   user.profileComplete = true;
   const { config: tradingCfg } = ensureTrading212Config(user);
+  if (resetNetDeposits) {
+    normalizePortfolioHistory(user);
+  }
   const totals = computeNetDepositsTotals(user, history);
   tradingCfg.lastNetDeposits = totals.total;
   refreshAnchors(user, history);
@@ -1999,6 +2165,9 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (cfg.enabled && !cfg.apiKey) {
     return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
   }
+  if (cfg.enabled) {
+    delete cfg.authoritativeSyncAt;
+  }
   if (cfg.enabled && cfg.lastNetDeposits === undefined) {
     cfg.lastNetDeposits = totals.total;
   }
@@ -2073,36 +2242,59 @@ app.post('/api/pl', auth, (req,res)=>{
   history[ym] ||= {};
   const existingRecord = history[ym][date];
   const anchorDate = user.netDepositsAnchor || null;
+  const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
+  const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
+  if (!Number.isFinite(deposit) || deposit < 0) {
+    return res.status(400).json({ error: 'Invalid deposit value' });
+  }
+  if (!Number.isFinite(withdrawal) || withdrawal < 0) {
+    return res.status(400).json({ error: 'Invalid withdrawal value' });
+  }
+  let normalizedNote;
+  if (note !== undefined) {
+    if (note === null) {
+      normalizedNote = '';
+    } else if (typeof note === 'string') {
+      normalizedNote = note.trim();
+    } else {
+      return res.status(400).json({ error: 'Invalid note value' });
+    }
+  }
+  const existingPreBaseline = existingRecord?.preBaseline === true;
+  const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
   if (value === null || value === '') {
-    delete history[ym][date];
-    if (!Object.keys(history[ym]).length) {
-      delete history[ym];
+    const hasCash = deposit > 0 || withdrawal > 0;
+    const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existingRecord?.note;
+    if (hasCash || hasNote) {
+      const entryPayload = {
+        cashIn: deposit,
+        cashOut: withdrawal
+      };
+      if (shouldFlagPreBaseline) {
+        entryPayload.preBaseline = true;
+      }
+      if (normalizedNote !== undefined) {
+        if (normalizedNote) {
+          entryPayload.note = normalizedNote;
+        }
+      } else if (existingRecord && typeof existingRecord.note === 'string') {
+        const carryNote = existingRecord.note.trim();
+        if (carryNote) {
+          entryPayload.note = carryNote;
+        }
+      }
+      history[ym][date] = entryPayload;
+    } else {
+      delete history[ym][date];
+      if (!Object.keys(history[ym]).length) {
+        delete history[ym];
+      }
     }
   } else {
     const num = Number(value);
     if (!Number.isFinite(num) || num < 0) {
       return res.status(400).json({ error: 'Invalid portfolio value' });
     }
-    const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
-    const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
-    if (!Number.isFinite(deposit) || deposit < 0) {
-      return res.status(400).json({ error: 'Invalid deposit value' });
-    }
-    if (!Number.isFinite(withdrawal) || withdrawal < 0) {
-      return res.status(400).json({ error: 'Invalid withdrawal value' });
-    }
-    let normalizedNote;
-    if (note !== undefined) {
-      if (note === null) {
-        normalizedNote = '';
-      } else if (typeof note === 'string') {
-        normalizedNote = note.trim();
-      } else {
-        return res.status(400).json({ error: 'Invalid note value' });
-      }
-    }
-    const existingPreBaseline = existingRecord?.preBaseline === true;
-    const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
     const entryPayload = {
       end: num,
       cashIn: deposit,
