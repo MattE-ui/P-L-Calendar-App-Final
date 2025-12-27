@@ -1562,9 +1562,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
         const sizeUnits = Math.abs(quantity);
         const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
+        const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
         let lowStop = null;
         try {
-          const lowQuote = await fetchDailyLow(symbol);
+          const lowQuote = await fetchDailyLow(symbol, tradeDateKey);
           lowStop = Number(lowQuote?.low);
         } catch (e) {
           lowStop = null;
@@ -2404,18 +2405,27 @@ function normalizeTradeMeta(trade = {}) {
 const marketCache = new Map();
 const dailyLowCache = new Map();
 
-function getNyDateKey() {
-  const nyNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+function getTimezoneOffset(date, timeZone) {
+  const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
+  return (date - tzDate) / 60000;
+}
+
+function getNyDateKeyForDate(date, adjustForMarketOpen = false) {
+  const nyNow = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const hours = nyNow.getHours();
   const minutes = nyNow.getMinutes();
-  const date = new Date(nyNow);
-  if (hours < 9 || (hours === 9 && minutes < 30)) {
-    date.setDate(date.getDate() - 1);
+  const localDate = new Date(nyNow);
+  if (adjustForMarketOpen && (hours < 9 || (hours === 9 && minutes < 30))) {
+    localDate.setDate(localDate.getDate() - 1);
   }
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
+  const year = localDate.getFullYear();
+  const month = `${localDate.getMonth() + 1}`.padStart(2, '0');
+  const day = `${localDate.getDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function getNyDateKey() {
+  return getNyDateKeyForDate(new Date(), true);
 }
 async function fetchYahooQuote(symbol) {
   const baseUrls = [
@@ -2610,14 +2620,51 @@ async function fetchMarketPrice(symbol) {
   return normalized;
 }
 
-async function fetchDailyLow(symbol) {
+async function fetchYahooDayLowForDate(symbol, dateKey) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
-  const dateKey = getNyDateKey();
-  const cacheKey = `${trimmed}:${dateKey}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) throw new Error('Invalid date key');
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const baseUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  const offsetMinutes = getTimezoneOffset(baseUtc, 'America/New_York');
+  const start = baseUtc.getTime() + offsetMinutes * 60000;
+  const end = start + 24 * 60 * 60 * 1000;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&period1=${Math.floor(start / 1000)}&period2=${Math.floor(end / 1000)}&includePrePost=true`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'application/json,text/plain,*/*'
+    }
+  });
+  if (!res.ok) throw new Error('Yahoo chart not available');
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  const lows = result?.indicators?.quote?.[0]?.low;
+  if (!Array.isArray(lows) || lows.length === 0) throw new Error('Yahoo chart missing low');
+  let min = null;
+  for (const value of lows) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    if (min === null || value < min) min = value;
+  }
+  if (!Number.isFinite(min) || min <= 0) throw new Error('Yahoo chart missing low');
+  return {
+    symbol: trimmed,
+    low: min,
+    currency: result?.meta?.currency || 'USD'
+  };
+}
+
+async function fetchDailyLow(symbol, dateKey = null) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const resolvedDateKey = dateKey || getNyDateKey();
+  const cacheKey = `${trimmed}:${resolvedDateKey}`;
   const cached = dailyLowCache.get(cacheKey);
   if (cached) return cached;
-  const low = await fetchYahooDayLow(trimmed);
+  const isToday = resolvedDateKey === getNyDateKey();
+  const low = isToday
+    ? await fetchYahooDayLow(trimmed)
+    : await fetchYahooDayLowForDate(trimmed, resolvedDateKey);
   dailyLowCache.set(cacheKey, low);
   return low;
 }
