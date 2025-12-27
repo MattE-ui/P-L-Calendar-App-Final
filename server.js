@@ -1293,6 +1293,30 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
+    if (!cfg.authoritativeSyncAt) {
+      for (const [monthKey, days] of Object.entries(history)) {
+        for (const [dayKey, record] of Object.entries(days || {})) {
+          if (!record || typeof record !== 'object') continue;
+          const end = Number(record.end);
+          if (Number.isFinite(end) && end >= 0) {
+            record.cashIn = 0;
+            record.cashOut = 0;
+            continue;
+          }
+          delete days[dayKey];
+        }
+        if (!Object.keys(days).length) {
+          delete history[monthKey];
+        }
+      }
+      const authoritativeNet = Number.isFinite(snapshot.netDeposits) ? snapshot.netDeposits : 0;
+      user.initialNetDeposits = authoritativeNet;
+      user.netDepositsAnchor = dateKey;
+      cfg.lastNetDeposits = authoritativeNet;
+      cfg.lastTransactionAt = null;
+      cfg.processedReferences = [];
+      cfg.authoritativeSyncAt = new Date().toISOString();
+    }
     const previousNet = Number.isFinite(Number(cfg.lastNetDeposits))
       ? Number(cfg.lastNetDeposits)
       : currentTotal;
@@ -2108,6 +2132,9 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   }
   if (cfg.enabled && !cfg.apiKey) {
     return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
+  }
+  if (cfg.enabled) {
+    delete cfg.authoritativeSyncAt;
   }
   if (cfg.enabled && cfg.lastNetDeposits === undefined) {
     cfg.lastNetDeposits = totals.total;
