@@ -525,14 +525,17 @@ function normalizeTradeJournal(user) {
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
       }
-      if (Number.isFinite(trade.lastSyncPrice)) {
-        normalizedTrade.lastSyncPrice = trade.lastSyncPrice;
+      const lastSyncPrice = parseTradingNumber(trade.lastSyncPrice);
+      const fxPpl = parseTradingNumber(trade.fxPpl);
+      const ppl = parseTradingNumber(trade.ppl);
+      if (Number.isFinite(lastSyncPrice)) {
+        normalizedTrade.lastSyncPrice = lastSyncPrice;
       }
-      if (Number.isFinite(trade.fxPpl)) {
-        normalizedTrade.fxPpl = trade.fxPpl;
+      if (Number.isFinite(fxPpl)) {
+        normalizedTrade.fxPpl = fxPpl;
       }
-      if (Number.isFinite(trade.ppl)) {
-        normalizedTrade.ppl = trade.ppl;
+      if (Number.isFinite(ppl)) {
+        normalizedTrade.ppl = ppl;
       }
       if (fxFeeEligible) {
         normalizedTrade.fxFeeEligible = true;
@@ -2506,7 +2509,7 @@ async function buildActiveTrades(user, rates = {}) {
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
-    const syncPpl = Number(trade.ppl);
+    const syncPpl = parseTradingNumber(trade.ppl);
     if (isTrading212 && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
     }
