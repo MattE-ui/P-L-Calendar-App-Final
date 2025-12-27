@@ -1237,8 +1237,10 @@ async function fetchTrading212Snapshot(config) {
                 nextPath = null;
               }
             }
-            if (aggregated.length) {
-              transactions = aggregated;
+            if (rawPages.length) {
+              if (aggregated.length) {
+                transactions = aggregated;
+              }
               transactionsRaw = rawPages.length === 1 ? rawPages[0] : { items: aggregated, pages: rawPages };
               break;
             }
