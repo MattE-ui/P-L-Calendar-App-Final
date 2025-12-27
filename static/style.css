@@ -735,6 +735,12 @@ select {
   gap: 10px;
   margin-bottom: 8px;
 }
+.week-detail-grid div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
 .week-trades {
   display: flex;
   flex-wrap: wrap;

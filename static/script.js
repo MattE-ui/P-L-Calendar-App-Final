@@ -1103,12 +1103,7 @@ function renderTitle() {
   if (!title) return;
   const monthFormatter = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' });
   if (state.view === 'year') {
-    const entries = getAllEntries();
-    const firstYear = entries.length ? entries[0].date.getFullYear() : state.selected.getFullYear();
-    const lastYear = entries.length ? entries[entries.length - 1].date.getFullYear() : state.selected.getFullYear();
-    title.textContent = firstYear === lastYear
-      ? `${firstYear} Performance`
-      : `${firstYear}–${lastYear} Performance`;
+    title.textContent = 'All-time performance';
   } else if (state.view === 'month') {
     title.textContent = `${state.selected.getFullYear()} Performance`;
   } else if (state.view === 'week') {
@@ -1138,13 +1133,16 @@ function renderSummary() {
     }
     cashSum += item?.cashFlow ?? 0;
   });
-  const periodLabel = state.view === 'month' || state.view === 'year' ? 'year' : 'month';
+  const periodLabel = state.view === 'month' ? 'year' : 'month';
   const cashClass = cashSum > 0 ? 'positive' : cashSum < 0 ? 'negative' : '';
   const cashValue = formatSignedCurrency(cashSum);
   const cashClassName = cashClass ? ` ${cashClass}` : '';
-  const cashFlowHtml = `Net deposits this ${periodLabel}: <span class="cashflow${cashClassName}">${cashValue}</span>`;
+  const cashFlowHtml = state.view === 'year'
+    ? ''
+    : `Net deposits this ${periodLabel}: <span class="cashflow${cashClassName}">${cashValue}</span>`;
   if (!changeCount) {
-    avgEl.innerHTML = `<div class="summary-line"><strong>No performance data yet</strong></div><div class="summary-line">${cashFlowHtml}</div>`;
+    const cashRow = cashFlowHtml ? `<div class="summary-line">${cashFlowHtml}</div>` : '';
+    avgEl.innerHTML = `<div class="summary-line"><strong>No performance data yet</strong></div>${cashRow}`;
     avgEl.classList.remove('positive', 'negative');
     return;
   }
@@ -1152,7 +1150,8 @@ function renderSummary() {
   const avgPct = pctCount ? (pctSum / pctCount) : null;
   const label = viewAvgLabels[state.view] || 'Average';
   const pctText = avgPct === null ? '' : ` (${formatPercent(avgPct)})`;
-  avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}</strong></div><div class="summary-line">${cashFlowHtml}</div>`;
+  const cashRow = cashFlowHtml ? `<div class="summary-line">${cashFlowHtml}</div>` : '';
+  avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}</strong></div>${cashRow}`;
   avgEl.classList.toggle('positive', avgGBP > 0);
   avgEl.classList.toggle('negative', avgGBP < 0);
 }
