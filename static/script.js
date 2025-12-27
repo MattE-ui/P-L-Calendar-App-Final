@@ -736,43 +736,87 @@ function renderActiveTrades() {
   trades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
-    if (trade.source === 'trading212') {
-      const sourceLogo = document.createElement('div');
-      sourceLogo.className = 'trade-source-logo';
-      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
-      pill.appendChild(sourceLogo);
-    }
-    const priceLine = document.createElement('div');
-    priceLine.className = 'trade-line';
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
     const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
-    const stopDisplay = currentStop !== null
-      ? `Stop ${formatPrice(trade.stop, trade.currency, 2)} • Current Stop ${formatPrice(currentStop, trade.currency, 2)}`
-      : `Stop ${formatPrice(trade.stop, trade.currency, 2)}`;
-    priceLine.textContent = `${sym} (${trade.direction === 'short' ? 'Short' : 'Long'}) @ ${formatPrice(trade.entry, trade.currency, 2)} • ${stopDisplay} • Live ${formatPrice(livePrice, trade.currency, 2)}`;
-    pill.appendChild(priceLine);
-    const badges = document.createElement('div');
-    badges.className = 'trade-meta';
+    const directionLabel = trade.direction === 'short' ? 'Short' : 'Long';
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
-    const pnlBadge = document.createElement('span');
-    pnlBadge.className = `trade-badge ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlBadge.textContent = `PnL ${formatSignedCurrency(pnl)}`;
-    badges.appendChild(pnlBadge);
-    if (guaranteed !== null) {
-      const guaranteedBadge = document.createElement('span');
-      guaranteedBadge.className = `trade-badge ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
-      guaranteedBadge.textContent = `Guaranteed ${formatSignedCurrency(guaranteed)}`;
-      badges.appendChild(guaranteedBadge);
+    const headerRow = document.createElement('div');
+    headerRow.className = 'trade-header-row';
+    const title = document.createElement('div');
+    title.className = 'trade-title';
+    title.textContent = `${sym} (${directionLabel})`;
+    headerRow.appendChild(title);
+    if (trade.source === 'trading212') {
+      const sourceLogo = document.createElement('div');
+      sourceLogo.className = 'trade-source-logo';
+      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      headerRow.appendChild(sourceLogo);
     }
-    badges.insertAdjacentHTML('beforeend', `
-      <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
-      <span class="trade-badge">Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%</span>
-      ${Number.isFinite(trade.fees) && trade.fees > 0 ? `<span class="trade-badge">Fees ${formatCurrency(trade.fees, trade.currency)}</span>` : ''}
-    `);
+    pill.appendChild(headerRow);
+
+    const bodyRow = document.createElement('div');
+    bodyRow.className = 'trade-body';
+
+    const pnlCard = document.createElement('div');
+    pnlCard.className = `trade-pnl-card ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+    pnlCard.innerHTML = `
+      <span class="trade-pnl-label">Live PnL</span>
+      <strong class="trade-pnl-value">${formatSignedCurrency(pnl)}</strong>
+    `;
+    bodyRow.appendChild(pnlCard);
+
+    const details = document.createElement('dl');
+    details.className = 'trade-details';
+    const detailItems = [
+      ['Buy Price', formatPrice(trade.entry, trade.currency, 2)],
+      ['Original Stop', formatPrice(trade.stop, trade.currency, 2)],
+      ...(currentStop !== null ? [['Current Stop', formatPrice(currentStop, trade.currency, 2)]] : []),
+      ['Live Price', formatPrice(livePrice, trade.currency, 2)]
+    ];
+    detailItems.forEach(([label, value]) => {
+      const dt = document.createElement('dt');
+      dt.textContent = `${label}:`;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      details.append(dt, dd);
+    });
+    bodyRow.appendChild(details);
+    pill.appendChild(bodyRow);
+
+    const badges = document.createElement('div');
+    badges.className = 'trade-meta trade-badges';
+    const badgeItems = [];
+    if (guaranteed !== null) {
+      badgeItems.push({
+        label: `Guaranteed ${formatSignedCurrency(guaranteed)}`,
+        className: guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''
+      });
+    }
+    badgeItems.push({
+      label: `Units ${formatShares(trade.sizeUnits)}`,
+      className: ''
+    });
+    badgeItems.push({
+      label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%`,
+      className: ''
+    });
+    if (Number.isFinite(trade.fees) && trade.fees > 0) {
+      badgeItems.push({
+        label: `Fees ${formatCurrency(trade.fees, trade.currency)}`,
+        className: ''
+      });
+    }
+    badgeItems.forEach(item => {
+      const badge = document.createElement('span');
+      badge.className = `trade-badge ${item.className}`.trim();
+      badge.textContent = item.label;
+      badges.appendChild(badge);
+    });
     pill.appendChild(badges);
+
     const editToggle = document.createElement('button');
     editToggle.className = 'primary outline';
     editToggle.textContent = 'Edit trade';
@@ -780,7 +824,7 @@ function renderActiveTrades() {
       openEditTradeModal(trade);
     });
     const actionRow = document.createElement('div');
-    actionRow.className = 'close-row trade-action-row';
+    actionRow.className = 'close-row trade-action-row trade-actions';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
