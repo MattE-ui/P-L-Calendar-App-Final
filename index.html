@@ -206,6 +206,17 @@
               </div>
               <div id="portfolio-trend" class="mini-line"></div>
             </div>
+            <div class="trade-sort" aria-label="Active trade sorting">
+              <label for="active-trade-sort">Sort</label>
+              <select id="active-trade-sort">
+                <option value="newest" selected>Newest trade</option>
+                <option value="oldest">Oldest trade</option>
+                <option value="best-percent">Best % return</option>
+                <option value="worst-percent">Worst % return</option>
+                <option value="best-amount">Best monetary return</option>
+                <option value="worst-amount">Lowest monetary return</option>
+              </select>
+            </div>
             <div id="active-trade-list" class="trade-list"></div>
             <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
             <button id="active-trade-show-all" class="ghost show-all-btn is-hidden" type="button">Show all trades</button>
@@ -300,6 +311,10 @@
           <label for="edit-trade-stop">Stop price</label>
           <input id="edit-trade-stop" type="number" step="0.0001" min="0">
         </div>
+      </div>
+      <div class="modal-field">
+        <label for="edit-trade-current-stop">Current stop price</label>
+        <input id="edit-trade-current-stop" type="number" step="0.0001" min="0" placeholder="Optional">
       </div>
       <div class="modal-field">
         <label for="edit-trade-units">Units</label>
