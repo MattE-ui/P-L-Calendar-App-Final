@@ -760,20 +760,26 @@ function renderActiveTrades() {
     const bodyRow = document.createElement('div');
     bodyRow.className = 'trade-body';
 
+    const pnlStack = document.createElement('div');
+    pnlStack.className = 'trade-pnl-stack';
+
     const pnlCard = document.createElement('div');
     pnlCard.className = `trade-pnl-card ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
     pnlCard.innerHTML = `
       <span class="trade-pnl-label">Live PnL</span>
       <strong class="trade-pnl-value">${formatSignedCurrency(pnl)}</strong>
     `;
-    if (guaranteed !== null) {
-      const guaranteedEl = document.createElement('span');
-      guaranteedEl.className = `trade-pnl-guaranteed ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
-      guaranteedEl.textContent = `Guaranteed ${formatSignedCurrency(guaranteed)}`;
-      pnlCard.appendChild(guaranteedEl);
-    }
-    bodyRow.appendChild(pnlCard);
+    pnlStack.appendChild(pnlCard);
 
+    if (guaranteed !== null) {
+      const guaranteedCard = document.createElement('div');
+      guaranteedCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
+      guaranteedCard.innerHTML = `
+        <span class="trade-pnl-label">Guaranteed</span>
+        <strong class="trade-pnl-value">${formatSignedCurrency(guaranteed)}</strong>
+      `;
+      pnlStack.appendChild(guaranteedCard);
+    }
     const details = document.createElement('dl');
     details.className = 'trade-details';
     const detailItems = [
@@ -789,6 +795,7 @@ function renderActiveTrades() {
       dd.textContent = value;
       details.append(dt, dd);
     });
+    bodyRow.appendChild(pnlStack);
     bodyRow.appendChild(details);
     pill.appendChild(bodyRow);
 

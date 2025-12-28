@@ -495,9 +495,14 @@ select {
 }
 .trade-pill .trade-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   align-items: stretch;
+}
+.trade-pill .trade-pnl-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 .trade-pill .trade-pnl-card {
   background: rgba(80, 140, 110, 0.15);
@@ -507,7 +512,7 @@ select {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 120px;
+  min-height: 96px;
 }
 .trade-pill .trade-pnl-card.positive {
   background: rgba(80, 140, 110, 0.15);
@@ -517,6 +522,10 @@ select {
   background: rgba(255, 59, 92, 0.12);
   border-color: rgba(255, 59, 92, 0.35);
 }
+.trade-pill .trade-pnl-guaranteed-card {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.15);
+}
 .trade-pill .trade-pnl-label {
   font-size: 14px;
   text-transform: uppercase;
@@ -524,20 +533,11 @@ select {
   color: var(--muted);
 }
 .trade-pill .trade-pnl-value {
-  font-size: 28px;
-  margin-top: 8px;
+  font-size: 18px;
+  margin-top: 6px;
   color: var(--positive);
 }
 .trade-pill .trade-pnl-card.negative .trade-pnl-value {
-  color: var(--negative);
-}
-.trade-pill .trade-pnl-guaranteed {
-  margin-top: 10px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--positive);
-}
-.trade-pill .trade-pnl-guaranteed.negative {
   color: var(--negative);
 }
 .trade-pill .trade-details {
@@ -660,6 +660,21 @@ select {
     flex: 1 1 140px;
   }
 }
+.trade-pill .trade-badges {
+  gap: 14px;
+}
+@media (max-width: 720px) {
+  .trade-pill .trade-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trade-pill .trade-actions {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .trade-pill .trade-actions button {
+    flex: 1 1 140px;
+  }
+}
 .trade-pill .trade-note {
   color: var(--muted);
   font-size: 13px;
@@ -679,9 +694,37 @@ select {
   margin-top: 2px;
 }
 .trade-pill .trade-actions button {
-  min-width: 130px;
-  padding: 8px 14px;
-  font-size: 13px;
+  min-width: 120px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+@media (min-width: 900px) {
+  .trade-pill {
+    padding: 20px;
+    gap: 16px;
+  }
+  .trade-pill .trade-title {
+    font-size: 24px;
+  }
+  .trade-pill .trade-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .trade-pill .trade-pnl-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .trade-pill .trade-pnl-card {
+    min-height: 110px;
+  }
+  .trade-pill .trade-pnl-value {
+    font-size: 20px;
+  }
+  .trade-pill .trade-actions button {
+    min-width: 130px;
+    padding: 8px 14px;
+    font-size: 13px;
+  }
 }
 .trade-pill .close-row input[type="date"],
 .trade-pill .close-row input[type="number"] {
