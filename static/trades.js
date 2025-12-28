@@ -265,8 +265,25 @@ function populateForm(trade) {
   document.querySelector('#form-strategy').value = trade.strategyTag || '';
   document.querySelector('#form-market-condition').value = trade.marketCondition || '';
   document.querySelector('#form-screenshot').value = trade.screenshotUrl || '';
-  setCheckboxes('form-setup', trade.setupTags || []);
-  setCheckboxes('form-emotion', trade.emotionTags || []);
+  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id;
+  const setupTags = (trade.setupTags && trade.setupTags.length) ? trade.setupTags : (isProviderTrade ? state.defaults.setupTags : []);
+  const emotionTags = (trade.emotionTags && trade.emotionTags.length) ? trade.emotionTags : (isProviderTrade ? state.defaults.emotionTags : []);
+  setCheckboxes('form-setup', setupTags);
+  setCheckboxes('form-emotion', emotionTags);
+  if (isProviderTrade) {
+    if (state.defaults.tradeType && (!trade.tradeType || trade.tradeType === 'day')) {
+      document.querySelector('#form-trade-type').value = state.defaults.tradeType;
+    }
+    if (state.defaults.assetClass && (!trade.assetClass || trade.assetClass === 'stocks')) {
+      document.querySelector('#form-asset-class').value = state.defaults.assetClass;
+    }
+    if (state.defaults.strategyTag && !trade.strategyTag) {
+      document.querySelector('#form-strategy').value = state.defaults.strategyTag;
+    }
+    if (state.defaults.marketCondition && !trade.marketCondition) {
+      document.querySelector('#form-market-condition').value = state.defaults.marketCondition;
+    }
+  }
   document.querySelector('#form-notes').value = trade.note || '';
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Editing existing trade';
