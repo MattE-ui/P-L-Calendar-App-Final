@@ -566,6 +566,96 @@ select {
 .trade-pill .trade-details dd {
   margin: 0;
   font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.trade-pill .trade-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+.trade-pill .trade-pnl-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.trade-pill .trade-pnl-card {
+  background: rgba(80, 140, 110, 0.15);
+  border: 1px solid rgba(80, 140, 110, 0.35);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 72px;
+}
+.trade-pill .trade-pnl-card.positive {
+  background: rgba(80, 140, 110, 0.15);
+  border-color: rgba(80, 140, 110, 0.35);
+}
+.trade-pill .trade-pnl-card.negative {
+  background: rgba(255, 59, 92, 0.12);
+  border-color: rgba(255, 59, 92, 0.35);
+}
+.trade-pill .trade-pnl-guaranteed-card {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.15);
+}
+.trade-pill .trade-pnl-label {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.trade-pill .trade-pnl-value {
+  font-size: 18px;
+  margin-top: 6px;
+  color: var(--positive);
+}
+.trade-pill .trade-pnl-card.negative .trade-pnl-value {
+  color: var(--negative);
+}
+.trade-pill .trade-details {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  align-content: center;
+  font-size: 15px;
+}
+.trade-pill .trade-details-toggle {
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.trade-pill .trade-details-collapsible {
+  transition: max-height 0.2s ease;
+}
+.trade-pill .trade-details-collapsible.is-collapsed {
+  display: none;
+}
+.trade-pill .trade-details dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+.trade-pill .trade-details dd {
+  margin: 0;
+  font-weight: 700;
+}
+.trade-pill .trade-badges {
+  gap: 14px;
+}
+@media (max-width: 720px) {
+  .trade-pill .trade-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trade-pill .trade-actions {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .trade-pill .trade-actions button {
+    flex: 1 1 140px;
+  }
 }
 .trade-pill .trade-badges {
   gap: 14px;
@@ -609,7 +699,10 @@ select {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 4px 0 2px;
+  margin: 2px 0 6px;
+}
+.mini-chart + .trade-sort {
+  margin-top: 2px;
 }
 .trade-sort label {
   font-size: 12px;
