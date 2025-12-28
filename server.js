@@ -1356,7 +1356,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       const portfolioValue = Number.isFinite(snapshot.portfolioValue)
         ? snapshot.portfolioValue
         : (Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0);
-      const minDeposit = Number.isFinite(portfolioValue) ? portfolioValue * 0.00015 : 0;
+      const minDeposit = Number.isFinite(portfolioValue) && portfolioValue > 0
+        ? portfolioValue * 0.00015
+        : 0;
       const txs = effectiveTransactions
         .map(tx => {
           const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
