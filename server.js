@@ -2724,6 +2724,9 @@ async function buildActiveTrades(user, rates = {}) {
       }
       const liveFromProvider = Number.isFinite(Number(trade.lastSyncPrice)) ? Number(trade.lastSyncPrice) : null;
       const riskPct = Number.isFinite(Number(trade.riskPct)) ? Number(trade.riskPct) : 0;
+      const entryValueGBP = Number.isFinite(entry) && Number.isFinite(sizeUnits)
+        ? convertToGBP(entry * sizeUnits, tradeCurrency, rates)
+        : null;
       enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
@@ -2741,6 +2744,7 @@ async function buildActiveTrades(user, rates = {}) {
         liveCurrency: tradeCurrency,
         unrealizedGBP: syncPpl,
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
+        positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
         currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
@@ -2820,6 +2824,7 @@ async function buildActiveTrades(user, rates = {}) {
       liveCurrency,
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
       guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
+      positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
       currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
       source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
       note: trade.note

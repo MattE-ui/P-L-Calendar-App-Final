@@ -13,6 +13,7 @@ const state = {
   liveOpenPnlGBP: 0,
   livePortfolioGBP: 0,
   activeTrades: [],
+  activeTradeSort: 'newest',
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
   metrics: {
@@ -733,7 +734,46 @@ function renderActiveTrades() {
     return;
   }
   if (empty) empty.classList.add('is-hidden');
-  trades.forEach(trade => {
+  const parseTradeDate = trade => Date.parse(trade.createdAt || trade.date || trade.openDate || '') || 0;
+  const sortedTrades = [...trades].sort((a, b) => {
+    const aDate = parseTradeDate(a);
+    const bDate = parseTradeDate(b);
+    switch (state.activeTradeSort) {
+      case 'oldest':
+        return aDate - bDate;
+      case 'best-percent':
+      case 'worst-percent': {
+        const aBase = Number.isFinite(a.positionGBP)
+          ? a.positionGBP
+          : (Number.isFinite(a.entry) && Number.isFinite(a.sizeUnits) && (a.currency || 'GBP') === 'GBP'
+            ? a.entry * a.sizeUnits
+            : null);
+        const bBase = Number.isFinite(b.positionGBP)
+          ? b.positionGBP
+          : (Number.isFinite(b.entry) && Number.isFinite(b.sizeUnits) && (b.currency || 'GBP') === 'GBP'
+            ? b.entry * b.sizeUnits
+            : null);
+        const aPct = Number.isFinite(a.unrealizedGBP) && Number.isFinite(aBase) && aBase !== 0
+          ? (a.unrealizedGBP / aBase) * 100
+          : -Infinity;
+        const bPct = Number.isFinite(b.unrealizedGBP) && Number.isFinite(bBase) && bBase !== 0
+          ? (b.unrealizedGBP / bBase) * 100
+          : -Infinity;
+        return state.activeTradeSort === 'best-percent' ? bPct - aPct : aPct - bPct;
+      }
+      case 'best-amount':
+      case 'worst-amount': {
+        const aAmt = Number.isFinite(a.unrealizedGBP) ? a.unrealizedGBP : -Infinity;
+        const bAmt = Number.isFinite(b.unrealizedGBP) ? b.unrealizedGBP : -Infinity;
+        return state.activeTradeSort === 'best-amount' ? bAmt - aAmt : aAmt - bAmt;
+      }
+      case 'newest':
+      default:
+        return bDate - aDate;
+    }
+  });
+
+  sortedTrades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
     const sym = trade.symbol || '—';
@@ -780,6 +820,14 @@ function renderActiveTrades() {
       `;
       pnlStack.appendChild(guaranteedCard);
     }
+    const detailsToggle = document.createElement('button');
+    detailsToggle.className = 'ghost trade-details-toggle';
+    detailsToggle.type = 'button';
+    detailsToggle.textContent = 'Show price info';
+
+    const detailsWrap = document.createElement('div');
+    detailsWrap.className = 'trade-details-collapsible is-collapsed';
+
     const details = document.createElement('dl');
     details.className = 'trade-details';
     const detailItems = [
@@ -795,8 +843,14 @@ function renderActiveTrades() {
       dd.textContent = value;
       details.append(dt, dd);
     });
+    detailsWrap.appendChild(details);
+    detailsToggle.addEventListener('click', () => {
+      const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
+      detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
+    });
     bodyRow.appendChild(pnlStack);
-    bodyRow.appendChild(details);
+    bodyRow.appendChild(detailsToggle);
+    bodyRow.appendChild(detailsWrap);
     pill.appendChild(bodyRow);
 
     const badges = document.createElement('div');
@@ -1902,6 +1956,11 @@ function bindControls() {
 
   $('#active-trade-show-all')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
+  });
+  $('#active-trade-sort')?.addEventListener('change', event => {
+    const value = event.target?.value || 'newest';
+    state.activeTradeSort = value;
+    renderActiveTrades();
   });
 
   $('#portfolio-btn')?.addEventListener('click', () => {
