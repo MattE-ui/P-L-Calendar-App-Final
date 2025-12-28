@@ -1957,6 +1957,10 @@ function bindControls() {
   $('#active-trade-show-all')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  const sortBlocks = $$('#active-trades-card .trade-sort');
+  if (sortBlocks.length > 1) {
+    sortBlocks.slice(0, -1).forEach(block => block.remove());
+  }
   $('#active-trade-sort')?.addEventListener('change', event => {
     const value = event.target?.value || 'newest';
     state.activeTradeSort = value;
