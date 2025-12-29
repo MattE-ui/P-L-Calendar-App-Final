@@ -4,6 +4,7 @@ function createLoginHandlers() {
   const loginError = document.getElementById('login-error');
   const loginBtn = document.getElementById('login-btn');
   const signupLink = document.getElementById('signup-link');
+  const guestBtn = document.getElementById('guest-btn');
 
   if (!usernameInput || !passwordInput || !loginBtn) {
     return;
@@ -37,6 +38,7 @@ function createLoginHandlers() {
       const res = await call('/api/login', { username, password });
       const data = await res.json().catch(() => ({ error: 'Login failed' }));
       if (res.ok) {
+        localStorage.removeItem('guestMode');
         window.location.href = data.profileComplete ? '/' : '/profile.html';
       } else {
         setError(data.error || 'Login failed');
@@ -56,6 +58,10 @@ function createLoginHandlers() {
 
   signupLink?.addEventListener('click', () => {
     window.location.href = '/signup.html';
+  });
+  guestBtn?.addEventListener('click', () => {
+    localStorage.setItem('guestMode', 'true');
+    window.location.href = '/';
   });
 }
 
