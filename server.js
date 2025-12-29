@@ -40,7 +40,31 @@ const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS
 
 const guestRateLimit = new Map();
 
-const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
+function isWritableDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveDataDir() {
+  if (process.env.DATA_DIR) {
+    return process.env.DATA_DIR;
+  }
+
+  // Render only allows writes in /var/data if a persistent disk is mounted.
+  const renderBase = '/var/data';
+  if (isWritableDir(renderBase)) {
+    return renderBase;
+  }
+
+  return '/tmp';
+}
+
+const DEFAULT_DATA_DIR = path.join(resolveDataDir(), 'pl-calendar');
 const DATA_FILE = process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
 const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
 
@@ -70,6 +94,7 @@ function ensureDataStore() {
 }
 
 ensureDataStore();
+console.info(`Data directory: ${DEFAULT_DATA_DIR}`);
 
 function isStrongPassword(password) {
   if (typeof password !== 'string' || password.length < 12) return false;
