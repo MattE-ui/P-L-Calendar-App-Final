@@ -4,6 +4,8 @@ function createLoginHandlers() {
   const loginError = document.getElementById('login-error');
   const loginBtn = document.getElementById('login-btn');
   const signupLink = document.getElementById('signup-link');
+  const guestBtn = document.getElementById('guest-btn');
+  const loginInfo = document.getElementById('login-info');
 
   if (!usernameInput || !passwordInput || !loginBtn) {
     return;
@@ -12,6 +14,13 @@ function createLoginHandlers() {
   function setError(message) {
     if (loginError) {
       loginError.textContent = message || '';
+    }
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('expired') === 'guest') {
+    if (loginInfo) {
+      loginInfo.textContent = 'Guest session expired. Continue as Guest again or sign up.';
     }
   }
 
@@ -56,6 +65,22 @@ function createLoginHandlers() {
 
   signupLink?.addEventListener('click', () => {
     window.location.href = '/signup.html';
+  });
+
+  guestBtn?.addEventListener('click', async () => {
+    setError('');
+    try {
+      const res = await call('/api/auth/guest', {});
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        window.location.href = '/';
+      } else {
+        setError(data.error || 'Unable to start guest mode.');
+      }
+    } catch (error) {
+      console.error(error);
+      setError('Unable to start guest mode. Please try again.');
+    }
   });
 }
 

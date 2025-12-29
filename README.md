@@ -69,6 +69,7 @@ User accounts, sessions, and P&L entries are stored in a JSON file whose locatio
 - By default the app reads and writes `storage/data.json` (the directory is created automatically on boot).
 - Set the `DATA_DIR` environment variable to a directory mounted on persistent storage (for example `/var/data/pl-calendar`) to keep data across redeploys, or set `DATA_FILE` to point to an explicit file path.
 - On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DATA_DIR=/var/data/pl-calendar` in the service environment so user records survive code pushes and restarts.
+- Guest sessions expire automatically; configure the TTL with `GUEST_TTL_HOURS` (defaults to 24 hours).
 
 When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
 
