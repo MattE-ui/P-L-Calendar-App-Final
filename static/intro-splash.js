@@ -5,27 +5,36 @@
   }
 
   const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (document.getElementById('vts-intro')) {
+    return;
+  }
+
   const overlay = document.createElement('div');
   overlay.id = 'vts-intro';
   overlay.setAttribute('aria-hidden', 'true');
   overlay.setAttribute('role', 'presentation');
 
+  const inner = document.createElement('div');
+  inner.className = 'vts-intro-inner';
+
   const logo = document.createElement('img');
-  logo.className = 'vts-intro__logo';
+  logo.className = 'vts-logo';
   logo.src = '/static/brand/veracity-logo.svg';
   logo.alt = 'Veracity Trading Suite';
 
   const fallback = document.createElement('div');
-  fallback.className = 'vts-intro__fallback';
+  fallback.className = 'vts-logo-fallback';
   fallback.textContent = 'VERACITY\nTRADING SUITE';
   fallback.setAttribute('aria-hidden', 'true');
 
   const wipe = document.createElement('div');
-  wipe.className = 'vts-intro__wipe';
+  wipe.className = 'vts-wipe';
+  wipe.setAttribute('aria-hidden', 'true');
 
-  overlay.appendChild(logo);
-  overlay.appendChild(fallback);
-  overlay.appendChild(wipe);
+  inner.appendChild(logo);
+  inner.appendChild(fallback);
+  inner.appendChild(wipe);
+  overlay.appendChild(inner);
 
   const mount = () => {
     if (!document.body.contains(overlay)) {
@@ -54,11 +63,16 @@
       console.warn('Intro splash session storage unavailable:', error);
     }
 
-    const totalDurationMs = 2300;
-    window.setTimeout(removeOverlay, totalDurationMs);
+    const exitDelayMs = 1700;
+    window.setTimeout(() => {
+      overlay.classList.add('out');
+      window.setTimeout(() => {
+        overlay.remove();
+      }, 350);
+    }, exitDelayMs);
   };
 
-  const safetyTimeoutMs = 2600;
+  const safetyTimeoutMs = 3000;
   window.setTimeout(() => {
     if (document.body.contains(overlay)) {
       removeOverlay();
