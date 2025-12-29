@@ -84,7 +84,8 @@ function createSignupHandlers() {
     window.location.href = '/login.html';
   });
   guestBtn?.addEventListener('click', () => {
-    localStorage.setItem('guestMode', 'true');
+    sessionStorage.setItem('guestMode', 'true');
+    localStorage.removeItem('guestMode');
     window.location.href = '/';
   });
 }

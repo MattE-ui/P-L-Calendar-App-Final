@@ -24,21 +24,10 @@ const state = {
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 async function api(path, opts = {}) {
-  const isGuest = localStorage.getItem('guestMode') === 'true';
+  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
   const method = (opts.method || 'GET').toUpperCase();
-  if (isGuest) {
-    if (method !== 'GET') {
-      return { ok: true };
-    }
-    if (path.startsWith('/api/trades')) {
-      return { trades: window.GUEST_DATA?.trades || [] };
-    }
-    if (path.startsWith('/api/profile')) {
-      return window.GUEST_DATA?.portfolio || {};
-    }
-    if (path.startsWith('/api/rates')) {
-      return { rates: { GBP: 1, USD: 1.24, EUR: 1.12 }, cachedAt: Date.now() };
-    }
+  if (isGuest && typeof window.handleGuestRequest === 'function') {
+    return window.handleGuestRequest(path, opts);
   }
   const res = await fetch(path, { credentials: 'include', ...opts });
   const data = await res.json().catch(() => ({}));
@@ -459,6 +448,7 @@ function bindNav() {
   });
   document.querySelector('#logout-btn')?.addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST' }).catch(() => {});
+    sessionStorage.removeItem('guestMode');
     localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });

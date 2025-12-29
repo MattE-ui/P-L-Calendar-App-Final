@@ -40,43 +40,13 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 async function api(path, opts = {}) {
-  const isGuest = localStorage.getItem('guestMode') === 'true';
+  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
   const method = (opts.method || 'GET').toUpperCase();
-  if (isGuest) {
+  if (isGuest && typeof window.handleGuestRequest === 'function') {
     if (method !== 'GET') {
-      return { ok: true };
+      return window.handleGuestRequest(path, opts);
     }
-    if (path.startsWith('/api/pl')) {
-      return window.GUEST_DATA?.pl || {};
-    }
-    if (path.startsWith('/api/portfolio')) {
-      return window.GUEST_DATA?.portfolio || {};
-    }
-    if (path.startsWith('/api/profile')) {
-      return {
-        profileComplete: true,
-        portfolio: window.GUEST_DATA?.portfolio?.portfolio || 0,
-        initialNetDeposits: window.GUEST_DATA?.portfolio?.initialNetDeposits || 0,
-        netDepositsTotal: window.GUEST_DATA?.portfolio?.netDepositsTotal || 0,
-        today: new Date().toISOString().slice(0, 10),
-        netDepositsAnchor: null,
-        username: 'guest'
-      };
-    }
-    if (path.startsWith('/api/trades/active')) {
-      return {
-        trades: window.GUEST_DATA?.activeTrades || [],
-        liveOpenPnl: window.GUEST_DATA?.portfolio?.liveOpenPnl || 0,
-        liveOpenPnlMode: 'computed',
-        liveOpenPnlCurrency: 'GBP'
-      };
-    }
-    if (path.startsWith('/api/rates')) {
-      return { rates: { GBP: 1, USD: 1.24, EUR: 1.12 }, cachedAt: Date.now() };
-    }
-    if (path.startsWith('/api/market/low')) {
-      return { low: 220.5 };
-    }
+    return window.handleGuestRequest(path, opts);
   }
   const res = await fetch(path, { credentials: 'include', ...opts });
   let data;
@@ -2243,6 +2213,7 @@ function bindControls() {
     } catch (e) {
       console.warn(e);
     }
+    sessionStorage.removeItem('guestMode');
     localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });

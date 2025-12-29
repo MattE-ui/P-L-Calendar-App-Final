@@ -1,4 +1,4 @@
-window.GUEST_DATA = {
+const DEFAULT_GUEST_DATA = {
   portfolio: {
     portfolio: 12000,
     initialNetDeposits: 8000,
@@ -171,4 +171,211 @@ window.GUEST_DATA = {
       { date: "2025-12-24", cumulative: 165 }
     ]
   }
+};
+
+function cloneGuestData() {
+  return JSON.parse(JSON.stringify(DEFAULT_GUEST_DATA));
+}
+
+function loadGuestData() {
+  const navEntry = performance.getEntriesByType?.('navigation')?.[0];
+  const isReload = navEntry?.type === 'reload';
+  if (isReload) {
+    sessionStorage.removeItem('guest-data');
+  }
+  const stored = sessionStorage.getItem('guest-data');
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {
+      sessionStorage.removeItem('guest-data');
+    }
+  }
+  const fresh = cloneGuestData();
+  sessionStorage.setItem('guest-data', JSON.stringify(fresh));
+  return fresh;
+}
+
+function saveGuestData(data) {
+  sessionStorage.setItem('guest-data', JSON.stringify(data));
+}
+
+function parseGuestQuery(path) {
+  const url = new URL(path, window.location.origin);
+  return url.searchParams;
+}
+
+function convertToGBP(value, currency, rates) {
+  if (!Number.isFinite(value)) return null;
+  if (currency === 'GBP') return value;
+  const rate = rates?.[currency];
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return value / rate;
+}
+
+function ensureGuestMonth(pl, dateKey) {
+  const ym = dateKey.slice(0, 7);
+  pl[ym] ||= {};
+  return { ym, bucket: pl[ym] };
+}
+
+function computeGuestActiveTrades(data) {
+  const trades = data.trades.filter(trade => trade.status !== 'closed' && !Number.isFinite(Number(trade.closePrice)));
+  const liveOpenPnl = trades.reduce((sum, trade) => sum + (Number(trade.unrealizedGBP) || 0), 0);
+  return { trades, liveOpenPnl };
+}
+
+window.GUEST_DATA = loadGuestData();
+window.handleGuestRequest = (path, opts = {}) => {
+  const method = (opts.method || 'GET').toUpperCase();
+  const data = window.GUEST_DATA;
+  const rates = data.rates || { GBP: 1, USD: 1.24, EUR: 1.12 };
+  if (path.startsWith('/api/rates')) {
+    return { rates, cachedAt: Date.now() };
+  }
+  if (path.startsWith('/api/profile')) {
+    return {
+      profileComplete: true,
+      portfolio: data.portfolio.portfolio,
+      initialNetDeposits: data.portfolio.initialNetDeposits,
+      netDepositsTotal: data.portfolio.netDepositsTotal,
+      today: new Date().toISOString().slice(0, 10),
+      netDepositsAnchor: null,
+      username: 'guest'
+    };
+  }
+  if (path.startsWith('/api/portfolio')) {
+    if (method === 'GET') return data.portfolio;
+    const payload = opts.body ? JSON.parse(opts.body) : {};
+    data.portfolio.portfolio = Number(payload.portfolio) || data.portfolio.portfolio;
+    saveGuestData(data);
+    return { ok: true, portfolio: data.portfolio.portfolio };
+  }
+  if (path.startsWith('/api/pl')) {
+    if (method === 'GET') {
+      const params = parseGuestQuery(path);
+      const year = params.get('year');
+      const month = params.get('month');
+      if (year && month) {
+        const key = `${year}-${String(month).padStart(2, '0')}`;
+        return data.pl[key] || {};
+      }
+      return data.pl;
+    }
+    const payload = opts.body ? JSON.parse(opts.body) : {};
+    const date = payload.date;
+    if (date) {
+      const { bucket } = ensureGuestMonth(data.pl, date);
+      bucket[date] = {
+        ...bucket[date],
+        start: bucket[date]?.start ?? data.portfolio.portfolio,
+        end: payload.value ?? bucket[date]?.end ?? data.portfolio.portfolio,
+        cashIn: Number(payload.cashIn ?? 0),
+        cashOut: Number(payload.cashOut ?? 0),
+        note: payload.note ?? bucket[date]?.note ?? '',
+        trades: bucket[date]?.trades ?? []
+      };
+    }
+    saveGuestData(data);
+    return { ok: true };
+  }
+  if (path.startsWith('/api/market/low')) {
+    return { low: 220.5 };
+  }
+  if (path.startsWith('/api/trades/active')) {
+    const active = computeGuestActiveTrades(data);
+    return {
+      trades: active.trades,
+      liveOpenPnl: active.liveOpenPnl,
+      liveOpenPnlMode: 'computed',
+      liveOpenPnlCurrency: 'GBP'
+    };
+  }
+  if (path.startsWith('/api/trades/export')) {
+    return { ok: true };
+  }
+  if (path.startsWith('/api/trades/close')) {
+    const payload = opts.body ? JSON.parse(opts.body) : {};
+    const trade = data.trades.find(item => item.id === payload.tradeId);
+    if (trade) {
+      trade.status = 'closed';
+      trade.closePrice = Number(payload.closePrice) || trade.closePrice;
+      trade.closeDate = payload.closeDate || trade.closeDate;
+      const pnlCurrency = (Number(trade.closePrice) - Number(trade.entry)) * Number(trade.sizeUnits || 0);
+      trade.realizedPnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates) || 0;
+      saveGuestData(data);
+    }
+    return { ok: true };
+  }
+  if (path.startsWith('/api/trades')) {
+    if (method === 'GET') {
+      return { trades: data.trades };
+    }
+    if (method === 'POST') {
+      const payload = opts.body ? JSON.parse(opts.body) : {};
+      const id = `guest-${Date.now()}`;
+      const trade = {
+        id,
+        symbol: payload.symbol || '',
+        status: payload.status || 'open',
+        openDate: payload.date || new Date().toISOString().slice(0, 10),
+        closeDate: payload.closeDate || '',
+        entry: Number(payload.entry) || 0,
+        stop: Number(payload.stop) || 0,
+        currentStop: payload.currentStop ?? null,
+        closePrice: payload.closePrice ?? null,
+        currency: payload.currency || 'GBP',
+        sizeUnits: Number(payload.sizeUnits) || 0,
+        riskPct: Number(payload.riskPct) || 0,
+        riskAmountGBP: Number(payload.riskAmount) || 0,
+        positionGBP: Number(payload.positionGBP) || 0,
+        realizedPnlGBP: 0,
+        guaranteedPnlGBP: 0,
+        tradeType: payload.tradeType || 'day',
+        assetClass: payload.assetClass || 'stocks',
+        strategyTag: payload.strategyTag || '',
+        marketCondition: payload.marketCondition || '',
+        setupTags: payload.setupTags || [],
+        emotionTags: payload.emotionTags || [],
+        note: payload.note || '',
+        source: payload.source || 'manual'
+      };
+      data.trades.unshift(trade);
+      saveGuestData(data);
+      return { ok: true, trade };
+    }
+  }
+  if (path.startsWith('/api/trades/')) {
+    const parts = path.split('/');
+    const tradeId = parts[3];
+    const trade = data.trades.find(item => item.id === tradeId);
+    if (!trade) return { ok: false };
+    if (method === 'DELETE') {
+      data.trades = data.trades.filter(item => item.id !== tradeId);
+      saveGuestData(data);
+      return { ok: true };
+    }
+    if (method === 'PUT') {
+      const payload = opts.body ? JSON.parse(opts.body) : {};
+      Object.assign(trade, payload);
+      saveGuestData(data);
+      return { ok: true, trade };
+    }
+  }
+  if (path.startsWith('/api/analytics/summary')) {
+    return { summary: data.analytics?.summary || {}, breakdowns: {} };
+  }
+  if (path.startsWith('/api/analytics/equity-curve')) {
+    return { curve: data.analytics?.equityCurve || [] };
+  }
+  if (path.startsWith('/api/analytics/drawdown')) {
+    return { drawdown: data.analytics?.drawdown || {} };
+  }
+  if (path.startsWith('/api/analytics/distribution')) {
+    return { distribution: data.analytics?.distribution || {} };
+  }
+  if (path.startsWith('/api/analytics/streaks')) {
+    return { streaks: data.analytics?.streaks || {} };
+  }
+  return { ok: true };
 };
