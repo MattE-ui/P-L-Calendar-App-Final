@@ -1,4 +1,8 @@
 async function api(path, opts = {}) {
+  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
+  if (isGuest && typeof window.handleGuestRequest === 'function') {
+    return window.handleGuestRequest(path, opts);
+  }
   const res = await fetch(path, { credentials: 'include', ...opts });
   let data;
   try {
@@ -82,6 +86,8 @@ function bindNav() {
     } catch (e) {
       console.warn(e);
     }
+    sessionStorage.removeItem('guestMode');
+    localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
@@ -563,6 +569,8 @@ async function logout() {
   } catch (e) {
     console.warn(e);
   }
+  sessionStorage.removeItem('guestMode');
+  localStorage.removeItem('guestMode');
   window.location.href = '/login.html';
 }
 

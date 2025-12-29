@@ -1324,6 +1324,33 @@ textarea {
   min-height: 80px;
 }
 
+.guest-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(120deg, rgba(255, 188, 66, 0.2), rgba(255, 122, 122, 0.2));
+  border-bottom: 1px solid rgba(255, 188, 66, 0.35);
+  color: #f9e7b8;
+  font-size: 14px;
+  text-align: center;
+  flex-wrap: wrap;
+}
+
+.guest-banner strong {
+  color: #ffd27d;
+}
+
+.guest-banner-link {
+  color: #ffffff;
+  text-decoration: underline;
+}
+
+.guest-banner-link:hover {
+  color: #ffe8b5;
+}
+
 @media (max-width: 540px) {
   .profile-container { margin-top: 36px; padding-inline: 16px; }
   .profile-header h1 { font-size: 22px; }
