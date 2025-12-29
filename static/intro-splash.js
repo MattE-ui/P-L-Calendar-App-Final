@@ -24,22 +24,21 @@
     window.addEventListener('DOMContentLoaded', mountOverlay, { once: true });
   }
 
-  try {
-    sessionStorage.setItem(storageKey, 'true');
-  } catch (error) {
-    console.warn('Intro splash session storage unavailable:', error);
-  }
-
-  const removeOverlay = (delayMs) => {
+  const finalizeIntro = (delayMs) => {
     window.setTimeout(() => {
       overlay.remove();
+      try {
+        sessionStorage.setItem(storageKey, 'true');
+      } catch (error) {
+        console.warn('Intro splash session storage unavailable:', error);
+      }
     }, delayMs);
   };
 
   if (prefersReducedMotion) {
     logoWrap.innerHTML = '<img src="/static/brand/veracity-logo.svg" alt="" class="intro-splash__img" />';
     overlay.classList.add('intro-splash--reduced');
-    removeOverlay(550);
+    finalizeIntro(550);
     return;
   }
 
@@ -50,11 +49,11 @@
       overlay.classList.add('intro-splash--animate');
       // Adjust totalDurationMs + CSS keyframes together to tweak the full intro timing.
       const totalDurationMs = 1550;
-      removeOverlay(totalDurationMs);
+      finalizeIntro(totalDurationMs);
     })
     .catch((error) => {
       console.warn('Unable to load intro logo:', error);
       overlay.classList.add('intro-splash--reduced');
-      removeOverlay(400);
+      finalizeIntro(400);
     });
 })();
