@@ -198,6 +198,91 @@ body {
   border: 1px solid var(--border); border-radius: 10px;
   padding: 8px 12px; cursor: pointer;
 }
+
+/* Intro splash animation timings can be tuned by adjusting delays/durations here and in static/intro-splash.js. */
+#vts-intro {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0b1320;
+  z-index: 9999;
+  opacity: 1;
+  overflow: hidden;
+}
+
+#vts-intro .vts-intro__logo,
+#vts-intro .vts-intro__fallback {
+  width: min(520px, 80vw);
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: transform 0.6s ease, opacity 0.6s ease;
+}
+
+#vts-intro .vts-intro__logo {
+  display: block;
+  height: auto;
+}
+
+#vts-intro .vts-intro__fallback {
+  display: none;
+  white-space: pre-line;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 6px;
+}
+
+#vts-intro.logo-missing .vts-intro__logo {
+  display: none;
+}
+
+#vts-intro.logo-missing .vts-intro__fallback {
+  display: block;
+}
+
+#vts-intro .vts-intro__wipe {
+  position: absolute;
+  top: 0;
+  left: -50%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(120deg, rgba(255,255,255,0.0), rgba(255,255,255,0.1), rgba(255,255,255,0.0));
+  transform: translateX(140%) skewX(-12deg);
+  opacity: 0.6;
+}
+
+#vts-intro.play .vts-intro__wipe {
+  animation: vts-wipe 0.9s cubic-bezier(0.22, 0.8, 0.4, 1) forwards;
+}
+
+#vts-intro.play .vts-intro__logo,
+#vts-intro.play .vts-intro__fallback {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.2s;
+}
+
+#vts-intro.out {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+#vts-intro.reduced .vts-intro__wipe {
+  display: none;
+}
+
+#vts-intro.reduced .vts-intro__logo,
+#vts-intro.reduced .vts-intro__fallback {
+  opacity: 1;
+  transform: translateY(0);
+  transition: none;
+}
+
+@keyframes vts-wipe {
+  0% { transform: translateX(140%) skewX(-12deg); opacity: 0.2; }
+  100% { transform: translateX(-140%) skewX(-12deg); opacity: 0.6; }
+}
 #view-controls button.active { outline: 2px solid var(--primary); background: rgba(42,163,255,.16); color: #cde8ff; }
 #view-controls button:hover { border-color: var(--accent); }
 #view-controls button:focus-visible { outline: 2px solid var(--accent); }
