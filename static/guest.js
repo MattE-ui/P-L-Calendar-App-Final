@@ -220,7 +220,10 @@ function ensureGuestMonth(pl, dateKey) {
 }
 
 function computeGuestActiveTrades(data) {
-  const trades = data.trades.filter(trade => trade.status !== 'closed' && !Number.isFinite(Number(trade.closePrice)));
+  const openTrades = data.trades.filter(trade => trade.status !== 'closed' && !Number.isFinite(Number(trade.closePrice)));
+  const activeTrades = Array.isArray(data.activeTrades) ? data.activeTrades : [];
+  const activeMap = new Map(activeTrades.map(trade => [trade.id, trade]));
+  const trades = openTrades.map(trade => ({ ...trade, ...activeMap.get(trade.id) }));
   const liveOpenPnl = trades.reduce((sum, trade) => sum + (Number(trade.unrealizedGBP) || 0), 0);
   return { trades, liveOpenPnl };
 }
@@ -264,17 +267,82 @@ window.handleGuestRequest = (path, opts = {}) => {
     }
     const payload = opts.body ? JSON.parse(opts.body) : {};
     const date = payload.date;
+    if (!date) {
+      return { ok: false, error: 'Missing date' };
+    }
     if (date) {
-      const { bucket } = ensureGuestMonth(data.pl, date);
-      bucket[date] = {
-        ...bucket[date],
-        start: bucket[date]?.start ?? data.portfolio.portfolio,
-        end: payload.value ?? bucket[date]?.end ?? data.portfolio.portfolio,
-        cashIn: Number(payload.cashIn ?? 0),
-        cashOut: Number(payload.cashOut ?? 0),
-        note: payload.note ?? bucket[date]?.note ?? '',
-        trades: bucket[date]?.trades ?? []
-      };
+      const { ym, bucket } = ensureGuestMonth(data.pl, date);
+      const existing = bucket[date];
+      const deposit = payload.cashIn === undefined || payload.cashIn === '' ? 0 : Number(payload.cashIn);
+      const withdrawal = payload.cashOut === undefined || payload.cashOut === '' ? 0 : Number(payload.cashOut);
+      if (!Number.isFinite(deposit) || deposit < 0) {
+        return { ok: false, error: 'Invalid deposit value' };
+      }
+      if (!Number.isFinite(withdrawal) || withdrawal < 0) {
+        return { ok: false, error: 'Invalid withdrawal value' };
+      }
+      let normalizedNote;
+      if (payload.note !== undefined) {
+        if (payload.note === null) {
+          normalizedNote = '';
+        } else if (typeof payload.note === 'string') {
+          normalizedNote = payload.note.trim();
+        } else {
+          return { ok: false, error: 'Invalid note value' };
+        }
+      }
+      const hasValue = Object.prototype.hasOwnProperty.call(payload, 'value');
+      if (hasValue && (payload.value === null || payload.value === '')) {
+        const hasCash = deposit > 0 || withdrawal > 0;
+        const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existing?.note;
+        if (hasCash || hasNote) {
+          const entryPayload = {
+            cashIn: deposit,
+            cashOut: withdrawal,
+            start: existing?.start ?? data.portfolio.portfolio,
+            trades: existing?.trades ?? []
+          };
+          if (normalizedNote !== undefined) {
+            if (normalizedNote) {
+              entryPayload.note = normalizedNote;
+            }
+          } else if (existing && typeof existing.note === 'string') {
+            const carryNote = existing.note.trim();
+            if (carryNote) {
+              entryPayload.note = carryNote;
+            }
+          }
+          bucket[date] = entryPayload;
+        } else {
+          delete bucket[date];
+          if (!Object.keys(bucket).length) {
+            delete data.pl[ym];
+          }
+        }
+      } else {
+        const nextEnd = hasValue ? Number(payload.value) : existing?.end ?? data.portfolio.portfolio;
+        if (!Number.isFinite(nextEnd) || nextEnd < 0) {
+          return { ok: false, error: 'Invalid portfolio value' };
+        }
+        const entryPayload = {
+          start: existing?.start ?? data.portfolio.portfolio,
+          end: nextEnd,
+          cashIn: deposit,
+          cashOut: withdrawal,
+          trades: existing?.trades ?? []
+        };
+        if (normalizedNote !== undefined) {
+          if (normalizedNote) {
+            entryPayload.note = normalizedNote;
+          }
+        } else if (existing && typeof existing.note === 'string') {
+          const carryNote = existing.note.trim();
+          if (carryNote) {
+            entryPayload.note = carryNote;
+          }
+        }
+        bucket[date] = entryPayload;
+      }
     }
     saveGuestData(data);
     return { ok: true };
@@ -296,13 +364,17 @@ window.handleGuestRequest = (path, opts = {}) => {
   }
   if (path.startsWith('/api/trades/close')) {
     const payload = opts.body ? JSON.parse(opts.body) : {};
-    const trade = data.trades.find(item => item.id === payload.tradeId);
+    const tradeId = payload.tradeId || payload.id;
+    const trade = data.trades.find(item => item.id === tradeId);
     if (trade) {
       trade.status = 'closed';
-      trade.closePrice = Number(payload.closePrice) || trade.closePrice;
-      trade.closeDate = payload.closeDate || trade.closeDate;
+      trade.closePrice = Number(payload.closePrice ?? payload.price) || trade.closePrice;
+      trade.closeDate = payload.closeDate || payload.date || trade.closeDate;
       const pnlCurrency = (Number(trade.closePrice) - Number(trade.entry)) * Number(trade.sizeUnits || 0);
       trade.realizedPnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates) || 0;
+      if (Array.isArray(data.activeTrades)) {
+        data.activeTrades = data.activeTrades.filter(item => item.id !== trade.id);
+      }
       saveGuestData(data);
     }
     return { ok: true };
@@ -341,6 +413,25 @@ window.handleGuestRequest = (path, opts = {}) => {
         source: payload.source || 'manual'
       };
       data.trades.unshift(trade);
+      if (trade.status !== 'closed') {
+        data.activeTrades ||= [];
+        data.activeTrades.unshift({
+          id,
+          symbol: trade.symbol,
+          entry: trade.entry,
+          stop: trade.stop,
+          currentStop: trade.currentStop ?? null,
+          currency: trade.currency,
+          sizeUnits: trade.sizeUnits,
+          riskPct: trade.riskPct,
+          direction: payload.direction || 'long',
+          livePrice: Number(payload.entry) || 0,
+          unrealizedGBP: 0,
+          guaranteedPnlGBP: 0,
+          positionGBP: trade.positionGBP,
+          source: trade.source
+        });
+      }
       saveGuestData(data);
       return { ok: true, trade };
     }
@@ -352,12 +443,18 @@ window.handleGuestRequest = (path, opts = {}) => {
     if (!trade) return { ok: false };
     if (method === 'DELETE') {
       data.trades = data.trades.filter(item => item.id !== tradeId);
+      if (Array.isArray(data.activeTrades)) {
+        data.activeTrades = data.activeTrades.filter(item => item.id !== tradeId);
+      }
       saveGuestData(data);
       return { ok: true };
     }
     if (method === 'PUT') {
       const payload = opts.body ? JSON.parse(opts.body) : {};
       Object.assign(trade, payload);
+      if (trade.status === 'closed' && Array.isArray(data.activeTrades)) {
+        data.activeTrades = data.activeTrades.filter(item => item.id !== tradeId);
+      }
       saveGuestData(data);
       return { ok: true, trade };
     }
