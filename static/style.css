@@ -206,85 +206,121 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0b1018;
+  background: #0b1320;
   z-index: 9999;
   pointer-events: auto;
-  opacity: 0;
+  opacity: 1;
+  overflow: hidden;
 }
 
 .intro-splash__logo {
-  width: min(520px, 82vw);
+  position: relative;
+  width: min(560px, 86vw);
+  z-index: 2;
 }
 
-.intro-splash__logo svg,
-.intro-splash__img {
+.intro-splash__logo-svg {
   width: 100%;
   height: auto;
   display: block;
 }
 
-.intro-splash--animate {
-  animation: splash-fade 2.1s ease forwards;
-}
-
-.intro-splash--animate #vts-chart path {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: splash-draw 0.7s ease forwards 0.16s;
-}
-
-.intro-splash--animate #vts-wordmark {
+.intro-splash__logo-full {
   opacity: 0;
-  transform: translateY(10px);
-  animation: splash-wordmark 0.6s ease forwards 0.75s;
 }
 
-.intro-splash--animate #vts-subtitle {
-  opacity: 0;
-  transform: translateY(6px);
-  animation: splash-subtitle 0.5s ease forwards 1s;
+.intro-splash__logo-reveal {
+  opacity: 1;
 }
 
-.intro-splash--animate #vts-candles {
-  opacity: 0;
-  transform: scale(0.96);
+.intro-splash__cutout-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.intro-splash__cutout {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.intro-splash--animate .intro-splash__v-mask {
+  transform-box: fill-box;
   transform-origin: center;
-  animation: splash-candles 0.35s ease forwards 1.2s;
+  transform: translateX(60vw);
+  animation: splash-v-sweep 0.8s cubic-bezier(0.25, 0.8, 0.3, 1) forwards;
+}
+
+.intro-splash--animate .intro-splash__cutout-v {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  transform: scale(1);
+  animation: splash-v-reveal 0.65s cubic-bezier(0.22, 0.8, 0.4, 1) forwards 1.75s;
+}
+
+.intro-splash--animate .intro-splash__cutout-wrap {
+  animation: splash-overlay-fade 0.25s ease forwards 2.15s;
+}
+
+.intro-splash--animate .intro-splash__logo {
+  opacity: 0;
+  animation: splash-logo-hold 1.8s ease forwards;
+}
+
+.intro-splash--animate .intro-splash__logo-full {
+  animation: splash-logo-full 0.2s ease forwards 0.9s;
+}
+
+.intro-splash--animate .intro-splash__logo-reveal {
+  animation: splash-logo-reveal 0.2s ease forwards 0.9s;
 }
 
 .intro-splash--reduced {
-  animation: splash-fade-reduced 0.5s ease forwards;
+  animation: splash-reduced 0.3s ease forwards;
 }
 
-@keyframes splash-fade {
+.intro-splash--reduced .intro-splash__logo-full {
+  opacity: 1;
+}
+
+.intro-splash--reduced .intro-splash__logo-reveal {
+  opacity: 0;
+}
+
+@keyframes splash-v-sweep {
+  from { transform: translateX(60vw); }
+  to { transform: translateX(-60vw); }
+}
+
+@keyframes splash-logo-hold {
   0% { opacity: 0; }
-  7% { opacity: 1; }
-  85% { opacity: 1; }
-  100% { opacity: 0; }
+  12% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 1; }
 }
 
-@keyframes splash-fade-reduced {
-  0% { opacity: 0; }
-  40% { opacity: 1; }
-  100% { opacity: 0; }
+@keyframes splash-logo-full {
+  to { opacity: 1; }
 }
 
-@keyframes splash-draw {
-  to { stroke-dashoffset: 0; }
+@keyframes splash-logo-reveal {
+  to { opacity: 0; }
 }
 
-@keyframes splash-wordmark {
-  to { opacity: 1; transform: translateY(0); }
+@keyframes splash-v-reveal {
+  from { transform: scale(1); }
+  to { transform: scale(12); }
 }
 
-@keyframes splash-subtitle {
-  to { opacity: 1; transform: translateY(0); }
+@keyframes splash-overlay-fade {
+  to { opacity: 0; }
 }
 
-@keyframes splash-candles {
-  0% { opacity: 0; transform: scale(0.96); }
-  60% { opacity: 1; transform: scale(1.02); }
-  100% { opacity: 1; transform: scale(1); }
+@keyframes splash-reduced {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 #view-controls button.active { outline: 2px solid var(--primary); background: rgba(42,163,255,.16); color: #cde8ff; }
 #view-controls button:hover { border-color: var(--accent); }
