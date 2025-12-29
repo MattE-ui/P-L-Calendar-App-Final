@@ -52,6 +52,17 @@ async function api(path, opts = {}) {
     if (path.startsWith('/api/portfolio')) {
       return window.GUEST_DATA?.portfolio || {};
     }
+    if (path.startsWith('/api/profile')) {
+      return {
+        profileComplete: true,
+        portfolio: window.GUEST_DATA?.portfolio?.portfolio || 0,
+        initialNetDeposits: window.GUEST_DATA?.portfolio?.initialNetDeposits || 0,
+        netDepositsTotal: window.GUEST_DATA?.portfolio?.netDepositsTotal || 0,
+        today: new Date().toISOString().slice(0, 10),
+        netDepositsAnchor: null,
+        username: 'guest'
+      };
+    }
     if (path.startsWith('/api/trades/active')) {
       return {
         trades: window.GUEST_DATA?.activeTrades || [],
