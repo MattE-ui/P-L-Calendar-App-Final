@@ -1,4 +1,8 @@
 async function api(path, opts = {}) {
+  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
+  if (isGuest && typeof window.handleGuestRequest === 'function') {
+    return window.handleGuestRequest(path, opts);
+  }
   const res = await fetch(path, { credentials: 'include', ...opts });
   let data;
   try {
@@ -82,6 +86,8 @@ function bindNav() {
     } catch (e) {
       console.warn(e);
     }
+    sessionStorage.removeItem('guestMode');
+    localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
@@ -168,12 +174,12 @@ async function loadProfile() {
     if (netInput) {
       const hasNet = Number.isFinite(profileState.netDeposits);
       netInput.value = hasNet ? profileState.netDeposits.toFixed(2) : '';
-      netInput.readOnly = profileState.complete;
-      netInput.classList.toggle('readonly', profileState.complete);
-      netInput.required = !profileState.complete;
+      netInput.readOnly = false;
+      netInput.classList.remove('readonly');
+      netInput.required = true;
     }
     if (totalField) {
-      totalField.classList.toggle('readonly', profileState.complete);
+      totalField.classList.remove('readonly');
     }
     if (deltaField) {
       deltaField.classList.toggle('is-hidden', !profileState.complete);
@@ -508,7 +514,9 @@ async function saveProfile() {
     }
   } else {
     const deltaRaw = deltaInput?.value.trim() ?? '';
-    if (deltaRaw) {
+    if (netRaw && !Number.isNaN(netDepositsTotal) && netDepositsTotal !== profileState.netDeposits) {
+      // use the edited total when resetting or overriding deposits
+    } else if (deltaRaw) {
       const delta = Number(deltaRaw);
       if (Number.isNaN(delta)) {
         if (errEl) errEl.textContent = 'Additional deposits must be a number (use negative values for withdrawals).';
@@ -561,6 +569,8 @@ async function logout() {
   } catch (e) {
     console.warn(e);
   }
+  sessionStorage.removeItem('guestMode');
+  localStorage.removeItem('guestMode');
   window.location.href = '/login.html';
 }
 
