@@ -16,6 +16,32 @@ const state = {
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 async function api(path, opts = {}) {
+  const isGuest = localStorage.getItem('guestMode') === 'true';
+  const method = (opts.method || 'GET').toUpperCase();
+  if (isGuest) {
+    if (method !== 'GET') {
+      return { ok: true };
+    }
+    if (path.startsWith('/api/analytics/summary')) {
+      const analytics = window.GUEST_DATA?.analytics || {};
+      return { summary: analytics.summary || {}, breakdowns: {} };
+    }
+    if (path.startsWith('/api/analytics/equity-curve')) {
+      return { curve: window.GUEST_DATA?.analytics?.equityCurve || [] };
+    }
+    if (path.startsWith('/api/analytics/drawdown')) {
+      return { drawdown: window.GUEST_DATA?.analytics?.drawdown || {} };
+    }
+    if (path.startsWith('/api/analytics/distribution')) {
+      return { distribution: window.GUEST_DATA?.analytics?.distribution || {} };
+    }
+    if (path.startsWith('/api/analytics/streaks')) {
+      return { streaks: window.GUEST_DATA?.analytics?.streaks || {} };
+    }
+    if (path.startsWith('/api/rates')) {
+      return { rates: { GBP: 1, USD: 1.24, EUR: 1.12 }, cachedAt: Date.now() };
+    }
+  }
   const res = await fetch(path, { credentials: 'include', ...opts });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
@@ -377,6 +403,7 @@ function bindNav() {
   });
   document.querySelector('#logout-btn')?.addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST' }).catch(() => {});
+    localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });
   document.querySelector('#quick-settings-btn')?.addEventListener('click', () => {
