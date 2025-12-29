@@ -46,6 +46,7 @@ function createLoginHandlers() {
       const res = await call('/api/login', { username, password });
       const data = await res.json().catch(() => ({ error: 'Login failed' }));
       if (res.ok) {
+        localStorage.removeItem('guestMode');
         window.location.href = data.profileComplete ? '/' : '/profile.html';
       } else {
         setError(data.error || 'Login failed');
