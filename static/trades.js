@@ -27,7 +27,11 @@ async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    window.location.href = '/login.html';
+    if (data?.error && data.error.includes('Guest session expired')) {
+      window.location.href = '/login.html?expired=guest';
+    } else {
+      window.location.href = '/login.html';
+    }
     return {};
   }
   if (!res.ok) {
