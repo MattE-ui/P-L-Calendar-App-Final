@@ -468,7 +468,7 @@ function normalizeTradeJournal(user) {
       const entry = Number(trade.entry);
       const stop = Number(trade.stop);
       const riskPct = Number(trade.riskPct);
-      const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
+      const currency = ['GBP', 'USD', 'EUR'].includes(trade.currency) ? trade.currency : 'GBP';
       const status = trade.status === 'closed' ? 'closed' : 'open';
       const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
       const typeRaw = typeof trade.tradeType === 'string' ? trade.tradeType.trim().toLowerCase() : '';
@@ -1692,7 +1692,7 @@ function scheduleTrading212Job(username, user) {
   if (cfg.lastSyncAt) {
     const handle = setInterval(() => {
       syncTrading212ForUser(username, new Date());
-    }, 60 * 1000);
+    }, 30 * 1000);
     trading212Jobs.set(username, { type: 'interval', handle });
     return;
   }
@@ -2313,8 +2313,8 @@ async function fetchRates() {
   const SIX_HOURS = 6 * 60 * 60 * 1000;
   const now = Date.now();
   if (process.env.SKIP_RATE_FETCH === 'true') {
-    if (!cachedRates.USD) {
-      cachedRates = { GBP: 1, USD: 1 };
+    if (!cachedRates.USD || !cachedRates.EUR) {
+      cachedRates = { GBP: 1, USD: 1, EUR: 1 };
     }
     cachedRatesAt = now;
     return cachedRates;
@@ -2327,13 +2327,14 @@ async function fetchRates() {
     if (!res.ok) throw new Error(`Rate fetch failed: ${res.status}`);
     const data = await res.json();
     const usd = data?.rates?.USD;
+    const eur = data?.rates?.EUR;
     if (usd && typeof usd === 'number') {
-      cachedRates = { GBP: 1, USD: usd };
+      cachedRates = { GBP: 1, USD: usd, ...(eur && typeof eur === 'number' ? { EUR: eur } : {}) };
       cachedRatesAt = now;
     }
   } catch (e) {
     console.warn('Unable to refresh exchange rates', e.message || e);
-    if (!cachedRates.USD) {
+    if (!cachedRates.USD || !cachedRates.EUR) {
       cachedRates = { GBP: 1 };
     }
   }
@@ -2936,8 +2937,9 @@ app.post('/api/trades', auth, async (req, res) => {
     closePrice,
     closeDate
   } = req.body || {};
-  const tradeCurrency = currency === 'USD' ? 'USD' : 'GBP';
-  const tradeBaseCurrency = baseCurrency === 'USD' ? 'USD' : 'GBP';
+  const supportedCurrencies = ['GBP', 'USD', 'EUR'];
+  const tradeCurrency = supportedCurrencies.includes(currency) ? currency : 'GBP';
+  const tradeBaseCurrency = supportedCurrencies.includes(baseCurrency) ? baseCurrency : 'GBP';
   const entryNum = Number(entry);
   const stopNum = Number(stop);
   const currentStopNum = Number(currentStop);
@@ -3018,7 +3020,7 @@ app.post('/api/trades', auth, async (req, res) => {
     ? date
     : currentDateKey();
   const fxFeeRate = Number(process.env.FX_FEE_RATE ?? 0.005);
-  const fxFeeEligible = tradeCurrency === 'USD' && tradeBaseCurrency === 'GBP';
+  const fxFeeEligible = tradeCurrency !== tradeBaseCurrency;
   const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,

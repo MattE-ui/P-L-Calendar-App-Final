@@ -21,7 +21,7 @@ const state = {
   }
 };
 
-const currencySymbols = { GBP: '£', USD: '$' };
+const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });

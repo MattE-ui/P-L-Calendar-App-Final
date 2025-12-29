@@ -33,7 +33,7 @@ const state = {
   manualStopOverride: false
 };
 
-const currencySymbols = { GBP: '£', USD: '$' };
+const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 
 const $ = selector => document.querySelector(selector);
@@ -646,6 +646,9 @@ function renderRiskCalculator() {
   if (state.riskCurrency === 'USD' && !state.rates.USD) {
     state.riskCurrency = 'GBP';
   }
+  if (state.riskCurrency === 'EUR' && !state.rates.EUR) {
+    state.riskCurrency = 'GBP';
+  }
   const safeDirection = ['long', 'short'].includes(state.direction) ? state.direction : 'long';
   state.direction = safeDirection;
   $$('#risk-direction-toggle button').forEach(btn => {
@@ -682,7 +685,7 @@ function renderRiskCalculator() {
   }
   const symbolInput = $('#risk-symbol-input');
   if (symbolInput && !symbolInput.value) symbolInput.value = '';
-  const allowedCurrencies = ['GBP', 'USD'];
+  const allowedCurrencies = ['GBP', 'USD', 'EUR'];
   const safeCurrency = allowedCurrencies.includes(state.riskCurrency) ? state.riskCurrency : 'GBP';
   state.riskCurrency = safeCurrency;
   $$('#risk-currency-toggle button').forEach(btn => {
@@ -1042,7 +1045,7 @@ function renderMetrics() {
   const netPerformanceGBP = Number.isFinite(metrics.netPerformanceGBP) ? metrics.netPerformanceGBP : 0;
   const netPerformancePct = Number.isFinite(metrics.netPerformancePct) ? metrics.netPerformancePct : null;
   const altCurrency = state.currency === 'GBP'
-    ? (state.rates.USD ? 'USD' : null)
+    ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
   const portfolioValueEl = $('#metric-portfolio-value');
@@ -1117,11 +1120,19 @@ function updateCurrencySelect() {
   const sel = $('#currency-select');
   if (!sel) return;
   const usdOption = sel.querySelector('option[value="USD"]');
+  const eurOption = sel.querySelector('option[value="EUR"]');
   const hasUSD = !!state.rates.USD;
+  const hasEUR = !!state.rates.EUR;
   if (usdOption) {
     usdOption.disabled = !hasUSD;
   }
+  if (eurOption) {
+    eurOption.disabled = !hasEUR;
+  }
   if (!hasUSD && state.currency === 'USD') {
+    state.currency = 'GBP';
+  }
+  if (!hasEUR && state.currency === 'EUR') {
     state.currency = 'GBP';
   }
   sel.value = state.currency;
@@ -1139,7 +1150,9 @@ function updatePortfolioPill() {
   const base = formatCurrency(latestGBP);
   const alt = state.currency === 'USD'
     ? formatCurrency(latestGBP, 'GBP')
-    : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
+    : state.currency === 'EUR'
+      ? formatCurrency(latestGBP, 'GBP')
+      : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
   if (el) {
     if (state.currency === 'USD') {
       el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
@@ -1578,7 +1591,11 @@ async function loadRates() {
     state.rates = { GBP: 1, ...rates };
   } catch (e) {
     console.warn('Unable to load exchange rates', e);
-    state.rates = { GBP: 1, ...(state.rates.USD ? { USD: state.rates.USD } : {}) };
+    state.rates = {
+      GBP: 1,
+      ...(state.rates.USD ? { USD: state.rates.USD } : {}),
+      ...(state.rates.EUR ? { EUR: state.rates.EUR } : {})
+    };
   }
 }
 
@@ -2259,7 +2276,7 @@ function bindControls() {
       state.defaultRiskPct = pct;
       state.riskPct = pct;
     }
-    if (cur && ['GBP', 'USD'].includes(cur)) {
+    if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) {
       state.defaultRiskCurrency = cur;
       state.riskCurrency = cur;
     }
@@ -2277,7 +2294,7 @@ function bindControls() {
   $$('#risk-currency-toggle button').forEach(btn => {
     btn.addEventListener('click', () => {
       const cur = btn.dataset.riskCurrency;
-      if (!cur || !['GBP', 'USD'].includes(cur)) return;
+      if (!cur || !['GBP', 'USD', 'EUR'].includes(cur)) return;
       state.riskCurrency = cur;
       renderRiskCalculator();
     });
@@ -2432,7 +2449,7 @@ async function init() {
     if (saved) {
       const prefs = JSON.parse(saved);
       if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
-      if (prefs?.defaultRiskCurrency && ['GBP', 'USD'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
       state.riskPct = state.defaultRiskPct;
       state.riskCurrency = state.defaultRiskCurrency;
     }
@@ -2453,7 +2470,7 @@ async function init() {
   setInterval(() => {
     if (document.visibilityState === 'hidden') return;
     refreshActiveTrades();
-  }, 30000);
+  }, 15000);
 }
 
 if (typeof window !== 'undefined') {

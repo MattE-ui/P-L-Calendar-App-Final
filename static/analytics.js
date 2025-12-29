@@ -13,7 +13,7 @@ const state = {
   }
 };
 
-const currencySymbols = { GBP: '£', USD: '$' };
+const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });
@@ -405,7 +405,7 @@ function bindNav() {
     const cur = curSel?.value;
     const prefs = {};
     if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
-    if (cur && ['GBP', 'USD'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) prefs.defaultRiskCurrency = cur;
     try {
       localStorage.setItem('plc-prefs', JSON.stringify(prefs));
     } catch (e) {
