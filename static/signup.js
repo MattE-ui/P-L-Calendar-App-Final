@@ -3,6 +3,7 @@ function createSignupHandlers() {
   const passwordInput = document.getElementById('signup-password');
   const signupBtn = document.getElementById('signup-btn');
   const loginLink = document.getElementById('login-link');
+  const guestBtn = document.getElementById('guest-btn');
   const signupError = document.getElementById('signup-error');
   const signupSuccess = document.getElementById('signup-success');
 
@@ -81,6 +82,10 @@ function createSignupHandlers() {
   });
   loginLink?.addEventListener('click', () => {
     window.location.href = '/login.html';
+  });
+  guestBtn?.addEventListener('click', () => {
+    localStorage.setItem('guestMode', 'true');
+    window.location.href = '/';
   });
 }
 
