@@ -13,7 +13,7 @@ const state = {
   }
 };
 
-const currencySymbols = { GBP: '£', USD: '$' };
+const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'include', ...opts });
@@ -167,6 +167,10 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-avg-loss').textContent = formatNumber(summary.avgLoss);
   document.querySelector('#kpi-expectancy').textContent = formatNumber(summary.expectancy);
   document.querySelector('#kpi-profit-factor').textContent = summary.profitFactor ? summary.profitFactor.toFixed(2) : '—';
+  const pfSecondary = document.querySelector('#kpi-profit-factor-secondary');
+  if (pfSecondary) {
+    pfSecondary.textContent = summary.profitFactor ? summary.profitFactor.toFixed(2) : '—';
+  }
   document.querySelector('#kpi-r-multiple').textContent = summary.avgR !== null ? summary.avgR.toFixed(2) : '—';
   document.querySelector('#kpi-drawdown').textContent = formatNumber(dd.maxDrawdown || 0);
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
@@ -176,12 +180,21 @@ function updateKpis(summary, dist, dd, streaks) {
 }
 
 function renderEquityCurve(curve = []) {
+  const latestEl = document.querySelector('#equity-latest-value');
+  const emptyNote = document.querySelector('#equity-empty-note');
   if (!curve.length) {
     showEmptyState('equity-chart', 'No equity data yet.');
+    if (latestEl) latestEl.textContent = '—';
+    if (emptyNote) emptyNote.classList.remove('is-hidden');
     return;
   }
+  if (emptyNote) emptyNote.classList.add('is-hidden');
   const labels = curve.map(p => p.date);
   const values = curve.map(p => p.cumulative);
+  if (latestEl) {
+    const latest = values[values.length - 1];
+    latestEl.textContent = formatNumber(latest);
+  }
   renderChart('equity-chart', {
     type: 'line',
     data: {
@@ -392,7 +405,7 @@ function bindNav() {
     const cur = curSel?.value;
     const prefs = {};
     if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
-    if (cur && ['GBP', 'USD'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) prefs.defaultRiskCurrency = cur;
     try {
       localStorage.setItem('plc-prefs', JSON.stringify(prefs));
     } catch (e) {
