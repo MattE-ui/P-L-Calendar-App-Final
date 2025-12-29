@@ -4,7 +4,8 @@ function createLoginHandlers() {
   const loginError = document.getElementById('login-error');
   const loginBtn = document.getElementById('login-btn');
   const signupLink = document.getElementById('signup-link');
-  const guestBtn = document.getElementById('guest-btn');
+  document.querySelectorAll('#guest-btn').forEach(btn => btn.remove());
+  const guestBtn = document.getElementById('guest-btn-bottom');
   const loginInfo = document.getElementById('login-info');
 
   if (!usernameInput || !passwordInput || !loginBtn) {
