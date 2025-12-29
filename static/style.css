@@ -200,127 +200,88 @@ body {
 }
 
 /* Intro splash animation timings can be tuned by adjusting delays/durations here and in static/intro-splash.js. */
-.intro-splash {
+#vts-intro {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   background: #0b1320;
   z-index: 9999;
-  pointer-events: auto;
   opacity: 1;
   overflow: hidden;
 }
 
-.intro-splash__logo {
-  position: relative;
-  width: min(560px, 86vw);
+#vts-intro .vts-intro__logo,
+#vts-intro .vts-intro__fallback {
+  width: min(520px, 80vw);
   z-index: 2;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: transform 0.6s ease, opacity 0.6s ease;
 }
 
-.intro-splash__logo-svg {
-  width: 100%;
+#vts-intro .vts-intro__logo {
+  display: block;
   height: auto;
+}
+
+#vts-intro .vts-intro__fallback {
+  display: none;
+  white-space: pre-line;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 6px;
+}
+
+#vts-intro.logo-missing .vts-intro__logo {
+  display: none;
+}
+
+#vts-intro.logo-missing .vts-intro__fallback {
   display: block;
 }
 
-.intro-splash__logo-full {
-  opacity: 0;
-}
-
-.intro-splash__logo-reveal {
-  opacity: 1;
-}
-
-.intro-splash__cutout-wrap {
+#vts-intro .vts-intro__wipe {
   position: absolute;
-  inset: 0;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.intro-splash__cutout {
-  width: 100%;
+  top: 0;
+  left: -50%;
+  width: 60%;
   height: 100%;
-  display: block;
+  background: linear-gradient(120deg, rgba(255,255,255,0.0), rgba(255,255,255,0.1), rgba(255,255,255,0.0));
+  transform: translateX(140%) skewX(-12deg);
+  opacity: 0.6;
 }
 
-.intro-splash--animate .intro-splash__v-mask {
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: translateX(60vw);
-  animation: splash-v-sweep 0.8s cubic-bezier(0.25, 0.8, 0.3, 1) forwards;
+#vts-intro.play .vts-intro__wipe {
+  animation: vts-wipe 0.9s cubic-bezier(0.22, 0.8, 0.4, 1) forwards;
 }
 
-.intro-splash--animate .intro-splash__cutout-v {
-  transform-box: fill-box;
-  transform-origin: 50% 50%;
-  transform: scale(1);
-  animation: splash-v-reveal 0.65s cubic-bezier(0.22, 0.8, 0.4, 1) forwards 1.75s;
-}
-
-.intro-splash--animate .intro-splash__cutout-wrap {
-  animation: splash-overlay-fade 0.25s ease forwards 2.15s;
-}
-
-.intro-splash--animate .intro-splash__logo {
-  opacity: 0;
-  animation: splash-logo-hold 1.8s ease forwards;
-}
-
-.intro-splash--animate .intro-splash__logo-full {
-  animation: splash-logo-full 0.2s ease forwards 0.9s;
-}
-
-.intro-splash--animate .intro-splash__logo-reveal {
-  animation: splash-logo-reveal 0.2s ease forwards 0.9s;
-}
-
-.intro-splash--reduced {
-  animation: splash-reduced 0.3s ease forwards;
-}
-
-.intro-splash--reduced .intro-splash__logo-full {
+#vts-intro.play .vts-intro__logo,
+#vts-intro.play .vts-intro__fallback {
   opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.2s;
 }
 
-.intro-splash--reduced .intro-splash__logo-reveal {
+#vts-intro.out {
   opacity: 0;
+  transition: opacity 0.3s ease;
 }
 
-@keyframes splash-v-sweep {
-  from { transform: translateX(60vw); }
-  to { transform: translateX(-60vw); }
+#vts-intro.reduced .vts-intro__wipe {
+  display: none;
 }
 
-@keyframes splash-logo-hold {
-  0% { opacity: 0; }
-  12% { opacity: 1; }
-  80% { opacity: 1; }
-  100% { opacity: 1; }
+#vts-intro.reduced .vts-intro__logo,
+#vts-intro.reduced .vts-intro__fallback {
+  opacity: 1;
+  transform: translateY(0);
+  transition: none;
 }
 
-@keyframes splash-logo-full {
-  to { opacity: 1; }
-}
-
-@keyframes splash-logo-reveal {
-  to { opacity: 0; }
-}
-
-@keyframes splash-v-reveal {
-  from { transform: scale(1); }
-  to { transform: scale(12); }
-}
-
-@keyframes splash-overlay-fade {
-  to { opacity: 0; }
-}
-
-@keyframes splash-reduced {
-  from { opacity: 1; }
-  to { opacity: 0; }
+@keyframes vts-wipe {
+  0% { transform: translateX(140%) skewX(-12deg); opacity: 0.2; }
+  100% { transform: translateX(-140%) skewX(-12deg); opacity: 0.6; }
 }
 #view-controls button.active { outline: 2px solid var(--primary); background: rgba(42,163,255,.16); color: #cde8ff; }
 #view-controls button:hover { border-color: var(--accent); }
