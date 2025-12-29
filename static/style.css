@@ -224,32 +224,32 @@ body {
 }
 
 .intro-splash--animate {
-  animation: splash-fade 1.55s ease forwards;
+  animation: splash-fade 2.1s ease forwards;
 }
 
 .intro-splash--animate #vts-chart path {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: splash-draw 0.55s ease forwards 0.12s;
+  animation: splash-draw 0.7s ease forwards 0.16s;
 }
 
 .intro-splash--animate #vts-wordmark {
   opacity: 0;
   transform: translateY(10px);
-  animation: splash-wordmark 0.5s ease forwards 0.55s;
+  animation: splash-wordmark 0.6s ease forwards 0.75s;
 }
 
 .intro-splash--animate #vts-subtitle {
   opacity: 0;
   transform: translateY(6px);
-  animation: splash-subtitle 0.4s ease forwards 0.75s;
+  animation: splash-subtitle 0.5s ease forwards 1s;
 }
 
 .intro-splash--animate #vts-candles {
   opacity: 0;
   transform: scale(0.96);
   transform-origin: center;
-  animation: splash-candles 0.28s ease forwards 0.95s;
+  animation: splash-candles 0.35s ease forwards 1.2s;
 }
 
 .intro-splash--reduced {
@@ -258,8 +258,8 @@ body {
 
 @keyframes splash-fade {
   0% { opacity: 0; }
-  8% { opacity: 1; }
-  82% { opacity: 1; }
+  7% { opacity: 1; }
+  85% { opacity: 1; }
   100% { opacity: 0; }
 }
 
