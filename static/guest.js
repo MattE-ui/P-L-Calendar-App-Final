@@ -1,175 +1,22 @@
 const DEFAULT_GUEST_DATA = {
   portfolio: {
-    portfolio: 12000,
-    initialNetDeposits: 8000,
-    netDepositsTotal: 9000,
-    liveOpenPnl: 145.32,
-    livePortfolio: 12000,
+    portfolio: 0,
+    initialNetDeposits: 0,
+    netDepositsTotal: 0,
+    liveOpenPnl: 0,
+    livePortfolio: 0,
     profileComplete: true,
-    activeTrades: 2
+    activeTrades: 0
   },
-  pl: {
-    "2025-12": {
-      "2025-12-20": {
-        start: 10200,
-        end: 10350,
-        cashIn: 0,
-        cashOut: 0,
-        note: "First week trading",
-        trades: []
-      },
-      "2025-12-21": {
-        start: 10350,
-        end: 10520,
-        cashIn: 0,
-        cashOut: 0,
-        note: "",
-        trades: []
-      },
-      "2025-12-22": {
-        start: 10520,
-        end: 10840,
-        cashIn: 500,
-        cashOut: 0,
-        note: "Deposit",
-        trades: []
-      },
-      "2025-12-23": {
-        start: 10840,
-        end: 11020,
-        cashIn: 0,
-        cashOut: 0,
-        note: "",
-        trades: []
-      },
-      "2025-12-24": {
-        start: 11020,
-        end: 11250,
-        cashIn: 0,
-        cashOut: 0,
-        note: "",
-        trades: []
-      }
-    }
-  },
-  activeTrades: [
-    {
-      id: "guest1",
-      symbol: "SNDK",
-      entry: 232.8,
-      stop: 221.01,
-      currentStop: 233.0,
-      currency: "GBP",
-      sizeUnits: 4,
-      riskPct: 0.38,
-      direction: "long",
-      livePrice: 250.45,
-      unrealizedGBP: 44.62,
-      guaranteedPnlGBP: 0.59,
-      positionGBP: 931.2,
-      source: "manual"
-    },
-    {
-      id: "guest2",
-      symbol: "AAPL",
-      entry: 183.2,
-      stop: 175.4,
-      currency: "USD",
-      sizeUnits: 3,
-      riskPct: 0.45,
-      direction: "long",
-      livePrice: 188.25,
-      unrealizedGBP: 11.2,
-      guaranteedPnlGBP: -6.3,
-      positionGBP: 420,
-      source: "manual"
-    }
-  ],
-  trades: [
-    {
-      id: "guest1",
-      symbol: "SNDK",
-      status: "open",
-      openDate: "2025-12-24",
-      entry: 232.8,
-      stop: 221.01,
-      currentStop: 233.0,
-      currency: "GBP",
-      sizeUnits: 4,
-      riskPct: 0.38,
-      riskAmountGBP: 44.62,
-      positionGBP: 931.2,
-      realizedPnlGBP: 0,
-      guaranteedPnlGBP: 0.59,
-      tradeType: "swing",
-      assetClass: "stocks",
-      strategyTag: "Breakout",
-      marketCondition: "Trend",
-      setupTags: ["breakout"],
-      emotionTags: ["confident"],
-      note: "Guest demo trade",
-      source: "manual"
-    },
-    {
-      id: "guest2",
-      symbol: "AAPL",
-      status: "closed",
-      openDate: "2025-12-20",
-      closeDate: "2025-12-22",
-      entry: 183.2,
-      stop: 175.4,
-      closePrice: 190.6,
-      currency: "USD",
-      sizeUnits: 3,
-      riskPct: 0.45,
-      riskAmountGBP: 23.5,
-      positionGBP: 420,
-      realizedPnlGBP: 18.4,
-      guaranteedPnlGBP: 0,
-      tradeType: "day",
-      assetClass: "stocks",
-      strategyTag: "Momentum",
-      marketCondition: "Trending",
-      setupTags: ["momentum"],
-      emotionTags: ["focused"],
-      note: "Closed winner",
-      source: "manual"
-    }
-  ],
+  pl: {},
+  activeTrades: [],
+  trades: [],
   analytics: {
-    summary: {
-      total: 12,
-      wins: 7,
-      losses: 5,
-      winRate: 0.58,
-      lossRate: 0.42,
-      avgWin: 64.4,
-      avgLoss: 38.2,
-      expectancy: 14.6,
-      profitFactor: 1.68,
-      avgR: 1.2
-    },
-    drawdown: {
-      maxDrawdown: -120,
-      durationDays: 4,
-      series: []
-    },
-    distribution: {
-      median: 18,
-      stddev: 42,
-      histogram: []
-    },
-    streaks: {
-      maxWinStreak: 3,
-      maxLossStreak: 2
-    },
-    equityCurve: [
-      { date: "2025-12-20", cumulative: 0 },
-      { date: "2025-12-21", cumulative: 45 },
-      { date: "2025-12-22", cumulative: 80 },
-      { date: "2025-12-23", cumulative: 120 },
-      { date: "2025-12-24", cumulative: 165 }
-    ]
+    summary: {},
+    drawdown: {},
+    distribution: {},
+    streaks: {},
+    equityCurve: []
   },
   integrations: {
     trading212: {
@@ -238,6 +85,33 @@ function convertToGBP(value, currency, rates) {
   return value / rate;
 }
 
+function getGuestDateKey(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+function hashGuestSeed(input) {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) % 100000;
+  }
+  return hash;
+}
+
+function computeGuestMarketLow(symbol, dateKey) {
+  const seed = hashGuestSeed(`${symbol}:${dateKey}`);
+  const base = 40 + (seed % 160);
+  const variance = (seed % 90) / 100;
+  return Math.max(1, base - variance);
+}
+
+function computeGuestLivePrice(trade, dateKey) {
+  const entry = Number(trade.entry);
+  const seed = hashGuestSeed(`${trade.symbol || 'SYM'}:${dateKey}`);
+  const drift = ((seed % 21) - 10) / 100;
+  const base = Number.isFinite(entry) && entry > 0 ? entry : 50 + (seed % 200);
+  return Math.max(0.01, base * (1 + drift));
+}
+
 function computeUnrealizedGBP(trade, rates) {
   const entry = Number(trade.entry);
   const livePrice = Number.isFinite(Number(trade.livePrice)) ? Number(trade.livePrice) : entry;
@@ -256,17 +130,17 @@ function ensureGuestMonth(pl, dateKey) {
 }
 
 function computeGuestActiveTrades(data, rates) {
-  const openTrades = data.trades.filter(trade => trade.status !== 'closed' && !Number.isFinite(Number(trade.closePrice)));
+  const openTrades = data.trades.filter(trade => {
+    const hasClosePrice = trade.closePrice !== null && trade.closePrice !== undefined && Number.isFinite(Number(trade.closePrice));
+    return trade.status !== 'closed' && !hasClosePrice;
+  });
   const activeTrades = Array.isArray(data.activeTrades) ? data.activeTrades : [];
   const activeMap = new Map(activeTrades.map(trade => [trade.id, trade]));
+  const todayKey = getGuestDateKey();
   const trades = openTrades.map(trade => {
     const merged = { ...trade, ...activeMap.get(trade.id) };
-    if (!Number.isFinite(Number(merged.livePrice))) {
-      merged.livePrice = Number.isFinite(Number(trade.entry)) ? Number(trade.entry) : 0;
-    }
-    if (!Number.isFinite(Number(merged.unrealizedGBP))) {
-      merged.unrealizedGBP = computeUnrealizedGBP(merged, rates);
-    }
+    merged.livePrice = computeGuestLivePrice(merged, todayKey);
+    merged.unrealizedGBP = computeUnrealizedGBP(merged, rates);
     return merged;
   });
   const liveOpenPnl = trades.reduce((sum, trade) => sum + (Number(trade.unrealizedGBP) || 0), 0);
@@ -448,7 +322,13 @@ window.handleGuestRequest = (path, opts = {}) => {
     return { ok: true };
   }
   if (path.startsWith('/api/market/low')) {
-    return { low: 220.5 };
+    const params = parseGuestQuery(path);
+    const symbol = params.get('symbol');
+    if (!symbol) {
+      return { ok: false, error: 'Symbol is required' };
+    }
+    const todayKey = getGuestDateKey();
+    return { symbol: symbol.toUpperCase(), low: computeGuestMarketLow(symbol.toUpperCase(), todayKey), currency: 'USD' };
   }
   if (path.startsWith('/api/trades/active')) {
     const active = computeGuestActiveTrades(data, rates);
@@ -520,6 +400,7 @@ window.handleGuestRequest = (path, opts = {}) => {
     if (method === 'POST') {
       const payload = opts.body ? JSON.parse(opts.body) : {};
       const id = `guest-${Date.now()}`;
+      const todayKey = getGuestDateKey();
       const trade = {
         id,
         symbol: payload.symbol || '',
@@ -549,6 +430,7 @@ window.handleGuestRequest = (path, opts = {}) => {
       data.trades.unshift(trade);
       if (trade.status !== 'closed') {
         data.activeTrades ||= [];
+        const livePrice = computeGuestLivePrice(trade, todayKey);
         data.activeTrades.unshift({
           id,
           symbol: trade.symbol,
@@ -559,8 +441,8 @@ window.handleGuestRequest = (path, opts = {}) => {
           sizeUnits: trade.sizeUnits,
           riskPct: trade.riskPct,
           direction: payload.direction || 'long',
-          livePrice: Number(payload.entry) || 0,
-          unrealizedGBP: 0,
+          livePrice,
+          unrealizedGBP: computeUnrealizedGBP({ ...trade, livePrice }, rates),
           guaranteedPnlGBP: 0,
           positionGBP: trade.positionGBP,
           source: trade.source
@@ -589,8 +471,11 @@ window.handleGuestRequest = (path, opts = {}) => {
       if (trade.status !== 'closed') {
         data.activeTrades ||= [];
         const existing = data.activeTrades.find(item => item.id === tradeId);
+        const todayKey = getGuestDateKey();
+        const livePrice = computeGuestLivePrice(trade, todayKey);
         if (existing) {
-          Object.assign(existing, payload);
+          Object.assign(existing, payload, { livePrice });
+          existing.unrealizedGBP = computeUnrealizedGBP(existing, rates);
         } else {
           data.activeTrades.unshift({
             id: trade.id,
@@ -602,8 +487,8 @@ window.handleGuestRequest = (path, opts = {}) => {
             sizeUnits: trade.sizeUnits,
             riskPct: trade.riskPct,
             direction: payload.direction || trade.direction || 'long',
-            livePrice: Number.isFinite(Number(trade.entry)) ? Number(trade.entry) : 0,
-            unrealizedGBP: computeUnrealizedGBP(trade, rates),
+            livePrice,
+            unrealizedGBP: computeUnrealizedGBP({ ...trade, livePrice }, rates),
             guaranteedPnlGBP: trade.guaranteedPnlGBP ?? 0,
             positionGBP: trade.positionGBP,
             source: trade.source
