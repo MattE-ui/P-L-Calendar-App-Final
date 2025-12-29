@@ -11,7 +11,11 @@ async function api(path, opts = {}) {
     data = {};
   }
   if (res.status === 401) {
-    window.location.href = '/login.html';
+    if (data?.error && data.error.includes('Guest session expired')) {
+      window.location.href = '/login.html?expired=guest';
+    } else {
+      window.location.href = '/login.html';
+    }
     throw new Error('Unauthenticated');
   }
   if (!res.ok) {
@@ -26,7 +30,8 @@ const profileState = {
   complete: false,
   netDeposits: 0,
   netDepositsBaseline: 0,
-  username: ''
+  username: '',
+  isGuest: false
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -146,6 +151,7 @@ async function loadProfile() {
       ? netDepositsTotal
       : profileState.netDepositsBaseline;
     profileState.username = data.username || '';
+    profileState.isGuest = !!data.isGuest;
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
     const deltaField = document.getElementById('profile-net-delta-field');
@@ -205,10 +211,47 @@ async function loadProfile() {
     if (heroPerformance) heroPerformance.textContent = formatSignedCurrency(netPerformance);
     const heroPerfSub = document.getElementById('hero-net-performance-sub');
     if (heroPerfSub) heroPerfSub.textContent = `${(netPerfPct * 100).toFixed(1)}%`;
+    applyGuestRestrictions();
     renderSecurityState();
   } catch (e) {
     console.error('Unable to load profile details', e);
   }
+}
+
+function applyGuestRestrictions() {
+  const banner = document.getElementById('guest-restriction');
+  if (banner) {
+    banner.classList.toggle('hidden', !profileState.isGuest);
+  }
+  const disable = profileState.isGuest;
+  const disableIds = [
+    'account-password-current',
+    'account-password-new',
+    'account-password-submit',
+    'profile-reset',
+    't212-enabled',
+    't212-api-key',
+    't212-api-secret',
+    't212-mode',
+    't212-save',
+    't212-run-now'
+  ];
+  disableIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = disable;
+      if (disable) {
+        el.setAttribute('title', 'Guests cannot perform this action. Please create an account.');
+      } else {
+        el.removeAttribute('title');
+      }
+    }
+  });
+  const sections = ['account-security', 'profile-reset-card', 'automation-card'];
+  sections.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('guest-disabled', disable);
+  });
 }
 
 function renderSecurityState() {
@@ -388,7 +431,7 @@ async function loadIntegration() {
         : 'Paste your API secret';
     }
     if (modeSelect) modeSelect.value = integrationState.mode;
-    setIntegrationFieldsDisabled(!integrationState.enabled);
+    setIntegrationFieldsDisabled(!integrationState.enabled || profileState.isGuest);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
       lastSyncAt: data.lastSyncAt,

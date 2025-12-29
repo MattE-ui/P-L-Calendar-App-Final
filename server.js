@@ -33,6 +33,12 @@ process.on('uncaughtException', (error) => {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
+const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
+const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
+const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
+
+const guestRateLimit = new Map();
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
 const DATA_FILE = process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
@@ -151,14 +157,85 @@ function saveDB(db) {
   }
 }
 
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip || req.connection?.remoteAddress || 'unknown';
+}
+
+function applyGuestRateLimit(req) {
+  const key = getClientIp(req);
+  const now = Date.now();
+  const entry = guestRateLimit.get(key);
+  if (!entry || entry.resetAt <= now) {
+    guestRateLimit.set(key, { count: 1, resetAt: now + GUEST_RATE_LIMIT_WINDOW_MS });
+    return null;
+  }
+  if (entry.count >= GUEST_RATE_LIMIT_MAX) {
+    return entry.resetAt - now;
+  }
+  entry.count += 1;
+  return null;
+}
+
+function clearSessionsForUser(db, username) {
+  const tokens = Object.keys(db.sessions);
+  for (const token of tokens) {
+    if (db.sessions[token] === username) {
+      delete db.sessions[token];
+    }
+  }
+}
+
+function cleanupExpiredGuests(db, now = new Date()) {
+  if (!db?.users) return false;
+  const nowMs = now.getTime();
+  let mutated = false;
+  for (const [username, user] of Object.entries(db.users)) {
+    if (!user?.guest) continue;
+    const expiresAt = Date.parse(user.expiresAt);
+    if (Number.isNaN(expiresAt) || expiresAt > nowMs) continue;
+    delete db.users[username];
+    clearSessionsForUser(db, username);
+    mutated = true;
+  }
+  return mutated;
+}
+
 function auth(req, res, next) {
   const token = req.cookies?.auth_token;
   if (!token) return res.status(401).json({ error: 'Unauthenticated' });
   const db = loadDB();
   const username = db.sessions[token];
   if (!username) return res.status(401).json({ error: 'Unauthenticated' });
+  const user = db.users[username];
+  if (!user) return res.status(401).json({ error: 'Unauthenticated' });
+  if (user.guest && user.expiresAt) {
+    const expiresAt = Date.parse(user.expiresAt);
+    if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) {
+      delete db.users[username];
+      clearSessionsForUser(db, username);
+      saveDB(db);
+      res.clearCookie('auth_token');
+      return res.status(401).json({
+        error: 'Guest session expired. Continue as Guest again or sign up.'
+      });
+    }
+  }
   req.username = username;
+  req.user = user;
+  req.isGuest = !!user.guest;
   next();
+}
+
+function rejectGuest(req, res) {
+  if (req.user?.guest) {
+    res.status(403).json({ error: 'Guests cannot perform this action. Please create an account.' });
+    return true;
+  }
+  return false;
 }
 
 function asyncHandler(fn) {
@@ -276,6 +353,19 @@ function ensureUserShape(user, identifier) {
   }
   if (!user.security || typeof user.security !== 'object') {
     user.security = {};
+    mutated = true;
+  }
+  if (user.guest === undefined) {
+    user.guest = false;
+    mutated = true;
+  }
+  if (user.guest) {
+    if (!user.expiresAt || Number.isNaN(Date.parse(user.expiresAt))) {
+      user.expiresAt = new Date(Date.now() + GUEST_TTL_MS).toISOString();
+      mutated = true;
+    }
+  } else if (user.expiresAt !== undefined) {
+    delete user.expiresAt;
     mutated = true;
   }
   if (user.security.pendingEmail !== undefined) {
@@ -1726,6 +1816,9 @@ app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analyt
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
+  if (req.user?.guest) {
+    return res.status(403).send('Guests cannot perform this action. Please create an account.');
+  }
   if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
     return res.status(403).send('Forbidden');
   }
@@ -1737,6 +1830,18 @@ function currentDateKey() {
   const now = new Date();
   const tzAdjusted = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
   return tzAdjusted.toISOString().slice(0, 10);
+}
+
+function createSession(db, username, res, maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+  const token = crypto.randomBytes(24).toString('hex');
+  db.sessions[token] = username;
+  saveDB(db);
+  res.cookie('auth_token', token, {
+    httpOnly: true,
+    sameSite: 'Strict',
+    secure: !!process.env.RENDER,
+    maxAge: maxAgeMs
+  });
 }
 
 app.post('/api/signup', asyncHandler(async (req,res)=>{
@@ -1841,6 +1946,52 @@ app.post('/api/auth/resend-verification', asyncHandler(async (req, res) => {
   res.json({ ok: true, status: 'sent', retryAfter: 60 });
 }));
 
+app.post('/api/auth/guest', asyncHandler(async (req, res) => {
+  const retryAfter = applyGuestRateLimit(req);
+  if (retryAfter !== null) {
+    const waitSeconds = Math.ceil(retryAfter / 1000);
+    res.set('Retry-After', String(waitSeconds));
+    return res.status(429).json({
+      error: `Too many guest sessions. Try again in ${waitSeconds} seconds.`,
+      retryAfter: waitSeconds
+    });
+  }
+  const db = loadDB();
+  const now = Date.now();
+  const expiresAt = new Date(now + GUEST_TTL_MS).toISOString();
+  let username;
+  let attempts = 0;
+  while (!username || db.users[username]) {
+    const suffix = crypto.randomBytes(4).toString('hex');
+    username = `guest_${suffix}`;
+    attempts += 1;
+    if (attempts > 5) break;
+  }
+  if (!username || db.users[username]) {
+    return res.status(500).json({ error: 'Unable to create guest session. Please try again.' });
+  }
+  const displayName = `Guest ${username.slice(-4)}`;
+  db.users[username] = {
+    username,
+    displayName,
+    guest: true,
+    expiresAt,
+    passwordHash: '',
+    portfolio: 0,
+    initialPortfolio: 0,
+    initialNetDeposits: 0,
+    profileComplete: false,
+    portfolioHistory: {},
+    netDepositsAnchor: null,
+    trading212: {},
+    security: {},
+    tradeJournal: {}
+  };
+  ensureUserShape(db.users[username], username);
+  createSession(db, username, res, GUEST_TTL_MS);
+  res.json({ ok: true, profileComplete: false, isGuest: true });
+}));
+
 app.post('/api/login', async (req,res)=>{
   const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
   const username = rawUsername.trim();
@@ -1854,15 +2005,7 @@ app.post('/api/login', async (req,res)=>{
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
   ensureUserShape(user, username);
-  const token = crypto.randomBytes(24).toString('hex');
-  db.sessions[token] = username;
-  saveDB(db);
-  res.cookie('auth_token', token, {
-    httpOnly: true,
-    sameSite: 'Strict',
-    secure: !!process.env.RENDER, // Render uses HTTPS
-    maxAge: 7*24*60*60*1000
-  });
+  createSession(db, username, res);
   res.json({ ok: true, profileComplete: !!user.profileComplete });
 });
 
@@ -1897,7 +2040,8 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     profileComplete: !!user.profileComplete,
     liveOpenPnl: liveOpenPnlGBP,
     livePortfolio,
-    activeTrades: trades.length
+    activeTrades: trades.length,
+    isGuest: !!user.guest
   });
 });
 
@@ -1943,7 +2087,8 @@ app.get('/api/profile', auth, (req,res)=>{
     netDepositsTotal: total,
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
-    username: user.username || req.username
+    username: user.username || req.username,
+    isGuest: !!user.guest
   });
 });
 
@@ -2028,6 +2173,7 @@ app.post('/api/profile', auth, (req,res)=>{
 });
 
 app.post('/api/account/password', auth, async (req, res) => {
+  if (rejectGuest(req, res)) return;
   const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
   const newPassword = req.body?.password ?? req.body?.newPassword;
   if (!isStrongPassword(newPassword)) {
@@ -2053,6 +2199,7 @@ app.post('/api/account/password', auth, async (req, res) => {
 });
 
 app.delete('/api/profile', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
   const db = loadDB();
   const username = req.username;
   const user = db.users[username];
@@ -2888,6 +3035,7 @@ app.get('/api/trades', auth, async (req, res) => {
 });
 
 app.get('/api/trades/export', auth, async (req, res) => {
+  if (rejectGuest(req, res)) return;
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -3409,8 +3557,16 @@ function bootstrapTrading212Schedules() {
   }
 }
 
+function runGuestCleanup() {
+  const db = loadDB();
+  const mutated = cleanupExpiredGuests(db);
+  if (mutated) saveDB(db);
+}
+
 if (require.main === module) {
   bootstrapTrading212Schedules();
+  runGuestCleanup();
+  setInterval(runGuestCleanup, 60 * 60 * 1000);
   app.listen(PORT, ()=>{
     console.log(`P&L Calendar server listening on port ${PORT}`);
   });
@@ -3424,7 +3580,8 @@ module.exports = {
   ensurePortfolioHistory,
   ensureTradeJournal,
   flattenTrades,
-  filterTrades
+  filterTrades,
+  cleanupExpiredGuests
 };
 
 // global error handler

@@ -16,6 +16,7 @@ const state = {
   activeTradeSort: 'newest',
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
+  isGuest: false,
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -56,7 +57,11 @@ async function api(path, opts = {}) {
     data = {};
   }
   if (res.status === 401) {
-    window.location.href = '/login.html';
+    if (data?.error && data.error.includes('Guest session expired')) {
+      window.location.href = '/login.html?expired=guest';
+    } else {
+      window.location.href = '/login.html';
+    }
     throw new Error('Unauthenticated');
   }
   if (res.status === 409 && data?.code === 'profile_incomplete') {
@@ -1577,7 +1582,14 @@ function renderView() {
   return renderYear();
 }
 
+function renderGuestBanner() {
+  const banner = $('#guest-banner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !state.isGuest);
+}
+
 function render() {
+  renderGuestBanner();
   updateCurrencySelect();
   updatePortfolioPill();
   setActiveView();
@@ -1628,6 +1640,7 @@ async function loadData() {
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
     state.livePortfolioGBP = state.portfolioGBP;
+    state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
       return;

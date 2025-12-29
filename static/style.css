@@ -1330,25 +1330,30 @@ textarea {
   justify-content: center;
   gap: 12px;
   padding: 10px 16px;
-  background: linear-gradient(120deg, rgba(255, 188, 66, 0.2), rgba(255, 122, 122, 0.2));
-  border-bottom: 1px solid rgba(255, 188, 66, 0.35);
-  color: #f9e7b8;
+  background: rgba(255, 197, 102, 0.12);
+  border-bottom: 1px solid rgba(255, 197, 102, 0.35);
+  color: #f6e7c3;
   font-size: 14px;
   text-align: center;
-  flex-wrap: wrap;
 }
 
-.guest-banner strong {
-  color: #ffd27d;
+.guest-banner.hidden {
+  display: none;
 }
 
-.guest-banner-link {
-  color: #ffffff;
-  text-decoration: underline;
+.guest-restriction {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 197, 102, 0.12);
+  border: 1px solid rgba(255, 197, 102, 0.35);
+  color: #f6e7c3;
+  font-size: 14px;
 }
 
-.guest-banner-link:hover {
-  color: #ffe8b5;
+.guest-disabled {
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 @media (max-width: 540px) {
