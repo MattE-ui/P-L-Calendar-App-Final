@@ -40,6 +40,33 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 async function api(path, opts = {}) {
+  const isGuest = localStorage.getItem('guestMode') === 'true';
+  const method = (opts.method || 'GET').toUpperCase();
+  if (isGuest) {
+    if (method !== 'GET') {
+      return { ok: true };
+    }
+    if (path.startsWith('/api/pl')) {
+      return window.GUEST_DATA?.pl || {};
+    }
+    if (path.startsWith('/api/portfolio')) {
+      return window.GUEST_DATA?.portfolio || {};
+    }
+    if (path.startsWith('/api/trades/active')) {
+      return {
+        trades: window.GUEST_DATA?.activeTrades || [],
+        liveOpenPnl: window.GUEST_DATA?.portfolio?.liveOpenPnl || 0,
+        liveOpenPnlMode: 'computed',
+        liveOpenPnlCurrency: 'GBP'
+      };
+    }
+    if (path.startsWith('/api/rates')) {
+      return { rates: { GBP: 1, USD: 1.24, EUR: 1.12 }, cachedAt: Date.now() };
+    }
+    if (path.startsWith('/api/market/low')) {
+      return { low: 220.5 };
+    }
+  }
   const res = await fetch(path, { credentials: 'include', ...opts });
   let data;
   try {
@@ -2205,6 +2232,7 @@ function bindControls() {
     } catch (e) {
       console.warn(e);
     }
+    localStorage.removeItem('guestMode');
     window.location.href = '/login.html';
   });
 
