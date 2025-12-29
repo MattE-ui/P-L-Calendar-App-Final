@@ -2513,7 +2513,7 @@ async function fetchYahooChartQuote(symbol) {
 async function fetchYahooDayLow(symbol) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=true`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(trimmed)}?interval=1m&range=1d&includePrePost=false`;
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0',
@@ -2535,6 +2535,30 @@ async function fetchYahooDayLow(symbol) {
     symbol: trimmed,
     low: min,
     currency: result?.meta?.currency || 'USD'
+  };
+}
+
+async function fetchYahooRegularDayLow(symbol) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) throw new Error('Missing symbol');
+  const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(trimmed)}&includePrePost=false`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'application/json,text/plain,*/*'
+    }
+  });
+  if (!res.ok) throw new Error('Yahoo quote not available');
+  const data = await res.json();
+  const quote = data?.quoteResponse?.result?.[0];
+  const low = Number(quote?.regularMarketDayLow);
+  if (!Number.isFinite(low) || low <= 0) {
+    throw new Error('Yahoo quote missing regular day low');
+  }
+  return {
+    symbol: trimmed,
+    low,
+    currency: quote?.currency || 'USD'
   };
 }
 
@@ -2665,9 +2689,16 @@ async function fetchDailyLow(symbol, dateKey = null) {
   const cached = dailyLowCache.get(cacheKey);
   if (cached) return cached;
   const isToday = resolvedDateKey === getNyDateKey();
-  const low = isToday
-    ? await fetchYahooDayLow(trimmed)
-    : await fetchYahooDayLowForDate(trimmed, resolvedDateKey);
+  let low;
+  if (isToday) {
+    try {
+      low = await fetchYahooRegularDayLow(trimmed);
+    } catch (e) {
+      low = await fetchYahooDayLow(trimmed);
+    }
+  } else {
+    low = await fetchYahooDayLowForDate(trimmed, resolvedDateKey);
+  }
   dailyLowCache.set(cacheKey, low);
   return low;
 }
