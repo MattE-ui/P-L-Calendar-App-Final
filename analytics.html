@@ -56,16 +56,86 @@
     </nav>
   </aside>
 
-  <main class="container">
-    <section class="page-title">
-      <h2>Analytics</h2>
-    </section>
-    <section class="title-wrap">
-      <h2>Performance analytics</h2>
-      <p class="avg" id="analytics-range"></p>
+  <main class="container analytics-page">
+    <section class="stats-hero">
+      <div class="stats-heading">
+        <span class="stats-icon">📊</span>
+        <div>
+          <h2>Trading Stats</h2>
+          <p>All-time performance metrics</p>
+        </div>
+      </div>
+      <p class="stats-range" id="analytics-range"></p>
     </section>
 
-    <section class="tool-card">
+    <section class="stats-section">
+      <div class="stats-section-title">
+        <span class="stats-section-icon">📈</span>
+        <h3>Trading Performance</h3>
+      </div>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="stats-label">Win Rate</p>
+          <div class="stats-value" id="kpi-win-rate">0%</div>
+          <p class="stats-sub">Loss rate: <span id="kpi-loss-rate">0%</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Average Win</p>
+          <div class="stats-value" id="kpi-avg-win">£0.00</div>
+          <p class="stats-sub">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Expectancy</p>
+          <div class="stats-value" id="kpi-expectancy">£0.00</div>
+          <p class="stats-sub">Profit factor: <span id="kpi-profit-factor">—</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Average R</p>
+          <div class="stats-value" id="kpi-r-multiple">—</div>
+          <p class="stats-sub">Closed trades only</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="stats-section">
+      <div class="stats-section-title">
+        <span class="stats-section-icon">💰</span>
+        <h3>Account Growth</h3>
+      </div>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="stats-label">Max Drawdown</p>
+          <div class="stats-value" id="kpi-drawdown">£0.00</div>
+          <p class="stats-sub">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Distribution</p>
+          <div class="stats-value" id="kpi-median">£0.00 median</div>
+          <p class="stats-sub">Std dev: <span id="kpi-stddev">—</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Streaks</p>
+          <div class="stats-value" id="kpi-streaks">—</div>
+          <p class="stats-sub">Wins / losses</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Profit Factor</p>
+          <div class="stats-value" id="kpi-profit-factor-secondary">—</div>
+          <p class="stats-sub">From closed trades</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="stats-card stats-card-wide">
+      <div class="stats-card-header">
+        <h3>Equity Curve</h3>
+        <span id="equity-latest-value">£0.00</span>
+      </div>
+      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
+      <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
+    </section>
+
+    <section class="analytics-filters tool-card">
       <div class="section-header">
         <div>
           <p class="tool-overline">Filters</p>
@@ -130,75 +200,28 @@
       </div>
     </section>
 
-    <section class="kpi-grid" id="kpi-grid">
-      <article class="kpi-card">
-        <p class="tool-overline">Win rate</p>
-        <h3 id="kpi-win-rate">0%</h3>
-        <p class="tool-note">Loss rate: <span id="kpi-loss-rate">0%</span></p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Average win</p>
-        <h3 id="kpi-avg-win">£0.00</h3>
-        <p class="tool-note">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Expectancy per trade</p>
-        <h3 id="kpi-expectancy">£0.00</h3>
-        <p class="tool-note">Profit factor: <span id="kpi-profit-factor">—</span></p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Average R multiple</p>
-        <h3 id="kpi-r-multiple">—</h3>
-        <p class="tool-note">Closed trades only</p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Max drawdown</p>
-        <h3 id="kpi-drawdown">£0.00</h3>
-        <p class="tool-note">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Distribution</p>
-        <h3 id="kpi-median">£0.00 median</h3>
-        <p class="tool-note">Std dev: <span id="kpi-stddev">—</span></p>
-      </article>
-      <article class="kpi-card">
-        <p class="tool-overline">Streaks</p>
-        <h3 id="kpi-streaks">—</h3>
-        <p class="tool-note">Wins / losses</p>
-      </article>
-    </section>
-
-    <section class="chart-card">
-      <div class="section-header">
-        <h3>Equity curve</h3>
-      </div>
-      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
-    </section>
-
-    <section class="chart-card">
-      <div class="section-header">
-        <h3>Drawdown</h3>
-      </div>
-      <canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas>
-    </section>
-
-    <section class="chart-card">
-      <div class="section-header">
-        <h3>P&L distribution</h3>
-      </div>
-      <canvas id="distribution-chart" aria-label="Distribution chart"></canvas>
-    </section>
-
     <section class="analytics-grid">
       <div class="chart-card">
         <div class="section-header">
-          <h3>P&L by trade type</h3>
+          <h3>Drawdown</h3>
+        </div>
+        <canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>P&amp;L distribution</h3>
+        </div>
+        <canvas id="distribution-chart" aria-label="Distribution chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>P&amp;L by trade type</h3>
         </div>
         <canvas id="type-chart"></canvas>
       </div>
       <div class="chart-card">
         <div class="section-header">
-          <h3>P&L by strategy tag</h3>
+          <h3>P&amp;L by strategy tag</h3>
         </div>
         <canvas id="strategy-chart"></canvas>
       </div>
@@ -208,13 +231,12 @@
         </div>
         <canvas id="winrate-type-chart"></canvas>
       </div>
-    </section>
-
-    <section class="chart-card">
-      <div class="section-header">
-        <h3>Monthly heatmap</h3>
+      <div class="chart-card">
+        <div class="section-header">
+          <h3>Monthly heatmap</h3>
+        </div>
+        <div id="heatmap-grid" class="heatmap"></div>
       </div>
-      <div id="heatmap-grid" class="heatmap"></div>
     </section>
   </main>
 
@@ -239,6 +261,7 @@
         <select id="qs-currency-select">
           <option value="GBP">GBP (£)</option>
           <option value="USD">USD ($)</option>
+          <option value="EUR">EUR (€)</option>
         </select>
       </div>
       <div class="row">
