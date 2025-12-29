@@ -1,9 +1,4 @@
 (() => {
-  const storageKey = 'vts_intro_shown';
-  if (sessionStorage.getItem(storageKey) === 'true') {
-    return;
-  }
-
   const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const overlay = document.createElement('div');
   overlay.className = 'intro-splash';
@@ -27,11 +22,6 @@
   const finalizeIntro = (delayMs) => {
     window.setTimeout(() => {
       overlay.remove();
-      try {
-        sessionStorage.setItem(storageKey, 'true');
-      } catch (error) {
-        console.warn('Intro splash session storage unavailable:', error);
-      }
     }, delayMs);
   };
 
@@ -48,7 +38,7 @@
       logoWrap.innerHTML = svgMarkup;
       overlay.classList.add('intro-splash--animate');
       // Adjust totalDurationMs + CSS keyframes together to tweak the full intro timing.
-      const totalDurationMs = 1550;
+      const totalDurationMs = 2100;
       finalizeIntro(totalDurationMs);
     })
     .catch((error) => {
