@@ -86,7 +86,11 @@ body {
   align-items: center;
   gap: 10px;
 }
-.hero-left { justify-self: start; }
+.hero-left {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+}
 .hero-right { justify-self: end; }
 .hero-left .brand-heading { margin: 0; }
 .brand-logo {
