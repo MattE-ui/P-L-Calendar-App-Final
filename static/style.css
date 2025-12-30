@@ -88,7 +88,14 @@ body {
 }
 .hero-left { justify-self: start; }
 .hero-right { justify-self: end; }
-.hero-left h1 { margin: 0; }
+.hero-left .brand-heading { margin: 0; }
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+}
+.hero-left .brand-logo { max-width: 220px; }
 .hero-sub { margin: 4px 0 0; color: var(--muted); }
 .hero-card {
   background: linear-gradient(135deg, rgba(42,163,255,.08), rgba(42,163,255,.02));
@@ -1124,6 +1131,11 @@ button:disabled {
 
 .login-container { max-width: 440px; margin: 48px auto; padding: 0 16px; }
 .login-container h1 { text-align: center; margin: 0 0 24px; }
+.auth-brand {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 16px;
+}
 .card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; }
 .card-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
 .auth-switch { margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
