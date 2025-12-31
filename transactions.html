@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Devtools | P&L Calendar</title>
+  <title>Transactions | P&L Calendar</title>
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -62,32 +62,78 @@
 
   <main class="container">
     <section class="page-title">
-      <h2>Devtools</h2>
+      <h2>Transactions</h2>
+      <p class="tool-note">Deposits and withdrawals logged across your calendar.</p>
     </section>
-    <section class="tool-card devtools-card">
+
+    <section class="tool-card">
       <div class="section-header">
         <div>
-          <p class="tool-overline">Trading 212</p>
-          <h3>Raw integration payloads</h3>
+          <p class="tool-overline">Filters</p>
+          <h3>Find transactions</h3>
+        </div>
+        <div class="filter-actions">
+          <button id="apply-filters-btn" class="primary">Apply filters</button>
+          <button id="reset-filters-btn" class="ghost">Reset</button>
         </div>
       </div>
-      <div class="devtools-grid">
-        <div>
-          <h4>Portfolio endpoint</h4>
-          <pre id="devtools-portfolio" class="raw-json"></pre>
+      <div class="filter-bar">
+        <div class="tool-field">
+          <label for="filter-from">From</label>
+          <input id="filter-from" type="date">
         </div>
-        <div>
-          <h4>Positions endpoint</h4>
-          <pre id="devtools-positions" class="raw-json"></pre>
+        <div class="tool-field">
+          <label for="filter-to">To</label>
+          <input id="filter-to" type="date">
         </div>
-        <div>
-          <h4>Transactions endpoint</h4>
-          <pre id="devtools-transactions" class="raw-json"></pre>
+        <div class="tool-field">
+          <label for="filter-type">Type</label>
+          <select id="filter-type">
+            <option value="" selected>All</option>
+            <option value="Deposit">Deposits</option>
+            <option value="Withdrawal">Withdrawals</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-search">Notes</label>
+          <input id="filter-search" type="text" placeholder="Search notes">
         </div>
       </div>
+    </section>
+
+    <section class="list-card">
+      <table class="transaction-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+      <p id="transactions-empty" class="tool-note">No transactions logged yet.</p>
     </section>
   </main>
 
-  <script src="static/devtools.js"></script>
+  <div id="transactions-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field toggle-field">
+        <label class="toggle" for="transactions-qs-split-profits">
+          <input id="transactions-qs-split-profits" type="checkbox">
+          Split Profits
+        </label>
+        <p class="tool-note">For investors managing pooled funds. Track depositor profiles, set a profit split, and see who is owed what. Notes: this works on a combined portfolio basis only and does not assign trades to individual profiles.</p>
+      </div>
+      <div class="row">
+        <button id="transactions-save-qs-btn" class="primary">Save</button>
+        <button id="transactions-close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/transactions.js"></script>
 </body>
 </html>
