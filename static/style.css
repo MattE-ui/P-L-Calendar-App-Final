@@ -613,10 +613,6 @@ select {
   min-height: 76px;
   resize: vertical;
 }
-.trade-note-actions {
-  display: flex;
-  justify-content: flex-end;
-}
 .trade-note-status {
   font-size: 12px;
   color: var(--muted);

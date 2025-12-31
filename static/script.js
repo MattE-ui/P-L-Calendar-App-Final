@@ -921,17 +921,10 @@ function renderActiveTrades() {
     noteInput.rows = 3;
     noteInput.placeholder = 'Add a note about this trade...';
     noteInput.value = draft?.note ?? trade.note ?? '';
-    const noteActions = document.createElement('div');
-    noteActions.className = 'trade-note-actions';
-    const saveNoteBtn = document.createElement('button');
-    saveNoteBtn.className = 'primary outline';
-    saveNoteBtn.type = 'button';
-    saveNoteBtn.textContent = 'Save note';
     const noteStatus = document.createElement('div');
     noteStatus.className = 'trade-note-status';
     noteStatus.setAttribute('aria-live', 'polite');
-    noteActions.appendChild(saveNoteBtn);
-    notePanel.append(noteInput, noteActions, noteStatus);
+    notePanel.append(noteInput, noteStatus);
     if (draft?.isOpen) {
       notePanel.classList.remove('is-collapsed');
       noteToggle.setAttribute('aria-expanded', 'true');
@@ -943,11 +936,11 @@ function renderActiveTrades() {
         noteInput.focus();
       }
     });
-    saveNoteBtn.addEventListener('click', async () => {
+    const saveNote = async () => {
       if (!trade.id) return;
       const nextNote = noteInput.value.trim();
+      if (nextNote === (trade.note || '')) return;
       noteStatus.textContent = 'Saving...';
-      saveNoteBtn.disabled = true;
       try {
         await api(`/api/trades/${trade.id}`, {
           method: 'PUT',
@@ -959,10 +952,15 @@ function renderActiveTrades() {
         noteStatus.textContent = 'Saved.';
       } catch (e) {
         noteStatus.textContent = e?.message || 'Failed to save note.';
-      } finally {
-        saveNoteBtn.disabled = false;
       }
+    };
+    let noteSaveTimer;
+    noteInput.addEventListener('input', () => {
+      noteStatus.textContent = 'Drafting...';
+      window.clearTimeout(noteSaveTimer);
+      noteSaveTimer = window.setTimeout(saveNote, 600);
     });
+    noteInput.addEventListener('blur', saveNote);
     pill.appendChild(notePanel);
 
     const editToggle = document.createElement('button');
