@@ -736,7 +736,6 @@ function renderActiveTrades() {
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
   if (!list) return;
-  list.innerHTML = '';
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   if (pnlEl) pnlEl.textContent = formatLiveOpenPnl(livePnl);
@@ -744,6 +743,32 @@ function renderActiveTrades() {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
   }
+  if (list.querySelector('.trade-note-input:focus')) {
+    updateActiveTradeDisplay(trades);
+    return;
+  }
+  const noteDrafts = new Map();
+  list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
+    const tradeId = pill.dataset.tradeId;
+    if (!tradeId) return;
+    const noteInput = pill.querySelector('.trade-note-input');
+    const notePanel = pill.querySelector('.trade-note-panel');
+    const detailsWrap = pill.querySelector('.trade-details-collapsible');
+    const isFocused = document.activeElement === noteInput;
+    const selection = noteInput && typeof noteInput.selectionStart === 'number'
+      ? { start: noteInput.selectionStart, end: noteInput.selectionEnd }
+      : null;
+    noteDrafts.set(tradeId, {
+      note: noteInput ? noteInput.value : '',
+      isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false,
+      detailsOpen: detailsWrap ? !detailsWrap.classList.contains('is-collapsed') : false,
+      height: noteInput ? noteInput.style.height : '',
+      selection,
+      isFocused,
+      scrollTop: noteInput ? noteInput.scrollTop : 0
+    });
+  });
+  list.innerHTML = '';
   if (!trades.length) {
     if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.classList.add('is-hidden');
@@ -792,6 +817,7 @@ function renderActiveTrades() {
   sortedTrades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.id) pill.dataset.tradeId = trade.id;
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
@@ -821,19 +847,29 @@ function renderActiveTrades() {
 
     const pnlCard = document.createElement('div');
     pnlCard.className = `trade-pnl-card ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlCard.innerHTML = `
-      <span class="trade-pnl-label">Live PnL</span>
-      <strong class="trade-pnl-value">${formatSignedCurrency(pnl)}</strong>
-    `;
+    pnlCard.dataset.role = 'trade-pnl-card';
+    const pnlLabel = document.createElement('span');
+    pnlLabel.className = 'trade-pnl-label';
+    pnlLabel.textContent = 'Live PnL';
+    const pnlValue = document.createElement('strong');
+    pnlValue.className = 'trade-pnl-value';
+    pnlValue.dataset.role = 'trade-pnl';
+    pnlValue.textContent = formatSignedCurrency(pnl);
+    pnlCard.append(pnlLabel, pnlValue);
     pnlStack.appendChild(pnlCard);
 
     if (guaranteed !== null) {
       const guaranteedCard = document.createElement('div');
       guaranteedCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
-      guaranteedCard.innerHTML = `
-        <span class="trade-pnl-label">Guaranteed</span>
-        <strong class="trade-pnl-value">${formatSignedCurrency(guaranteed)}</strong>
-      `;
+      guaranteedCard.dataset.role = 'trade-guaranteed-card';
+      const guaranteedLabel = document.createElement('span');
+      guaranteedLabel.className = 'trade-pnl-label';
+      guaranteedLabel.textContent = 'Guaranteed';
+      const guaranteedValue = document.createElement('strong');
+      guaranteedValue.className = 'trade-pnl-value';
+      guaranteedValue.dataset.role = 'trade-guaranteed';
+      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+      guaranteedCard.append(guaranteedLabel, guaranteedValue);
       pnlStack.appendChild(guaranteedCard);
     }
     const detailsToggle = document.createElement('button');
@@ -857,9 +893,18 @@ function renderActiveTrades() {
       dt.textContent = `${label}:`;
       const dd = document.createElement('dd');
       dd.textContent = value;
+      if (label === 'Live Price') dd.dataset.role = 'detail-live-price';
+      if (label === 'Current Stop') dd.dataset.role = 'detail-current-stop';
+      if (label === 'Buy Price') dd.dataset.role = 'detail-entry';
+      if (label === 'Original Stop') dd.dataset.role = 'detail-stop';
       details.append(dt, dd);
     });
     detailsWrap.appendChild(details);
+    const draft = trade.id ? noteDrafts.get(trade.id) : null;
+    if (draft?.detailsOpen) {
+      detailsWrap.classList.remove('is-collapsed');
+      detailsToggle.textContent = 'Hide price info';
+    }
     detailsToggle.addEventListener('click', () => {
       const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
       detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
@@ -869,6 +914,8 @@ function renderActiveTrades() {
     bodyRow.appendChild(detailsWrap);
     pill.appendChild(bodyRow);
 
+    const metaRow = document.createElement('div');
+    metaRow.className = 'trade-meta-row';
     const badges = document.createElement('div');
     badges.className = 'trade-meta trade-badges';
     const badgeItems = [{
@@ -884,7 +931,90 @@ function renderActiveTrades() {
       badge.textContent = item.label;
       badges.appendChild(badge);
     });
-    pill.appendChild(badges);
+    const noteToggle = document.createElement('button');
+    noteToggle.className = 'ghost trade-note-toggle';
+    noteToggle.type = 'button';
+    noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+    noteToggle.setAttribute('aria-expanded', 'false');
+    noteToggle.textContent = '📝';
+    metaRow.append(badges, noteToggle);
+    pill.appendChild(metaRow);
+
+    const notePanel = document.createElement('div');
+    notePanel.className = 'trade-note-panel is-collapsed';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'trade-note-input';
+    noteInput.rows = 3;
+    noteInput.placeholder = 'Add a note about this trade...';
+    const noteValue = draft?.note ?? trade.note ?? '';
+    noteInput.value = noteValue;
+    if (noteValue.trim()) {
+      noteToggle.classList.add('has-note');
+      noteToggle.setAttribute('aria-label', 'Trade notes available');
+    }
+    if (draft?.height) {
+      noteInput.style.height = draft.height;
+    }
+    const noteStatus = document.createElement('div');
+    noteStatus.className = 'trade-note-status';
+    noteStatus.setAttribute('aria-live', 'polite');
+    notePanel.append(noteInput, noteStatus);
+    if (draft?.isOpen || draft?.isFocused) {
+      notePanel.classList.remove('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', 'true');
+    }
+    if (draft?.isFocused) {
+      noteInput.focus();
+      if (draft.selection) {
+        noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
+      }
+      noteInput.scrollTop = draft.scrollTop || 0;
+    }
+    noteToggle.addEventListener('click', () => {
+      const isCollapsed = notePanel.classList.toggle('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', String(!isCollapsed));
+      if (!isCollapsed) {
+        noteInput.focus();
+      }
+    });
+    const refreshNoteIndicator = () => {
+      if (noteInput.value.trim()) {
+        noteToggle.classList.add('has-note');
+        noteToggle.setAttribute('aria-label', 'Trade notes available');
+      } else {
+        noteToggle.classList.remove('has-note');
+        noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+      }
+    };
+    const saveNote = async () => {
+      if (!trade.id) return;
+      const nextNote = noteInput.value.trim();
+      refreshNoteIndicator();
+      if (nextNote === (trade.note || '')) return;
+      noteStatus.textContent = 'Saving...';
+      try {
+        await api(`/api/trades/${trade.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: nextNote })
+        });
+        trade.note = nextNote;
+        noteInput.value = nextNote;
+        noteStatus.textContent = 'Saved.';
+        refreshNoteIndicator();
+      } catch (e) {
+        noteStatus.textContent = e?.message || 'Failed to save note.';
+      }
+    };
+    let noteSaveTimer;
+    noteInput.addEventListener('input', () => {
+      noteStatus.textContent = 'Drafting...';
+      refreshNoteIndicator();
+      window.clearTimeout(noteSaveTimer);
+      noteSaveTimer = window.setTimeout(saveNote, 600);
+    });
+    noteInput.addEventListener('blur', saveNote);
+    pill.appendChild(notePanel);
 
     const editToggle = document.createElement('button');
     editToggle.className = 'primary outline';
@@ -905,6 +1035,45 @@ function renderActiveTrades() {
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
+}
+
+function updateActiveTradeDisplay(trades) {
+  const list = $('#active-trade-list');
+  if (!list) return;
+  const tradeMap = new Map(trades.filter(trade => trade?.id).map(trade => [trade.id, trade]));
+  list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
+    const tradeId = pill.dataset.tradeId;
+    if (!tradeId) return;
+    const trade = tradeMap.get(tradeId);
+    if (!trade) return;
+    const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+    const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
+    const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
+    if (pnlValue) pnlValue.textContent = formatSignedCurrency(pnl);
+    if (pnlCard) {
+      pnlCard.classList.toggle('positive', pnl > 0);
+      pnlCard.classList.toggle('negative', pnl < 0);
+    }
+    const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
+    const guaranteedCard = pill.querySelector('[data-role="trade-guaranteed-card"]');
+    const guaranteedValue = pill.querySelector('[data-role="trade-guaranteed"]');
+    if (guaranteedValue && guaranteed !== null) {
+      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+    }
+    if (guaranteedCard) {
+      guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0);
+      guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0);
+    }
+    const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
+    const currentStopValue = Number(trade.currentStop);
+    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const livePriceEl = pill.querySelector('[data-role="detail-live-price"]');
+    if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
+    const currentStopEl = pill.querySelector('[data-role="detail-current-stop"]');
+    if (currentStopEl && currentStop !== null) {
+      currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
+    }
+  });
 }
 
 function renderPortfolioTrend() {
