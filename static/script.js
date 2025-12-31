@@ -753,7 +753,8 @@ function renderActiveTrades() {
       detailsOpen: detailsWrap ? !detailsWrap.classList.contains('is-collapsed') : false,
       height: noteInput ? noteInput.style.height : '',
       selection,
-      isFocused
+      isFocused,
+      scrollTop: noteInput ? noteInput.scrollTop : 0
     });
   });
   list.innerHTML = '';
@@ -940,15 +941,16 @@ function renderActiveTrades() {
     noteStatus.className = 'trade-note-status';
     noteStatus.setAttribute('aria-live', 'polite');
     notePanel.append(noteInput, noteStatus);
-    if (draft?.isOpen) {
+    if (draft?.isOpen || draft?.isFocused) {
       notePanel.classList.remove('is-collapsed');
       noteToggle.setAttribute('aria-expanded', 'true');
-      if (draft?.isFocused) {
-        noteInput.focus();
-        if (draft.selection) {
-          noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
-        }
+    }
+    if (draft?.isFocused) {
+      noteInput.focus();
+      if (draft.selection) {
+        noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
       }
+      noteInput.scrollTop = draft.scrollTop || 0;
     }
     noteToggle.addEventListener('click', () => {
       const isCollapsed = notePanel.classList.toggle('is-collapsed');
