@@ -2145,6 +2145,9 @@ function bindControls() {
   $('#trades-btn')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  $('#calendar-btn')?.addEventListener('click', () => {
+    window.location.href = '/';
+  });
   $('#transactions-btn')?.addEventListener('click', () => {
     window.location.href = '/transactions.html';
   });
