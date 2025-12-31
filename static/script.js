@@ -1296,10 +1296,10 @@ function renderMetrics() {
 
   const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
-    const deltaFromBaseline = Number.isFinite(metrics.baselineGBP)
-      ? latestGBP - metrics.baselineGBP
+    const deltaFromDeposits = Number.isFinite(netDepositsGBP)
+      ? latestGBP - netDepositsGBP
       : 0;
-    setMetricTrend(portfolioCard, deltaFromBaseline);
+    setMetricTrend(portfolioCard, deltaFromDeposits);
   }
 }
 
