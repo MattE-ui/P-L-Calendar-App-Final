@@ -869,6 +869,8 @@ function renderActiveTrades() {
     bodyRow.appendChild(detailsWrap);
     pill.appendChild(bodyRow);
 
+    const metaRow = document.createElement('div');
+    metaRow.className = 'trade-meta-row';
     const badges = document.createElement('div');
     badges.className = 'trade-meta trade-badges';
     const badgeItems = [{
@@ -884,7 +886,61 @@ function renderActiveTrades() {
       badge.textContent = item.label;
       badges.appendChild(badge);
     });
-    pill.appendChild(badges);
+    const noteToggle = document.createElement('button');
+    noteToggle.className = 'ghost trade-note-toggle';
+    noteToggle.type = 'button';
+    noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+    noteToggle.setAttribute('aria-expanded', 'false');
+    noteToggle.textContent = '📝';
+    metaRow.append(badges, noteToggle);
+    pill.appendChild(metaRow);
+
+    const notePanel = document.createElement('div');
+    notePanel.className = 'trade-note-panel is-collapsed';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'trade-note-input';
+    noteInput.rows = 3;
+    noteInput.placeholder = 'Add a note about this trade...';
+    noteInput.value = trade.note || '';
+    const noteActions = document.createElement('div');
+    noteActions.className = 'trade-note-actions';
+    const saveNoteBtn = document.createElement('button');
+    saveNoteBtn.className = 'primary outline';
+    saveNoteBtn.type = 'button';
+    saveNoteBtn.textContent = 'Save note';
+    const noteStatus = document.createElement('div');
+    noteStatus.className = 'trade-note-status';
+    noteStatus.setAttribute('aria-live', 'polite');
+    noteActions.appendChild(saveNoteBtn);
+    notePanel.append(noteInput, noteActions, noteStatus);
+    noteToggle.addEventListener('click', () => {
+      const isCollapsed = notePanel.classList.toggle('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', String(!isCollapsed));
+      if (!isCollapsed) {
+        noteInput.focus();
+      }
+    });
+    saveNoteBtn.addEventListener('click', async () => {
+      if (!trade.id) return;
+      const nextNote = noteInput.value.trim();
+      noteStatus.textContent = 'Saving...';
+      saveNoteBtn.disabled = true;
+      try {
+        await api(`/api/trades/${trade.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: nextNote })
+        });
+        trade.note = nextNote;
+        noteInput.value = nextNote;
+        noteStatus.textContent = 'Saved.';
+      } catch (e) {
+        noteStatus.textContent = e?.message || 'Failed to save note.';
+      } finally {
+        saveNoteBtn.disabled = false;
+      }
+    });
+    pill.appendChild(notePanel);
 
     const editToggle = document.createElement('button');
     editToggle.className = 'primary outline';
