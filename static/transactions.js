@@ -122,7 +122,7 @@ async function loadHeroMetrics() {
     const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
     const netPerformance = portfolioValue - netDepositsValue;
-    const netPerfPct = netDepositsValue ? netPerformance / Math.abs(netDepositsValue) : 0;
+    const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
     const portfolioEl = document.getElementById('header-portfolio-value');
     if (portfolioEl) portfolioEl.textContent = formatCurrency(portfolioValue);
     const netDepositsEl = document.getElementById('hero-net-deposits-value');
