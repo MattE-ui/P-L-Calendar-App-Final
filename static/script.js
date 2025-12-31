@@ -736,6 +736,17 @@ function renderActiveTrades() {
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
   if (!list) return;
+  const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
+  const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+  if (pnlEl) pnlEl.textContent = formatLiveOpenPnl(livePnl);
+  if (pnlCard) {
+    pnlCard.classList.toggle('positive', livePnl > 0);
+    pnlCard.classList.toggle('negative', livePnl < 0);
+  }
+  if (list.querySelector('.trade-note-input:focus')) {
+    updateActiveTradeDisplay(trades);
+    return;
+  }
   const noteDrafts = new Map();
   list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
     const tradeId = pill.dataset.tradeId;
@@ -758,13 +769,6 @@ function renderActiveTrades() {
     });
   });
   list.innerHTML = '';
-  const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
-  const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-  if (pnlEl) pnlEl.textContent = formatLiveOpenPnl(livePnl);
-  if (pnlCard) {
-    pnlCard.classList.toggle('positive', livePnl > 0);
-    pnlCard.classList.toggle('negative', livePnl < 0);
-  }
   if (!trades.length) {
     if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.classList.add('is-hidden');
@@ -843,19 +847,29 @@ function renderActiveTrades() {
 
     const pnlCard = document.createElement('div');
     pnlCard.className = `trade-pnl-card ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    pnlCard.innerHTML = `
-      <span class="trade-pnl-label">Live PnL</span>
-      <strong class="trade-pnl-value">${formatSignedCurrency(pnl)}</strong>
-    `;
+    pnlCard.dataset.role = 'trade-pnl-card';
+    const pnlLabel = document.createElement('span');
+    pnlLabel.className = 'trade-pnl-label';
+    pnlLabel.textContent = 'Live PnL';
+    const pnlValue = document.createElement('strong');
+    pnlValue.className = 'trade-pnl-value';
+    pnlValue.dataset.role = 'trade-pnl';
+    pnlValue.textContent = formatSignedCurrency(pnl);
+    pnlCard.append(pnlLabel, pnlValue);
     pnlStack.appendChild(pnlCard);
 
     if (guaranteed !== null) {
       const guaranteedCard = document.createElement('div');
       guaranteedCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
-      guaranteedCard.innerHTML = `
-        <span class="trade-pnl-label">Guaranteed</span>
-        <strong class="trade-pnl-value">${formatSignedCurrency(guaranteed)}</strong>
-      `;
+      guaranteedCard.dataset.role = 'trade-guaranteed-card';
+      const guaranteedLabel = document.createElement('span');
+      guaranteedLabel.className = 'trade-pnl-label';
+      guaranteedLabel.textContent = 'Guaranteed';
+      const guaranteedValue = document.createElement('strong');
+      guaranteedValue.className = 'trade-pnl-value';
+      guaranteedValue.dataset.role = 'trade-guaranteed';
+      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+      guaranteedCard.append(guaranteedLabel, guaranteedValue);
       pnlStack.appendChild(guaranteedCard);
     }
     const detailsToggle = document.createElement('button');
@@ -879,6 +893,10 @@ function renderActiveTrades() {
       dt.textContent = `${label}:`;
       const dd = document.createElement('dd');
       dd.textContent = value;
+      if (label === 'Live Price') dd.dataset.role = 'detail-live-price';
+      if (label === 'Current Stop') dd.dataset.role = 'detail-current-stop';
+      if (label === 'Buy Price') dd.dataset.role = 'detail-entry';
+      if (label === 'Original Stop') dd.dataset.role = 'detail-stop';
       details.append(dt, dd);
     });
     detailsWrap.appendChild(details);
@@ -1017,6 +1035,45 @@ function renderActiveTrades() {
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
+}
+
+function updateActiveTradeDisplay(trades) {
+  const list = $('#active-trade-list');
+  if (!list) return;
+  const tradeMap = new Map(trades.filter(trade => trade?.id).map(trade => [trade.id, trade]));
+  list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
+    const tradeId = pill.dataset.tradeId;
+    if (!tradeId) return;
+    const trade = tradeMap.get(tradeId);
+    if (!trade) return;
+    const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+    const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
+    const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
+    if (pnlValue) pnlValue.textContent = formatSignedCurrency(pnl);
+    if (pnlCard) {
+      pnlCard.classList.toggle('positive', pnl > 0);
+      pnlCard.classList.toggle('negative', pnl < 0);
+    }
+    const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
+    const guaranteedCard = pill.querySelector('[data-role="trade-guaranteed-card"]');
+    const guaranteedValue = pill.querySelector('[data-role="trade-guaranteed"]');
+    if (guaranteedValue && guaranteed !== null) {
+      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+    }
+    if (guaranteedCard) {
+      guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0);
+      guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0);
+    }
+    const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
+    const currentStopValue = Number(trade.currentStop);
+    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const livePriceEl = pill.querySelector('[data-role="detail-live-price"]');
+    if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
+    const currentStopEl = pill.querySelector('[data-role="detail-current-stop"]');
+    if (currentStopEl && currentStop !== null) {
+      currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
+    }
+  });
 }
 
 function renderPortfolioTrend() {
