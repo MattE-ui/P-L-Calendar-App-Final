@@ -1,18 +1,19 @@
 // Bump version when you change cached assets
-const CACHE_NAME = 'pl-calendar-cache-v25';
+const CACHE_NAME = 'pl-calendar-cache-v26';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/style.css',
   '/static/script.js',
   '/static/login.js',
   '/static/signup.js',
-  '/static/profile.js'
+  '/static/profile.js',
+  '/static/transactions.js'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(['/', '/index.html', '/login.html', '/signup.html', '/profile.html', ...STATIC_ASSETS]);
+      await cache.addAll(['/', '/index.html', '/login.html', '/signup.html', '/profile.html', '/transactions.html', ...STATIC_ASSETS]);
     })
   );
   self.skipWaiting();
