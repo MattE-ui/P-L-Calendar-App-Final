@@ -742,9 +742,11 @@ function renderActiveTrades() {
     if (!tradeId) return;
     const noteInput = pill.querySelector('.trade-note-input');
     const notePanel = pill.querySelector('.trade-note-panel');
+    const detailsWrap = pill.querySelector('.trade-details-collapsible');
     noteDrafts.set(tradeId, {
       note: noteInput ? noteInput.value : '',
-      isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false
+      isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false,
+      detailsOpen: detailsWrap ? !detailsWrap.classList.contains('is-collapsed') : false
     });
   });
   list.innerHTML = '';
@@ -872,6 +874,11 @@ function renderActiveTrades() {
       details.append(dt, dd);
     });
     detailsWrap.appendChild(details);
+    const draft = trade.id ? noteDrafts.get(trade.id) : null;
+    if (draft?.detailsOpen) {
+      detailsWrap.classList.remove('is-collapsed');
+      detailsToggle.textContent = 'Hide price info';
+    }
     detailsToggle.addEventListener('click', () => {
       const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
       detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
@@ -913,7 +920,6 @@ function renderActiveTrades() {
     noteInput.className = 'trade-note-input';
     noteInput.rows = 3;
     noteInput.placeholder = 'Add a note about this trade...';
-    const draft = trade.id ? noteDrafts.get(trade.id) : null;
     noteInput.value = draft?.note ?? trade.note ?? '';
     const noteActions = document.createElement('div');
     noteActions.className = 'trade-note-actions';
