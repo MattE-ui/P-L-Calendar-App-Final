@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Devtools | P&L Calendar</title>
+  <title>Transactions | P&L Calendar</title>
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -62,32 +62,26 @@
 
   <main class="container">
     <section class="page-title">
-      <h2>Devtools</h2>
+      <h2>Transactions</h2>
+      <p class="tool-note">Deposits and withdrawals logged across your calendar.</p>
     </section>
-    <section class="tool-card devtools-card">
-      <div class="section-header">
-        <div>
-          <p class="tool-overline">Trading 212</p>
-          <h3>Raw integration payloads</h3>
-        </div>
-      </div>
-      <div class="devtools-grid">
-        <div>
-          <h4>Portfolio endpoint</h4>
-          <pre id="devtools-portfolio" class="raw-json"></pre>
-        </div>
-        <div>
-          <h4>Positions endpoint</h4>
-          <pre id="devtools-positions" class="raw-json"></pre>
-        </div>
-        <div>
-          <h4>Transactions endpoint</h4>
-          <pre id="devtools-transactions" class="raw-json"></pre>
-        </div>
-      </div>
+
+    <section class="list-card">
+      <table class="transaction-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+      <p id="transactions-empty" class="tool-note">No transactions logged yet.</p>
     </section>
   </main>
 
-  <script src="static/devtools.js"></script>
+  <script src="static/transactions.js"></script>
 </body>
 </html>
