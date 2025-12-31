@@ -736,6 +736,26 @@ function renderActiveTrades() {
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
   if (!list) return;
+  const noteDrafts = new Map();
+  list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
+    const tradeId = pill.dataset.tradeId;
+    if (!tradeId) return;
+    const noteInput = pill.querySelector('.trade-note-input');
+    const notePanel = pill.querySelector('.trade-note-panel');
+    const detailsWrap = pill.querySelector('.trade-details-collapsible');
+    const isFocused = document.activeElement === noteInput;
+    const selection = noteInput && typeof noteInput.selectionStart === 'number'
+      ? { start: noteInput.selectionStart, end: noteInput.selectionEnd }
+      : null;
+    noteDrafts.set(tradeId, {
+      note: noteInput ? noteInput.value : '',
+      isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false,
+      detailsOpen: detailsWrap ? !detailsWrap.classList.contains('is-collapsed') : false,
+      height: noteInput ? noteInput.style.height : '',
+      selection,
+      isFocused
+    });
+  });
   list.innerHTML = '';
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
@@ -792,6 +812,7 @@ function renderActiveTrades() {
   sortedTrades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.id) pill.dataset.tradeId = trade.id;
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
@@ -860,6 +881,11 @@ function renderActiveTrades() {
       details.append(dt, dd);
     });
     detailsWrap.appendChild(details);
+    const draft = trade.id ? noteDrafts.get(trade.id) : null;
+    if (draft?.detailsOpen) {
+      detailsWrap.classList.remove('is-collapsed');
+      detailsToggle.textContent = 'Hide price info';
+    }
     detailsToggle.addEventListener('click', () => {
       const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
       detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
@@ -869,6 +895,8 @@ function renderActiveTrades() {
     bodyRow.appendChild(detailsWrap);
     pill.appendChild(bodyRow);
 
+    const metaRow = document.createElement('div');
+    metaRow.className = 'trade-meta-row';
     const badges = document.createElement('div');
     badges.className = 'trade-meta trade-badges';
     const badgeItems = [{
@@ -884,7 +912,89 @@ function renderActiveTrades() {
       badge.textContent = item.label;
       badges.appendChild(badge);
     });
-    pill.appendChild(badges);
+    const noteToggle = document.createElement('button');
+    noteToggle.className = 'ghost trade-note-toggle';
+    noteToggle.type = 'button';
+    noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+    noteToggle.setAttribute('aria-expanded', 'false');
+    noteToggle.textContent = '📝';
+    metaRow.append(badges, noteToggle);
+    pill.appendChild(metaRow);
+
+    const notePanel = document.createElement('div');
+    notePanel.className = 'trade-note-panel is-collapsed';
+    const noteInput = document.createElement('textarea');
+    noteInput.className = 'trade-note-input';
+    noteInput.rows = 3;
+    noteInput.placeholder = 'Add a note about this trade...';
+    const noteValue = draft?.note ?? trade.note ?? '';
+    noteInput.value = noteValue;
+    if (noteValue.trim()) {
+      noteToggle.classList.add('has-note');
+      noteToggle.setAttribute('aria-label', 'Trade notes available');
+    }
+    if (draft?.height) {
+      noteInput.style.height = draft.height;
+    }
+    const noteStatus = document.createElement('div');
+    noteStatus.className = 'trade-note-status';
+    noteStatus.setAttribute('aria-live', 'polite');
+    notePanel.append(noteInput, noteStatus);
+    if (draft?.isOpen) {
+      notePanel.classList.remove('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', 'true');
+      if (draft?.isFocused) {
+        noteInput.focus();
+        if (draft.selection) {
+          noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
+        }
+      }
+    }
+    noteToggle.addEventListener('click', () => {
+      const isCollapsed = notePanel.classList.toggle('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', String(!isCollapsed));
+      if (!isCollapsed) {
+        noteInput.focus();
+      }
+    });
+    const refreshNoteIndicator = () => {
+      if (noteInput.value.trim()) {
+        noteToggle.classList.add('has-note');
+        noteToggle.setAttribute('aria-label', 'Trade notes available');
+      } else {
+        noteToggle.classList.remove('has-note');
+        noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+      }
+    };
+    const saveNote = async () => {
+      if (!trade.id) return;
+      const nextNote = noteInput.value.trim();
+      refreshNoteIndicator();
+      if (nextNote === (trade.note || '')) return;
+      noteStatus.textContent = 'Saving...';
+      try {
+        await api(`/api/trades/${trade.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: nextNote })
+        });
+        trade.note = nextNote;
+        noteInput.value = nextNote;
+        noteStatus.textContent = 'Saved.';
+        refreshNoteIndicator();
+      } catch (e) {
+        noteStatus.textContent = e?.message || 'Failed to save note.';
+      }
+    };
+    let noteSaveTimer;
+    noteInput.addEventListener('input', () => {
+      noteStatus.textContent = 'Drafting...';
+      refreshNoteIndicator();
+      window.clearTimeout(noteSaveTimer);
+      noteSaveTimer = window.setTimeout(saveNote, 600);
+    });
+    noteInput.addEventListener('blur', saveNote);
+    pill.appendChild(notePanel);
 
     const editToggle = document.createElement('button');
     editToggle.className = 'primary outline';
