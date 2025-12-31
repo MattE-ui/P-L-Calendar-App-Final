@@ -109,6 +109,7 @@
             <th>Type</th>
             <th>Amount</th>
             <th>Notes</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="transactions-body"></tbody>
@@ -130,6 +131,24 @@
       <div class="row">
         <button id="transactions-save-qs-btn" class="primary">Save</button>
         <button id="transactions-close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="transactions-note-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit notes</h3>
+        <button id="transactions-note-close-btn" class="ghost close-btn" aria-label="Close notes">✕</button>
+      </div>
+      <div class="modal-field">
+        <label for="transactions-note-input">Notes</label>
+        <textarea id="transactions-note-input" rows="4" placeholder="Add a note for this transaction"></textarea>
+      </div>
+      <div id="transactions-note-status" class="helper" aria-live="polite"></div>
+      <div class="row">
+        <button id="transactions-note-save-btn" class="primary">Save</button>
+        <button id="transactions-note-cancel-btn" class="ghost">Cancel</button>
       </div>
     </div>
   </div>

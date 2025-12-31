@@ -172,13 +172,20 @@ function renderTransactions(transactions = []) {
     const typeCell = document.createElement('td');
     const amountCell = document.createElement('td');
     const noteCell = document.createElement('td');
+    const actionCell = document.createElement('td');
     dateCell.textContent = tx.date;
     typeCell.textContent = tx.type;
     amountCell.textContent = formatSignedCurrency(tx.amount, 'GBP');
     amountCell.classList.toggle('positive', tx.amount > 0);
     amountCell.classList.toggle('negative', tx.amount < 0);
     noteCell.textContent = tx.note || '—';
-    row.append(dateCell, typeCell, amountCell, noteCell);
+    const editBtn = document.createElement('button');
+    editBtn.className = 'ghost';
+    editBtn.type = 'button';
+    editBtn.textContent = 'Edit Notes';
+    editBtn.addEventListener('click', () => openNoteModal(tx));
+    actionCell.appendChild(editBtn);
+    row.append(dateCell, typeCell, amountCell, noteCell, actionCell);
     tbody.appendChild(row);
   });
 }
@@ -209,6 +216,54 @@ function bindFilters() {
     if (searchEl) searchEl.value = '';
     renderTransactions(state.transactions);
   });
+}
+
+function openNoteModal(tx) {
+  const modal = document.getElementById('transactions-note-modal');
+  const input = document.getElementById('transactions-note-input');
+  const status = document.getElementById('transactions-note-status');
+  const saveBtn = document.getElementById('transactions-note-save-btn');
+  if (!modal || !input || !saveBtn) return;
+  modal.dataset.date = tx.date;
+  modal.dataset.type = tx.type;
+  input.value = tx.note || '';
+  if (status) status.textContent = '';
+  modal.classList.remove('hidden');
+  input.focus();
+}
+
+function closeNoteModal() {
+  const modal = document.getElementById('transactions-note-modal');
+  const status = document.getElementById('transactions-note-status');
+  if (status) status.textContent = '';
+  modal?.classList.add('hidden');
+}
+
+async function saveNote() {
+  const modal = document.getElementById('transactions-note-modal');
+  const input = document.getElementById('transactions-note-input');
+  const status = document.getElementById('transactions-note-status');
+  if (!modal || !input) return;
+  const date = modal.dataset.date;
+  if (!date) return;
+  const nextNote = input.value.trim();
+  if (status) status.textContent = 'Saving...';
+  try {
+    await api('/api/pl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, note: nextNote })
+    });
+    const target = state.transactions.find(tx => tx.date === date);
+    if (target) {
+      target.note = nextNote;
+    }
+    renderTransactions(applyFilters(state.transactions));
+    if (status) status.textContent = 'Saved.';
+    closeNoteModal();
+  } catch (e) {
+    if (status) status.textContent = e?.message || 'Failed to save note.';
+  }
 }
 
 async function loadHeroMetrics() {
@@ -339,6 +394,9 @@ function setupNav() {
     }
     closeQs();
   });
+  document.getElementById('transactions-note-close-btn')?.addEventListener('click', closeNoteModal);
+  document.getElementById('transactions-note-cancel-btn')?.addEventListener('click', closeNoteModal);
+  document.getElementById('transactions-note-save-btn')?.addEventListener('click', saveNote);
 }
 
 async function loadTransactions() {
