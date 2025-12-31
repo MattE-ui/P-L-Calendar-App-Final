@@ -81,6 +81,9 @@ function bindNav() {
   document.getElementById('trades-btn')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  document.getElementById('transactions-btn')?.addEventListener('click', () => {
+    window.location.href = '/transactions.html';
+  });
   document.getElementById('devtools-btn')?.addEventListener('click', () => {
     closeNav?.(false);
     window.location.href = '/devtools.html';
