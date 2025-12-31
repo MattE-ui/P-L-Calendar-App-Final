@@ -1088,6 +1088,12 @@ select {
   overflow-y: auto;
   min-height: 0;
   padding-right: 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#active-trades-card .trade-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 .show-all-btn {
   align-self: flex-start;
