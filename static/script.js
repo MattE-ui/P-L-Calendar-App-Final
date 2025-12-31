@@ -736,6 +736,17 @@ function renderActiveTrades() {
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
   if (!list) return;
+  const noteDrafts = new Map();
+  list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
+    const tradeId = pill.dataset.tradeId;
+    if (!tradeId) return;
+    const noteInput = pill.querySelector('.trade-note-input');
+    const notePanel = pill.querySelector('.trade-note-panel');
+    noteDrafts.set(tradeId, {
+      note: noteInput ? noteInput.value : '',
+      isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false
+    });
+  });
   list.innerHTML = '';
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
@@ -792,6 +803,7 @@ function renderActiveTrades() {
   sortedTrades.forEach(trade => {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
+    if (trade.id) pill.dataset.tradeId = trade.id;
     const sym = trade.symbol || '—';
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
@@ -901,7 +913,8 @@ function renderActiveTrades() {
     noteInput.className = 'trade-note-input';
     noteInput.rows = 3;
     noteInput.placeholder = 'Add a note about this trade...';
-    noteInput.value = trade.note || '';
+    const draft = trade.id ? noteDrafts.get(trade.id) : null;
+    noteInput.value = draft?.note ?? trade.note ?? '';
     const noteActions = document.createElement('div');
     noteActions.className = 'trade-note-actions';
     const saveNoteBtn = document.createElement('button');
@@ -913,6 +926,10 @@ function renderActiveTrades() {
     noteStatus.setAttribute('aria-live', 'polite');
     noteActions.appendChild(saveNoteBtn);
     notePanel.append(noteInput, noteActions, noteStatus);
+    if (draft?.isOpen) {
+      notePanel.classList.remove('is-collapsed');
+      noteToggle.setAttribute('aria-expanded', 'true');
+    }
     noteToggle.addEventListener('click', () => {
       const isCollapsed = notePanel.classList.toggle('is-collapsed');
       noteToggle.setAttribute('aria-expanded', String(!isCollapsed));
