@@ -581,8 +581,20 @@ function setRiskOutputs(values = null) {
   sharesEl && (sharesEl.textContent = formatShares(shares));
   perShareEl && (perShareEl.textContent = formatCurrency(perShareRiskGBP, riskCurrency));
   amountNote && (amountNote.textContent = `Risking ${riskPct.toFixed(2)}% of your portfolio`);
+  let secondaryCurrency = null;
+  if (riskCurrency === 'USD') {
+    secondaryCurrency = state.currency && state.currency !== 'USD' ? state.currency : null;
+  } else {
+    secondaryCurrency = 'USD';
+  }
+  const secondaryValue = secondaryCurrency
+    ? formatCurrency(positionGBP, secondaryCurrency)
+    : null;
+  const secondaryText = secondaryValue && secondaryValue !== '—' && secondaryCurrency !== riskCurrency
+    ? ` (${secondaryValue})`
+    : '';
   positionNote && (positionNote.textContent = shares > 0
-    ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${riskCurrency !== 'GBP' && Number.isFinite(positionCurrency) ? ` (${formatCurrency(positionCurrency, 'GBP')})` : ''}`
+    ? `Position ≈ ${formatCurrency(positionGBP, riskCurrency)}${secondaryText}`
     : 'Position too small for the chosen risk');
   shareNote && (shareNote.textContent = shares > 0 ? 'Fractional units allowed for sizing' : '');
   perShareNote && (perShareNote.textContent = `Difference between entry and stop-loss${state.direction === 'short' ? ' (short)' : ''}`);
