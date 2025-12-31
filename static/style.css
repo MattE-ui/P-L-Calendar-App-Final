@@ -597,6 +597,10 @@ select {
   font-size: 18px;
   flex: 0 0 auto;
 }
+.trade-note-toggle.has-note {
+  border-color: rgba(42, 163, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(42, 163, 255, 0.15);
+}
 .trade-note-panel {
   display: flex;
   flex-direction: column;

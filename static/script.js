@@ -927,7 +927,12 @@ function renderActiveTrades() {
     noteInput.className = 'trade-note-input';
     noteInput.rows = 3;
     noteInput.placeholder = 'Add a note about this trade...';
-    noteInput.value = draft?.note ?? trade.note ?? '';
+    const noteValue = draft?.note ?? trade.note ?? '';
+    noteInput.value = noteValue;
+    if (noteValue.trim()) {
+      noteToggle.classList.add('has-note');
+      noteToggle.setAttribute('aria-label', 'Trade notes available');
+    }
     if (draft?.height) {
       noteInput.style.height = draft.height;
     }
@@ -952,9 +957,19 @@ function renderActiveTrades() {
         noteInput.focus();
       }
     });
+    const refreshNoteIndicator = () => {
+      if (noteInput.value.trim()) {
+        noteToggle.classList.add('has-note');
+        noteToggle.setAttribute('aria-label', 'Trade notes available');
+      } else {
+        noteToggle.classList.remove('has-note');
+        noteToggle.setAttribute('aria-label', 'Toggle trade notes');
+      }
+    };
     const saveNote = async () => {
       if (!trade.id) return;
       const nextNote = noteInput.value.trim();
+      refreshNoteIndicator();
       if (nextNote === (trade.note || '')) return;
       noteStatus.textContent = 'Saving...';
       try {
@@ -966,6 +981,7 @@ function renderActiveTrades() {
         trade.note = nextNote;
         noteInput.value = nextNote;
         noteStatus.textContent = 'Saved.';
+        refreshNoteIndicator();
       } catch (e) {
         noteStatus.textContent = e?.message || 'Failed to save note.';
       }
@@ -973,6 +989,7 @@ function renderActiveTrades() {
     let noteSaveTimer;
     noteInput.addEventListener('input', () => {
       noteStatus.textContent = 'Drafting...';
+      refreshNoteIndicator();
       window.clearTimeout(noteSaveTimer);
       noteSaveTimer = window.setTimeout(saveNote, 600);
     });
