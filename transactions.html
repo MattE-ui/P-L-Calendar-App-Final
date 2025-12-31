@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Devtools | P&L Calendar</title>
+  <title>Transactions | P&L Calendar</title>
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -62,32 +62,61 @@
 
   <main class="container">
     <section class="page-title">
-      <h2>Devtools</h2>
+      <h2>Transactions</h2>
+      <p class="tool-note">Deposits and withdrawals logged across your calendar.</p>
     </section>
-    <section class="tool-card devtools-card">
-      <div class="section-header">
-        <div>
-          <p class="tool-overline">Trading 212</p>
-          <h3>Raw integration payloads</h3>
-        </div>
-      </div>
-      <div class="devtools-grid">
-        <div>
-          <h4>Portfolio endpoint</h4>
-          <pre id="devtools-portfolio" class="raw-json"></pre>
-        </div>
-        <div>
-          <h4>Positions endpoint</h4>
-          <pre id="devtools-positions" class="raw-json"></pre>
-        </div>
-        <div>
-          <h4>Transactions endpoint</h4>
-          <pre id="devtools-transactions" class="raw-json"></pre>
-        </div>
-      </div>
+
+    <section class="list-card">
+      <table class="transaction-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+      <p id="transactions-empty" class="tool-note">No transactions logged yet.</p>
     </section>
   </main>
 
-  <script src="static/devtools.js"></script>
+  <div id="transactions-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="transactions-qs-risk-select">Default risk per trade</label>
+        <select id="transactions-qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="transactions-qs-currency-select">Default currency</label>
+        <select id="transactions-qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+          <option value="EUR">EUR (€)</option>
+        </select>
+      </div>
+      <div class="modal-field toggle-field">
+        <label class="toggle" for="transactions-qs-split-profits">
+          <input id="transactions-qs-split-profits" type="checkbox">
+          Split Profits
+        </label>
+        <p class="tool-note">For investors managing pooled funds. Track depositor profiles, set a profit split, and see who is owed what. Notes: this works on a combined portfolio basis only and does not assign trades to individual profiles.</p>
+      </div>
+      <div class="row">
+        <button id="transactions-save-qs-btn" class="primary">Save</button>
+        <button id="transactions-close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/transactions.js"></script>
 </body>
 </html>
