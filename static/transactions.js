@@ -33,7 +33,14 @@ async function api(path, opts = {}) {
 
 const state = {
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  transactions: [],
+  filters: {
+    from: '',
+    to: '',
+    type: '',
+    search: ''
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
@@ -134,6 +141,21 @@ function buildTransactions(data) {
   return transactions;
 }
 
+function applyFilters(transactions) {
+  const { from, to, type, search } = state.filters;
+  const fromTime = from ? Date.parse(from) : null;
+  const toTime = to ? Date.parse(to) : null;
+  const query = search.trim().toLowerCase();
+  return transactions.filter(tx => {
+    const txTime = Date.parse(tx.date);
+    if (fromTime && txTime < fromTime) return false;
+    if (toTime && txTime > toTime) return false;
+    if (type && tx.type !== type) return false;
+    if (query && !tx.note.toLowerCase().includes(query)) return false;
+    return true;
+  });
+}
+
 function renderTransactions(transactions = []) {
   const tbody = document.getElementById('transactions-body');
   const empty = document.getElementById('transactions-empty');
@@ -158,6 +180,34 @@ function renderTransactions(transactions = []) {
     noteCell.textContent = tx.note || '—';
     row.append(dateCell, typeCell, amountCell, noteCell);
     tbody.appendChild(row);
+  });
+}
+
+function readFilters() {
+  state.filters = {
+    from: document.getElementById('filter-from')?.value || '',
+    to: document.getElementById('filter-to')?.value || '',
+    type: document.getElementById('filter-type')?.value || '',
+    search: document.getElementById('filter-search')?.value || ''
+  };
+}
+
+function bindFilters() {
+  document.getElementById('apply-filters-btn')?.addEventListener('click', () => {
+    readFilters();
+    renderTransactions(applyFilters(state.transactions));
+  });
+  document.getElementById('reset-filters-btn')?.addEventListener('click', () => {
+    state.filters = { from: '', to: '', type: '', search: '' };
+    const fromEl = document.getElementById('filter-from');
+    const toEl = document.getElementById('filter-to');
+    const typeEl = document.getElementById('filter-type');
+    const searchEl = document.getElementById('filter-search');
+    if (fromEl) fromEl.value = '';
+    if (toEl) toEl.value = '';
+    if (typeEl) typeEl.value = '';
+    if (searchEl) searchEl.value = '';
+    renderTransactions(state.transactions);
   });
 }
 
@@ -294,8 +344,8 @@ function setupNav() {
 async function loadTransactions() {
   try {
     const data = await api('/api/pl');
-    const transactions = buildTransactions(data);
-    renderTransactions(transactions);
+    state.transactions = buildTransactions(data);
+    renderTransactions(state.transactions);
   } catch (e) {
     console.error('Failed to load transactions', e);
   }
@@ -304,3 +354,4 @@ async function loadTransactions() {
 setupNav();
 loadHeroMetrics();
 loadTransactions();
+bindFilters();

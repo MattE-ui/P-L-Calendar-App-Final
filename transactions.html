@@ -66,6 +66,41 @@
       <p class="tool-note">Deposits and withdrawals logged across your calendar.</p>
     </section>
 
+    <section class="tool-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Filters</p>
+          <h3>Find transactions</h3>
+        </div>
+        <div class="filter-actions">
+          <button id="apply-filters-btn" class="primary">Apply filters</button>
+          <button id="reset-filters-btn" class="ghost">Reset</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <div class="tool-field">
+          <label for="filter-from">From</label>
+          <input id="filter-from" type="date">
+        </div>
+        <div class="tool-field">
+          <label for="filter-to">To</label>
+          <input id="filter-to" type="date">
+        </div>
+        <div class="tool-field">
+          <label for="filter-type">Type</label>
+          <select id="filter-type">
+            <option value="" selected>All</option>
+            <option value="Deposit">Deposits</option>
+            <option value="Withdrawal">Withdrawals</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-search">Notes</label>
+          <input id="filter-search" type="text" placeholder="Search notes">
+        </div>
+      </div>
+    </section>
+
     <section class="list-card">
       <table class="transaction-table">
         <thead>
