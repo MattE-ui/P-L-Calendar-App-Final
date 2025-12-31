@@ -262,7 +262,7 @@ function setupNav() {
     }
   });
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
+    setNavOpen(false);
     const modal = document.getElementById('transactions-settings-modal');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
     try {
