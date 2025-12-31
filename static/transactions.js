@@ -35,6 +35,7 @@ const state = {
   currency: 'GBP',
   rates: { GBP: 1 },
   transactions: [],
+  notes: {},
   filters: {
     from: '',
     to: '',
@@ -118,21 +119,27 @@ function buildTransactions(data) {
       const cashOut = Number(record.cashOut ?? 0);
       const note = typeof record.note === 'string' ? record.note.trim() : '';
       if (Number.isFinite(cashIn) && cashIn > 0) {
+        const noteKey = buildNoteKey(dateKey, 'Deposit', cashIn);
+        const note = state.notes[noteKey] || '';
         transactions.push({
           id: `${dateKey}-deposit`,
           date: dateKey,
           type: 'Deposit',
           amount: cashIn,
-          note
+          note,
+          noteKey
         });
       }
       if (Number.isFinite(cashOut) && cashOut > 0) {
+        const noteKey = buildNoteKey(dateKey, 'Withdrawal', cashOut);
+        const note = state.notes[noteKey] || '';
         transactions.push({
           id: `${dateKey}-withdrawal`,
           date: dateKey,
           type: 'Withdrawal',
           amount: -cashOut,
-          note
+          note,
+          noteKey
         });
       }
     });
@@ -224,8 +231,7 @@ function openNoteModal(tx) {
   const status = document.getElementById('transactions-note-status');
   const saveBtn = document.getElementById('transactions-note-save-btn');
   if (!modal || !input || !saveBtn) return;
-  modal.dataset.date = tx.date;
-  modal.dataset.type = tx.type;
+  modal.dataset.noteKey = tx.noteKey || '';
   input.value = tx.note || '';
   if (status) status.textContent = '';
   modal.classList.remove('hidden');
@@ -244,17 +250,14 @@ async function saveNote() {
   const input = document.getElementById('transactions-note-input');
   const status = document.getElementById('transactions-note-status');
   if (!modal || !input) return;
-  const date = modal.dataset.date;
-  if (!date) return;
+  const noteKey = modal.dataset.noteKey;
+  if (!noteKey) return;
   const nextNote = input.value.trim();
   if (status) status.textContent = 'Saving...';
   try {
-    await api('/api/pl', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, note: nextNote })
-    });
-    const target = state.transactions.find(tx => tx.date === date);
+    state.notes[noteKey] = nextNote;
+    localStorage.setItem('plc-transactions-notes', JSON.stringify(state.notes));
+    const target = state.transactions.find(tx => tx.noteKey === noteKey);
     if (target) {
       target.note = nextNote;
     }
@@ -401,12 +404,23 @@ function setupNav() {
 
 async function loadTransactions() {
   try {
+    try {
+      const saved = localStorage.getItem('plc-transactions-notes');
+      state.notes = saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      console.warn('Failed to load transaction notes', e);
+      state.notes = {};
+    }
     const data = await api('/api/pl');
     state.transactions = buildTransactions(data);
     renderTransactions(state.transactions);
   } catch (e) {
     console.error('Failed to load transactions', e);
   }
+}
+
+function buildNoteKey(date, type, amount) {
+  return `${date}-${type}-${amount}`;
 }
 
 setupNav();
