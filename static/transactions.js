@@ -261,6 +261,43 @@ function setupNav() {
       window.location.href = '/login.html';
     }
   });
+  document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
+    const modal = document.getElementById('quick-settings-modal');
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    const splitToggle = document.getElementById('qs-split-profits');
+    try {
+      const saved = localStorage.getItem('plc-prefs');
+      if (saved) {
+        const prefs = JSON.parse(saved);
+        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+        if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+    modal?.classList.remove('hidden');
+  });
+  const closeQs = () => document.getElementById('quick-settings-modal')?.classList.add('hidden');
+  document.getElementById('close-qs-btn')?.addEventListener('click', closeQs);
+  document.getElementById('save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = document.getElementById('qs-risk-select');
+    const curSel = document.getElementById('qs-currency-select');
+    const splitToggle = document.getElementById('qs-split-profits');
+    const pct = Number(riskSel?.value);
+    const cur = curSel?.value;
+    const prefs = {};
+    if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
+    if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) prefs.defaultRiskCurrency = cur;
+    if (splitToggle) prefs.splitProfits = splitToggle.checked;
+    try {
+      localStorage.setItem('plc-prefs', JSON.stringify(prefs));
+    } catch (e) {
+      console.warn(e);
+    }
+    closeQs();
+  });
 }
 
 async function loadTransactions() {
