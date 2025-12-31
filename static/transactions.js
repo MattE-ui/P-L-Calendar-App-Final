@@ -262,16 +262,13 @@ function setupNav() {
     }
   });
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
+    closeNav?.(false);
     const modal = document.getElementById('transactions-settings-modal');
-    const riskSel = document.getElementById('transactions-qs-risk-select');
-    const curSel = document.getElementById('transactions-qs-currency-select');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
     try {
       const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
         const prefs = JSON.parse(saved);
-        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
-        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
         if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
       }
     } catch (e) {
@@ -282,14 +279,8 @@ function setupNav() {
   const closeQs = () => document.getElementById('transactions-settings-modal')?.classList.add('hidden');
   document.getElementById('transactions-close-qs-btn')?.addEventListener('click', closeQs);
   document.getElementById('transactions-save-qs-btn')?.addEventListener('click', () => {
-    const riskSel = document.getElementById('transactions-qs-risk-select');
-    const curSel = document.getElementById('transactions-qs-currency-select');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
-    const pct = Number(riskSel?.value);
-    const cur = curSel?.value;
     const prefs = {};
-    if (Number.isFinite(pct) && pct > 0) prefs.defaultRiskPct = pct;
-    if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) prefs.defaultRiskCurrency = cur;
     if (splitToggle) prefs.splitProfits = splitToggle.checked;
     try {
       localStorage.setItem('plc-transactions-prefs', JSON.stringify(prefs));
