@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transactions | P&L Calendar</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1 class="brand-heading">
+          <img class="brand-logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
+        </h1>
+      </div>
+      <div class="hero-metrics key-metrics">
+        <article class="metric-card hero-card" id="hero-portfolio">
+          <h3>Portfolio value</h3>
+          <div class="metric-value" id="header-portfolio-value">£0.00</div>
+          <div class="metric-sub" id="header-portfolio-sub"></div>
+        </article>
+        <article class="metric-card hero-card" id="hero-net-deposits">
+          <h3>Net deposits</h3>
+          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-deposits-sub"></div>
+        </article>
+        <article class="metric-card hero-card" id="hero-net-performance">
+          <h3>Net performance</h3>
+          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
+          <div class="metric-sub" id="hero-net-performance-sub"></div>
+        </article>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="analytics-btn" class="ghost">Analytics</button>
+      <button id="trades-btn" class="ghost">Trades</button>
+      <button id="transactions-btn" class="ghost">Transactions</button>
+      <button id="profile-btn" class="ghost">Profile</button>
+      <button id="portfolio-btn" class="ghost">Portfolio</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
+
+  <main class="container">
+    <section class="page-title">
+      <h2>Transactions</h2>
+      <p class="tool-note">Deposits and withdrawals logged across your calendar.</p>
+    </section>
+
+    <section class="tool-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Filters</p>
+          <h3>Find transactions</h3>
+        </div>
+        <div class="filter-actions">
+          <button id="apply-filters-btn" class="primary">Apply filters</button>
+          <button id="reset-filters-btn" class="ghost">Reset</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <div class="tool-field">
+          <label for="filter-from">From</label>
+          <input id="filter-from" type="date">
+        </div>
+        <div class="tool-field">
+          <label for="filter-to">To</label>
+          <input id="filter-to" type="date">
+        </div>
+        <div class="tool-field">
+          <label for="filter-type">Type</label>
+          <select id="filter-type">
+            <option value="" selected>All</option>
+            <option value="Deposit">Deposits</option>
+            <option value="Withdrawal">Withdrawals</option>
+          </select>
+        </div>
+        <div class="tool-field">
+          <label for="filter-search">Notes</label>
+          <input id="filter-search" type="text" placeholder="Search notes">
+        </div>
+      </div>
+    </section>
+
+    <section class="list-card">
+      <table class="transaction-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Amount</th>
+            <th>Notes</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="transactions-body"></tbody>
+      </table>
+      <p id="transactions-empty" class="tool-note">No transactions logged yet.</p>
+    </section>
+  </main>
+
+  <div id="transactions-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field toggle-field">
+        <label class="toggle" for="transactions-qs-split-profits">
+          <input id="transactions-qs-split-profits" type="checkbox">
+          Split Profits
+        </label>
+        <p class="tool-note">For investors managing pooled funds. Track depositor profiles, set a profit split, and see who is owed what. Notes: this works on a combined portfolio basis only and does not assign trades to individual profiles.</p>
+      </div>
+      <div class="row">
+        <button id="transactions-save-qs-btn" class="primary">Save</button>
+        <button id="transactions-close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="transactions-note-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit notes</h3>
+        <button id="transactions-note-close-btn" class="ghost close-btn" aria-label="Close notes">✕</button>
+      </div>
+      <div class="modal-field">
+        <label for="transactions-note-input">Notes</label>
+        <textarea id="transactions-note-input" rows="4" placeholder="Add a note for this transaction"></textarea>
+      </div>
+      <div id="transactions-note-status" class="helper" aria-live="polite"></div>
+      <div class="row">
+        <button id="transactions-note-save-btn" class="primary">Save</button>
+        <button id="transactions-note-cancel-btn" class="ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/transactions.js"></script>
+</body>
+</html>
