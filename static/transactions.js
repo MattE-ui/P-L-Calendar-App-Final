@@ -262,12 +262,12 @@ function setupNav() {
     }
   });
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
-    const modal = document.getElementById('quick-settings-modal');
-    const riskSel = document.getElementById('qs-risk-select');
-    const curSel = document.getElementById('qs-currency-select');
-    const splitToggle = document.getElementById('qs-split-profits');
+    const modal = document.getElementById('transactions-settings-modal');
+    const riskSel = document.getElementById('transactions-qs-risk-select');
+    const curSel = document.getElementById('transactions-qs-currency-select');
+    const splitToggle = document.getElementById('transactions-qs-split-profits');
     try {
-      const saved = localStorage.getItem('plc-prefs');
+      const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
         const prefs = JSON.parse(saved);
         if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
@@ -279,12 +279,12 @@ function setupNav() {
     }
     modal?.classList.remove('hidden');
   });
-  const closeQs = () => document.getElementById('quick-settings-modal')?.classList.add('hidden');
-  document.getElementById('close-qs-btn')?.addEventListener('click', closeQs);
-  document.getElementById('save-qs-btn')?.addEventListener('click', () => {
-    const riskSel = document.getElementById('qs-risk-select');
-    const curSel = document.getElementById('qs-currency-select');
-    const splitToggle = document.getElementById('qs-split-profits');
+  const closeQs = () => document.getElementById('transactions-settings-modal')?.classList.add('hidden');
+  document.getElementById('transactions-close-qs-btn')?.addEventListener('click', closeQs);
+  document.getElementById('transactions-save-qs-btn')?.addEventListener('click', () => {
+    const riskSel = document.getElementById('transactions-qs-risk-select');
+    const curSel = document.getElementById('transactions-qs-currency-select');
+    const splitToggle = document.getElementById('transactions-qs-split-profits');
     const pct = Number(riskSel?.value);
     const cur = curSel?.value;
     const prefs = {};
@@ -292,7 +292,7 @@ function setupNav() {
     if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) prefs.defaultRiskCurrency = cur;
     if (splitToggle) prefs.splitProfits = splitToggle.checked;
     try {
-      localStorage.setItem('plc-prefs', JSON.stringify(prefs));
+      localStorage.setItem('plc-transactions-prefs', JSON.stringify(prefs));
     } catch (e) {
       console.warn(e);
     }
