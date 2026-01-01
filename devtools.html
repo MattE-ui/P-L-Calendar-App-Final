@@ -10,8 +10,9 @@
   <header class="hero">
     <div class="hero-top">
       <div class="hero-left">
-        <h1>P&L Calendar</h1>
-        <p class="hero-sub">Trading journal & performance dashboard</p>
+        <h1 class="brand-heading">
+          <img class="brand-logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
+        </h1>
       </div>
       <div class="hero-metrics key-metrics">
         <article class="metric-card hero-card" id="hero-portfolio">
@@ -19,12 +20,12 @@
           <div class="metric-value" id="header-portfolio-value">£0.00</div>
           <div class="metric-sub" id="header-portfolio-sub"></div>
         </article>
-        <article class="metric-card" id="hero-net-deposits">
+        <article class="metric-card hero-card" id="hero-net-deposits">
           <h3>Net deposits</h3>
           <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
           <div class="metric-sub" id="hero-net-deposits-sub"></div>
         </article>
-        <article class="metric-card" id="hero-net-performance">
+        <article class="metric-card hero-card" id="hero-net-performance">
           <h3>Net performance</h3>
           <div class="metric-value" id="hero-net-performance-value">£0.00</div>
           <div class="metric-sub" id="hero-net-performance-sub"></div>
@@ -51,8 +52,10 @@
       <button id="calendar-btn" class="ghost">Calendar</button>
       <button id="analytics-btn" class="ghost">Analytics</button>
       <button id="trades-btn" class="ghost">Trades</button>
+      <button id="transactions-btn" class="ghost">Transactions</button>
       <button id="profile-btn" class="ghost">Profile</button>
-      <button id="devtools-btn" class="ghost">Devtools</button>
+      <button id="portfolio-btn" class="ghost">Portfolio</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
       <button id="logout-btn" class="danger ghost">Logout</button>
     </nav>
   </aside>
