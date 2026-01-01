@@ -444,35 +444,39 @@ function closeProfileStats() {
 function calculateProfileStats(profileName) {
   let deposits = 0;
   let withdrawals = 0;
-  let earliestDepositDate = null;
+  let netDeposits = 0;
+  let portfolioValue = 0;
   Object.values(state.splits).forEach(split => {
     const isDeposit = split.type === 'Deposit';
+    const isWithdrawal = split.type === 'Withdrawal';
+    if (!isDeposit && !isWithdrawal) return;
     split.splits?.forEach(item => {
       if (item.profile !== profileName) return;
       const amount = Number(item.amount || 0);
       if (!Number.isFinite(amount)) return;
-      if (isDeposit) {
-        deposits += amount;
-        if (split.noteKey) {
-          const [datePart] = split.noteKey.split('-Deposit-');
-          if (datePart) {
-            const ts = Date.parse(datePart);
-            if (!Number.isNaN(ts)) {
-              earliestDepositDate = earliestDepositDate === null ? ts : Math.min(earliestDepositDate, ts);
-            }
-          }
-        }
-      } else {
-        withdrawals += amount;
-      }
+      const signedAmount = isDeposit ? amount : -amount;
+      if (isDeposit) deposits += amount;
+      if (isWithdrawal) withdrawals += amount;
+      netDeposits += signedAmount;
+      const dateMs = parseTransactionDate(split.noteKey, split.type);
+      const performanceFactor = getPortfolioPerformanceFactor(dateMs);
+      portfolioValue += signedAmount * performanceFactor;
     });
   });
-  const portfolioValue = deposits - withdrawals;
-  const baseDeposit = deposits;
-  const performanceFactor = getPortfolioPerformanceFactor(earliestDepositDate);
-  const netPerformance = baseDeposit ? (baseDeposit * performanceFactor - baseDeposit) : 0;
-  const rateOfReturn = baseDeposit ? (netPerformance / baseDeposit) * 100 : 0;
+  const netPerformance = portfolioValue - netDeposits;
+  const rateOfReturn = netDeposits ? (netPerformance / netDeposits) * 100 : 0;
   return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
+}
+
+function parseTransactionDate(noteKey, type) {
+  if (!noteKey || !type) return null;
+  const marker = `-${type}-`;
+  const index = noteKey.indexOf(marker);
+  if (index === -1) return null;
+  const datePart = noteKey.slice(0, index);
+  if (!datePart) return null;
+  const ts = Date.parse(datePart);
+  return Number.isNaN(ts) ? null : ts;
 }
 
 function getPortfolioPerformanceFactor(depositDateMs) {
