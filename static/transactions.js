@@ -355,10 +355,12 @@ function saveSplitSettings() {
     profile: row.querySelector('.transactions-split-profile')?.value.trim() || '',
     amount: Number(row.querySelector('.transactions-split-amount')?.value || 0)
   })).filter(split => split.profile || split.amount);
+  const txType = modal.dataset.type || '';
   state.splits[noteKey] = {
     total: Number(total.value || 0),
-    ratio: modal.dataset.type === 'Deposit' ? ratio.value.trim() : '',
-    splits
+    ratio: txType === 'Deposit' ? ratio.value.trim() : '',
+    splits,
+    type: txType
   };
   try {
     localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
@@ -423,17 +425,40 @@ function persistProfiles() {
 function openProfileStats(profile) {
   const modal = document.getElementById('transactions-profile-modal');
   if (!modal) return;
+  const stats = calculateProfileStats(profile.name);
   document.getElementById('transactions-profile-title').textContent = `${profile.name} stats`;
-  document.getElementById('transactions-profile-deposits').textContent = '£0.00';
-  document.getElementById('transactions-profile-withdrawals').textContent = '£0.00';
-  document.getElementById('transactions-profile-value').textContent = '£0.00';
-  document.getElementById('transactions-profile-return').textContent = '0.00%';
-  document.getElementById('transactions-profile-performance').textContent = '£0.00';
+  document.getElementById('transactions-profile-deposits').textContent = formatCurrency(stats.deposits);
+  document.getElementById('transactions-profile-withdrawals').textContent = formatCurrency(stats.withdrawals);
+  document.getElementById('transactions-profile-value').textContent = formatCurrency(stats.portfolioValue);
+  document.getElementById('transactions-profile-return').textContent = formatPercent(stats.rateOfReturn);
+  document.getElementById('transactions-profile-performance').textContent = formatSignedCurrency(stats.netPerformance);
   modal.classList.remove('hidden');
 }
 
 function closeProfileStats() {
   document.getElementById('transactions-profile-modal')?.classList.add('hidden');
+}
+
+function calculateProfileStats(profileName) {
+  let deposits = 0;
+  let withdrawals = 0;
+  Object.values(state.splits).forEach(split => {
+    const isDeposit = split.type === 'Deposit';
+    split.splits?.forEach(item => {
+      if (item.profile !== profileName) return;
+      const amount = Number(item.amount || 0);
+      if (!Number.isFinite(amount)) return;
+      if (isDeposit) {
+        deposits += amount;
+      } else {
+        withdrawals += amount;
+      }
+    });
+  });
+  const portfolioValue = deposits - withdrawals;
+  const netPerformance = portfolioValue;
+  const rateOfReturn = deposits ? (netPerformance / deposits) * 100 : 0;
+  return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
 }
 
 async function loadHeroMetrics() {
