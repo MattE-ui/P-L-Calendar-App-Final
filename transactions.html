@@ -129,6 +129,17 @@
         </label>
         <p class="tool-note">For investors managing pooled funds. Track depositor profiles, set a profit split, and see who is owed what. Notes: this works on a combined portfolio basis only and does not assign trades to individual profiles.</p>
       </div>
+      <div id="transactions-split-profiles" class="modal-field is-hidden">
+        <div class="section-header">
+          <div>
+            <p class="tool-overline">Set up Split Profits Profiles</p>
+            <h3>Profiles</h3>
+          </div>
+          <button id="transactions-add-profile-btn" class="ghost">Add profile</button>
+        </div>
+        <div id="transactions-profiles-list" class="integration-fields"></div>
+        <p class="tool-note">Profiles are saved to this account and can be selected when splitting deposits or withdrawals.</p>
+      </div>
       <div class="row">
         <button id="transactions-save-qs-btn" class="primary">Save</button>
         <button id="transactions-close-qs-btn" class="ghost">Close</button>
@@ -178,6 +189,40 @@
       <div class="row">
         <button id="transactions-split-save-btn" class="primary">Save</button>
         <button id="transactions-split-cancel-btn" class="ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="transactions-profile-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="transactions-profile-title">Profile stats</h3>
+        <button id="transactions-profile-close-btn" class="ghost close-btn" aria-label="Close profile stats">✕</button>
+      </div>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="stats-label">Total deposits</p>
+          <p class="stats-value" id="transactions-profile-deposits">£0.00</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Total withdrawals</p>
+          <p class="stats-value" id="transactions-profile-withdrawals">£0.00</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Portfolio value</p>
+          <p class="stats-value" id="transactions-profile-value">£0.00</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Rate of return</p>
+          <p class="stats-value" id="transactions-profile-return">0.00%</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Net performance</p>
+          <p class="stats-value" id="transactions-profile-performance">£0.00</p>
+        </article>
+      </div>
+      <div class="row">
+        <button id="transactions-profile-close-btn-bottom" class="ghost">Close</button>
       </div>
     </div>
   </div>

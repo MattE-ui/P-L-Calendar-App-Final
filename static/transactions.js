@@ -38,6 +38,7 @@ const state = {
   notes: {},
   splits: {},
   splitProfitsEnabled: false,
+  profiles: [],
   filters: {
     from: '',
     to: '',
@@ -359,6 +360,73 @@ function saveSplitSettings() {
   closeSplitModal();
 }
 
+function renderProfiles() {
+  const list = document.getElementById('transactions-profiles-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!state.profiles.length) {
+    const empty = document.createElement('p');
+    empty.className = 'tool-note';
+    empty.textContent = 'No profiles yet. Add one to start tracking splits.';
+    list.appendChild(empty);
+    return;
+  }
+  state.profiles.forEach(profile => {
+    const row = document.createElement('div');
+    row.className = 'integration-fields';
+    row.innerHTML = `
+      <div class="tool-field">
+        <label>Profile name</label>
+        <input type="text" value="${profile.name}" disabled>
+      </div>
+      <div class="tool-field">
+        <label>Notes</label>
+        <input type="text" value="${profile.note || ''}" placeholder="Optional note">
+      </div>
+      <div class="filter-actions">
+        <button type="button" class="ghost profile-stats-btn">Statistics</button>
+        <button type="button" class="ghost danger remove-profile-btn">Remove</button>
+      </div>
+    `;
+    row.querySelector('.remove-profile-btn')?.addEventListener('click', () => {
+      state.profiles = state.profiles.filter(p => p.id !== profile.id);
+      persistProfiles();
+      renderProfiles();
+    });
+    row.querySelector('.profile-stats-btn')?.addEventListener('click', () => openProfileStats(profile));
+    const noteInput = row.querySelector('input[placeholder="Optional note"]');
+    noteInput?.addEventListener('change', () => {
+      profile.note = noteInput.value.trim();
+      persistProfiles();
+    });
+    list.appendChild(row);
+  });
+}
+
+function persistProfiles() {
+  try {
+    localStorage.setItem('plc-transactions-profiles', JSON.stringify(state.profiles));
+  } catch (e) {
+    console.warn('Failed to save profiles', e);
+  }
+}
+
+function openProfileStats(profile) {
+  const modal = document.getElementById('transactions-profile-modal');
+  if (!modal) return;
+  document.getElementById('transactions-profile-title').textContent = `${profile.name} stats`;
+  document.getElementById('transactions-profile-deposits').textContent = '£0.00';
+  document.getElementById('transactions-profile-withdrawals').textContent = '£0.00';
+  document.getElementById('transactions-profile-value').textContent = '£0.00';
+  document.getElementById('transactions-profile-return').textContent = '0.00%';
+  document.getElementById('transactions-profile-performance').textContent = '£0.00';
+  modal.classList.remove('hidden');
+}
+
+function closeProfileStats() {
+  document.getElementById('transactions-profile-modal')?.classList.add('hidden');
+}
+
 async function loadHeroMetrics() {
   try {
     const res = await api('/api/portfolio');
@@ -463,6 +531,7 @@ function setupNav() {
     setNavOpen(false);
     const modal = document.getElementById('transactions-settings-modal');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
+    const profilesSection = document.getElementById('transactions-split-profiles');
     try {
       const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
@@ -472,18 +541,26 @@ function setupNav() {
     } catch (e) {
       console.warn(e);
     }
+    if (profilesSection) {
+      profilesSection.classList.toggle('is-hidden', !splitToggle?.checked);
+    }
+    renderProfiles();
     modal?.classList.remove('hidden');
   });
   const closeQs = () => document.getElementById('transactions-settings-modal')?.classList.add('hidden');
   document.getElementById('transactions-close-qs-btn')?.addEventListener('click', closeQs);
   document.getElementById('transactions-save-qs-btn')?.addEventListener('click', () => {
     const splitToggle = document.getElementById('transactions-qs-split-profits');
+    const profilesSection = document.getElementById('transactions-split-profiles');
     const prefs = {};
     if (splitToggle) prefs.splitProfits = splitToggle.checked;
     try {
       localStorage.setItem('plc-transactions-prefs', JSON.stringify(prefs));
       state.splitProfitsEnabled = !!prefs.splitProfits;
       renderTransactions(applyFilters(state.transactions));
+      if (profilesSection) {
+        profilesSection.classList.toggle('is-hidden', !state.splitProfitsEnabled);
+      }
     } catch (e) {
       console.warn(e);
     }
@@ -499,6 +576,16 @@ function setupNav() {
     const list = document.getElementById('transactions-split-list');
     if (list) list.appendChild(buildSplitRow());
   });
+  document.getElementById('transactions-add-profile-btn')?.addEventListener('click', () => {
+    const name = window.prompt('Profile name');
+    if (!name) return;
+    const profile = { id: `${Date.now()}-${Math.random()}`, name: name.trim(), note: '' };
+    state.profiles.push(profile);
+    persistProfiles();
+    renderProfiles();
+  });
+  document.getElementById('transactions-profile-close-btn')?.addEventListener('click', closeProfileStats);
+  document.getElementById('transactions-profile-close-btn-bottom')?.addEventListener('click', closeProfileStats);
 }
 
 async function loadTransactions() {
@@ -524,6 +611,13 @@ async function loadTransactions() {
     } catch (e) {
       console.warn('Failed to load transaction prefs', e);
       state.splitProfitsEnabled = false;
+    }
+    try {
+      const savedProfiles = localStorage.getItem('plc-transactions-profiles');
+      state.profiles = savedProfiles ? JSON.parse(savedProfiles) : [];
+    } catch (e) {
+      console.warn('Failed to load profiles', e);
+      state.profiles = [];
     }
     const data = await api('/api/pl');
     state.transactions = buildTransactions(data);
