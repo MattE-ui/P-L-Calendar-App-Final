@@ -686,6 +686,7 @@ function getPortfolioPerformanceFactor(depositDateMs) {
 
 function findClosestEntry(dateMs) {
   let closest = null;
+  let closestBefore = null;
   Object.entries(state.data || {}).forEach(([, days]) => {
     Object.entries(days || {}).forEach(([dateKey, record]) => {
       const date = Date.parse(dateKey);
@@ -695,17 +696,23 @@ function findClosestEntry(dateMs) {
       const hasClosing = Number.isFinite(closing);
       const hasOpening = Number.isFinite(opening);
       if (!hasClosing && !hasOpening) return;
-      if (date < dateMs) return;
-      if (!closest || date < closest.date) {
-        closest = {
-          date,
-          closing: hasClosing ? closing : null,
-          opening: hasOpening ? opening : null
-        };
+      const payload = {
+        date,
+        closing: hasClosing ? closing : null,
+        opening: hasOpening ? opening : null
+      };
+      if (date >= dateMs) {
+        if (!closest || date < closest.date) {
+          closest = payload;
+        }
+        return;
+      }
+      if (!closestBefore || date > closestBefore.date) {
+        closestBefore = payload;
       }
     });
   });
-  return closest;
+  return closestBefore || closest;
 }
 
 function sumNetDepositsAfter(dateMs) {
