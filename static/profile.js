@@ -31,17 +31,75 @@ const profileState = {
   netDeposits: 0,
   netDepositsBaseline: 0,
   username: '',
-  isGuest: false
+  isGuest: false,
+  currency: 'GBP',
+  rates: { GBP: 1 }
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
 
-function formatSignedCurrency(value, currency = 'GBP') {
+function currencyAmount(valueGBP, currency = profileState.currency) {
+  const base = Number(valueGBP);
+  if (Number.isNaN(base)) return null;
+  if (currency === 'GBP') return base;
+  const rate = profileState.rates[currency];
+  if (!rate) return null;
+  return base * rate;
+}
+
+function formatCurrency(valueGBP, currency = profileState.currency) {
+  if (currency === 'GBP') {
+    const amount = Number(valueGBP) || 0;
+    const sign = amount < 0 ? '-' : '';
+    return `${sign}${currencySymbols[currency]}${Math.abs(amount).toFixed(2)}`;
+  }
+  const amount = currencyAmount(Math.abs(valueGBP), currency);
+  if (amount === null) return '—';
+  const sign = valueGBP < 0 ? '-' : '';
+  return `${sign}${currencySymbols[currency]}${amount.toFixed(2)}`;
+}
+
+function formatSignedCurrency(valueGBP, currency = profileState.currency) {
+  if (valueGBP === 0) return `${currencySymbols[currency]}0.00`;
+  const amount = currencyAmount(Math.abs(valueGBP), currency);
+  if (amount === null) return '—';
+  const sign = valueGBP < 0 ? '-' : '';
+  return `${sign}${currencySymbols[currency]}${amount.toFixed(2)}`;
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined) return '—';
+  if (value === 0) return '0.00%';
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
   const sign = num < 0 ? '-' : '';
-  const symbol = currencySymbols[currency] || '£';
-  return `${sign}${symbol}${Math.abs(num).toFixed(2)}`;
+  return `${sign}${Math.abs(num).toFixed(2)}%`;
+}
+
+function setMetricTrend(el, value) {
+  if (!el) return;
+  const isPositive = Number.isFinite(value) && value > 0;
+  const isNegative = Number.isFinite(value) && value < 0;
+  el.classList.toggle('positive', isPositive);
+  el.classList.toggle('negative', isNegative);
+  if (!isPositive && !isNegative) {
+    el.classList.remove('positive');
+    el.classList.remove('negative');
+  }
+}
+
+async function loadRates() {
+  try {
+    const res = await api('/api/rates');
+    const rates = res?.rates || {};
+    profileState.rates = { GBP: 1, ...rates };
+  } catch (e) {
+    console.warn('Unable to load exchange rates', e);
+    profileState.rates = {
+      GBP: 1,
+      ...(profileState.rates.USD ? { USD: profileState.rates.USD } : {}),
+      ...(profileState.rates.EUR ? { EUR: profileState.rates.EUR } : {})
+    };
+  }
 }
 
 function setupNavDrawer() {
@@ -80,6 +138,12 @@ function bindNav() {
   });
   document.getElementById('trades-btn')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
+  });
+  document.getElementById('transactions-btn')?.addEventListener('click', () => {
+    window.location.href = '/transactions.html';
+  });
+  document.getElementById('portfolio-btn')?.addEventListener('click', () => {
+    window.location.href = '/';
   });
   document.getElementById('devtools-btn')?.addEventListener('click', () => {
     closeNav?.(false);
@@ -201,16 +265,47 @@ async function loadProfile() {
     }
     const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
     const netDepositsValue = Number.isFinite(profileState.netDeposits) ? profileState.netDeposits : 0;
+    await loadRates();
     const netPerformance = portfolioValue - netDepositsValue;
-    const netPerfPct = netDepositsValue ? netPerformance / Math.abs(netDepositsValue) : 0;
+    const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
+    const altCurrency = profileState.currency === 'GBP'
+      ? (profileState.rates.USD ? 'USD' : (profileState.rates.EUR ? 'EUR' : null))
+      : 'GBP';
     const heroPortfolio = document.getElementById('header-portfolio-value');
-    if (heroPortfolio) heroPortfolio.textContent = formatSignedCurrency(portfolioValue);
+    if (heroPortfolio) heroPortfolio.textContent = formatCurrency(portfolioValue);
+    const heroPortfolioSub = document.getElementById('header-portfolio-sub');
+    if (heroPortfolioSub) {
+      const altValue = altCurrency ? formatCurrency(portfolioValue, altCurrency) : '—';
+      heroPortfolioSub.textContent = altCurrency && altValue !== '—' ? `≈ ${altValue}` : '';
+    }
     const heroDeposits = document.getElementById('hero-net-deposits-value');
     if (heroDeposits) heroDeposits.textContent = formatSignedCurrency(netDepositsValue);
+    const heroDepositsSub = document.getElementById('hero-net-deposits-sub');
+    if (heroDepositsSub) {
+      const altDeposits = altCurrency ? formatSignedCurrency(netDepositsValue, altCurrency) : '—';
+      heroDepositsSub.textContent = altCurrency && altDeposits !== '—' ? `≈ ${altDeposits}` : '';
+    }
     const heroPerformance = document.getElementById('hero-net-performance-value');
     if (heroPerformance) heroPerformance.textContent = formatSignedCurrency(netPerformance);
     const heroPerfSub = document.getElementById('hero-net-performance-sub');
-    if (heroPerfSub) heroPerfSub.textContent = `${(netPerfPct * 100).toFixed(1)}%`;
+    if (heroPerfSub) {
+      const pieces = [];
+      if (altCurrency) {
+        const altPerf = formatSignedCurrency(netPerformance, altCurrency);
+        if (altPerf !== '—') pieces.push(`≈ ${altPerf}`);
+      }
+      pieces.push(formatPercent(netPerfPct));
+      heroPerfSub.textContent = pieces.join(' • ');
+    }
+    setMetricTrend(document.getElementById('hero-net-performance'), netPerformance);
+    const heroPortfolioCard = document.getElementById('hero-portfolio');
+    if (heroPortfolioCard) {
+      setMetricTrend(heroPortfolioCard, portfolioValue - netDepositsValue);
+    }
+    const heroDepositsCard = document.getElementById('hero-net-deposits');
+    if (heroDepositsCard) {
+      heroDepositsCard.classList.remove('positive', 'negative');
+    }
     applyGuestRestrictions();
     renderSecurityState();
   } catch (e) {
