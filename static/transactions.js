@@ -38,6 +38,7 @@ const state = {
   notes: {},
   splits: {},
   splitProfitsEnabled: false,
+  data: {},
   profiles: [],
   filters: {
     from: '',
@@ -468,11 +469,44 @@ function calculateProfileStats(profileName) {
   });
   const portfolioValue = deposits - withdrawals;
   const baseDeposit = deposits;
-  const currentPortfolio = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
-  const latestValue = Number.isFinite(currentPortfolio) ? currentPortfolio : portfolioValue;
-  const netPerformance = baseDeposit ? (latestValue - baseDeposit) : 0;
+  const performanceFactor = getPortfolioPerformanceFactor(earliestDepositDate);
+  const netPerformance = baseDeposit ? (baseDeposit * performanceFactor - baseDeposit) : 0;
   const rateOfReturn = baseDeposit ? (netPerformance / baseDeposit) * 100 : 0;
   return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
+}
+
+function getPortfolioPerformanceFactor(depositDateMs) {
+  if (!depositDateMs || !state.data) return 1;
+  const entry = findClosestEntry(depositDateMs);
+  if (!entry) return 1;
+  const baseline = Number.isFinite(entry.closing) ? entry.closing : entry.opening;
+  const latest = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
+  if (!Number.isFinite(baseline) || !Number.isFinite(latest) || baseline <= 0) return 1;
+  return latest / baseline;
+}
+
+function findClosestEntry(dateMs) {
+  let closest = null;
+  Object.entries(state.data || {}).forEach(([, days]) => {
+    Object.entries(days || {}).forEach(([dateKey, record]) => {
+      const date = Date.parse(dateKey);
+      if (Number.isNaN(date)) return;
+      const closing = Number(record?.end);
+      const opening = Number(record?.start);
+      const hasClosing = Number.isFinite(closing);
+      const hasOpening = Number.isFinite(opening);
+      if (!hasClosing && !hasOpening) return;
+      if (date < dateMs) return;
+      if (!closest || date < closest.date) {
+        closest = {
+          date,
+          closing: hasClosing ? closing : null,
+          opening: hasOpening ? opening : null
+        };
+      }
+    });
+  });
+  return closest;
 }
 
 async function loadHeroMetrics() {
@@ -684,7 +718,8 @@ async function loadTransactions() {
       state.profiles = [];
     }
     const data = await api('/api/pl');
-    state.transactions = buildTransactions(data);
+    state.data = data || {};
+    state.transactions = buildTransactions(state.data);
     renderTransactions(state.transactions);
   } catch (e) {
     console.error('Failed to load transactions', e);
