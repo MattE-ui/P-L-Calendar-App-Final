@@ -268,7 +268,10 @@ async function saveNote() {
   const noteKey = modal.dataset.noteKey;
   if (!noteKey) return;
   const nextNote = input.value.trim();
-  if (status) status.textContent = 'Saving...';
+  if (status) {
+    status.textContent = 'Saving...';
+    status.classList.remove('is-error');
+  }
   try {
     state.notes[noteKey] = nextNote;
     localStorage.setItem('plc-transactions-notes', JSON.stringify(state.notes));
@@ -277,39 +280,94 @@ async function saveNote() {
       target.note = nextNote;
     }
     renderTransactions(applyFilters(state.transactions));
-    if (status) status.textContent = 'Saved.';
+    if (status) {
+      status.textContent = 'Saved.';
+      status.classList.remove('is-error');
+    }
     closeNoteModal();
   } catch (e) {
-    if (status) status.textContent = e?.message || 'Failed to save note.';
+    if (status) {
+      status.textContent = e?.message || 'Failed to save note.';
+      status.classList.add('is-error');
+    }
   }
 }
 
 function buildSplitRow(split = {}) {
   const row = document.createElement('div');
-  row.className = 'integration-fields';
+  row.className = 'transactions-split-row';
   const profiles = state.profiles.length
     ? state.profiles
     : [{ id: '', name: 'No profiles available' }];
+  const profileDisabledAttr = state.profiles.length ? '' : ' disabled data-locked="true"';
   const options = profiles.map(profile => {
     const selected = profile.name === split.profile ? ' selected' : '';
     return `<option value="${profile.name}"${selected}>${profile.name}</option>`;
   }).join('');
+  const shareOptions = profiles.map(profile => {
+    const selected = profile.name === split.profitSplitProfile ? ' selected' : '';
+    return `<option value="${profile.name}"${selected}>${profile.name}</option>`;
+  }).join('');
+  const profitSplitEnabled = Boolean(split.profitSplitEnabled);
+  const profitSplitRatio = Number.isFinite(Number(split.profitSplitRatio))
+    ? Number(split.profitSplitRatio)
+    : 50;
   row.innerHTML = `
-    <div class="tool-field">
-      <label>Profile</label>
-      <select class="transactions-split-profile"${state.profiles.length ? '' : ' disabled'}>
-        ${options}
-      </select>
+    <div class="transactions-split-main">
+      <div class="tool-field">
+        <label>Profile</label>
+        <select class="transactions-split-profile"${profileDisabledAttr}>
+          ${options}
+        </select>
+      </div>
+      <div class="tool-field">
+        <label>Amount</label>
+        <input type="number" step="0.01" min="0" class="transactions-split-amount" value="${split.amount ?? ''}">
+      </div>
+      <button type="button" class="ghost transactions-remove-split">Remove</button>
     </div>
-    <div class="tool-field">
-      <label>Amount</label>
-      <input type="number" step="0.01" min="0" class="transactions-split-amount" value="${split.amount ?? ''}">
+    <div class="transactions-split-sub">
+      <div class="transactions-split-toggle">
+        <label class="toggle-switch" aria-label="Split this profile's profits">
+          <input type="checkbox" class="transactions-split-profit-toggle"${profitSplitEnabled ? ' checked' : ''}>
+          <span class="toggle-slider"></span>
+        </label>
+        <span>Split this profile's profits</span>
+      </div>
+      <div class="transactions-split-sub-fields${profitSplitEnabled ? '' : ' is-hidden'}">
+        <div class="tool-field">
+          <label>Split with</label>
+          <select class="transactions-split-share-profile"${profileDisabledAttr}>
+            ${shareOptions}
+          </select>
+        </div>
+        <div class="tool-field">
+          <label>Split %</label>
+          <input type="number" min="1" max="99" step="1" class="transactions-split-share-ratio" value="${profitSplitRatio}">
+        </div>
+      </div>
     </div>
-    <button type="button" class="ghost transactions-remove-split">Remove</button>
   `;
   row.querySelector('.transactions-remove-split')?.addEventListener('click', () => {
     row.remove();
     updateSplitSummary(document.getElementById('transactions-split-modal'));
+  });
+  const profitToggle = row.querySelector('.transactions-split-profit-toggle');
+  const subFields = row.querySelector('.transactions-split-sub-fields');
+  const updateSubFields = enabled => {
+    subFields?.classList.toggle('is-hidden', !enabled);
+    subFields?.querySelectorAll('select, input').forEach(field => {
+      if (!enabled) {
+        field.disabled = true;
+        return;
+      }
+      if (field.dataset.locked === 'true') return;
+      field.disabled = false;
+    });
+  };
+  updateSubFields(profitToggle?.checked);
+  profitToggle?.addEventListener('change', event => {
+    updateSubFields(event.target.checked);
   });
   return row;
 }
@@ -327,12 +385,17 @@ function openSplitModal(tx) {
   ratio.textContent = '—';
   list.innerHTML = '';
   const existing = state.splits[tx.noteKey] || {};
-  const splits = Array.isArray(existing.splits) ? existing.splits : [];
+  const splits = Array.isArray(existing.rawSplits)
+    ? existing.rawSplits
+    : (Array.isArray(existing.splits) ? existing.splits : []);
   splits.forEach(split => list.appendChild(buildSplitRow(split)));
   if (!splits.length) {
     list.appendChild(buildSplitRow());
   }
-  if (status) status.textContent = '';
+  if (status) {
+    status.textContent = '';
+    status.classList.remove('is-error');
+  }
   modal.classList.remove('hidden');
   updateSplitSummary(modal);
   bindSplitSummary(modal);
@@ -341,7 +404,10 @@ function openSplitModal(tx) {
 function closeSplitModal() {
   const modal = document.getElementById('transactions-split-modal');
   const status = document.getElementById('transactions-split-status');
-  if (status) status.textContent = '';
+  if (status) {
+    status.textContent = '';
+    status.classList.remove('is-error');
+  }
   modal?.classList.add('hidden');
 }
 
@@ -353,34 +419,66 @@ function saveSplitSettings() {
   if (!modal || !list || !total) return;
   const noteKey = modal.dataset.noteKey;
   if (!noteKey) return;
-  const splits = Array.from(list.querySelectorAll('.integration-fields')).map(row => ({
+  const rawSplits = Array.from(list.querySelectorAll('.transactions-split-row')).map(row => ({
     profile: row.querySelector('.transactions-split-profile')?.value.trim() || '',
-    amount: Number(row.querySelector('.transactions-split-amount')?.value || 0)
+    amount: Number(row.querySelector('.transactions-split-amount')?.value || 0),
+    profitSplitEnabled: row.querySelector('.transactions-split-profit-toggle')?.checked || false,
+    profitSplitProfile: row.querySelector('.transactions-split-share-profile')?.value.trim() || '',
+    profitSplitRatio: Number(row.querySelector('.transactions-split-share-ratio')?.value || 0)
   })).filter(split => split.profile || split.amount);
   const totalValue = Number(total.value || 0);
   if (!Number.isFinite(totalValue) || totalValue < 0) {
-    if (status) status.textContent = 'Enter a valid total amount.';
+    if (status) {
+      status.textContent = 'Enter a valid total amount.';
+      status.classList.add('is-error');
+    }
     return;
   }
-  const splitTotal = splits.reduce((sum, split) => sum + (Number.isFinite(split.amount) ? split.amount : 0), 0);
+  if (!rawSplits.length) {
+    delete state.splits[noteKey];
+    try {
+      localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
+      if (status) {
+        status.textContent = 'Saved.';
+        status.classList.remove('is-error');
+      }
+    } catch (e) {
+      if (status) {
+        status.textContent = 'Failed to save split settings.';
+        status.classList.add('is-error');
+      }
+    }
+    closeSplitModal();
+    return;
+  }
+  const splitTotal = rawSplits.reduce((sum, split) => sum + (Number.isFinite(split.amount) ? split.amount : 0), 0);
   if (Math.abs(splitTotal - totalValue) > 0.01) {
     if (status) {
       status.textContent = `Split amounts must equal ${totalValue.toFixed(2)}.`;
+      status.classList.add('is-error');
     }
     return;
   }
   const txType = modal.dataset.type || '';
+  const splits = normalizeProfitSplits(rawSplits);
   state.splits[noteKey] = {
     total: Number(total.value || 0),
     splits,
+    rawSplits,
     type: txType,
     noteKey
   };
   try {
     localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
-    if (status) status.textContent = 'Saved.';
+    if (status) {
+      status.textContent = 'Saved.';
+      status.classList.remove('is-error');
+    }
   } catch (e) {
-    if (status) status.textContent = 'Failed to save split settings.';
+    if (status) {
+      status.textContent = 'Failed to save split settings.';
+      status.classList.add('is-error');
+    }
   }
   closeSplitModal();
 }
@@ -499,7 +597,8 @@ function calculateProfileStats(profileName) {
     const isDeposit = split.type === 'Deposit';
     const isWithdrawal = split.type === 'Withdrawal';
     if (!isDeposit && !isWithdrawal) return;
-    split.splits?.forEach(item => {
+    const splitItems = getSplitItems(split);
+    splitItems.forEach(item => {
       if (item.profile !== profileName) return;
       const amount = Number(item.amount || 0);
       if (!Number.isFinite(amount)) return;
@@ -515,6 +614,50 @@ function calculateProfileStats(profileName) {
   const netPerformance = portfolioValue - netDeposits;
   const rateOfReturn = netDeposits ? (netPerformance / netDeposits) * 100 : 0;
   return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
+}
+
+function roundCurrency(amount) {
+  return Math.round(amount * 100) / 100;
+}
+
+function normalizeProfitSplits(rawSplits) {
+  const normalized = [];
+  rawSplits.forEach(split => {
+    const profile = split.profile?.trim();
+    const amount = Number(split.amount || 0);
+    if (!profile || !Number.isFinite(amount) || amount <= 0) return;
+    const otherProfile = split.profitSplitProfile?.trim();
+    const ratio = Number(split.profitSplitRatio || 0);
+    const shouldSplit = split.profitSplitEnabled
+      && otherProfile
+      && otherProfile !== profile
+      && Number.isFinite(ratio)
+      && ratio > 0
+      && ratio < 100;
+    if (!shouldSplit) {
+      normalized.push({ profile, amount });
+      return;
+    }
+    const otherAmount = roundCurrency(amount * (ratio / 100));
+    const remainingAmount = roundCurrency(amount - otherAmount);
+    if (remainingAmount > 0) {
+      normalized.push({ profile, amount: remainingAmount });
+    }
+    if (otherAmount > 0) {
+      normalized.push({ profile: otherProfile, amount: otherAmount });
+    }
+  });
+  return normalized;
+}
+
+function getSplitItems(split) {
+  if (Array.isArray(split?.splits) && split.splits.length) {
+    return split.splits;
+  }
+  if (Array.isArray(split?.rawSplits)) {
+    return normalizeProfitSplits(split.rawSplits);
+  }
+  return [];
 }
 
 function parseTransactionDate(noteKey, type) {
@@ -543,6 +686,7 @@ function getPortfolioPerformanceFactor(depositDateMs) {
 
 function findClosestEntry(dateMs) {
   let closest = null;
+  let closestBefore = null;
   Object.entries(state.data || {}).forEach(([, days]) => {
     Object.entries(days || {}).forEach(([dateKey, record]) => {
       const date = Date.parse(dateKey);
@@ -552,17 +696,23 @@ function findClosestEntry(dateMs) {
       const hasClosing = Number.isFinite(closing);
       const hasOpening = Number.isFinite(opening);
       if (!hasClosing && !hasOpening) return;
-      if (date < dateMs) return;
-      if (!closest || date < closest.date) {
-        closest = {
-          date,
-          closing: hasClosing ? closing : null,
-          opening: hasOpening ? opening : null
-        };
+      const payload = {
+        date,
+        closing: hasClosing ? closing : null,
+        opening: hasOpening ? opening : null
+      };
+      if (date >= dateMs) {
+        if (!closest || date < closest.date) {
+          closest = payload;
+        }
+        return;
+      }
+      if (!closestBefore || date > closestBefore.date) {
+        closestBefore = payload;
       }
     });
   });
-  return closest;
+  return closestBefore || closest;
 }
 
 function sumNetDepositsAfter(dateMs) {
@@ -794,9 +944,25 @@ async function loadTransactions() {
     const data = await api('/api/pl');
     state.data = data || {};
     state.transactions = buildTransactions(state.data);
+    pruneSplitSettings();
     renderTransactions(state.transactions);
   } catch (e) {
     console.error('Failed to load transactions', e);
+  }
+}
+
+function pruneSplitSettings() {
+  if (!state.splits || typeof state.splits !== 'object') return;
+  const validKeys = new Set(state.transactions.map(tx => tx.noteKey));
+  const nextSplits = Object.fromEntries(
+    Object.entries(state.splits).filter(([noteKey]) => validKeys.has(noteKey))
+  );
+  if (Object.keys(nextSplits).length === Object.keys(state.splits).length) return;
+  state.splits = nextSplits;
+  try {
+    localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
+  } catch (e) {
+    console.warn('Failed to save transaction splits', e);
   }
 }
 
