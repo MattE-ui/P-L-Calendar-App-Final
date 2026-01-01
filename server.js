@@ -866,49 +866,60 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
 }
 
 function buildSnapshots(history, initial, tradeJournal = {}) {
-  const entries = listChronologicalEntries(history);
   const snapshots = {};
-  let baseline = Number.isFinite(initial) ? initial : null;
-  for (const entry of entries) {
-    const monthKey = entry.date.slice(0, 7);
-    if (!snapshots[monthKey]) snapshots[monthKey] = {};
-    const start = baseline !== null ? baseline : entry.end;
-    const payload = {
-      start,
-      end: entry.end,
-      cashIn: entry.cashIn,
-      cashOut: entry.cashOut
-    };
-    if (entry.preBaseline) {
-      payload.preBaseline = true;
-    }
-    if (entry.note) {
-      payload.note = entry.note;
-    }
-    snapshots[monthKey][entry.date] = payload;
-    baseline = entry.end;
-  }
+  const records = [];
   for (const [monthKey, days] of Object.entries(history || {})) {
     for (const [dateKey, record] of Object.entries(days || {})) {
       if (!record || typeof record !== 'object') continue;
-      const end = Number(record.end);
-      if (Number.isFinite(end) && end >= 0) continue;
-      const cashIn = Number(record.cashIn ?? 0);
-      const cashOut = Number(record.cashOut ?? 0);
+      const endRaw = Number(record.end);
+      const hasEnd = Number.isFinite(endRaw) && endRaw >= 0;
+      const cashInRaw = Number(record.cashIn ?? 0);
+      const cashOutRaw = Number(record.cashOut ?? 0);
+      const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
+      const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
       const noteRaw = typeof record.note === 'string' ? record.note : '';
       const note = noteRaw.trim();
-      if ((!Number.isFinite(cashIn) || cashIn <= 0) && (!Number.isFinite(cashOut) || cashOut <= 0) && !note) {
-        continue;
-      }
-      if (!snapshots[monthKey]) snapshots[monthKey] = {};
-      if (!snapshots[monthKey][dateKey]) snapshots[monthKey][dateKey] = {};
-      const payload = snapshots[monthKey][dateKey];
-      if (Number.isFinite(cashIn) && cashIn >= 0) payload.cashIn = cashIn;
-      if (Number.isFinite(cashOut) && cashOut >= 0) payload.cashOut = cashOut;
-      if (record.preBaseline === true) payload.preBaseline = true;
-      if (note) payload.note = note;
+      if (!hasEnd && cashIn === 0 && cashOut === 0 && !note) continue;
+      records.push({
+        date: dateKey,
+        monthKey,
+        end: hasEnd ? endRaw : null,
+        cashIn,
+        cashOut,
+        preBaseline: record.preBaseline === true,
+        note
+      });
     }
   }
+  records.sort((a, b) => a.date.localeCompare(b.date));
+  let baseline = Number.isFinite(initial) ? initial : null;
+  records.forEach(record => {
+    if (!snapshots[record.monthKey]) snapshots[record.monthKey] = {};
+    const payload = {};
+    if (record.end !== null) {
+      const start = baseline !== null ? baseline : record.end;
+      payload.start = start;
+      payload.end = record.end;
+      payload.cashIn = record.cashIn;
+      payload.cashOut = record.cashOut;
+      baseline = record.end;
+    } else {
+      if (record.cashIn || record.cashOut) {
+        payload.cashIn = record.cashIn;
+        payload.cashOut = record.cashOut;
+      }
+      if (baseline !== null) {
+        baseline += record.cashIn - record.cashOut;
+      }
+    }
+    if (record.preBaseline) {
+      payload.preBaseline = true;
+    }
+    if (record.note) {
+      payload.note = record.note;
+    }
+    snapshots[record.monthKey][record.date] = payload;
+  });
   for (const [dateKey, trades] of Object.entries(tradeJournal)) {
     const monthKey = dateKey.slice(0, 7);
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
