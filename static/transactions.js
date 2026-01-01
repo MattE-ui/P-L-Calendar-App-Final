@@ -307,7 +307,10 @@ function buildSplitRow(split = {}) {
     </div>
     <button type="button" class="ghost transactions-remove-split">Remove</button>
   `;
-  row.querySelector('.transactions-remove-split')?.addEventListener('click', () => row.remove());
+  row.querySelector('.transactions-remove-split')?.addEventListener('click', () => {
+    row.remove();
+    updateSplitSummary(document.getElementById('transactions-split-modal'));
+  });
   return row;
 }
 
@@ -321,7 +324,7 @@ function openSplitModal(tx) {
   modal.dataset.noteKey = tx.noteKey || '';
   modal.dataset.type = tx.type || '';
   total.value = Math.abs(tx.amount || 0).toFixed(2);
-  ratio.value = '';
+  ratio.textContent = '—';
   list.innerHTML = '';
   const existing = state.splits[tx.noteKey] || {};
   const splits = Array.isArray(existing.splits) ? existing.splits : [];
@@ -329,11 +332,10 @@ function openSplitModal(tx) {
   if (!splits.length) {
     list.appendChild(buildSplitRow());
   }
-  if (tx.type === 'Deposit' && existing.ratio) {
-    ratio.value = existing.ratio;
-  }
   if (status) status.textContent = '';
   modal.classList.remove('hidden');
+  updateSplitSummary(modal);
+  bindSplitSummary(modal);
 }
 
 function closeSplitModal() {
@@ -347,19 +349,29 @@ function saveSplitSettings() {
   const modal = document.getElementById('transactions-split-modal');
   const list = document.getElementById('transactions-split-list');
   const total = document.getElementById('transactions-split-total');
-  const ratio = document.getElementById('transactions-split-ratio');
   const status = document.getElementById('transactions-split-status');
-  if (!modal || !list || !total || !ratio) return;
+  if (!modal || !list || !total) return;
   const noteKey = modal.dataset.noteKey;
   if (!noteKey) return;
   const splits = Array.from(list.querySelectorAll('.integration-fields')).map(row => ({
     profile: row.querySelector('.transactions-split-profile')?.value.trim() || '',
     amount: Number(row.querySelector('.transactions-split-amount')?.value || 0)
   })).filter(split => split.profile || split.amount);
+  const totalValue = Number(total.value || 0);
+  if (!Number.isFinite(totalValue) || totalValue < 0) {
+    if (status) status.textContent = 'Enter a valid total amount.';
+    return;
+  }
+  const splitTotal = splits.reduce((sum, split) => sum + (Number.isFinite(split.amount) ? split.amount : 0), 0);
+  if (Math.abs(splitTotal - totalValue) > 0.01) {
+    if (status) {
+      status.textContent = `Split amounts must equal ${totalValue.toFixed(2)}.`;
+    }
+    return;
+  }
   const txType = modal.dataset.type || '';
   state.splits[noteKey] = {
     total: Number(total.value || 0),
-    ratio: txType === 'Deposit' ? ratio.value.trim() : '',
     splits,
     type: txType,
     noteKey
@@ -414,6 +426,43 @@ function renderProfiles() {
     });
     list.appendChild(row);
   });
+}
+
+function bindSplitSummary(modal) {
+  if (modal.dataset.boundSummary) return;
+  modal.addEventListener('input', event => {
+    const target = event.target;
+    if (!target) return;
+    if (target.id === 'transactions-split-total' || target.classList.contains('transactions-split-amount')) {
+      updateSplitSummary(modal);
+    }
+  });
+  modal.dataset.boundSummary = 'true';
+}
+
+function updateSplitSummary(modal) {
+  const ratio = document.getElementById('transactions-split-ratio');
+  const total = document.getElementById('transactions-split-total');
+  const list = document.getElementById('transactions-split-list');
+  if (!ratio || !total || !list) return;
+  if (modal?.dataset?.type !== 'Deposit') {
+    ratio.textContent = '—';
+    return;
+  }
+  const totalValue = Number(total.value || 0);
+  if (!Number.isFinite(totalValue) || totalValue <= 0) {
+    ratio.textContent = '—';
+    return;
+  }
+  const amounts = Array.from(list.querySelectorAll('.transactions-split-amount'))
+    .map(input => Number(input.value || 0))
+    .filter(value => Number.isFinite(value) && value > 0);
+  if (!amounts.length) {
+    ratio.textContent = '—';
+    return;
+  }
+  const ratios = amounts.map(amount => Math.round((amount / totalValue) * 100));
+  ratio.textContent = ratios.join('/');
 }
 
 function persistProfiles() {
@@ -694,7 +743,10 @@ function setupNav() {
   document.getElementById('transactions-split-save-btn')?.addEventListener('click', saveSplitSettings);
   document.getElementById('transactions-add-split-btn')?.addEventListener('click', () => {
     const list = document.getElementById('transactions-split-list');
-    if (list) list.appendChild(buildSplitRow());
+    if (list) {
+      list.appendChild(buildSplitRow());
+      updateSplitSummary(document.getElementById('transactions-split-modal'));
+    }
   });
   document.getElementById('transactions-add-profile-btn')?.addEventListener('click', () => {
     const name = window.prompt('Profile name');
