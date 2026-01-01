@@ -452,7 +452,8 @@ select {
 }
 .tool-result strong { font-size: 18px; }
 .tool-note { color: var(--muted); font-size: 12px; }
-#transactions-split-ratio { font-size: 24px; font-weight: 600; }
+#transactions-split-ratio { font-size: 24px; font-weight: 600; margin: 0; }
+#transactions-split-ratio + .tool-note { margin: 4px 0 0; }
 .trade-list {
   display: flex;
   flex-direction: column;
