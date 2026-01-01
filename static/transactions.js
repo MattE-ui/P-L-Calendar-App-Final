@@ -836,9 +836,25 @@ async function loadTransactions() {
     const data = await api('/api/pl');
     state.data = data || {};
     state.transactions = buildTransactions(state.data);
+    pruneSplitSettings();
     renderTransactions(state.transactions);
   } catch (e) {
     console.error('Failed to load transactions', e);
+  }
+}
+
+function pruneSplitSettings() {
+  if (!state.splits || typeof state.splits !== 'object') return;
+  const validKeys = new Set(state.transactions.map(tx => tx.noteKey));
+  const nextSplits = Object.fromEntries(
+    Object.entries(state.splits).filter(([noteKey]) => validKeys.has(noteKey))
+  );
+  if (Object.keys(nextSplits).length === Object.keys(state.splits).length) return;
+  state.splits = nextSplits;
+  try {
+    localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
+  } catch (e) {
+    console.warn('Failed to save transaction splits', e);
   }
 }
 
