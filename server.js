@@ -437,7 +437,7 @@ function normalizePortfolioHistory(user) {
       }
       if (typeof record === 'object') {
         if (record.end === undefined && typeof record.value === 'number') {
-          const preBaseline = (record.preBaseline === true) || (anchor && dateKey < anchor);
+          const preBaseline = anchor && dateKey < anchor;
           days[dateKey] = preBaseline
             ? { end: record.value, cashIn: 0, cashOut: 0, preBaseline: true }
             : { end: record.value, cashIn: 0, cashOut: 0 };
@@ -450,9 +450,7 @@ function normalizePortfolioHistory(user) {
         const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
         const noteRaw = typeof record.note === 'string' ? record.note : '';
         const note = noteRaw.trim();
-        const preBaselineRaw = record.preBaseline === true;
-        const shouldBePreBaseline = anchor && dateKey < anchor;
-        const preBaseline = preBaselineRaw || shouldBePreBaseline;
+        const preBaseline = anchor && dateKey < anchor;
         const end = Number(record.end);
         if (!Number.isFinite(end) || end < 0) {
           if (cashIn > 0 || cashOut > 0 || note) {
@@ -466,7 +464,6 @@ function normalizePortfolioHistory(user) {
               record.end !== undefined ||
               cashIn !== cashInRaw ||
               cashOut !== cashOutRaw ||
-              (!!record.preBaseline !== preBaseline) ||
               (note && note !== noteRaw) ||
               (!note && record.note !== undefined)
             ) {
@@ -483,7 +480,6 @@ function normalizePortfolioHistory(user) {
           cashIn !== cashInRaw ||
           cashOut !== cashOutRaw ||
           record.start !== undefined ||
-          (!!record.preBaseline !== preBaseline) ||
           (note && note !== noteRaw) ||
           (!note && record.note !== undefined)
         ) {
@@ -2383,7 +2379,12 @@ app.post('/api/pl', auth, (req,res)=>{
   const ym = date.slice(0,7);
   history[ym] ||= {};
   const existingRecord = history[ym][date];
-  const anchorDate = user.netDepositsAnchor || null;
+  let anchorDate = user.netDepositsAnchor || null;
+  if (anchorDate && date < anchorDate) {
+    user.netDepositsAnchor = date;
+    user.initialNetDeposits = 0;
+    anchorDate = date;
+  }
   const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
   const withdrawal = cashOut === undefined || cashOut === '' ? 0 : Number(cashOut);
   if (!Number.isFinite(deposit) || deposit < 0) {
@@ -2402,8 +2403,6 @@ app.post('/api/pl', auth, (req,res)=>{
       return res.status(400).json({ error: 'Invalid note value' });
     }
   }
-  const existingPreBaseline = existingRecord?.preBaseline === true;
-  const shouldFlagPreBaseline = existingPreBaseline || (anchorDate && date < anchorDate);
   if (value === null || value === '') {
     const hasCash = deposit > 0 || withdrawal > 0;
     const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existingRecord?.note;
@@ -2412,9 +2411,6 @@ app.post('/api/pl', auth, (req,res)=>{
         cashIn: deposit,
         cashOut: withdrawal
       };
-      if (shouldFlagPreBaseline) {
-        entryPayload.preBaseline = true;
-      }
       if (normalizedNote !== undefined) {
         if (normalizedNote) {
           entryPayload.note = normalizedNote;
@@ -2442,9 +2438,6 @@ app.post('/api/pl', auth, (req,res)=>{
       cashIn: deposit,
       cashOut: withdrawal
     };
-    if (shouldFlagPreBaseline) {
-      entryPayload.preBaseline = true;
-    }
     if (normalizedNote !== undefined) {
       if (normalizedNote) {
         entryPayload.note = normalizedNote;
@@ -2457,6 +2450,7 @@ app.post('/api/pl', auth, (req,res)=>{
     }
     history[ym][date] = entryPayload;
   }
+  normalizePortfolioHistory(user);
   refreshAnchors(user, history);
   saveDB(db);
   res.json({ ok: true });

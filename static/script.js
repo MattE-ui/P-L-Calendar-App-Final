@@ -303,7 +303,6 @@ function getDailyEntry(date) {
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
   const hasClosing = Number.isFinite(closing);
-  if (!hasClosing && !trades.length) return null;
   const cashInRaw = Number(record.cashIn ?? 0);
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -505,13 +504,9 @@ function computeLifetimeMetrics() {
   let latest = Number.isFinite(entries[entries.length - 1]?.closing)
     ? entries[entries.length - 1].closing
     : Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : null;
-  let computedTotalDeposits = baselineDeposits;
   entries.forEach(entry => {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
-    }
-    if (!entry?.preBaseline && entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
-      computedTotalDeposits += entry.cashFlow;
     }
     if (entry?.closing !== null && entry?.closing !== undefined) {
       latest = entry.closing;
@@ -525,9 +520,9 @@ function computeLifetimeMetrics() {
   }
   const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
   const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
-  const totalNetDeposits = entries.length
-    ? computedTotalDeposits
-    : (Number.isFinite(state.netDepositsTotalGBP) ? state.netDepositsTotalGBP : baselineDeposits);
+  const totalNetDeposits = Number.isFinite(knownTotalDeposits)
+    ? knownTotalDeposits
+    : baselineDeposits;
   state.netDepositsTotalGBP = Number.isFinite(totalNetDeposits) ? totalNetDeposits : 0;
   const netPerformance = safeLatest - state.netDepositsTotalGBP;
   const denominator = state.netDepositsTotalGBP !== 0
