@@ -1235,6 +1235,11 @@ button:disabled {
   border-bottom: 1px solid var(--border);
   text-align: left;
 }
+.transaction-action-cell {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
 .list-card tbody tr:hover { background: rgba(255,255,255,0.03); }
 .filter-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; align-items: flex-end; }
 .filter-actions { display: flex; gap: 10px; align-items: center; }

@@ -181,7 +181,10 @@ function renderTransactions(transactions = []) {
     const typeCell = document.createElement('td');
     const amountCell = document.createElement('td');
     const noteCell = document.createElement('td');
-    const actionCell = document.createElement('td');
+    const editCell = document.createElement('td');
+    const splitCell = document.createElement('td');
+    editCell.className = 'transaction-action-cell';
+    splitCell.className = 'transaction-action-cell';
     dateCell.textContent = tx.date;
     typeCell.textContent = tx.type;
     amountCell.textContent = formatSignedCurrency(tx.amount, 'GBP');
@@ -193,16 +196,16 @@ function renderTransactions(transactions = []) {
     editBtn.type = 'button';
     editBtn.textContent = 'Edit Notes';
     editBtn.addEventListener('click', () => openNoteModal(tx));
-    actionCell.appendChild(editBtn);
+    editCell.appendChild(editBtn);
     if (state.splitProfitsEnabled) {
       const splitBtn = document.createElement('button');
       splitBtn.className = 'ghost';
       splitBtn.type = 'button';
       splitBtn.textContent = 'Split Profits Settings';
       splitBtn.addEventListener('click', () => openSplitModal(tx));
-      actionCell.appendChild(splitBtn);
+      splitCell.appendChild(splitBtn);
     }
-    row.append(dateCell, typeCell, amountCell, noteCell, actionCell);
+    row.append(dateCell, typeCell, amountCell, noteCell, editCell, splitCell);
     tbody.appendChild(row);
   });
 }
