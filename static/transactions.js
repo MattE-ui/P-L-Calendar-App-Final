@@ -36,6 +36,8 @@ const state = {
   rates: { GBP: 1 },
   transactions: [],
   notes: {},
+  splits: {},
+  splitProfitsEnabled: false,
   filters: {
     from: '',
     to: '',
@@ -192,6 +194,14 @@ function renderTransactions(transactions = []) {
     editBtn.textContent = 'Edit Notes';
     editBtn.addEventListener('click', () => openNoteModal(tx));
     actionCell.appendChild(editBtn);
+    if (state.splitProfitsEnabled) {
+      const splitBtn = document.createElement('button');
+      splitBtn.className = 'ghost';
+      splitBtn.type = 'button';
+      splitBtn.textContent = 'Split Profits Settings';
+      splitBtn.addEventListener('click', () => openSplitModal(tx));
+      actionCell.appendChild(splitBtn);
+    }
     row.append(dateCell, typeCell, amountCell, noteCell, actionCell);
     tbody.appendChild(row);
   });
@@ -267,6 +277,83 @@ async function saveNote() {
   } catch (e) {
     if (status) status.textContent = e?.message || 'Failed to save note.';
   }
+}
+
+function buildSplitRow(split = {}) {
+  const row = document.createElement('div');
+  row.className = 'integration-fields';
+  row.innerHTML = `
+    <div class="tool-field">
+      <label>Profile</label>
+      <input type="text" class="transactions-split-profile" placeholder="Profile name" value="${split.profile || ''}">
+    </div>
+    <div class="tool-field">
+      <label>Amount</label>
+      <input type="number" step="0.01" min="0" class="transactions-split-amount" value="${split.amount ?? ''}">
+    </div>
+    <button type="button" class="ghost transactions-remove-split">Remove</button>
+  `;
+  row.querySelector('.transactions-remove-split')?.addEventListener('click', () => row.remove());
+  return row;
+}
+
+function openSplitModal(tx) {
+  const modal = document.getElementById('transactions-split-modal');
+  const list = document.getElementById('transactions-split-list');
+  const total = document.getElementById('transactions-split-total');
+  const ratio = document.getElementById('transactions-split-ratio');
+  const status = document.getElementById('transactions-split-status');
+  if (!modal || !list || !total || !ratio) return;
+  modal.dataset.noteKey = tx.noteKey || '';
+  modal.dataset.type = tx.type || '';
+  total.value = Math.abs(tx.amount || 0).toFixed(2);
+  ratio.value = '';
+  list.innerHTML = '';
+  const existing = state.splits[tx.noteKey] || {};
+  const splits = Array.isArray(existing.splits) ? existing.splits : [];
+  splits.forEach(split => list.appendChild(buildSplitRow(split)));
+  if (!splits.length) {
+    list.appendChild(buildSplitRow());
+  }
+  if (tx.type === 'Deposit' && existing.ratio) {
+    ratio.value = existing.ratio;
+  }
+  if (status) status.textContent = '';
+  modal.classList.remove('hidden');
+}
+
+function closeSplitModal() {
+  const modal = document.getElementById('transactions-split-modal');
+  const status = document.getElementById('transactions-split-status');
+  if (status) status.textContent = '';
+  modal?.classList.add('hidden');
+}
+
+function saveSplitSettings() {
+  const modal = document.getElementById('transactions-split-modal');
+  const list = document.getElementById('transactions-split-list');
+  const total = document.getElementById('transactions-split-total');
+  const ratio = document.getElementById('transactions-split-ratio');
+  const status = document.getElementById('transactions-split-status');
+  if (!modal || !list || !total || !ratio) return;
+  const noteKey = modal.dataset.noteKey;
+  if (!noteKey) return;
+  const splits = Array.from(list.querySelectorAll('.integration-fields')).map(row => ({
+    profile: row.querySelector('.transactions-split-profile')?.value.trim() || '',
+    amount: Number(row.querySelector('.transactions-split-amount')?.value || 0)
+  })).filter(split => split.profile || split.amount);
+  state.splits[noteKey] = {
+    total: Number(total.value || 0),
+    ratio: modal.dataset.type === 'Deposit' ? ratio.value.trim() : '',
+    splits
+  };
+  try {
+    localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
+    if (status) status.textContent = 'Saved.';
+  } catch (e) {
+    if (status) status.textContent = 'Failed to save split settings.';
+  }
+  closeSplitModal();
 }
 
 async function loadHeroMetrics() {
@@ -392,6 +479,8 @@ function setupNav() {
     if (splitToggle) prefs.splitProfits = splitToggle.checked;
     try {
       localStorage.setItem('plc-transactions-prefs', JSON.stringify(prefs));
+      state.splitProfitsEnabled = !!prefs.splitProfits;
+      renderTransactions(applyFilters(state.transactions));
     } catch (e) {
       console.warn(e);
     }
@@ -400,6 +489,13 @@ function setupNav() {
   document.getElementById('transactions-note-close-btn')?.addEventListener('click', closeNoteModal);
   document.getElementById('transactions-note-cancel-btn')?.addEventListener('click', closeNoteModal);
   document.getElementById('transactions-note-save-btn')?.addEventListener('click', saveNote);
+  document.getElementById('transactions-split-close-btn')?.addEventListener('click', closeSplitModal);
+  document.getElementById('transactions-split-cancel-btn')?.addEventListener('click', closeSplitModal);
+  document.getElementById('transactions-split-save-btn')?.addEventListener('click', saveSplitSettings);
+  document.getElementById('transactions-add-split-btn')?.addEventListener('click', () => {
+    const list = document.getElementById('transactions-split-list');
+    if (list) list.appendChild(buildSplitRow());
+  });
 }
 
 async function loadTransactions() {
@@ -410,6 +506,21 @@ async function loadTransactions() {
     } catch (e) {
       console.warn('Failed to load transaction notes', e);
       state.notes = {};
+    }
+    try {
+      const savedSplits = localStorage.getItem('plc-transactions-splits');
+      state.splits = savedSplits ? JSON.parse(savedSplits) : {};
+    } catch (e) {
+      console.warn('Failed to load transaction splits', e);
+      state.splits = {};
+    }
+    try {
+      const savedPrefs = localStorage.getItem('plc-transactions-prefs');
+      const prefs = savedPrefs ? JSON.parse(savedPrefs) : {};
+      state.splitProfitsEnabled = !!prefs?.splitProfits;
+    } catch (e) {
+      console.warn('Failed to load transaction prefs', e);
+      state.splitProfitsEnabled = false;
     }
     const data = await api('/api/pl');
     state.transactions = buildTransactions(data);
