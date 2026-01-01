@@ -360,7 +360,8 @@ function saveSplitSettings() {
     total: Number(total.value || 0),
     ratio: txType === 'Deposit' ? ratio.value.trim() : '',
     splits,
-    type: txType
+    type: txType,
+    noteKey
   };
   try {
     localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
@@ -442,6 +443,7 @@ function closeProfileStats() {
 function calculateProfileStats(profileName) {
   let deposits = 0;
   let withdrawals = 0;
+  let earliestDepositDate = null;
   Object.values(state.splits).forEach(split => {
     const isDeposit = split.type === 'Deposit';
     split.splits?.forEach(item => {
@@ -450,14 +452,26 @@ function calculateProfileStats(profileName) {
       if (!Number.isFinite(amount)) return;
       if (isDeposit) {
         deposits += amount;
+        if (split.noteKey) {
+          const [datePart] = split.noteKey.split('-Deposit-');
+          if (datePart) {
+            const ts = Date.parse(datePart);
+            if (!Number.isNaN(ts)) {
+              earliestDepositDate = earliestDepositDate === null ? ts : Math.min(earliestDepositDate, ts);
+            }
+          }
+        }
       } else {
         withdrawals += amount;
       }
     });
   });
   const portfolioValue = deposits - withdrawals;
-  const netPerformance = portfolioValue;
-  const rateOfReturn = deposits ? (netPerformance / deposits) * 100 : 0;
+  const baseDeposit = deposits;
+  const currentPortfolio = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
+  const latestValue = Number.isFinite(currentPortfolio) ? currentPortfolio : portfolioValue;
+  const netPerformance = baseDeposit ? (portfolioValue * (latestValue / baseDeposit) - baseDeposit) : 0;
+  const rateOfReturn = baseDeposit ? (netPerformance / baseDeposit) * 100 : 0;
   return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
 }
 
