@@ -303,7 +303,6 @@ function getDailyEntry(date) {
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
   const hasClosing = Number.isFinite(closing);
-  if (!hasClosing && !trades.length) return null;
   const cashInRaw = Number(record.cashIn ?? 0);
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
