@@ -470,7 +470,7 @@ function calculateProfileStats(profileName) {
   const baseDeposit = deposits;
   const currentPortfolio = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
   const latestValue = Number.isFinite(currentPortfolio) ? currentPortfolio : portfolioValue;
-  const netPerformance = baseDeposit ? (portfolioValue * (latestValue / baseDeposit) - baseDeposit) : 0;
+  const netPerformance = baseDeposit ? (latestValue - baseDeposit) : 0;
   const rateOfReturn = baseDeposit ? (netPerformance / baseDeposit) * 100 : 0;
   return { deposits, withdrawals, portfolioValue, netPerformance, rateOfReturn };
 }
@@ -484,6 +484,7 @@ async function loadHeroMetrics() {
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
+    state.metrics = { latestGBP: portfolioValue };
     const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
     const altCurrency = state.currency === 'GBP'
       ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
