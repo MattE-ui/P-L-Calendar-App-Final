@@ -286,10 +286,19 @@ async function saveNote() {
 function buildSplitRow(split = {}) {
   const row = document.createElement('div');
   row.className = 'integration-fields';
+  const profiles = state.profiles.length
+    ? state.profiles
+    : [{ id: '', name: 'No profiles available' }];
+  const options = profiles.map(profile => {
+    const selected = profile.name === split.profile ? ' selected' : '';
+    return `<option value="${profile.name}"${selected}>${profile.name}</option>`;
+  }).join('');
   row.innerHTML = `
     <div class="tool-field">
       <label>Profile</label>
-      <input type="text" class="transactions-split-profile" placeholder="Profile name" value="${split.profile || ''}">
+      <select class="transactions-split-profile"${state.profiles.length ? '' : ' disabled'}>
+        ${options}
+      </select>
     </div>
     <div class="tool-field">
       <label>Amount</label>
