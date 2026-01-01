@@ -2146,7 +2146,13 @@ app.post('/api/profile', auth, (req,res)=>{
   if (resetNetDeposits) {
     cashIn = 0;
     cashOut = 0;
-  } else if (wasComplete && netDelta !== 0) {
+  } else if (!wasComplete) {
+    if (netDepositsNumber > 0) {
+      cashIn += netDepositsNumber;
+    } else if (netDepositsNumber < 0) {
+      cashOut += Math.abs(netDepositsNumber);
+    }
+  } else if (netDelta !== 0) {
     if (netDelta > 0) {
       cashIn += netDelta;
     } else {
