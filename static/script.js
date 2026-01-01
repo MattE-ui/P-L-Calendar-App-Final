@@ -303,6 +303,7 @@ function getDailyEntry(date) {
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
   const hasClosing = Number.isFinite(closing);
+  const hasOpening = Number.isFinite(opening);
   const cashInRaw = Number(record.cashIn ?? 0);
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -311,16 +312,20 @@ function getDailyEntry(date) {
   const note = noteRaw.trim();
   if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
-  const base = (Number.isFinite(opening) ? opening : 0) + netCash;
-  let change = hasClosing ? closing - base : null;
-  let pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
-  if (hasClosing && netCash > 0 && Number.isFinite(opening) && opening === closing) {
-    change = 0;
-    pct = 0;
+  let change = null;
+  let pct = null;
+  if (hasClosing && (hasOpening || netCash === 0)) {
+    const base = (hasOpening ? opening : 0) + netCash;
+    change = closing - base;
+    pct = base !== 0 ? (change / base) * 100 : null;
+    if (netCash > 0 && hasOpening && opening === closing) {
+      change = 0;
+      pct = 0;
+    }
   }
   return {
     date,
-    opening: Number.isFinite(opening) ? opening : null,
+    opening: hasOpening ? opening : null,
     closing: hasClosing ? closing : null,
     hasClosing,
     change,
