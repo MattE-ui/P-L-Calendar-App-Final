@@ -1164,6 +1164,7 @@ button:disabled {
   opacity: 0.6;
 }
 .error { color: #ff8aa0; margin-top: 8px; font-size: 14px; }
+.helper.is-error { color: #d0342c; }
 
 .resend-actions {
   margin-top: 12px;

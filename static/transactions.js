@@ -268,7 +268,10 @@ async function saveNote() {
   const noteKey = modal.dataset.noteKey;
   if (!noteKey) return;
   const nextNote = input.value.trim();
-  if (status) status.textContent = 'Saving...';
+  if (status) {
+    status.textContent = 'Saving...';
+    status.classList.remove('is-error');
+  }
   try {
     state.notes[noteKey] = nextNote;
     localStorage.setItem('plc-transactions-notes', JSON.stringify(state.notes));
@@ -277,10 +280,16 @@ async function saveNote() {
       target.note = nextNote;
     }
     renderTransactions(applyFilters(state.transactions));
-    if (status) status.textContent = 'Saved.';
+    if (status) {
+      status.textContent = 'Saved.';
+      status.classList.remove('is-error');
+    }
     closeNoteModal();
   } catch (e) {
-    if (status) status.textContent = e?.message || 'Failed to save note.';
+    if (status) {
+      status.textContent = e?.message || 'Failed to save note.';
+      status.classList.add('is-error');
+    }
   }
 }
 
@@ -332,7 +341,10 @@ function openSplitModal(tx) {
   if (!splits.length) {
     list.appendChild(buildSplitRow());
   }
-  if (status) status.textContent = '';
+  if (status) {
+    status.textContent = '';
+    status.classList.remove('is-error');
+  }
   modal.classList.remove('hidden');
   updateSplitSummary(modal);
   bindSplitSummary(modal);
@@ -341,7 +353,10 @@ function openSplitModal(tx) {
 function closeSplitModal() {
   const modal = document.getElementById('transactions-split-modal');
   const status = document.getElementById('transactions-split-status');
-  if (status) status.textContent = '';
+  if (status) {
+    status.textContent = '';
+    status.classList.remove('is-error');
+  }
   modal?.classList.add('hidden');
 }
 
@@ -353,19 +368,40 @@ function saveSplitSettings() {
   if (!modal || !list || !total) return;
   const noteKey = modal.dataset.noteKey;
   if (!noteKey) return;
-  const splits = Array.from(list.querySelectorAll('.integration-fields')).map(row => ({
+  const splits = Array.from(list.querySelectorAll('.transactions-split-row')).map(row => ({
     profile: row.querySelector('.transactions-split-profile')?.value.trim() || '',
     amount: Number(row.querySelector('.transactions-split-amount')?.value || 0)
   })).filter(split => split.profile || split.amount);
   const totalValue = Number(total.value || 0);
   if (!Number.isFinite(totalValue) || totalValue < 0) {
-    if (status) status.textContent = 'Enter a valid total amount.';
+    if (status) {
+      status.textContent = 'Enter a valid total amount.';
+      status.classList.add('is-error');
+    }
+    return;
+  }
+  if (!splits.length) {
+    delete state.splits[noteKey];
+    try {
+      localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
+      if (status) {
+        status.textContent = 'Saved.';
+        status.classList.remove('is-error');
+      }
+    } catch (e) {
+      if (status) {
+        status.textContent = 'Failed to save split settings.';
+        status.classList.add('is-error');
+      }
+    }
+    closeSplitModal();
     return;
   }
   const splitTotal = splits.reduce((sum, split) => sum + (Number.isFinite(split.amount) ? split.amount : 0), 0);
   if (Math.abs(splitTotal - totalValue) > 0.01) {
     if (status) {
       status.textContent = `Split amounts must equal ${totalValue.toFixed(2)}.`;
+      status.classList.add('is-error');
     }
     return;
   }
@@ -378,9 +414,15 @@ function saveSplitSettings() {
   };
   try {
     localStorage.setItem('plc-transactions-splits', JSON.stringify(state.splits));
-    if (status) status.textContent = 'Saved.';
+    if (status) {
+      status.textContent = 'Saved.';
+      status.classList.remove('is-error');
+    }
   } catch (e) {
-    if (status) status.textContent = 'Failed to save split settings.';
+    if (status) {
+      status.textContent = 'Failed to save split settings.';
+      status.classList.add('is-error');
+    }
   }
   closeSplitModal();
 }
