@@ -486,7 +486,10 @@ function getPortfolioPerformanceFactor(depositDateMs) {
   const baseline = Number.isFinite(entry.closing) ? entry.closing : entry.opening;
   const latest = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
   if (!Number.isFinite(baseline) || !Number.isFinite(latest) || baseline <= 0) return 1;
-  return latest / baseline;
+  const netDepositsAfter = sumNetDepositsAfter(depositDateMs);
+  const adjustedLatest = latest - netDepositsAfter;
+  if (!Number.isFinite(adjustedLatest) || adjustedLatest <= 0) return 1;
+  return adjustedLatest / baseline;
 }
 
 function findClosestEntry(dateMs) {
@@ -511,6 +514,21 @@ function findClosestEntry(dateMs) {
     });
   });
   return closest;
+}
+
+function sumNetDepositsAfter(dateMs) {
+  let netDeposits = 0;
+  Object.entries(state.data || {}).forEach(([, days]) => {
+    Object.entries(days || {}).forEach(([dateKey, record]) => {
+      const date = Date.parse(dateKey);
+      if (Number.isNaN(date) || date <= dateMs) return;
+      const cashIn = Number(record?.cashIn ?? 0);
+      const cashOut = Number(record?.cashOut ?? 0);
+      if (Number.isFinite(cashIn)) netDeposits += cashIn;
+      if (Number.isFinite(cashOut)) netDeposits -= cashOut;
+    });
+  });
+  return netDeposits;
 }
 
 async function loadHeroMetrics() {
