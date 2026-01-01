@@ -1814,6 +1814,7 @@ app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.ht
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
 app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
+app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
   if (req.user?.guest) {
@@ -2145,7 +2146,13 @@ app.post('/api/profile', auth, (req,res)=>{
   if (resetNetDeposits) {
     cashIn = 0;
     cashOut = 0;
-  } else if (wasComplete && netDelta !== 0) {
+  } else if (!wasComplete) {
+    if (netDepositsNumber > 0) {
+      cashIn += netDepositsNumber;
+    } else if (netDepositsNumber < 0) {
+      cashOut += Math.abs(netDepositsNumber);
+    }
+  } else if (netDelta !== 0) {
     if (netDelta > 0) {
       cashIn += netDelta;
     } else {
@@ -2157,7 +2164,9 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
-  if (!wasComplete || resetNetDeposits) {
+  if (!wasComplete) {
+    user.initialNetDeposits = 0;
+  } else if (resetNetDeposits) {
     user.initialNetDeposits = netDepositsNumber;
   }
   user.profileComplete = true;
