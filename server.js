@@ -2164,7 +2164,9 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
-  if (!wasComplete || resetNetDeposits) {
+  if (!wasComplete) {
+    user.initialNetDeposits = 0;
+  } else if (resetNetDeposits) {
     user.initialNetDeposits = netDepositsNumber;
   }
   user.profileComplete = true;
