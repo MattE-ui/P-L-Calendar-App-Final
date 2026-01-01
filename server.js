@@ -2382,6 +2382,7 @@ app.post('/api/pl', auth, (req,res)=>{
   let anchorDate = user.netDepositsAnchor || null;
   if (anchorDate && date < anchorDate) {
     user.netDepositsAnchor = date;
+    user.initialNetDeposits = 0;
     anchorDate = date;
   }
   const deposit = cashIn === undefined || cashIn === '' ? 0 : Number(cashIn);
