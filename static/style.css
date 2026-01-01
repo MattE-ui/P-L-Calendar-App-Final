@@ -1361,6 +1361,15 @@ button:disabled {
 .toggle input[type="checkbox"] { width: 48px; height: 24px; accent-color: var(--accent); }
 .integration-fields { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .integration-fields.is-hidden { display: none; }
+#transactions-split-list { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.transactions-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 160px) auto;
+  gap: 12px;
+  align-items: end;
+}
+.transactions-split-row .tool-field { margin: 0; }
+.transactions-split-row .transactions-remove-split { justify-self: end; }
 .integration-instructions { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
 .integration-instructions h3 { margin: 0; font-size: 18px; }
 .integration-instructions p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }

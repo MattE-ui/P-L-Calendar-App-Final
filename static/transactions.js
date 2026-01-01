@@ -286,7 +286,7 @@ async function saveNote() {
 
 function buildSplitRow(split = {}) {
   const row = document.createElement('div');
-  row.className = 'integration-fields';
+  row.className = 'transactions-split-row';
   const profiles = state.profiles.length
     ? state.profiles
     : [{ id: '', name: 'No profiles available' }];
