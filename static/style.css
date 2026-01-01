@@ -86,9 +86,20 @@ body {
   align-items: center;
   gap: 10px;
 }
-.hero-left { justify-self: start; }
+.hero-left {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+}
 .hero-right { justify-self: end; }
-.hero-left h1 { margin: 0; }
+.hero-left .brand-heading { margin: 0; }
+.brand-logo {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+}
+.hero-left .brand-logo { max-width: 220px; }
 .hero-sub { margin: 4px 0 0; color: var(--muted); }
 .hero-card {
   background: linear-gradient(135deg, rgba(42,163,255,.08), rgba(42,163,255,.02));
@@ -180,6 +191,9 @@ body {
 .page-title {
   display: flex;
   justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   margin: 6px auto 18px;
   text-align: center;
 }
@@ -569,6 +583,46 @@ select {
 }
 .trade-pill .trade-badges {
   gap: 14px;
+}
+.trade-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.trade-note-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex: 0 0 auto;
+}
+.trade-note-toggle.has-note {
+  border-color: rgba(42, 163, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(42, 163, 255, 0.15);
+}
+.trade-note-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03);
+}
+.trade-note-panel.is-collapsed {
+  display: none;
+}
+.trade-note-input {
+  min-height: 76px;
+  resize: vertical;
+}
+.trade-note-status {
+  font-size: 12px;
+  color: var(--muted);
 }
 @media (max-width: 720px) {
   .trade-pill .trade-body {
@@ -1037,6 +1091,12 @@ select {
   overflow-y: auto;
   min-height: 0;
   padding-right: 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#active-trades-card .trade-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 .show-all-btn {
   align-self: flex-start;
@@ -1124,6 +1184,11 @@ button:disabled {
 
 .login-container { max-width: 440px; margin: 48px auto; padding: 0 16px; }
 .login-container h1 { text-align: center; margin: 0 0 24px; }
+.auth-brand {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 16px;
+}
 .card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; }
 .card-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
 .auth-switch { margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
