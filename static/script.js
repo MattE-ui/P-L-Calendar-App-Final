@@ -314,11 +314,11 @@ function getDailyEntry(date) {
   const netCash = cashIn - cashOut;
   let change = null;
   let pct = null;
-  if (hasClosing && (hasOpening || netCash === 0)) {
-    const base = (hasOpening ? opening : 0) + netCash;
+  if (hasClosing && hasOpening) {
+    const base = opening + netCash;
     change = closing - base;
     pct = base !== 0 ? (change / base) * 100 : null;
-    if (hasOpening && opening === closing && netCash !== 0) {
+    if (opening === closing && netCash !== 0) {
       change = 0;
       pct = 0;
     }
