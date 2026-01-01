@@ -547,6 +547,21 @@ function setupNav() {
     renderProfiles();
     modal?.classList.remove('hidden');
   });
+  document.getElementById('transactions-qs-split-profits')?.addEventListener('change', (event) => {
+    const enabled = event.target.checked;
+    const profilesSection = document.getElementById('transactions-split-profiles');
+    if (profilesSection) {
+      profilesSection.classList.toggle('is-hidden', !enabled);
+    }
+    state.splitProfitsEnabled = enabled;
+    try {
+      localStorage.setItem('plc-transactions-prefs', JSON.stringify({ splitProfits: enabled }));
+    } catch (e) {
+      console.warn(e);
+    }
+    renderTransactions(applyFilters(state.transactions));
+    renderProfiles();
+  });
   const closeQs = () => document.getElementById('transactions-settings-modal')?.classList.add('hidden');
   document.getElementById('transactions-close-qs-btn')?.addEventListener('click', closeQs);
   document.getElementById('transactions-save-qs-btn')?.addEventListener('click', () => {
