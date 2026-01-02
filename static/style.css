@@ -509,6 +509,13 @@ select {
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+.trade-pill .trade-percent {
+  margin-left: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.trade-pill .trade-percent.positive { color: var(--positive); }
+.trade-pill .trade-percent.negative { color: var(--negative); }
 .trade-pill .trade-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

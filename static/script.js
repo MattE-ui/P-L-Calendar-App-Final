@@ -852,6 +852,24 @@ function renderActiveTrades() {
     const title = document.createElement('div');
     title.className = 'trade-title';
     title.textContent = `${sym} (${directionLabel})`;
+    const pctBase = Number.isFinite(trade.positionGBP)
+      ? trade.positionGBP
+      : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
+        ? trade.entry * trade.sizeUnits
+        : null);
+    const pctChange = Number.isFinite(pnl) && Number.isFinite(pctBase) && pctBase !== 0
+      ? (pnl / pctBase) * 100
+      : null;
+    const pctSpan = document.createElement('span');
+    pctSpan.className = 'trade-percent';
+    if (pctChange !== null) {
+      pctSpan.textContent = `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`;
+      if (pctChange > 0) pctSpan.classList.add('positive');
+      if (pctChange < 0) pctSpan.classList.add('negative');
+    } else {
+      pctSpan.textContent = '—';
+    }
+    title.appendChild(pctSpan);
     headerRow.appendChild(title);
     if (trade.source === 'trading212') {
       const sourceLogo = document.createElement('div');
