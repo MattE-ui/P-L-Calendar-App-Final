@@ -413,6 +413,18 @@ function ensureUserShape(user, identifier) {
     user.tradeJournal = {};
     mutated = true;
   }
+  if (!user.uiPrefs || typeof user.uiPrefs !== 'object') {
+    user.uiPrefs = {};
+    mutated = true;
+  }
+  if (!user.transactionPrefs || typeof user.transactionPrefs !== 'object') {
+    user.transactionPrefs = {};
+    mutated = true;
+  }
+  if (!Array.isArray(user.transactionProfiles)) {
+    user.transactionProfiles = [];
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -2098,6 +2110,84 @@ app.get('/api/profile', auth, (req,res)=>{
     username: user.username || req.username,
     isGuest: !!user.guest
   });
+});
+
+app.get('/api/prefs', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const mutated = ensureUserShape(user, req.username);
+  if (mutated) saveDB(db);
+  res.json(user.uiPrefs || {});
+});
+
+app.post('/api/prefs', auth, (req, res) => {
+  const { defaultRiskPct, defaultRiskCurrency } = req.body || {};
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (Number.isFinite(Number(defaultRiskPct)) && Number(defaultRiskPct) > 0) {
+    user.uiPrefs.defaultRiskPct = Number(defaultRiskPct);
+  }
+  if (typeof defaultRiskCurrency === 'string' && ['GBP', 'USD', 'EUR'].includes(defaultRiskCurrency)) {
+    user.uiPrefs.defaultRiskCurrency = defaultRiskCurrency;
+  }
+  saveDB(db);
+  res.json(user.uiPrefs || {});
+});
+
+app.get('/api/transactions/prefs', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const mutated = ensureUserShape(user, req.username);
+  if (mutated) saveDB(db);
+  res.json(user.transactionPrefs || {});
+});
+
+app.post('/api/transactions/prefs', auth, (req, res) => {
+  const { splitProfits } = req.body || {};
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (typeof splitProfits === 'boolean') {
+    user.transactionPrefs.splitProfits = splitProfits;
+  }
+  saveDB(db);
+  res.json(user.transactionPrefs || {});
+});
+
+app.get('/api/transactions/profiles', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const mutated = ensureUserShape(user, req.username);
+  if (mutated) saveDB(db);
+  res.json({ profiles: user.transactionProfiles || [] });
+});
+
+app.post('/api/transactions/profiles', auth, (req, res) => {
+  const { profiles } = req.body || {};
+  if (!Array.isArray(profiles)) {
+    return res.status(400).json({ error: 'Profiles must be an array' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cleaned = profiles.map(profile => {
+    if (!profile || typeof profile !== 'object') return null;
+    const name = typeof profile.name === 'string' ? profile.name.trim() : '';
+    if (!name) return null;
+    const note = typeof profile.note === 'string' ? profile.note.trim() : '';
+    const id = typeof profile.id === 'string' ? profile.id : `${Date.now()}-${Math.random()}`;
+    return { id, name, note };
+  }).filter(Boolean);
+  user.transactionProfiles = cleaned;
+  saveDB(db);
+  res.json({ profiles: user.transactionProfiles });
 });
 
 app.post('/api/profile', auth, (req,res)=>{

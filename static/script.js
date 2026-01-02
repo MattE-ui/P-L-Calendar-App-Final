@@ -1800,6 +1800,41 @@ async function loadRates() {
   }
 }
 
+async function loadUiPrefs() {
+  if (isGuest) return;
+  try {
+    const prefs = await api('/api/prefs');
+    if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
+    if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) {
+      state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+    }
+    state.riskPct = state.defaultRiskPct;
+    state.riskCurrency = state.defaultRiskCurrency;
+    localStorage.setItem('plc-prefs', JSON.stringify({
+      defaultRiskPct: state.defaultRiskPct,
+      defaultRiskCurrency: state.defaultRiskCurrency
+    }));
+  } catch (e) {
+    console.warn('Failed to load ui prefs', e);
+  }
+}
+
+async function saveUiPrefs() {
+  if (isGuest) return;
+  try {
+    await api('/api/prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        defaultRiskPct: state.defaultRiskPct,
+        defaultRiskCurrency: state.defaultRiskCurrency
+      })
+    });
+  } catch (e) {
+    console.warn('Failed to save ui prefs', e);
+  }
+}
+
 async function loadData() {
   try {
     state.data = await api('/api/pl');
@@ -2498,6 +2533,7 @@ function bindControls() {
     } catch (e) {
       console.warn(e);
     }
+    saveUiPrefs();
     renderRiskCalculator();
     closeQs();
   });
@@ -2666,6 +2702,7 @@ async function init() {
   } catch (e) {
     console.warn(e);
   }
+  await loadUiPrefs();
   bindControls();
   updatePeriodSelect();
   setActiveView();

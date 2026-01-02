@@ -48,6 +48,56 @@ const state = {
   }
 };
 
+async function loadTransactionPrefs() {
+  if (isGuest) return;
+  try {
+    const prefs = await api('/api/transactions/prefs');
+    state.splitProfitsEnabled = !!prefs?.splitProfits;
+    localStorage.setItem('plc-transactions-prefs', JSON.stringify({ splitProfits: state.splitProfitsEnabled }));
+  } catch (e) {
+    console.warn('Failed to load transaction prefs', e);
+  }
+}
+
+async function saveTransactionPrefs() {
+  if (isGuest) return;
+  try {
+    await api('/api/transactions/prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ splitProfits: state.splitProfitsEnabled })
+    });
+  } catch (e) {
+    console.warn('Failed to save transaction prefs', e);
+  }
+}
+
+async function loadTransactionProfiles() {
+  if (isGuest) return;
+  try {
+    const res = await api('/api/transactions/profiles');
+    if (Array.isArray(res?.profiles)) {
+      state.profiles = res.profiles;
+      localStorage.setItem('plc-transactions-profiles', JSON.stringify(state.profiles));
+    }
+  } catch (e) {
+    console.warn('Failed to load transaction profiles', e);
+  }
+}
+
+async function saveTransactionProfiles() {
+  if (isGuest) return;
+  try {
+    await api('/api/transactions/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profiles: state.profiles })
+    });
+  } catch (e) {
+    console.warn('Failed to save transaction profiles', e);
+  }
+}
+
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
 function currencyAmount(valueGBP, currency = state.currency) {
@@ -569,6 +619,7 @@ function persistProfiles() {
   } catch (e) {
     console.warn('Failed to save profiles', e);
   }
+  saveTransactionProfiles();
 }
 
 function openProfileStats(profile) {
@@ -836,14 +887,19 @@ function setupNav() {
     const modal = document.getElementById('transactions-settings-modal');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
     const profilesSection = document.getElementById('transactions-split-profiles');
+    const applyPrefs = prefs => {
+      if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
+    };
     try {
       const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
-        const prefs = JSON.parse(saved);
-        if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
+        applyPrefs(JSON.parse(saved));
       }
     } catch (e) {
       console.warn(e);
+    }
+    if (!isGuest) {
+      loadTransactionPrefs().then(() => applyPrefs({ splitProfits: state.splitProfitsEnabled }));
     }
     if (profilesSection) {
       profilesSection.classList.toggle('is-hidden', !splitToggle?.checked);
@@ -863,6 +919,7 @@ function setupNav() {
     } catch (e) {
       console.warn(e);
     }
+    saveTransactionPrefs();
     renderTransactions(applyFilters(state.transactions));
     renderProfiles();
   });
@@ -883,6 +940,7 @@ function setupNav() {
     } catch (e) {
       console.warn(e);
     }
+    saveTransactionPrefs();
     closeQs();
   });
   document.getElementById('transactions-note-close-btn')?.addEventListener('click', closeNoteModal);
@@ -941,6 +999,8 @@ async function loadTransactions() {
       console.warn('Failed to load profiles', e);
       state.profiles = [];
     }
+    await loadTransactionPrefs();
+    await loadTransactionProfiles();
     const data = await api('/api/pl');
     state.data = data || {};
     state.transactions = buildTransactions(state.data);
