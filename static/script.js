@@ -39,8 +39,9 @@ const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Y
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
-const isGuestSession = () => sessionStorage.getItem('guestMode') === 'true'
-  || localStorage.getItem('guestMode') === 'true';
+const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true')
+  && typeof window.handleGuestRequest === 'function';
 
 async function api(path, opts = {}) {
   const isGuest = isGuestSession();

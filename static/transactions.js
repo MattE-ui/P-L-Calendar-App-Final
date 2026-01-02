@@ -31,8 +31,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
-const isGuestSession = () => sessionStorage.getItem('guestMode') === 'true'
-  || localStorage.getItem('guestMode') === 'true';
+const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true')
+  && typeof window.handleGuestRequest === 'function';
 
 const state = {
   currency: 'GBP',

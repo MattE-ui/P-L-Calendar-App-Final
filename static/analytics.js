@@ -17,10 +17,13 @@ const state = {
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
+const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true')
+  && typeof window.handleGuestRequest === 'function';
+
 async function api(path, opts = {}) {
-  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
   const method = (opts.method || 'GET').toUpperCase();
-  if (isGuest && typeof window.handleGuestRequest === 'function') {
+  if (isGuestSession()) {
     return window.handleGuestRequest(path, opts);
   }
   const res = await fetch(path, { credentials: 'include', ...opts });
@@ -486,7 +489,7 @@ function bindNav() {
     } catch (e) {
       console.warn(e);
     }
-    if (!isGuest) {
+    if (!isGuestSession()) {
       api('/api/prefs')
         .then(applyPrefs)
         .catch(err => console.warn('Failed to load ui prefs', err));
@@ -508,7 +511,7 @@ function bindNav() {
     } catch (e) {
       console.warn(e);
     }
-    if (!isGuest) {
+    if (!isGuestSession()) {
       api('/api/prefs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
