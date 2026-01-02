@@ -663,6 +663,36 @@ function calculateProfileStats(profileName) {
     const isDeposit = split.type === 'Deposit';
     const isWithdrawal = split.type === 'Withdrawal';
     if (!isDeposit && !isWithdrawal) return;
+    const dateMs = parseTransactionDate(split.noteKey, split.type);
+    const performanceFactor = getPortfolioPerformanceFactor(dateMs);
+    const hasRawSplits = Array.isArray(split.rawSplits);
+    if (hasRawSplits) {
+      split.rawSplits.forEach(item => {
+        const amount = Number(item.amount || 0);
+        if (!Number.isFinite(amount)) return;
+        const signedAmount = isDeposit ? amount : -amount;
+        const ratio = Number(item.profitSplitRatio || 0);
+        const splitEnabled = item.profitSplitEnabled
+          && item.profitSplitProfile
+          && item.profitSplitProfile !== item.profile
+          && Number.isFinite(ratio)
+          && ratio > 0
+          && ratio < 100;
+        const gain = signedAmount * (performanceFactor - 1);
+        const splitGain = splitEnabled ? gain * (ratio / 100) : 0;
+        const ownerGain = gain - splitGain;
+        if (item.profile === profileName) {
+          if (isDeposit) deposits += amount;
+          if (isWithdrawal) withdrawals += amount;
+          netDeposits += signedAmount;
+          portfolioValue += signedAmount + ownerGain;
+        }
+        if (splitEnabled && item.profitSplitProfile === profileName) {
+          portfolioValue += splitGain;
+        }
+      });
+      return;
+    }
     const splitItems = getSplitItems(split);
     splitItems.forEach(item => {
       if (item.profile !== profileName) return;
@@ -672,8 +702,6 @@ function calculateProfileStats(profileName) {
       if (isDeposit) deposits += amount;
       if (isWithdrawal) withdrawals += amount;
       netDeposits += signedAmount;
-      const dateMs = parseTransactionDate(split.noteKey, split.type);
-      const performanceFactor = getPortfolioPerformanceFactor(dateMs);
       portfolioValue += signedAmount * performanceFactor;
     });
   });
