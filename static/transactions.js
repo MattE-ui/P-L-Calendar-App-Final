@@ -902,6 +902,7 @@ function setupNav() {
     const modal = document.getElementById('transactions-settings-modal');
     const splitToggle = document.getElementById('transactions-qs-split-profits');
     const profilesSection = document.getElementById('transactions-split-profiles');
+    modal?.classList.remove('hidden');
     const applyPrefs = prefs => {
       if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
     };
@@ -919,8 +920,11 @@ function setupNav() {
     if (profilesSection) {
       profilesSection.classList.toggle('is-hidden', !splitToggle?.checked);
     }
-    renderProfiles();
-    modal?.classList.remove('hidden');
+    try {
+      renderProfiles();
+    } catch (e) {
+      console.warn('Failed to render transaction profiles', e);
+    }
   });
   document.getElementById('transactions-qs-split-profits')?.addEventListener('change', (event) => {
     const enabled = event.target.checked;
