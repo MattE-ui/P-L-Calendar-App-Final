@@ -39,9 +39,11 @@ const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Y
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+const isGuestSession = () => sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true';
 
 async function api(path, opts = {}) {
-  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
+  const isGuest = isGuestSession();
   const method = (opts.method || 'GET').toUpperCase();
   if (isGuest && typeof window.handleGuestRequest === 'function') {
     if (method !== 'GET') {
@@ -1801,7 +1803,7 @@ async function loadRates() {
 }
 
 async function loadUiPrefs() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     const prefs = await api('/api/prefs');
     if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
@@ -1820,7 +1822,7 @@ async function loadUiPrefs() {
 }
 
 async function saveUiPrefs() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     await api('/api/prefs', {
       method: 'POST',
