@@ -1164,6 +1164,7 @@ button:disabled {
   opacity: 0.6;
 }
 .error { color: #ff8aa0; margin-top: 8px; font-size: 14px; }
+.helper.is-error { color: #d0342c; }
 
 .resend-actions {
   margin-top: 12px;
@@ -1361,6 +1362,76 @@ button:disabled {
 .toggle input[type="checkbox"] { width: 48px; height: 24px; accent-color: var(--accent); }
 .integration-fields { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .integration-fields.is-hidden { display: none; }
+#transactions-split-list { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.transactions-split-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.transactions-split-main {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 160px) auto;
+  gap: 12px;
+  align-items: end;
+}
+.transactions-split-row .tool-field { margin: 0; }
+.transactions-split-row .transactions-remove-split { justify-self: end; }
+.transactions-split-sub {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.transactions-split-sub-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 120px);
+  gap: 12px;
+}
+.transactions-split-sub-fields.is-hidden { display: none; }
+.transactions-split-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.toggle-switch {
+  position: relative;
+  width: 54px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 24px;
+  width: 24px;
+  left: 3px;
+  top: 2px;
+  background: #f4f7fb;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+.toggle-switch input:checked + .toggle-slider {
+  background: #3aa2e8;
+}
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(24px);
+}
 .integration-instructions { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
 .integration-instructions h3 { margin: 0; font-size: 18px; }
 .integration-instructions p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }

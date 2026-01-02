@@ -474,15 +474,22 @@ function bindNav() {
     const modal = document.querySelector('#quick-settings-modal');
     const riskSel = document.querySelector('#qs-risk-select');
     const curSel = document.querySelector('#qs-currency-select');
+    const applyPrefs = prefs => {
+      if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+      if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+    };
     try {
       const saved = localStorage.getItem('plc-prefs');
       if (saved) {
-        const prefs = JSON.parse(saved);
-        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
-        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+        applyPrefs(JSON.parse(saved));
       }
     } catch (e) {
       console.warn(e);
+    }
+    if (!isGuest) {
+      api('/api/prefs')
+        .then(applyPrefs)
+        .catch(err => console.warn('Failed to load ui prefs', err));
     }
     modal?.classList.remove('hidden');
   });
@@ -500,6 +507,13 @@ function bindNav() {
       localStorage.setItem('plc-prefs', JSON.stringify(prefs));
     } catch (e) {
       console.warn(e);
+    }
+    if (!isGuest) {
+      api('/api/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prefs)
+      }).catch(err => console.warn('Failed to save ui prefs', err));
     }
     closeQs();
   });
