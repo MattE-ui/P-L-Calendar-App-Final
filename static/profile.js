@@ -1,6 +1,9 @@
+const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true')
+  && typeof window.handleGuestRequest === 'function';
+
 async function api(path, opts = {}) {
-  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
-  if (isGuest && typeof window.handleGuestRequest === 'function') {
+  if (isGuestSession()) {
     return window.handleGuestRequest(path, opts);
   }
   const res = await fetch(path, { credentials: 'include', ...opts });
@@ -164,15 +167,22 @@ function bindNav() {
     const modal = document.getElementById('quick-settings-modal');
     const riskSel = document.getElementById('qs-risk-select');
     const curSel = document.getElementById('qs-currency-select');
+    const applyPrefs = prefs => {
+      if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
+      if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+    };
     try {
       const saved = localStorage.getItem('plc-prefs');
       if (saved) {
-        const prefs = JSON.parse(saved);
-        if (riskSel && Number.isFinite(prefs?.defaultRiskPct)) riskSel.value = String(prefs.defaultRiskPct);
-        if (curSel && prefs?.defaultRiskCurrency) curSel.value = prefs.defaultRiskCurrency;
+        applyPrefs(JSON.parse(saved));
       }
     } catch (e) {
       console.warn(e);
+    }
+    if (!isGuestSession()) {
+      api('/api/prefs')
+        .then(applyPrefs)
+        .catch(err => console.warn('Failed to load ui prefs', err));
     }
     modal?.classList.remove('hidden');
   });
@@ -190,6 +200,13 @@ function bindNav() {
       localStorage.setItem('plc-prefs', JSON.stringify(prefs));
     } catch (e) {
       console.warn(e);
+    }
+    if (!isGuestSession()) {
+      api('/api/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prefs)
+      }).catch(err => console.warn('Failed to save ui prefs', err));
     }
     closeQs();
   });

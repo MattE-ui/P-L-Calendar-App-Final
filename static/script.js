@@ -39,9 +39,12 @@ const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Y
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true')
+  && typeof window.handleGuestRequest === 'function';
 
 async function api(path, opts = {}) {
-  const isGuest = sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true';
+  const isGuest = isGuestSession();
   const method = (opts.method || 'GET').toUpperCase();
   if (isGuest && typeof window.handleGuestRequest === 'function') {
     if (method !== 'GET') {
@@ -303,7 +306,7 @@ function getDailyEntry(date) {
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
   const hasClosing = Number.isFinite(closing);
-  if (!hasClosing && !trades.length) return null;
+  const hasOpening = Number.isFinite(opening);
   const cashInRaw = Number(record.cashIn ?? 0);
   const cashOutRaw = Number(record.cashOut ?? 0);
   const cashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
@@ -312,16 +315,20 @@ function getDailyEntry(date) {
   const note = noteRaw.trim();
   if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
-  const base = (Number.isFinite(opening) ? opening : 0) + netCash;
-  let change = hasClosing ? closing - base : null;
-  let pct = hasClosing && base !== 0 ? (change / base) * 100 : null;
-  if (hasClosing && netCash > 0 && Number.isFinite(opening) && opening === closing) {
-    change = 0;
-    pct = 0;
+  let change = null;
+  let pct = null;
+  if (hasClosing && hasOpening) {
+    const base = opening + netCash;
+    change = closing - base;
+    pct = base !== 0 ? (change / base) * 100 : null;
+    if (opening === closing && netCash !== 0) {
+      change = 0;
+      pct = 0;
+    }
   }
   return {
     date,
-    opening: Number.isFinite(opening) ? opening : null,
+    opening: hasOpening ? opening : null,
     closing: hasClosing ? closing : null,
     hasClosing,
     change,
@@ -505,13 +512,9 @@ function computeLifetimeMetrics() {
   let latest = Number.isFinite(entries[entries.length - 1]?.closing)
     ? entries[entries.length - 1].closing
     : Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : null;
-  let computedTotalDeposits = baselineDeposits;
   entries.forEach(entry => {
     if (baseline === null && entry?.opening !== null && entry?.opening !== undefined) {
       baseline = entry.opening;
-    }
-    if (!entry?.preBaseline && entry?.cashFlow !== undefined && entry?.cashFlow !== null) {
-      computedTotalDeposits += entry.cashFlow;
     }
     if (entry?.closing !== null && entry?.closing !== undefined) {
       latest = entry.closing;
@@ -525,9 +528,9 @@ function computeLifetimeMetrics() {
   }
   const safeBaseline = Number.isFinite(baseline) ? baseline : 0;
   const safeLatest = Number.isFinite(latest) ? latest : safeBaseline;
-  const totalNetDeposits = entries.length
-    ? computedTotalDeposits
-    : (Number.isFinite(state.netDepositsTotalGBP) ? state.netDepositsTotalGBP : baselineDeposits);
+  const totalNetDeposits = Number.isFinite(knownTotalDeposits)
+    ? knownTotalDeposits
+    : baselineDeposits;
   state.netDepositsTotalGBP = Number.isFinite(totalNetDeposits) ? totalNetDeposits : 0;
   const netPerformance = safeLatest - state.netDepositsTotalGBP;
   const denominator = state.netDepositsTotalGBP !== 0
@@ -1800,6 +1803,41 @@ async function loadRates() {
   }
 }
 
+async function loadUiPrefs() {
+  if (isGuestSession()) return;
+  try {
+    const prefs = await api('/api/prefs');
+    if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
+    if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) {
+      state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+    }
+    state.riskPct = state.defaultRiskPct;
+    state.riskCurrency = state.defaultRiskCurrency;
+    localStorage.setItem('plc-prefs', JSON.stringify({
+      defaultRiskPct: state.defaultRiskPct,
+      defaultRiskCurrency: state.defaultRiskCurrency
+    }));
+  } catch (e) {
+    console.warn('Failed to load ui prefs', e);
+  }
+}
+
+async function saveUiPrefs() {
+  if (isGuestSession()) return;
+  try {
+    await api('/api/prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        defaultRiskPct: state.defaultRiskPct,
+        defaultRiskCurrency: state.defaultRiskCurrency
+      })
+    });
+  } catch (e) {
+    console.warn('Failed to save ui prefs', e);
+  }
+}
+
 async function loadData() {
   try {
     state.data = await api('/api/pl');
@@ -2498,6 +2536,7 @@ function bindControls() {
     } catch (e) {
       console.warn(e);
     }
+    saveUiPrefs();
     renderRiskCalculator();
     closeQs();
   });
@@ -2666,6 +2705,7 @@ async function init() {
   } catch (e) {
     console.warn(e);
   }
+  await loadUiPrefs();
   bindControls();
   updatePeriodSelect();
   setActiveView();
