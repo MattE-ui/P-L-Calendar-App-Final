@@ -20,6 +20,10 @@ const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
   || localStorage.getItem('guestMode') === 'true')
   && typeof window.handleGuestRequest === 'function';
+const clearGuestMode = () => {
+  sessionStorage.removeItem('guestMode');
+  localStorage.removeItem('guestMode');
+};
 
 async function api(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
@@ -40,6 +44,9 @@ async function api(path, opts = {}) {
     const err = new Error(data.error || 'Request failed');
     err.data = data;
     throw err;
+  }
+  if (!isGuestSession()) {
+    clearGuestMode();
   }
   return data;
 }

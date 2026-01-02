@@ -28,12 +28,19 @@ async function api(path, opts = {}) {
     err.status = res.status;
     throw err;
   }
+  if (!isGuestSession()) {
+    clearGuestMode();
+  }
   return data;
 }
 
 const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
   || localStorage.getItem('guestMode') === 'true')
   && typeof window.handleGuestRequest === 'function';
+const clearGuestMode = () => {
+  sessionStorage.removeItem('guestMode');
+  localStorage.removeItem('guestMode');
+};
 
 const state = {
   currency: 'GBP',

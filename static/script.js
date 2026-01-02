@@ -42,6 +42,10 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
   || localStorage.getItem('guestMode') === 'true')
   && typeof window.handleGuestRequest === 'function';
+const clearGuestMode = () => {
+  sessionStorage.removeItem('guestMode');
+  localStorage.removeItem('guestMode');
+};
 
 async function api(path, opts = {}) {
   const isGuest = isGuestSession();
@@ -76,6 +80,9 @@ async function api(path, opts = {}) {
     err.data = data;
     err.status = res.status;
     throw err;
+  }
+  if (!isGuestSession()) {
+    clearGuestMode();
   }
   return data;
 }
