@@ -913,7 +913,7 @@ function setupNav() {
     } catch (e) {
       console.warn(e);
     }
-    if (!isGuest) {
+    if (!isGuestSession()) {
       loadTransactionPrefs().then(() => applyPrefs({ splitProfits: state.splitProfitsEnabled }));
     }
     if (profilesSection) {
