@@ -31,6 +31,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
+const isGuestSession = () => sessionStorage.getItem('guestMode') === 'true'
+  || localStorage.getItem('guestMode') === 'true';
+
 const state = {
   currency: 'GBP',
   rates: { GBP: 1 },
@@ -49,7 +52,7 @@ const state = {
 };
 
 async function loadTransactionPrefs() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     const prefs = await api('/api/transactions/prefs');
     state.splitProfitsEnabled = !!prefs?.splitProfits;
@@ -60,7 +63,7 @@ async function loadTransactionPrefs() {
 }
 
 async function saveTransactionPrefs() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     await api('/api/transactions/prefs', {
       method: 'POST',
@@ -73,7 +76,7 @@ async function saveTransactionPrefs() {
 }
 
 async function loadTransactionProfiles() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     const res = await api('/api/transactions/profiles');
     if (Array.isArray(res?.profiles)) {
@@ -86,7 +89,7 @@ async function loadTransactionProfiles() {
 }
 
 async function saveTransactionProfiles() {
-  if (isGuest) return;
+  if (isGuestSession()) return;
   try {
     await api('/api/transactions/profiles', {
       method: 'POST',
