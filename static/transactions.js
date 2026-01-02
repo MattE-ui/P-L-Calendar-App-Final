@@ -65,9 +65,11 @@ async function loadTransactionPrefs() {
     const prefs = await api('/api/transactions/prefs');
     state.splitProfitsEnabled = !!prefs?.splitProfits;
     localStorage.setItem('plc-transactions-prefs', JSON.stringify({ splitProfits: state.splitProfitsEnabled }));
+    return prefs || {};
   } catch (e) {
     console.warn('Failed to load transaction prefs', e);
   }
+  return null;
 }
 
 async function saveTransactionPrefs() {
@@ -91,9 +93,11 @@ async function loadTransactionProfiles() {
       state.profiles = res.profiles;
       localStorage.setItem('plc-transactions-profiles', JSON.stringify(state.profiles));
     }
+    return res?.profiles || [];
   } catch (e) {
     console.warn('Failed to load transaction profiles', e);
   }
+  return null;
 }
 
 async function saveTransactionProfiles() {
@@ -1010,8 +1014,14 @@ async function loadTransactions() {
       console.warn('Failed to load profiles', e);
       state.profiles = [];
     }
-    await loadTransactionPrefs();
-    await loadTransactionProfiles();
+    const serverPrefs = await loadTransactionPrefs();
+    const serverProfiles = await loadTransactionProfiles();
+    if (serverPrefs && serverPrefs.splitProfits === undefined) {
+      saveTransactionPrefs();
+    }
+    if (Array.isArray(serverProfiles) && !serverProfiles.length && state.profiles.length) {
+      saveTransactionProfiles();
+    }
     const data = await api('/api/pl');
     state.data = data || {};
     state.transactions = buildTransactions(state.data);

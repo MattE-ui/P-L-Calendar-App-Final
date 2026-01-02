@@ -1812,11 +1812,28 @@ async function loadRates() {
 
 async function loadUiPrefs() {
   if (isGuestSession()) return;
+  let localPrefs = null;
+  try {
+    const saved = localStorage.getItem('plc-prefs');
+    localPrefs = saved ? JSON.parse(saved) : null;
+  } catch (e) {
+    console.warn(e);
+  }
   try {
     const prefs = await api('/api/prefs');
-    if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
-    if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) {
-      state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+    const hasServerPrefs = Number.isFinite(prefs?.defaultRiskPct)
+      || (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency));
+    if (hasServerPrefs) {
+      if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
+      if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) {
+        state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      }
+    } else if (localPrefs) {
+      if (Number.isFinite(localPrefs?.defaultRiskPct)) state.defaultRiskPct = Number(localPrefs.defaultRiskPct);
+      if (localPrefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(localPrefs.defaultRiskCurrency)) {
+        state.defaultRiskCurrency = localPrefs.defaultRiskCurrency;
+      }
+      await saveUiPrefs();
     }
     state.riskPct = state.defaultRiskPct;
     state.riskCurrency = state.defaultRiskCurrency;
