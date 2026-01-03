@@ -468,7 +468,6 @@ function bindNav() {
   document.querySelector('#trades-btn')?.addEventListener('click', () => window.location.href = '/trades.html');
   document.querySelector('#transactions-btn')?.addEventListener('click', () => window.location.href = '/transactions.html');
   document.querySelector('#profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
-  document.querySelector('#portfolio-btn')?.addEventListener('click', () => window.location.href = '/');
   document.querySelector('#devtools-btn')?.addEventListener('click', () => {
     closeNav?.(false);
     window.location.href = '/devtools.html';
