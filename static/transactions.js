@@ -915,9 +915,6 @@ function setupNav() {
   document.getElementById('profile-btn')?.addEventListener('click', () => {
     window.location.href = '/profile.html';
   });
-  document.getElementById('portfolio-btn')?.addEventListener('click', () => {
-    window.location.href = '/';
-  });
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     try {
       await api('/api/logout', { method: 'POST' });

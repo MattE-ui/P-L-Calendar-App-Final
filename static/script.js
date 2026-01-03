@@ -2272,7 +2272,7 @@ function bindControls() {
     renderActiveTrades();
   });
 
-  $('#portfolio-btn')?.addEventListener('click', () => {
+  const openPortfolioModal = () => {
     setNavOpen(false);
     const modalTitle = $('#portfolio-modal-title');
     if (modalTitle) modalTitle.textContent = `Portfolio value (${state.currency})`;
@@ -2284,7 +2284,8 @@ function bindControls() {
       input.value = (Number.isFinite(value) ? value : 0).toFixed(2);
     }
     $('#portfolio-modal')?.classList.remove('hidden');
-  });
+  };
+  $('#qs-portfolio-btn')?.addEventListener('click', openPortfolioModal);
 
   $('#save-portfolio-btn')?.addEventListener('click', async () => {
     const input = $('#portfolio-input');

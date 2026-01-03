@@ -182,7 +182,6 @@ function bindNav() {
   document.getElementById('trades-btn')?.addEventListener('click', () => window.location.href = '/trades.html');
   document.getElementById('transactions-btn')?.addEventListener('click', () => window.location.href = '/transactions.html');
   document.getElementById('profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
-  document.getElementById('portfolio-btn')?.addEventListener('click', () => window.location.href = '/');
   document.getElementById('devtools-btn')?.addEventListener('click', () => {
     closeNav?.(false);
     window.location.href = '/devtools.html';
