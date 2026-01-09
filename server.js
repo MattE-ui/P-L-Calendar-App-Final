@@ -3049,6 +3049,7 @@ async function buildActiveTrades(user, rates = {}) {
       enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
+        displaySymbol: trade.displaySymbol,
         entry,
         stop: Number(trade.stop),
         currency: tradeCurrency,
@@ -3128,6 +3129,7 @@ async function buildActiveTrades(user, rates = {}) {
     enriched.push({
       id: trade.id,
       symbol: quoteSymbol || symbol,
+      displaySymbol: trade.displaySymbol,
       entry,
       stop: Number(trade.stop),
       currency: tradeCurrency,
