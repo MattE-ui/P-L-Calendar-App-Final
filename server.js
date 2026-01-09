@@ -573,6 +573,10 @@ function normalizeTradeJournal(user) {
       const currency = ['GBP', 'USD', 'EUR'].includes(trade.currency) ? trade.currency : 'GBP';
       const status = trade.status === 'closed' ? 'closed' : 'open';
       const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
+      const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol.trim().toUpperCase() : '';
+      const trading212Name = typeof trade.trading212Name === 'string' ? trade.trading212Name : '';
+      const trading212Isin = typeof trade.trading212Isin === 'string' ? trade.trading212Isin : '';
+      const trading212Ticker = typeof trade.trading212Ticker === 'string' ? trade.trading212Ticker : '';
       const typeRaw = typeof trade.tradeType === 'string' ? trade.tradeType.trim().toLowerCase() : '';
       const assetRaw = typeof trade.assetClass === 'string' ? trade.assetClass.trim().toLowerCase() : '';
       const conditionRaw = typeof trade.marketCondition === 'string' ? trade.marketCondition.trim().toLowerCase() : '';
@@ -620,6 +624,7 @@ function normalizeTradeJournal(user) {
         entry,
         stop: stopValue,
         symbol: symbol || undefined,
+        displaySymbol: displaySymbol || undefined,
         currency,
         riskPct: Number.isFinite(riskPct) && riskPct > 0
           ? riskPct
@@ -650,6 +655,15 @@ function normalizeTradeJournal(user) {
       }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
+      }
+      if (trading212Name) {
+        normalizedTrade.trading212Name = trading212Name;
+      }
+      if (trading212Isin) {
+        normalizedTrade.trading212Isin = trading212Isin;
+      }
+      if (trading212Ticker) {
+        normalizedTrade.trading212Ticker = trading212Ticker;
       }
       const lastSyncPrice = parseTradingNumber(trade.lastSyncPrice);
       const ppl = parseTradingNumber(trade.ppl);
