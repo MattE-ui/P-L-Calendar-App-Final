@@ -1051,6 +1051,10 @@ function normalizeTrading212Symbol(raw) {
   return cleaned || '';
 }
 
+function normalizeTrading212TickerValue(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
 function normalizeTrading212Name(raw) {
   if (!raw) return '';
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
@@ -1631,17 +1635,17 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const walletImpact = raw?.walletImpact || {};
         const rawName = instrument?.name ?? raw?.name ?? '';
         const rawIsin = instrument?.isin ?? raw?.isin ?? '';
-        const rawTicker = String(
+        const rawTickerValue = normalizeTrading212TickerValue(
           raw?.ticker ??
           raw?.symbol ??
           instrument?.ticker ??
           instrument?.symbol ??
           rawIsin ??
           ''
-        ).trim().toUpperCase();
+        );
         const overrideKey = trading212OverrideKey({ name: rawName, isin: rawIsin });
         const overrideSymbol = overrideKey ? cfg.symbolOverrides?.[overrideKey] : '';
-        const fallbackSymbol = normalizeTrading212Symbol(rawTicker);
+        const fallbackSymbol = normalizeTrading212Symbol(rawTickerValue);
         const symbol = normalizeTrading212Symbol(overrideSymbol) || fallbackSymbol;
         if (!symbol) continue;
         const quantity = parseTradingNumber(
@@ -1685,13 +1689,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
-        const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
         const normalizedName = normalizeTrading212Name(rawName);
+        const rawPositionId = raw?.id || raw?.positionId;
+        const trading212Key = rawIsin
+          ? `isin:${rawIsin.toUpperCase()}`
+          : (normalizedName ? `name:${normalizedName}` : symbol);
+        const trading212Id = rawPositionId
+          ? String(rawPositionId)
+          : `${trading212Key}:${createdAtDate.toISOString()}`;
         const existingTradeEntry = openTrades.find(entry => (
           entry.trade?.trading212Id === trading212Id ||
           entry.trade?.symbol === symbol ||
           (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
-          (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName)
+          (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
+          (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
         ));
         const existingTrade = existingTradeEntry?.trade;
         const resolvedSymbol = existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
@@ -1719,6 +1730,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.trading212Id = trading212Id;
           if (rawName) existingTrade.trading212Name = rawName;
           if (rawIsin) existingTrade.trading212Isin = rawIsin;
+          if (rawTickerValue) existingTrade.trading212Ticker = rawTickerValue;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1758,6 +1770,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           trading212Id,
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
+          trading212Ticker: rawTickerValue || undefined,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
