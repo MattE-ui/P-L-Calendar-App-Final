@@ -1685,11 +1685,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const trading212Key = rawIsin
           ? `isin:${rawIsin.toUpperCase()}`
           : (normalizedName ? `name:${normalizedName}` : symbol);
-        const trading212Id = rawPositionId
-          ? String(rawPositionId)
-          : `${trading212Key}:${createdAtDate.toISOString()}`;
+        const trading212Id = rawPositionId ? String(rawPositionId) : trading212Key;
         const existingTradeEntry = openTrades.find(entry => (
           entry.trade?.trading212Id === trading212Id ||
+          (trading212Key && typeof entry.trade?.trading212Id === 'string' && entry.trade.trading212Id.startsWith(`${trading212Key}:`)) ||
           entry.trade?.symbol === symbol ||
           (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
           (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
