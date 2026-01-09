@@ -328,6 +328,10 @@
         <div>
           <label for="edit-trade-symbol">Ticker (display)</label>
           <input id="edit-trade-symbol" type="text" placeholder="e.g. AAPL">
+          <div class="mapping-actions" id="edit-mapping-actions">
+            <span class="mapping-badge is-hidden" id="edit-mapping-badge" title="Display ticker overridden (uses Trading 212 instrument for pricing)">Mapped</span>
+            <button type="button" class="ghost small is-hidden" id="edit-promote-mapping-btn">Promote to Global</button>
+          </div>
         </div>
         <div>
           <label for="edit-trade-entry">Entry price</label>
@@ -393,6 +397,7 @@
   </div>
 
   <script src="static/guest.js"></script>
+  <script src="static/instrument-mappings.js"></script>
   <script src="static/script.js"></script>
   <script> if ('serviceWorker' in navigator) navigator.serviceWorker.register('/serviceWorker.js'); </script>
 </body>
