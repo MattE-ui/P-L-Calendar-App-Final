@@ -1060,12 +1060,6 @@ function normalizeTrading212Name(raw) {
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
-function trading212OverrideKey({ name, isin }) {
-  if (isin) return `ISIN:${String(isin).trim().toUpperCase()}`;
-  const normalizedName = normalizeTrading212Name(name);
-  return normalizedName ? `NAME:${normalizedName}` : '';
-}
-
 function deriveTrading212Root(endpointPath) {
   if (typeof endpointPath !== 'string') return '/api/v0';
   const trimmed = endpointPath.trim();
@@ -1643,10 +1637,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           rawIsin ??
           ''
         );
-        const overrideKey = trading212OverrideKey({ name: rawName, isin: rawIsin });
-        const overrideSymbol = overrideKey ? cfg.symbolOverrides?.[overrideKey] : '';
-        const fallbackSymbol = normalizeTrading212Symbol(rawTickerValue);
-        const symbol = normalizeTrading212Symbol(overrideSymbol) || fallbackSymbol;
+        const symbol = normalizeTrading212Symbol(rawTickerValue);
         if (!symbol) continue;
         const quantity = parseTradingNumber(
           raw?.quantity ??
@@ -1705,7 +1696,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
         ));
         const existingTrade = existingTradeEntry?.trade;
-        const resolvedSymbol = existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
+        const isTrading212Trade = existingTrade?.source === 'trading212' || existingTrade?.trading212Id;
+        const resolvedSymbol = !isTrading212Trade && existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -3251,6 +3243,7 @@ app.post('/api/trades', auth, async (req, res) => {
     baseCurrency,
     note,
     symbol,
+    displaySymbol,
     direction,
     rounding,
     tradeType,
@@ -3273,7 +3266,8 @@ app.post('/api/trades', auth, async (req, res) => {
   const pctNum = Number(riskPct);
     const riskAmountNum = Number(riskAmount);
   const sizeUnitsNum = Number(sizeUnitsInput);
-  const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
+  const symbolInput = typeof displaySymbol === 'string' ? displaySymbol : symbol;
+  const symbolClean = typeof symbolInput === 'string' ? symbolInput.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
@@ -3424,32 +3418,24 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (trade.status === 'closed' && wantsRiskUpdate) {
     return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
   }
-  if (typeof updates.symbol === 'string') {
-    const trimmed = updates.symbol.trim().toUpperCase();
-    if (trimmed) {
-      trade.symbol = trimmed;
-      trade.symbolOverride = true;
-      if (trade.source === 'trading212' || trade.trading212Id) {
-        const overrideKey = trading212OverrideKey({
-          name: trade.trading212Name,
-          isin: trade.trading212Isin
-        });
-        if (overrideKey) {
-          tradingCfg.symbolOverrides ||= {};
-          tradingCfg.symbolOverrides[overrideKey] = trimmed;
-        }
+  const incomingSymbol = typeof updates.displaySymbol === 'string'
+    ? updates.displaySymbol
+    : (typeof updates.symbol === 'string' ? updates.symbol : null);
+  if (incomingSymbol !== null) {
+    const trimmed = incomingSymbol.trim().toUpperCase();
+    const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+    if (isTrading212) {
+      if (trimmed) {
+        trade.displaySymbol = trimmed;
+      } else {
+        delete trade.displaySymbol;
       }
     } else {
-      delete trade.symbolOverride;
-      if (trade.source === 'trading212' || trade.trading212Id) {
-        const overrideKey = trading212OverrideKey({
-          name: trade.trading212Name,
-          isin: trade.trading212Isin
-        });
-        if (overrideKey && tradingCfg.symbolOverrides) {
-          delete tradingCfg.symbolOverrides[overrideKey];
-        }
+      if (!trimmed) {
+        return res.status(400).json({ error: 'Enter a valid ticker symbol.' });
       }
+      trade.symbol = trimmed;
+      delete trade.displaySymbol;
     }
   }
   if (updates.currentStop !== undefined) {

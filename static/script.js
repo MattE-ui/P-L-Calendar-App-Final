@@ -247,6 +247,7 @@ function normalizeTradeRecords(trades) {
     const sizeUnits = Number(trade.sizeUnits);
     const status = trade.status === 'closed' ? 'closed' : 'open';
     const symbol = typeof trade.symbol === 'string' ? trade.symbol : '';
+    const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol : '';
     if (!Number.isFinite(entry) || entry <= 0) return null;
     if (!Number.isFinite(stop) || stop <= 0) return null;
     if (!Number.isFinite(riskPct) || riskPct <= 0) return null;
@@ -279,6 +280,7 @@ function normalizeTradeRecords(trades) {
       sizeUnits,
       status,
       symbol,
+      displaySymbol,
       riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : null,
       positionGBP: Number.isFinite(positionGBP) ? positionGBP : null,
       riskAmountCurrency: Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : null,
@@ -302,6 +304,11 @@ function normalizeTradeRecords(trades) {
       createdAt
     };
   }).filter(Boolean);
+}
+
+function getTradeDisplaySymbol(trade) {
+  if (!trade) return '—';
+  return trade.displaySymbol || trade.symbol || '—';
 }
 
 function getDailyEntry(date) {
@@ -840,7 +847,7 @@ function renderActiveTrades() {
     const pill = document.createElement('div');
     pill.className = 'trade-pill';
     if (trade.id) pill.dataset.tradeId = trade.id;
-    const sym = trade.symbol || '—';
+    const sym = getTradeDisplaySymbol(trade);
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
     const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
@@ -1198,7 +1205,7 @@ function openCloseTradeModal(trade) {
   const status = $('#close-trade-status');
   const closeLabel = $('#close-trade-close-label');
   if (title) {
-    const sym = trade.symbol || 'Trade';
+    const sym = getTradeDisplaySymbol(trade);
     title.textContent = `Close ${sym}`;
   }
   if (closeLabel) {
@@ -1235,10 +1242,10 @@ function openEditTradeModal(trade) {
   const unitsInput = $('#edit-trade-units');
   const status = $('#edit-trade-status');
   if (title) {
-    const sym = trade.symbol || 'Trade';
+    const sym = getTradeDisplaySymbol(trade);
     title.textContent = `Edit ${sym}`;
   }
-  if (symbolInput) symbolInput.value = trade.symbol || '';
+  if (symbolInput) symbolInput.value = trade.displaySymbol || trade.symbol || '';
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
   if (currentStopInput) currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
@@ -1605,7 +1612,7 @@ function renderWeek() {
     const detail = document.createElement('div');
     detail.className = 'week-detail hidden';
     const summary = summarizeWeek(week.entries || []);
-    const tradeList = (week.trades || []).map(t => `${t.symbol || '—'} ${t.tradeType || ''} ${t.status || ''}`.trim());
+    const tradeList = (week.trades || []).map(t => `${getTradeDisplaySymbol(t)} ${t.tradeType || ''} ${t.status || ''}`.trim());
     detail.innerHTML = `
       <div class="week-detail-grid">
         <div><strong>Cash flow:</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
@@ -1971,7 +1978,7 @@ function renderTradeList(trades = [], dateStr = null) {
     const perShareDisplay = formatPrice(trade.perUnitRisk, currency);
     const metaLine = document.createElement('div');
     metaLine.className = 'trade-line';
-    const sym = trade.symbol || '—';
+    const sym = getTradeDisplaySymbol(trade);
     const status = trade.status === 'closed' ? 'Closed' : 'Open';
     metaLine.textContent = `${sym} • ${status} • Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
     pill.appendChild(metaLine);
@@ -2460,7 +2467,7 @@ function bindControls() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          symbol: symbolVal,
+          displaySymbol: symbolVal,
           entry: entryVal,
           stop: stopVal,
           currentStop: currentStopPayload ?? null,
