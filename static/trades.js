@@ -260,7 +260,7 @@ function renderTrades() {
     tr.appendChild(dateCell);
 
     const symCell = document.createElement('td');
-    symCell.textContent = trade.symbol || '—';
+    symCell.textContent = trade.displaySymbol || trade.symbol || '—';
     tr.appendChild(symCell);
 
     const typeCell = document.createElement('td');
@@ -343,7 +343,7 @@ function populateForm(trade) {
   state.editingId = trade.id;
   document.querySelector('#form-title').textContent = 'Edit trade';
   document.querySelector('#trade-id').value = trade.id;
-  document.querySelector('#form-symbol').value = trade.symbol || '';
+  document.querySelector('#form-symbol').value = trade.displaySymbol || trade.symbol || '';
   document.querySelector('#form-currency').value = trade.currency || 'GBP';
   document.querySelector('#form-entry').value = trade.entry ?? '';
   document.querySelector('#form-stop').value = trade.stop ?? '';
@@ -426,7 +426,7 @@ function collectFormData() {
     return Number.isNaN(num) ? undefined : num;
   };
   return {
-    symbol: document.querySelector('#form-symbol')?.value,
+    displaySymbol: document.querySelector('#form-symbol')?.value,
     currency: document.querySelector('#form-currency')?.value || 'GBP',
     entry: numberOrUndefined('#form-entry'),
     stop: numberOrUndefined('#form-stop'),
