@@ -498,6 +498,12 @@ select {
   color: var(--muted);
   font-size: 12px;
 }
+.trade-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .trade-pill .trade-header-row {
   display: flex;
   align-items: center;
@@ -505,6 +511,9 @@ select {
   gap: 12px;
 }
 .trade-pill .trade-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -1220,6 +1229,36 @@ button:disabled {
 }
 .tag-chip.positive { border-color: rgba(29,185,84,.6); color: #c9f2d7; }
 .tag-chip.negative { border-color: rgba(255,59,92,.6); color: #ffd8de; }
+
+.mapping-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.mapping-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(79, 183, 255, 0.35);
+  background: rgba(79, 183, 255, 0.1);
+  color: #cfe8ff;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+td .mapping-badge {
+  margin-left: 6px;
+}
+
+.ghost.small {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+}
 .analytics-grid, .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

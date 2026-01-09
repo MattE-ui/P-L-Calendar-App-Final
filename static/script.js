@@ -17,6 +17,7 @@ const state = {
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
   isGuest: false,
+  isAdmin: false,
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -248,6 +249,7 @@ function normalizeTradeRecords(trades) {
     const status = trade.status === 'closed' ? 'closed' : 'open';
     const symbol = typeof trade.symbol === 'string' ? trade.symbol : '';
     const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol : '';
+    const displayTicker = typeof trade.displayTicker === 'string' ? trade.displayTicker : '';
     if (!Number.isFinite(entry) || entry <= 0) return null;
     if (!Number.isFinite(stop) || stop <= 0) return null;
     if (!Number.isFinite(riskPct) || riskPct <= 0) return null;
@@ -281,6 +283,9 @@ function normalizeTradeRecords(trades) {
       status,
       symbol,
       displaySymbol,
+      displayTicker,
+      mappingScope: trade.mappingScope || null,
+      brokerTicker: trade.brokerTicker || '',
       riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : null,
       positionGBP: Number.isFinite(positionGBP) ? positionGBP : null,
       riskAmountCurrency: Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : null,
@@ -308,7 +313,21 @@ function normalizeTradeRecords(trades) {
 
 function getTradeDisplaySymbol(trade) {
   if (!trade) return '—';
-  return trade.displaySymbol || trade.symbol || '—';
+  return trade.displayTicker || trade.displaySymbol || trade.symbol || '—';
+}
+
+function shouldShowMappingBadge(trade) {
+  if (!trade?.mappingScope) return false;
+  if (!trade.displayTicker || !trade.brokerTicker) return true;
+  return trade.displayTicker !== trade.brokerTicker;
+}
+
+function createMappingBadge() {
+  const badge = document.createElement('span');
+  badge.className = 'mapping-badge';
+  badge.textContent = 'Mapped';
+  badge.title = 'Display ticker overridden (uses Trading 212 instrument for pricing)';
+  return badge;
 }
 
 function getDailyEntry(date) {
@@ -858,7 +877,12 @@ function renderActiveTrades() {
     headerRow.className = 'trade-header-row';
     const title = document.createElement('div');
     title.className = 'trade-title';
-    title.textContent = `${sym} (${directionLabel})`;
+    const titleText = document.createElement('span');
+    titleText.textContent = `${sym} (${directionLabel})`;
+    title.appendChild(titleText);
+    if (shouldShowMappingBadge(trade)) {
+      title.appendChild(createMappingBadge());
+    }
     const pctBase = Number.isFinite(trade.positionGBP)
       ? trade.positionGBP
       : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
@@ -1241,18 +1265,40 @@ function openEditTradeModal(trade) {
   const currentStopInput = $('#edit-trade-current-stop');
   const unitsInput = $('#edit-trade-units');
   const status = $('#edit-trade-status');
+  const mappingBadge = $('#edit-mapping-badge');
+  const promoteBtn = $('#edit-promote-mapping-btn');
   if (title) {
     const sym = getTradeDisplaySymbol(trade);
     title.textContent = `Edit ${sym}`;
   }
-  if (symbolInput) symbolInput.value = trade.displaySymbol || trade.symbol || '';
+  if (symbolInput) symbolInput.value = getTradeDisplaySymbol(trade);
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
   if (currentStopInput) currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
   if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
   if (status) status.textContent = '';
+  if (mappingBadge) {
+    mappingBadge.classList.toggle('is-hidden', !shouldShowMappingBadge(trade));
+  }
+  if (promoteBtn) {
+    const canPromote = state.isAdmin && trade.mappingScope === 'user' && trade.mappingId;
+    promoteBtn.classList.toggle('is-hidden', !canPromote);
+    if (canPromote) {
+      promoteBtn.dataset.mappingId = trade.mappingId;
+    } else {
+      promoteBtn.dataset.mappingId = '';
+    }
+  }
+  const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
   modal.dataset.tradeId = trade.id;
   modal.dataset.direction = trade.direction || 'long';
+  modal.dataset.isTrading212 = isTrading212 ? 'true' : 'false';
+  modal.dataset.brokerTicker = trade.brokerTicker || trade.trading212Ticker || trade.symbol || '';
+  modal.dataset.brokerName = trade.trading212Name || '';
+  modal.dataset.currency = trade.currency || '';
+  modal.dataset.isin = trade.trading212Isin || '';
+  modal.dataset.uid = trade.trading212Id || '';
+  modal.dataset.sourceKey = trade.sourceKey || '';
   modal.classList.remove('hidden');
 }
 
@@ -1980,7 +2026,12 @@ function renderTradeList(trades = [], dateStr = null) {
     metaLine.className = 'trade-line';
     const sym = getTradeDisplaySymbol(trade);
     const status = trade.status === 'closed' ? 'Closed' : 'Open';
-    metaLine.textContent = `${sym} • ${status} • Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
+    const metaText = document.createElement('span');
+    metaText.textContent = `${sym} • ${status} • Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
+    metaLine.appendChild(metaText);
+    if (shouldShowMappingBadge(trade)) {
+      metaLine.appendChild(createMappingBadge());
+    }
     pill.appendChild(metaLine);
 
     const badges = document.createElement('div');
@@ -2463,22 +2514,70 @@ function bindControls() {
       currentStopPayload = parsedCurrentStop;
     }
     try {
+      const isTrading212 = modal.dataset.isTrading212 === 'true';
+      if (isTrading212 && typeof window.computeSourceKey === 'function') {
+        const instrument = {
+          isin: modal.dataset.isin || '',
+          uid: modal.dataset.uid || '',
+          ticker: modal.dataset.brokerTicker || '',
+          currency: modal.dataset.currency || ''
+        };
+        const sourceKey = window.computeSourceKey(instrument);
+        await api('/api/instrument-mappings/user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceKey,
+            brokerTicker: modal.dataset.brokerTicker || '',
+            brokerName: modal.dataset.brokerName || '',
+            currency: modal.dataset.currency || '',
+            isin: modal.dataset.isin || '',
+            canonicalTicker: symbolVal,
+            canonicalName: modal.dataset.brokerName || ''
+          })
+        });
+      }
+      const tradePayload = {
+        entry: entryVal,
+        stop: stopVal,
+        currentStop: currentStopPayload ?? null,
+        sizeUnits: unitsVal
+      };
+      if (modal.dataset.isTrading212 !== 'true') {
+        tradePayload.displaySymbol = symbolVal;
+      }
       await api(`/api/trades/${tradeId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          displaySymbol: symbolVal,
-          entry: entryVal,
-          stop: stopVal,
-          currentStop: currentStopPayload ?? null,
-          sizeUnits: unitsVal
-        })
+        body: JSON.stringify(tradePayload)
       });
       modal.classList.add('hidden');
       await loadData();
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to update trade.';
+    }
+  });
+  $('#edit-promote-mapping-btn')?.addEventListener('click', async () => {
+    const modal = $('#edit-trade-modal');
+    const status = $('#edit-trade-status');
+    const mappingId = Number($('#edit-promote-mapping-btn')?.dataset?.mappingId);
+    if (!modal || !mappingId) return;
+    if (!window.confirm('Promote this ticker mapping for all users?')) {
+      return;
+    }
+    if (status) status.textContent = '';
+    try {
+      await api('/api/instrument-mappings/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mappingId })
+      });
+      if (status) status.textContent = 'Mapping promoted globally.';
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to promote mapping.';
     }
   });
   $('#delete-edit-trade-btn')?.addEventListener('click', async () => {
@@ -2708,6 +2807,15 @@ if (typeof module !== 'undefined') {
   module.exports = { computeRiskPlan, summarizeWeek };
 }
 
+async function loadProfile() {
+  try {
+    const profile = await api('/api/profile');
+    state.isAdmin = !!profile?.isAdmin;
+  } catch (e) {
+    state.isAdmin = false;
+  }
+}
+
 async function updateDevtoolsNav() {
   try {
     const profile = await api('/api/profile');
@@ -2765,6 +2873,7 @@ async function init() {
     console.warn(e);
   }
   await loadUiPrefs();
+  await loadProfile();
   bindControls();
   updatePeriodSelect();
   setActiveView();

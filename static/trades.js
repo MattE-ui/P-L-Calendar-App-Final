@@ -11,6 +11,7 @@ const state = {
     winLoss: ''
   },
   editingId: null,
+  editingTrade: null,
   defaults: {
     tradeType: '',
     assetClass: '',
@@ -20,6 +21,7 @@ const state = {
     emotionTags: []
   },
   currency: 'GBP',
+  isAdmin: false,
   rates: { GBP: 1 }
 };
 
@@ -84,6 +86,25 @@ function formatPercent(value) {
   const num = Number(value);
   const sign = num < 0 ? '-' : '';
   return `${sign}${Math.abs(num).toFixed(2)}%`;
+}
+
+function getTradeDisplaySymbol(trade) {
+  if (!trade) return '—';
+  return trade.displayTicker || trade.displaySymbol || trade.symbol || '—';
+}
+
+function shouldShowMappingBadge(trade) {
+  if (!trade?.mappingScope) return false;
+  if (!trade.displayTicker || !trade.brokerTicker) return true;
+  return trade.displayTicker !== trade.brokerTicker;
+}
+
+function createMappingBadge() {
+  const badge = document.createElement('span');
+  badge.className = 'mapping-badge';
+  badge.textContent = 'Mapped';
+  badge.title = 'Display ticker overridden (uses Trading 212 instrument for pricing)';
+  return badge;
 }
 
 function setMetricTrend(el, value) {
@@ -260,7 +281,12 @@ function renderTrades() {
     tr.appendChild(dateCell);
 
     const symCell = document.createElement('td');
-    symCell.textContent = trade.displaySymbol || trade.symbol || '—';
+    const symLabel = document.createElement('span');
+    symLabel.textContent = getTradeDisplaySymbol(trade);
+    symCell.appendChild(symLabel);
+    if (shouldShowMappingBadge(trade)) {
+      symCell.appendChild(createMappingBadge());
+    }
     tr.appendChild(symCell);
 
     const typeCell = document.createElement('td');
@@ -341,9 +367,10 @@ function renderTrades() {
 
 function populateForm(trade) {
   state.editingId = trade.id;
+  state.editingTrade = trade;
   document.querySelector('#form-title').textContent = 'Edit trade';
   document.querySelector('#trade-id').value = trade.id;
-  document.querySelector('#form-symbol').value = trade.displaySymbol || trade.symbol || '';
+  document.querySelector('#form-symbol').value = getTradeDisplaySymbol(trade);
   document.querySelector('#form-currency').value = trade.currency || 'GBP';
   document.querySelector('#form-entry').value = trade.entry ?? '';
   document.querySelector('#form-stop').value = trade.stop ?? '';
@@ -382,6 +409,20 @@ function populateForm(trade) {
   document.querySelector('#form-notes').value = trade.note || '';
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Editing existing trade';
+  const mappingBadge = document.querySelector('#form-mapping-badge');
+  const promoteBtn = document.querySelector('#form-promote-mapping-btn');
+  if (mappingBadge) {
+    mappingBadge.classList.toggle('is-hidden', !shouldShowMappingBadge(trade));
+  }
+  if (promoteBtn) {
+    const canPromote = state.isAdmin && trade.mappingScope === 'user' && trade.mappingId;
+    promoteBtn.classList.toggle('is-hidden', !canPromote);
+    if (canPromote) {
+      promoteBtn.dataset.mappingId = trade.mappingId;
+    } else {
+      promoteBtn.dataset.mappingId = '';
+    }
+  }
   document.querySelector('#trade-form-modal')?.classList.remove('hidden');
 }
 
@@ -408,6 +449,7 @@ function applyDefaultsToForm() {
 
 function resetForm() {
   state.editingId = null;
+  state.editingTrade = null;
   document.querySelector('#trade-id').value = '';
   document.querySelector('#form-title').textContent = 'Log a trade';
   document.querySelector('#trade-form').reset();
@@ -416,6 +458,8 @@ function resetForm() {
   applyDefaultsToForm();
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Ready to log a new trade';
+  document.querySelector('#form-mapping-badge')?.classList.add('is-hidden');
+  document.querySelector('#form-promote-mapping-btn')?.classList.add('is-hidden');
 }
 
 function collectFormData() {
@@ -453,6 +497,32 @@ async function saveTrade(event) {
   const payload = collectFormData();
   const status = document.querySelector('#form-status');
   try {
+    const isTrading212 = state.editingTrade?.source === 'trading212' || state.editingTrade?.trading212Id;
+    if (state.editingId && isTrading212 && typeof window.computeSourceKey === 'function') {
+      const instrument = {
+        isin: state.editingTrade?.trading212Isin || '',
+        uid: state.editingTrade?.trading212Id || '',
+        ticker: state.editingTrade?.brokerTicker || state.editingTrade?.trading212Ticker || state.editingTrade?.symbol || '',
+        currency: state.editingTrade?.currency || ''
+      };
+      const sourceKey = window.computeSourceKey(instrument);
+      await api('/api/instrument-mappings/user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceKey,
+          brokerTicker: instrument.ticker,
+          brokerName: state.editingTrade?.trading212Name || '',
+          currency: instrument.currency,
+          isin: instrument.isin,
+          canonicalTicker: payload.displaySymbol || '',
+          canonicalName: state.editingTrade?.trading212Name || ''
+        })
+      });
+    }
+    if (isTrading212) {
+      delete payload.displaySymbol;
+    }
     if (state.editingId) {
       await api(`/api/trades/${state.editingId}`, {
         method: 'PUT',
@@ -549,10 +619,12 @@ function bindNav() {
   });
   api('/api/profile')
     .then(profile => {
+      state.isAdmin = !!profile?.isAdmin;
       const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
       document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
     })
     .catch(() => {
+      state.isAdmin = false;
       document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
     });
 }
@@ -591,6 +663,33 @@ function bindForm() {
     localStorage.setItem('trade-defaults', JSON.stringify(state.defaults));
     applyDefaultsToForm();
     document.querySelector('#trade-settings-modal')?.classList.add('hidden');
+  });
+  document.querySelector('#form-promote-mapping-btn')?.addEventListener('click', async () => {
+    const button = document.querySelector('#form-promote-mapping-btn');
+    const status = document.querySelector('#form-status');
+    const mappingId = Number(button?.dataset?.mappingId);
+    if (!mappingId) return;
+    if (!window.confirm('Promote this ticker mapping for all users?')) {
+      return;
+    }
+    if (status) status.textContent = '';
+    try {
+      await api('/api/instrument-mappings/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mappingId })
+      });
+      if (status) {
+        status.textContent = 'Mapping promoted globally.';
+        status.classList.add('success');
+      }
+      await loadTrades();
+    } catch (e) {
+      if (status) {
+        status.textContent = e?.message || 'Failed to promote mapping.';
+        status.classList.remove('success');
+      }
+    }
   });
 }
 

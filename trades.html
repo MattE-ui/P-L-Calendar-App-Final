@@ -183,6 +183,10 @@
           <div class="tool-field">
             <label for="form-symbol">Ticker (display)</label>
             <input type="text" id="form-symbol" required placeholder="AAPL">
+            <div class="mapping-actions" id="form-mapping-actions">
+              <span class="mapping-badge is-hidden" id="form-mapping-badge" title="Display ticker overridden (uses Trading 212 instrument for pricing)">Mapped</span>
+              <button type="button" class="ghost small is-hidden" id="form-promote-mapping-btn">Promote to Global</button>
+            </div>
           </div>
           <div class="tool-field">
             <label for="form-currency">Currency</label>
@@ -362,6 +366,7 @@
   </div>
 
   <script src="static/guest.js"></script>
+  <script src="static/instrument-mappings.js"></script>
   <script src="static/trades.js"></script>
 </body>
 </html>
