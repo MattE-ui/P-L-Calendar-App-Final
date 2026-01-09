@@ -329,6 +329,10 @@ function ensureTrading212Config(user) {
     cfg.processedReferences = [];
     mutated = true;
   }
+  if (!cfg.symbolOverrides || typeof cfg.symbolOverrides !== 'object' || Array.isArray(cfg.symbolOverrides)) {
+    cfg.symbolOverrides = {};
+    mutated = true;
+  }
   return { mutated, config: cfg };
 }
 
@@ -1047,6 +1051,17 @@ function normalizeTrading212Symbol(raw) {
   return cleaned || '';
 }
 
+function normalizeTrading212Name(raw) {
+  if (!raw) return '';
+  return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+function trading212OverrideKey({ name, isin }) {
+  if (isin) return `ISIN:${String(isin).trim().toUpperCase()}`;
+  const normalizedName = normalizeTrading212Name(name);
+  return normalizedName ? `NAME:${normalizedName}` : '';
+}
+
 function deriveTrading212Root(endpointPath) {
   if (typeof endpointPath !== 'string') return '/api/v0';
   const trimmed = endpointPath.trim();
@@ -1614,15 +1629,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       for (const raw of sortedPositions) {
         const instrument = raw?.instrument || {};
         const walletImpact = raw?.walletImpact || {};
+        const rawName = instrument?.name ?? raw?.name ?? '';
+        const rawIsin = instrument?.isin ?? raw?.isin ?? '';
         const rawTicker = String(
           raw?.ticker ??
           raw?.symbol ??
           instrument?.ticker ??
           instrument?.symbol ??
-          instrument?.isin ??
+          rawIsin ??
           ''
         ).trim().toUpperCase();
-        const symbol = normalizeTrading212Symbol(rawTicker);
+        const overrideKey = trading212OverrideKey({ name: rawName, isin: rawIsin });
+        const overrideSymbol = overrideKey ? cfg.symbolOverrides?.[overrideKey] : '';
+        const fallbackSymbol = normalizeTrading212Symbol(rawTicker);
+        const symbol = normalizeTrading212Symbol(overrideSymbol) || fallbackSymbol;
         if (!symbol) continue;
         const quantity = parseTradingNumber(
           raw?.quantity ??
@@ -1666,8 +1686,15 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
         const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
-        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === trading212Id || entry.trade?.symbol === symbol);
+        const normalizedName = normalizeTrading212Name(rawName);
+        const existingTradeEntry = openTrades.find(entry => (
+          entry.trade?.trading212Id === trading212Id ||
+          entry.trade?.symbol === symbol ||
+          (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
+          (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName)
+        ));
         const existingTrade = existingTradeEntry?.trade;
+        const resolvedSymbol = existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -1676,13 +1703,13 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
         let lowStop = null;
         try {
-          const lowQuote = await fetchDailyLow(symbol, tradeDateKey);
+          const lowQuote = await fetchDailyLow(resolvedSymbol, tradeDateKey);
           lowStop = Number(lowQuote?.low);
         } catch (e) {
           lowStop = null;
         }
         if (existingTrade) {
-          existingTrade.symbol = symbol;
+          existingTrade.symbol = resolvedSymbol;
           existingTrade.entry = entry;
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
@@ -1690,6 +1717,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
           existingTrade.trading212Id = trading212Id;
+          if (rawName) existingTrade.trading212Name = rawName;
+          if (rawIsin) existingTrade.trading212Isin = rawIsin;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1706,7 +1735,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         }
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
-          symbol,
+          symbol: resolvedSymbol,
           currency: tradeCurrency,
           entry,
           stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
@@ -1727,6 +1756,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           assetClass: 'stocks',
           source: 'trading212',
           trading212Id,
+          trading212Name: rawName || undefined,
+          trading212Isin: rawIsin || undefined,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
@@ -3364,6 +3395,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (!found) return res.status(404).json({ error: 'Trade not found' });
   const trade = found.trade;
   const updates = req.body || {};
+  const { config: tradingCfg } = ensureTrading212Config(user);
   const rates = await fetchRates();
   const tradeCurrency = trade.currency || 'GBP';
   if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {
@@ -3380,7 +3412,32 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
   }
   if (typeof updates.symbol === 'string') {
-    trade.symbol = updates.symbol.trim().toUpperCase() || undefined;
+    const trimmed = updates.symbol.trim().toUpperCase();
+    if (trimmed) {
+      trade.symbol = trimmed;
+      trade.symbolOverride = true;
+      if (trade.source === 'trading212' || trade.trading212Id) {
+        const overrideKey = trading212OverrideKey({
+          name: trade.trading212Name,
+          isin: trade.trading212Isin
+        });
+        if (overrideKey) {
+          tradingCfg.symbolOverrides ||= {};
+          tradingCfg.symbolOverrides[overrideKey] = trimmed;
+        }
+      }
+    } else {
+      delete trade.symbolOverride;
+      if (trade.source === 'trading212' || trade.trading212Id) {
+        const overrideKey = trading212OverrideKey({
+          name: trade.trading212Name,
+          isin: trade.trading212Isin
+        });
+        if (overrideKey && tradingCfg.symbolOverrides) {
+          delete tradingCfg.symbolOverrides[overrideKey];
+        }
+      }
+    }
   }
   if (updates.currentStop !== undefined) {
     const stopVal = Number(updates.currentStop);

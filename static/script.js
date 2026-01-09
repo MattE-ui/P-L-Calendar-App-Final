@@ -1228,6 +1228,7 @@ function openEditTradeModal(trade) {
   const modal = $('#edit-trade-modal');
   if (!modal) return;
   const title = $('#edit-trade-title');
+  const symbolInput = $('#edit-trade-symbol');
   const entryInput = $('#edit-trade-entry');
   const stopInput = $('#edit-trade-stop');
   const currentStopInput = $('#edit-trade-current-stop');
@@ -1237,6 +1238,7 @@ function openEditTradeModal(trade) {
     const sym = trade.symbol || 'Trade';
     title.textContent = `Edit ${sym}`;
   }
+  if (symbolInput) symbolInput.value = trade.symbol || '';
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
   if (currentStopInput) currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
@@ -2407,16 +2409,22 @@ function bindControls() {
     if (!modal) return;
     const tradeId = modal.dataset.tradeId;
     if (!tradeId) return;
+    const symbolInput = $('#edit-trade-symbol');
     const entryInput = $('#edit-trade-entry');
     const stopInput = $('#edit-trade-stop');
     const currentStopInput = $('#edit-trade-current-stop');
     const unitsInput = $('#edit-trade-units');
     const status = $('#edit-trade-status');
     if (status) status.textContent = '';
+    const symbolVal = symbolInput?.value.trim() ?? '';
     const entryVal = Number(entryInput?.value);
     const stopVal = Number(stopInput?.value);
     const currentStopVal = currentStopInput?.value.trim() ?? '';
     const unitsVal = Number(unitsInput?.value);
+    if (!symbolVal) {
+      if (status) status.textContent = 'Enter a valid ticker symbol.';
+      return;
+    }
     if (!Number.isFinite(entryVal) || entryVal <= 0) {
       if (status) status.textContent = 'Enter a valid entry price.';
       return;
@@ -2452,6 +2460,7 @@ function bindControls() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          symbol: symbolVal,
           entry: entryVal,
           stop: stopVal,
           currentStop: currentStopPayload ?? null,
