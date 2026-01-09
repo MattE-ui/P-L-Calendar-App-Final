@@ -1696,8 +1696,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
         ));
         const existingTrade = existingTradeEntry?.trade;
-        const isTrading212Trade = existingTrade?.source === 'trading212' || existingTrade?.trading212Id;
-        const resolvedSymbol = !isTrading212Trade && existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
+        const resolvedSymbol = existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -1712,7 +1711,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           lowStop = null;
         }
         if (existingTrade) {
-          existingTrade.symbol = resolvedSymbol;
+          if (!existingTrade.symbol) {
+            existingTrade.symbol = resolvedSymbol;
+          }
           existingTrade.entry = entry;
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
