@@ -329,6 +329,10 @@ function ensureTrading212Config(user) {
     cfg.processedReferences = [];
     mutated = true;
   }
+  if (!cfg.symbolOverrides || typeof cfg.symbolOverrides !== 'object' || Array.isArray(cfg.symbolOverrides)) {
+    cfg.symbolOverrides = {};
+    mutated = true;
+  }
   return { mutated, config: cfg };
 }
 
@@ -3400,6 +3404,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (!found) return res.status(404).json({ error: 'Trade not found' });
   const trade = found.trade;
   const updates = req.body || {};
+  const { config: tradingCfg } = ensureTrading212Config(user);
   const rates = await fetchRates();
   const tradeCurrency = trade.currency || 'GBP';
   if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {

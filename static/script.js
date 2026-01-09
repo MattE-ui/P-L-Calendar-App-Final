@@ -2428,6 +2428,10 @@ function bindControls() {
     const stopVal = Number(stopInput?.value);
     const currentStopVal = currentStopInput?.value.trim() ?? '';
     const unitsVal = Number(unitsInput?.value);
+    if (!symbolVal) {
+      if (status) status.textContent = 'Enter a valid ticker symbol.';
+      return;
+    }
     if (!Number.isFinite(entryVal) || entryVal <= 0) {
       if (status) status.textContent = 'Enter a valid entry price.';
       return;
