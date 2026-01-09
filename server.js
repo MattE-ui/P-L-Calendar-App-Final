@@ -1047,6 +1047,15 @@ function normalizeTrading212Symbol(raw) {
   return cleaned || '';
 }
 
+function normalizeTrading212TickerValue(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
+function normalizeTrading212Name(raw) {
+  if (!raw) return '';
+  return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 function deriveTrading212Root(endpointPath) {
   if (typeof endpointPath !== 'string') return '/api/v0';
   const trimmed = endpointPath.trim();
@@ -1614,15 +1623,17 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       for (const raw of sortedPositions) {
         const instrument = raw?.instrument || {};
         const walletImpact = raw?.walletImpact || {};
-        const rawTicker = String(
+        const rawName = instrument?.name ?? raw?.name ?? '';
+        const rawIsin = instrument?.isin ?? raw?.isin ?? '';
+        const rawTickerValue = normalizeTrading212TickerValue(
           raw?.ticker ??
           raw?.symbol ??
           instrument?.ticker ??
           instrument?.symbol ??
-          instrument?.isin ??
+          rawIsin ??
           ''
-        ).trim().toUpperCase();
-        const symbol = normalizeTrading212Symbol(rawTicker);
+        );
+        const symbol = normalizeTrading212Symbol(rawTickerValue);
         if (!symbol) continue;
         const quantity = parseTradingNumber(
           raw?.quantity ??
@@ -1665,9 +1676,24 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
-        const trading212Id = raw?.id || raw?.positionId || `${symbol}:${createdAtDate.toISOString()}`;
-        const existingTradeEntry = openTrades.find(entry => entry.trade?.trading212Id === trading212Id || entry.trade?.symbol === symbol);
+        const normalizedName = normalizeTrading212Name(rawName);
+        const rawPositionId = raw?.id || raw?.positionId;
+        const trading212Key = rawIsin
+          ? `isin:${rawIsin.toUpperCase()}`
+          : (normalizedName ? `name:${normalizedName}` : symbol);
+        const trading212Id = rawPositionId
+          ? String(rawPositionId)
+          : `${trading212Key}:${createdAtDate.toISOString()}`;
+        const existingTradeEntry = openTrades.find(entry => (
+          entry.trade?.trading212Id === trading212Id ||
+          entry.trade?.symbol === symbol ||
+          (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
+          (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
+          (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
+        ));
         const existingTrade = existingTradeEntry?.trade;
+        const isTrading212Trade = existingTrade?.source === 'trading212' || existingTrade?.trading212Id;
+        const resolvedSymbol = !isTrading212Trade && existingTrade?.symbolOverride ? existingTrade.symbol : symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -1676,13 +1702,13 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
         let lowStop = null;
         try {
-          const lowQuote = await fetchDailyLow(symbol, tradeDateKey);
+          const lowQuote = await fetchDailyLow(resolvedSymbol, tradeDateKey);
           lowStop = Number(lowQuote?.low);
         } catch (e) {
           lowStop = null;
         }
         if (existingTrade) {
-          existingTrade.symbol = symbol;
+          existingTrade.symbol = resolvedSymbol;
           existingTrade.entry = entry;
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
@@ -1690,6 +1716,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
           existingTrade.trading212Id = trading212Id;
+          if (rawName) existingTrade.trading212Name = rawName;
+          if (rawIsin) existingTrade.trading212Isin = rawIsin;
+          if (rawTickerValue) existingTrade.trading212Ticker = rawTickerValue;
           if (Number.isFinite(currentPrice) && currentPrice > 0) {
             existingTrade.lastSyncPrice = currentPrice;
           }
@@ -1706,7 +1735,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         }
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
-          symbol,
+          symbol: resolvedSymbol,
           currency: tradeCurrency,
           entry,
           stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
@@ -1727,6 +1756,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           assetClass: 'stocks',
           source: 'trading212',
           trading212Id,
+          trading212Name: rawName || undefined,
+          trading212Isin: rawIsin || undefined,
+          trading212Ticker: rawTickerValue || undefined,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
@@ -3013,6 +3045,7 @@ async function buildActiveTrades(user, rates = {}) {
       enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
+        displaySymbol: trade.displaySymbol,
         entry,
         stop: Number(trade.stop),
         currency: tradeCurrency,
@@ -3092,6 +3125,7 @@ async function buildActiveTrades(user, rates = {}) {
     enriched.push({
       id: trade.id,
       symbol: quoteSymbol || symbol,
+      displaySymbol: trade.displaySymbol,
       entry,
       stop: Number(trade.stop),
       currency: tradeCurrency,
@@ -3207,6 +3241,7 @@ app.post('/api/trades', auth, async (req, res) => {
     baseCurrency,
     note,
     symbol,
+    displaySymbol,
     direction,
     rounding,
     tradeType,
@@ -3229,7 +3264,8 @@ app.post('/api/trades', auth, async (req, res) => {
   const pctNum = Number(riskPct);
     const riskAmountNum = Number(riskAmount);
   const sizeUnitsNum = Number(sizeUnitsInput);
-  const symbolClean = typeof symbol === 'string' ? symbol.trim().toUpperCase() : '';
+  const symbolInput = typeof displaySymbol === 'string' ? displaySymbol : symbol;
+  const symbolClean = typeof symbolInput === 'string' ? symbolInput.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
@@ -3379,8 +3415,25 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (trade.status === 'closed' && wantsRiskUpdate) {
     return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
   }
-  if (typeof updates.symbol === 'string') {
-    trade.symbol = updates.symbol.trim().toUpperCase() || undefined;
+  const incomingSymbol = typeof updates.displaySymbol === 'string'
+    ? updates.displaySymbol
+    : (typeof updates.symbol === 'string' ? updates.symbol : null);
+  if (incomingSymbol !== null) {
+    const trimmed = incomingSymbol.trim().toUpperCase();
+    const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+    if (isTrading212) {
+      if (trimmed) {
+        trade.displaySymbol = trimmed;
+      } else {
+        delete trade.displaySymbol;
+      }
+    } else {
+      if (!trimmed) {
+        return res.status(400).json({ error: 'Enter a valid ticker symbol.' });
+      }
+      trade.symbol = trimmed;
+      delete trade.displaySymbol;
+    }
   }
   if (updates.currentStop !== undefined) {
     const stopVal = Number(updates.currentStop);
