@@ -876,6 +876,7 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
     : (defaultDate || currentDateKey());
+  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id;
   const direction = trade.direction === 'short' ? 'short' : 'long';
   const slippage = Number(trade.slippage) || 0;
   const effectiveClose = direction === 'long'
@@ -896,8 +897,10 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   trade.realizedPnlCurrency = netPnlCurrency;
   const risk = Number(trade.riskAmountGBP);
   trade.rMultiple = Number.isFinite(risk) && risk !== 0 ? pnlSafe / risk : null;
-  updateHistoryForClose(user, history, targetDate, pnlSafe);
-  refreshAnchors(user, history);
+  if (!isProviderTrade) {
+    updateHistoryForClose(user, history, targetDate, pnlSafe);
+    refreshAnchors(user, history);
+  }
   return { pnlGBP: pnlSafe, closeDateKey: targetDate };
 }
 
