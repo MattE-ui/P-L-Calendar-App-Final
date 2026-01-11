@@ -1851,7 +1851,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
         ));
         const existingTrade = existingTradeEntry?.trade;
-        const resolvedSymbol = existingTrade?.symbol || symbol;
+        const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
