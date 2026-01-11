@@ -93,9 +93,50 @@ const Trading212Error = (() => {
       if (code !== undefined) this.code = code;
     }
   }
+  class Trading212AuthError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'auth_error' });
+      this.name = 'Trading212AuthError';
+    }
+  }
+  class Trading212HttpError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'http_error' });
+      this.name = 'Trading212HttpError';
+    }
+  }
+  class Trading212RateLimitError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'rate_limited' });
+      this.name = 'Trading212RateLimitError';
+    }
+  }
+  class Trading212NetworkError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'network_error' });
+      this.name = 'Trading212NetworkError';
+    }
+  }
+  class Trading212ParseError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'parse_error' });
+      this.name = 'Trading212ParseError';
+    }
+  }
   global.__Trading212Error__ = Trading212ErrorImpl;
+  global.__Trading212AuthError__ = Trading212AuthError;
+  global.__Trading212HttpError__ = Trading212HttpError;
+  global.__Trading212RateLimitError__ = Trading212RateLimitError;
+  global.__Trading212NetworkError__ = Trading212NetworkError;
+  global.__Trading212ParseError__ = Trading212ParseError;
   return Trading212ErrorImpl;
 })();
+
+const Trading212AuthError = global.__Trading212AuthError__;
+const Trading212HttpError = global.__Trading212HttpError__;
+const Trading212RateLimitError = global.__Trading212RateLimitError__;
+const Trading212NetworkError = global.__Trading212NetworkError__;
+const Trading212ParseError = global.__Trading212ParseError__;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -592,6 +633,11 @@ function normalizeTradeJournal(user) {
       const sizeUnits = Number(trade.sizeUnits ?? trade.quantity ?? trade.units ?? trade.shares);
       const perUnitRiskRaw = Number(trade.perUnitRisk);
       const currentStopRaw = Number(trade.currentStop);
+      const currentStopSourceRaw = typeof trade.currentStopSource === 'string' ? trade.currentStopSource.trim().toLowerCase() : '';
+      const currentStopLastSyncedAtRaw = typeof trade.currentStopLastSyncedAt === 'string' ? trade.currentStopLastSyncedAt : '';
+      const t212StopOrderIdRaw = typeof trade.t212StopOrderId === 'string' ? trade.t212StopOrderId : '';
+      const currentStopStale = trade.currentStopStale === true;
+      const originalStopRaw = Number(trade.originalStopPrice);
       const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
       const feesRaw = Number(trade.fees);
       const slippageRaw = Number(trade.slippage);
@@ -605,6 +651,9 @@ function normalizeTradeJournal(user) {
         continue;
       }
       const stopValue = Number.isFinite(stop) && stop > 0 ? stop : undefined;
+      const originalStopPrice = Number.isFinite(originalStopRaw) && originalStopRaw > 0
+        ? originalStopRaw
+        : stopValue;
       let perUnitRisk = Number.isFinite(perUnitRiskRaw) && perUnitRiskRaw > 0 ? perUnitRiskRaw : undefined;
       if (stopValue !== undefined) {
         const calculatedRisk = Math.abs(entry - stopValue);
@@ -651,10 +700,23 @@ function normalizeTradeJournal(user) {
         positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
         portfolioGBPAtCalc: Number.isFinite(portfolioGBPAtCalc) ? portfolioGBPAtCalc : undefined,
         portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
-        createdAt
+        createdAt,
+        originalStopPrice
       };
       if (Number.isFinite(currentStopRaw) && currentStopRaw > 0) {
         normalizedTrade.currentStop = currentStopRaw;
+      }
+      if (currentStopSourceRaw === 'manual' || currentStopSourceRaw === 't212') {
+        normalizedTrade.currentStopSource = currentStopSourceRaw;
+      }
+      if (currentStopLastSyncedAtRaw) {
+        normalizedTrade.currentStopLastSyncedAt = currentStopLastSyncedAtRaw;
+      }
+      if (t212StopOrderIdRaw) {
+        normalizedTrade.t212StopOrderId = t212StopOrderIdRaw;
+      }
+      if (currentStopStale) {
+        normalizedTrade.currentStopStale = true;
       }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
@@ -876,6 +938,7 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
     : (defaultDate || currentDateKey());
+  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id;
   const direction = trade.direction === 'short' ? 'short' : 'long';
   const slippage = Number(trade.slippage) || 0;
   const effectiveClose = direction === 'long'
@@ -896,8 +959,10 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   trade.realizedPnlCurrency = netPnlCurrency;
   const risk = Number(trade.riskAmountGBP);
   trade.rMultiple = Number.isFinite(risk) && risk !== 0 ? pnlSafe / risk : null;
-  updateHistoryForClose(user, history, targetDate, pnlSafe);
-  refreshAnchors(user, history);
+  if (!isProviderTrade) {
+    updateHistoryForClose(user, history, targetDate, pnlSafe);
+    refreshAnchors(user, history);
+  }
   return { pnlGBP: pnlSafe, closeDateKey: targetDate };
 }
 
@@ -1080,6 +1145,215 @@ function normalizeTrading212Name(raw) {
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function resolveTrading212BaseUrl(config) {
+  const base = String(config?.baseUrl || process.env.T212_BASE_URL || '').trim();
+  if (base) return base.replace(/\/+$/, '');
+  return config?.mode === 'practice'
+    ? 'https://demo.trading212.com'
+    : 'https://live.trading212.com';
+}
+
+function buildTrading212AuthHeaders(config) {
+  const apiKey = String(config?.apiKey || '').trim();
+  const apiSecret = String(config?.apiSecret || '').trim();
+  if (!apiKey || !apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
+  }
+  const encodedCredentials = Buffer.from(`${apiKey}:${apiSecret}`, 'utf8').toString('base64');
+  return {
+    'Accept': 'application/json',
+    'User-Agent': 'VeracitySuite/1.0',
+    Authorization: `Basic ${encodedCredentials}`
+  };
+}
+
+const trading212OrdersCache = new Map();
+const TRADING212_ORDERS_CACHE_MS = 20000;
+
+function normalizeTrading212OrderStatus(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
+function extractTrading212Orders(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.orders)) return payload.orders;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return null;
+}
+
+function parseTrading212Orders(payload) {
+  const orders = extractTrading212Orders(payload);
+  if (!Array.isArray(orders)) return [];
+  return orders.map(raw => {
+    const instrument = raw?.instrument || {};
+    const ticker = normalizeTrading212TickerValue(
+      instrument?.ticker ?? raw?.ticker ?? raw?.symbol ?? ''
+    );
+    const isin = String(instrument?.isin ?? raw?.isin ?? '').trim();
+    const uid = String(instrument?.id ?? instrument?.uid ?? raw?.instrumentId ?? raw?.instrumentUid ?? '').trim();
+    const type = normalizeTrading212OrderStatus(raw?.type ?? raw?.orderType ?? raw?.orderTypeName ?? '');
+    const status = normalizeTrading212OrderStatus(raw?.status ?? raw?.state ?? raw?.orderStatus ?? '');
+    const side = normalizeTrading212OrderStatus(raw?.side ?? raw?.direction ?? '');
+    const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
+    const stopPrice = parseTradingNumber(
+      raw?.stopPrice ??
+      raw?.stop ??
+      raw?.stop?.price ??
+      raw?.stop?.value
+    );
+    const limitPrice = parseTradingNumber(
+      raw?.limitPrice ??
+      raw?.limit ??
+      raw?.limit?.price ??
+      raw?.limit?.value
+    );
+    const createdAt = raw?.createdAt ?? raw?.createdAtUtc ?? raw?.dateCreated ?? raw?.created ?? null;
+    const id = raw?.id ?? raw?.orderId ?? raw?.uid ?? null;
+    return {
+      id: id ? String(id) : '',
+      instrumentTicker: ticker,
+      instrumentIsin: isin || '',
+      instrumentUid: uid || '',
+      type,
+      status,
+      side,
+      quantity,
+      stopPrice,
+      limitPrice,
+      createdAt
+    };
+  }).filter(order => {
+    if (!order.stopPrice || !Number.isFinite(order.stopPrice)) return false;
+    const type = order.type;
+    if (!['STOP', 'STOP_LIMIT'].includes(type)) return false;
+    const status = order.status;
+    const isOpen = ['OPEN', 'PENDING', 'ACTIVE', 'WORKING', 'PLACED', 'TRIGGERED'].includes(status);
+    if (!isOpen) return false;
+    const isSell = order.side === 'SELL' || (Number.isFinite(order.quantity) && order.quantity < 0);
+    return isSell;
+  });
+}
+
+function resolveMappedBrokerTicker(db, username, displayTicker) {
+  const trimmed = String(displayTicker || '').trim().toUpperCase();
+  if (!trimmed) return '';
+  const mappings = ensureInstrumentMappings(db);
+  const userMapping = mappings.find(mapping => (
+    mapping?.status === 'active'
+    && mapping.scope === 'user'
+    && mapping.user_id === username
+    && String(mapping.canonical_ticker || '').toUpperCase() === trimmed
+  ));
+  if (userMapping?.broker_ticker) return String(userMapping.broker_ticker).trim().toUpperCase();
+  const globalMapping = mappings.find(mapping => (
+    mapping?.status === 'active'
+    && mapping.scope === 'global'
+    && !mapping.user_id
+    && String(mapping.canonical_ticker || '').toUpperCase() === trimmed
+  ));
+  return globalMapping?.broker_ticker ? String(globalMapping.broker_ticker).trim().toUpperCase() : '';
+}
+
+function pickBestStopOrder(orders, trade) {
+  if (!orders.length) return null;
+  const tradeQty = Number(trade.sizeUnits);
+  const scored = orders.map(order => {
+    const orderQty = Number.isFinite(order.quantity) ? Math.abs(order.quantity) : null;
+    const qtyDiff = (Number.isFinite(tradeQty) && Number.isFinite(orderQty))
+      ? Math.abs(orderQty - tradeQty)
+      : Infinity;
+    const createdAt = Date.parse(order.createdAt || '');
+    return {
+      order,
+      qtyDiff,
+      createdAt: Number.isFinite(createdAt) ? createdAt : 0
+    };
+  });
+  scored.sort((a, b) => {
+    if (a.qtyDiff !== b.qtyDiff) return a.qtyDiff - b.qtyDiff;
+    return b.createdAt - a.createdAt;
+  });
+  return scored[0]?.order || null;
+}
+
+function matchStopOrderForTrade(trade, orders, db, username) {
+  if (!trade || !orders.length) return null;
+  if (trade.t212StopOrderId) {
+    const found = orders.find(order => order.id && order.id === trade.t212StopOrderId);
+    if (found) return found;
+  }
+  const brokerTicker = normalizeTrading212TickerValue(
+    trade.trading212Ticker || trade.brokerTicker || trade.symbol || ''
+  );
+  const displayTicker = String(trade.displaySymbol || trade.displayTicker || '').trim().toUpperCase();
+  const mappedBrokerTicker = resolveMappedBrokerTicker(db, username, displayTicker);
+  const tickers = new Set([brokerTicker, mappedBrokerTicker].filter(Boolean));
+  const tradeIsin = String(trade.trading212Isin || '').trim().toUpperCase();
+  const filtered = orders.filter(order => {
+    const orderTicker = normalizeTrading212TickerValue(order.instrumentTicker || '');
+    if (orderTicker && tickers.has(orderTicker)) return true;
+    if (tradeIsin && String(order.instrumentIsin || '').trim().toUpperCase() === tradeIsin) return true;
+    return false;
+  });
+  return pickBestStopOrder(filtered, trade);
+}
+
+async function fetchTrading212Orders(config, username, { bypassCache = false } = {}) {
+  if (!config?.apiKey || !config?.apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
+  }
+  const baseUrl = resolveTrading212BaseUrl(config);
+  const endpoint = '/api/v0/equity/orders';
+  const cacheKey = `${String(username || '')}|${baseUrl}|${endpoint}`;
+  const cached = trading212OrdersCache.get(cacheKey);
+  if (!bypassCache && cached && Date.now() - cached.fetchedAt < TRADING212_ORDERS_CACHE_MS) {
+    console.info(`[T212] cache hit orders key=${cacheKey}`);
+    return {
+      raw: cached.raw,
+      orders: cached.orders,
+      rawCount: cached.rawCount,
+      filteredCount: cached.filteredCount,
+      fromCache: true
+    };
+  }
+  console.info(`[T212] cache miss orders key=${cacheKey}`);
+  const headers = buildTrading212AuthHeaders(config);
+  const url = `${baseUrl}${endpoint}`;
+  console.info(`[T212] baseUrl=${baseUrl} endpoint=${endpoint}`);
+  const payload = await requestTrading212RawEndpoint(url, headers, {
+    signal: AbortSignal.timeout(15000)
+  });
+  if (payload === null) {
+    throw new Trading212ParseError('Trading 212 orders response was empty.', { status: 200 });
+  }
+  const rawOrders = extractTrading212Orders(payload);
+  if (!Array.isArray(rawOrders)) {
+    throw new Trading212ParseError('Trading 212 orders response was in an unexpected format.', {
+      status: 200,
+      details: { sample: JSON.stringify(payload).slice(0, 500) }
+    });
+  }
+  const orders = parseTrading212Orders(payload);
+  const rawCount = rawOrders.length;
+  const filteredCount = orders.length;
+  trading212OrdersCache.set(cacheKey, {
+    fetchedAt: Date.now(),
+    raw: payload,
+    orders,
+    rawCount,
+    filteredCount
+  });
+  console.info(`[T212] orders rawCount=${rawCount} filteredCount=${filteredCount}`);
+  return {
+    raw: payload,
+    orders,
+    rawCount,
+    filteredCount,
+    fromCache: false
+  };
+}
+
 function computeSourceKey(instrument = {}) {
   if (instrument.isin) {
     return `TRADING212|ISIN:${instrument.isin}`;
@@ -1198,8 +1472,10 @@ function applyInstrumentMappingToTrade(trade, db, username) {
   }
   const instrument = buildInstrumentFromTrade(trade);
   const resolved = resolveInstrumentMapping(db, instrument, username);
-  const fallbackTicker = trade.displaySymbol || instrument.ticker || trade.symbol || '';
-  const displayTicker = resolved.displayTicker || fallbackTicker;
+  const fallbackTicker = trade.displaySymbol || trade.symbol || instrument.ticker || '';
+  const displayTicker = resolved.scope === 'broker'
+    ? fallbackTicker
+    : (resolved.displayTicker || fallbackTicker);
   return {
     ...trade,
     displayTicker,
@@ -1222,7 +1498,7 @@ function deriveTrading212Root(endpointPath) {
   return '/api/v0';
 }
 
-async function requestTrading212Endpoint(url, headers) {
+async function requestTrading212Endpoint(url, headers, options = {}) {
   const maxAttempts = 3;
   let attempt = 0;
   let lastError = null;
@@ -1230,16 +1506,23 @@ async function requestTrading212Endpoint(url, headers) {
     attempt += 1;
     let res;
     try {
-      res = await fetch(url, { method: 'GET', headers });
+      res = await fetch(url, { method: 'GET', headers, signal: options.signal });
     } catch (networkErr) {
-      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      const code = networkErr?.code || networkErr?.cause?.code || networkErr?.name;
+      const isNetwork = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'AbortError'].includes(code);
+      lastError = isNetwork
+        ? new Trading212NetworkError('Unable to reach Trading 212', { code: 'network_error' })
+        : new Trading212Error('Trading 212 request failed.', { code: 'trading212_error' });
       await sleep(Math.min(1000 * attempt, 3000));
       continue;
     }
     const status = res.status;
+    const contentType = res.headers.get('content-type') || '';
+    const bodyText = await res.text().catch(() => '');
+    console.info(`Trading 212 request ${url} -> ${status}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
-      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+      lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter
       });
@@ -1251,31 +1534,25 @@ async function requestTrading212Endpoint(url, headers) {
       throw lastError;
     }
     if (status === 401 || status === 403) {
-      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
-        status,
-        code: 'unauthorised'
-      });
-    }
-    if (status === 404) {
-      throw new Trading212Error('Trading 212 could not find the portfolio summary endpoint.', {
-        status,
-        code: 'not_found'
-      });
+      console.warn(`Trading 212 auth failure ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212AuthError('Invalid API key or missing Orders Read permission.', { status });
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+      console.warn(`Trading 212 non-OK ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212HttpError(bodyText || `Trading 212 responded with ${status}`, { status });
     }
-    const contentType = res.headers.get('content-type') || '';
-    let data;
-    if (contentType.includes('application/json')) {
-      data = await res.json();
-    } else {
-      const raw = await res.text();
+    let data = {};
+    if (bodyText) {
+      if (!contentType.includes('application/json')) {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
       try {
-        data = JSON.parse(raw);
+        data = JSON.parse(bodyText);
       } catch (e) {
-        throw new Trading212Error('Trading 212 returned an unexpected response format.', {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
           status,
           code: 'invalid_payload'
         });
@@ -1353,7 +1630,7 @@ async function requestTrading212Endpoint(url, headers) {
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
-async function requestTrading212RawEndpoint(url, headers) {
+async function requestTrading212RawEndpoint(url, headers, options = {}) {
   const maxAttempts = 3;
   let attempt = 0;
   let lastError = null;
@@ -1361,16 +1638,24 @@ async function requestTrading212RawEndpoint(url, headers) {
     attempt += 1;
     let res;
     try {
-      res = await fetch(url, { method: 'GET', headers });
+      res = await fetch(url, { method: 'GET', headers, signal: options.signal });
     } catch (networkErr) {
-      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      const code = networkErr?.code || networkErr?.cause?.code || networkErr?.name;
+      const isNetwork = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'AbortError'].includes(code);
+      lastError = isNetwork
+        ? new Trading212NetworkError('Unable to reach Trading 212', { code: 'network_error' })
+        : new Trading212Error('Trading 212 request failed.', { code: 'trading212_error' });
       await sleep(Math.min(1000 * attempt, 3000));
       continue;
     }
     const status = res.status;
+    const contentType = res.headers.get('content-type') || '';
+    const bodyText = await res.text().catch(() => '');
+    console.info(`Trading 212 request ${url} -> ${status}`);
+    console.info(`[T212] status=${status} content-type=${contentType} body=${bodyText.slice(0, 300)}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
-      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+      lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter
       });
@@ -1382,88 +1667,43 @@ async function requestTrading212RawEndpoint(url, headers) {
       throw lastError;
     }
     if (status === 401 || status === 403) {
-      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
-        status,
-        code: 'unauthorised'
-      });
-    }
-    if (status === 404) {
-      throw new Trading212Error('Trading 212 could not find the requested endpoint.', {
-        status,
-        code: 'not_found'
-      });
+      console.warn(`Trading 212 auth failure ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212AuthError('Invalid API key or missing Orders Read permission.', { status });
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+      console.warn(`Trading 212 non-OK ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212HttpError(bodyText || `Trading 212 responded with ${status}`, { status });
     }
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      return await res.json();
+    if (bodyText) {
+      if (!contentType.includes('application/json')) {
+        throw new Trading212ParseError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
+      try {
+        return JSON.parse(bodyText);
+      } catch (e) {
+        throw new Trading212ParseError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
     }
-    const raw = await res.text();
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      throw new Trading212Error('Trading 212 returned an unexpected response format.', {
-        status,
-        code: 'invalid_payload'
-      });
-    }
+    return null;
   }
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
 async function fetchTrading212Snapshot(config) {
-  if (!config.apiKey) {
-    throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
+  if (!config?.apiKey || !config?.apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
-  const baseCandidates = [];
-  const seenBases = new Set();
-  const appendBase = (value) => {
-    if (!value || typeof value !== 'string') return;
-    let normalized = value.trim();
-    if (!normalized) return;
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `https://${normalized.replace(/^\/+/, '')}`;
-    }
-    normalized = normalized.replace(/\/+$/, '');
-    if (seenBases.has(normalized)) return;
-    seenBases.add(normalized);
-    baseCandidates.push(normalized);
-  };
-  const practiceBases = [
-    config.baseUrl,
-    process.env.T212_PRACTICE_BASE,
-    'https://demo.trading212.com',
-    'https://api-demo.trading212.com'
-  ];
-  const liveBases = [
-    config.baseUrl,
-    process.env.T212_LIVE_BASE,
-    'https://api.trading212.com',
-    'https://live.trading212.com'
-  ];
-  const orderedBases = config.mode === 'practice'
-    ? [...practiceBases, ...liveBases]
-    : [...liveBases, ...practiceBases];
-  for (const candidate of orderedBases) {
-    appendBase(candidate);
-  }
-  if (!baseCandidates.length) {
+  const baseUrl = resolveTrading212BaseUrl(config);
+  if (!baseUrl) {
     throw new Trading212Error('Trading 212 base URL could not be determined.');
   }
-  const headers = {
-    'Accept': 'application/json',
-    'User-Agent': 'PL-Calendar-App/1.0'
-  };
-  if (config.apiKey && config.apiSecret) {
-    const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
-    headers.Authorization = `Basic ${encodedCredentials}`;
-  } else if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
-    headers['X-Api-Key'] = config.apiKey;
-  }
+  const headers = buildTrading212AuthHeaders(config);
   const endpointCandidates = [];
   const seenEndpoints = new Set();
   const appendEndpoint = (value) => {
@@ -1489,83 +1729,82 @@ async function fetchTrading212Snapshot(config) {
   appendEndpoint('/api/v0/account/summary');
   appendEndpoint('/api/v0/portfolio/summary');
   let lastError = null;
-  for (const base of baseCandidates) {
-    for (const pathSuffix of endpointCandidates) {
-      const endpoint = `${base}${pathSuffix}`;
-      try {
-        const snapshot = await requestTrading212Endpoint(endpoint, headers);
-        const root = deriveTrading212Root(pathSuffix);
-        const positionsEndpoints = [
-          `${root}/equity/positions`,
-          `${root}/equity/portfolio`,
-          `${root}/equity/portfolio/positions`,
-          `${root}/equity/account/positions`,
-          `${root}/portfolio/positions`
-        ];
-        const transactionEndpoints = [
-          `${root}/equity/history/transactions?limit=50`,
-          `${root}/history/transactions`,
-          `${root}/history/transactions?type=CASH`,
-          `${root}/history/cash`,
-          `${root}/transactions`,
-          `${root}/cash/transactions`
-        ];
-        let positions = null;
-        let positionsRaw = null;
-        let transactions = null;
-        let transactionsRaw = null;
-        for (const candidate of positionsEndpoints) {
-          try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
-            if (Array.isArray(list)) {
-              positions = list;
-              positionsRaw = payload;
-              break;
-            }
-          } catch (e) {
-            if (e instanceof Trading212Error && e.status === 404) continue;
+  for (const pathSuffix of endpointCandidates) {
+    const endpoint = `${baseUrl}${pathSuffix}`;
+    try {
+      console.info(`[T212] baseUrl=${baseUrl} endpoint=${pathSuffix}`);
+      const snapshot = await requestTrading212Endpoint(endpoint, headers);
+      const root = deriveTrading212Root(pathSuffix);
+      const positionsEndpoints = [
+        `${root}/equity/positions`,
+        `${root}/equity/portfolio`,
+        `${root}/equity/portfolio/positions`,
+        `${root}/equity/account/positions`,
+        `${root}/portfolio/positions`
+      ];
+      const transactionEndpoints = [
+        `${root}/equity/history/transactions?limit=50`,
+        `${root}/history/transactions`,
+        `${root}/history/transactions?type=CASH`,
+        `${root}/history/cash`,
+        `${root}/transactions`,
+        `${root}/cash/transactions`
+      ];
+      let positions = null;
+      let positionsRaw = null;
+      let transactions = null;
+      let transactionsRaw = null;
+      for (const candidate of positionsEndpoints) {
+        try {
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
+          if (Array.isArray(list)) {
+            positions = list;
+            positionsRaw = payload;
+            break;
           }
+        } catch (e) {
+          if (e instanceof Trading212Error && e.status === 404) continue;
         }
-        for (const candidate of transactionEndpoints) {
-          try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
-            if (Array.isArray(list)) {
-              transactions = list;
-              transactionsRaw = payload ?? { items: [] };
-              break;
-            }
-          } catch (e) {
-            if (e instanceof Trading212Error && e.status === 404) continue;
-          }
-        }
-        return {
-          ...snapshot,
-          baseUrl: base,
-          endpoint: pathSuffix,
-          positions,
-          positionsRaw,
-          transactions,
-          transactionsRaw
-        };
-      } catch (error) {
-        if (error instanceof Trading212Error && error.status === 404) {
-          const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
-            status: 404,
-            code: 'not_found'
-          });
-          notFoundError.baseUrl = base;
-          notFoundError.endpoint = pathSuffix;
-          lastError = notFoundError;
-          continue;
-        }
-        if (error instanceof Trading212Error) {
-          error.baseUrl = base;
-          error.endpoint = pathSuffix;
-        }
-        throw error;
       }
+      for (const candidate of transactionEndpoints) {
+        try {
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+          if (Array.isArray(list)) {
+            transactions = list;
+            transactionsRaw = payload ?? { items: [] };
+            break;
+          }
+        } catch (e) {
+          if (e instanceof Trading212Error && e.status === 404) continue;
+        }
+      }
+      return {
+        ...snapshot,
+        baseUrl,
+        endpoint: pathSuffix,
+        positions,
+        positionsRaw,
+        transactions,
+        transactionsRaw
+      };
+    } catch (error) {
+      if (error instanceof Trading212Error && error.status === 404) {
+        const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
+          status: 404,
+          code: 'not_found'
+        });
+        notFoundError.baseUrl = baseUrl;
+        notFoundError.endpoint = pathSuffix;
+        lastError = notFoundError;
+        continue;
+      }
+      if (error instanceof Trading212Error) {
+        error.baseUrl = baseUrl;
+        error.endpoint = pathSuffix;
+      }
+      throw error;
     }
   }
   throw lastError || new Trading212Error('Trading 212 portfolio summary endpoint not found.', { status: 404 });
@@ -1579,7 +1818,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   if (!user) return;
   ensureUserShape(user, username);
   const cfg = user.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const rates = await fetchRates();
   const now = Date.now();
   if (cfg.cooldownUntil) {
@@ -1846,7 +2085,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
         ));
         const existingTrade = existingTradeEntry?.trade;
-        const resolvedSymbol = existingTrade?.symbol || symbol;
+        const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
@@ -1882,8 +2121,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           }
           const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
           if (Number.isFinite(nextStop) && nextStop > 0) {
-            existingTrade.stop = nextStop;
-            existingTrade.perUnitRisk = Math.abs(entry - nextStop);
+            existingTrade.currentStop = nextStop;
+            if (!Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
+              existingTrade.stop = nextStop;
+              existingTrade.perUnitRisk = Math.abs(entry - nextStop);
+            }
           }
           positionsMutated = true;
           continue;
@@ -1982,7 +2224,7 @@ function stopTrading212Job(username) {
 function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const parsed = parseSnapshotTime(cfg.snapshotTime);
   const timezone = cfg.timezone || 'Europe/London';
   if (cfg.lastSyncAt) {
@@ -2706,7 +2948,29 @@ app.get('/api/integrations/trading212/raw', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.trading212 || {};
-  res.json(cfg.lastRaw || { portfolio: null, positions: null, transactions: null });
+  let ordersPayload = null;
+  let ordersError = null;
+  if (cfg.apiKey && cfg.apiSecret) {
+    fetchTrading212Orders(cfg, req.username, { bypassCache: true })
+      .then(payload => {
+        ordersPayload = payload.raw ?? null;
+        cfg.lastRaw = {
+          ...(cfg.lastRaw || {}),
+          orders: ordersPayload
+        };
+        saveDB(db);
+      })
+      .catch(err => {
+        ordersError = err?.message || 'Unable to fetch orders.';
+      })
+      .finally(() => {
+        const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+        res.json({ ...raw, orders: ordersPayload ?? raw.orders ?? null, ordersError });
+      });
+    return;
+  }
+  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+  res.json({ ...raw, ordersError: ordersError || null });
 });
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
@@ -2745,8 +3009,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
       cfg.apiSecret = '';
     }
   }
-  if (cfg.enabled && !cfg.apiKey) {
-    return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
+  if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
+    return res.status(400).json({ error: 'Provide your Trading 212 API key and secret to enable automation.' });
   }
   if (cfg.enabled) {
     delete cfg.authoritativeSyncAt;
@@ -3367,6 +3631,8 @@ async function buildActiveTrades(user, rates = {}) {
         id: trade.id,
         symbol: quoteSymbol || symbol,
         displaySymbol: trade.displaySymbol,
+        createdAt: trade.createdAt,
+        date: trade.date,
         trading212Isin: trade.trading212Isin,
         trading212Ticker: trade.trading212Ticker,
         trading212Name: trade.trading212Name,
@@ -3387,6 +3653,10 @@ async function buildActiveTrades(user, rates = {}) {
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
         positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
         currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+        currentStopSource: trade.currentStopSource,
+        currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
+        currentStopStale: trade.currentStopStale === true,
+        originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
       });
@@ -3451,6 +3721,8 @@ async function buildActiveTrades(user, rates = {}) {
       id: trade.id,
       symbol: quoteSymbol || symbol,
       displaySymbol: trade.displaySymbol,
+      createdAt: trade.createdAt,
+      date: trade.date,
       trading212Isin: trade.trading212Isin,
       trading212Ticker: trade.trading212Ticker,
       trading212Name: trade.trading212Name,
@@ -3472,6 +3744,10 @@ async function buildActiveTrades(user, rates = {}) {
       guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
       positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
       currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+      currentStopSource: trade.currentStopSource,
+      currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
+      currentStopStale: trade.currentStopStale === true,
+      originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
       source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
       note: trade.note
     });
@@ -3676,6 +3952,7 @@ app.post('/api/trades', auth, async (req, res) => {
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
     stop: stopNum,
+    originalStopPrice: stopNum,
     currentStop: Number.isFinite(currentStopNum) && currentStopNum > 0 ? currentStopNum : undefined,
     symbol: symbolClean || undefined,
     currency: tradeCurrency,
@@ -3778,6 +4055,13 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       trade.currentStop = stopVal;
     }
   }
+  const incomingStopSource = typeof updates.currentStopSource === 'string'
+    ? updates.currentStopSource.trim().toLowerCase()
+    : '';
+  if (incomingStopSource === 'manual') {
+    trade.currentStopSource = 'manual';
+    trade.currentStopStale = false;
+  }
   if (wantsRiskUpdate && trade.status !== 'closed') {
     const entryNum = Number(updates.entry ?? trade.entry);
     const stopNum = Number(updates.stop ?? trade.stop);
@@ -3827,6 +4111,9 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     trade.entry = entryNum;
     trade.stop = stopNum;
     trade.perUnitRisk = perUnitRisk;
+    if (!Number.isFinite(Number(trade.originalStopPrice))) {
+      trade.originalStopPrice = stopNum;
+    }
     trade.riskPct = pctToUse || pctNum || 0;
     trade.sizeUnits = sizeUnits;
     trade.riskAmountCurrency = riskAmountCurrency;
@@ -3944,6 +4231,102 @@ app.get('/api/trades/active', auth, async (req, res) => {
     liveOpenPnlMode,
     liveOpenPnlCurrency
   });
+});
+
+app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ ok: false, error: 'Trade not found' });
+  const trade = found.trade;
+  const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+  if (!isTrading212) {
+    return res.json({
+      ok: true,
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: trade.currentStopLastSyncedAt || null,
+      stale: trade.currentStopStale === true,
+      message: 'Trading 212 sync not enabled for this trade.'
+    });
+  }
+  const { config: tradingCfg } = ensureTrading212Config(user);
+  if (!tradingCfg?.apiKey || !tradingCfg?.apiSecret) {
+    return res.status(401).json({
+      error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
+    });
+  }
+  try {
+    const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
+    const matched = matchStopOrderForTrade(trade, ordersPayload.orders, db, req.username);
+    const syncedAt = new Date().toISOString();
+    if (matched) {
+      trade.currentStop = matched.stopPrice;
+      trade.currentStopSource = 't212';
+      trade.currentStopLastSyncedAt = syncedAt;
+      trade.currentStopStale = false;
+      trade.t212StopOrderId = matched.id || '';
+      saveDB(db);
+      console.info(`Trading 212 stop sync matched trade ${trade.id} -> order ${matched.id || 'unknown'}`);
+      return res.json({
+        ok: true,
+        currentStopPrice: matched.stopPrice,
+        source: 't212',
+        lastSyncedAt: syncedAt,
+        stale: false,
+        matchedOrder: {
+          id: matched.id || null,
+          type: matched.type || null,
+          stopPrice: matched.stopPrice || null,
+          limitPrice: matched.limitPrice || null,
+          createdAt: matched.createdAt || null,
+          status: matched.status || null,
+          quantity: matched.quantity || null
+        }
+      });
+    }
+    trade.currentStopLastSyncedAt = syncedAt;
+    if (trade.currentStopSource === 't212') {
+      trade.currentStopStale = true;
+    }
+    trade.t212StopOrderId = '';
+    saveDB(db);
+    console.info(`Trading 212 stop sync found no match for trade ${trade.id}`);
+    const noOrders = ordersPayload.rawCount === 0;
+    return res.json({
+      ok: true,
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: syncedAt,
+      stale: trade.currentStopStale === true,
+      message: noOrders
+        ? 'No open equity orders returned by Trading 212 API.'
+        : 'No active stop order found.'
+    });
+  } catch (e) {
+    console.warn('Trading 212 stop sync failed', e);
+    if (e instanceof Trading212AuthError) {
+      return res.status(e.status || 401).json({
+        error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
+      });
+    }
+    if (e instanceof Trading212RateLimitError) {
+      return res.status(429).json({
+        error: 'Rate limited by Trading 212, retry shortly.'
+      });
+    }
+    if (e instanceof Trading212NetworkError) {
+      return res.status(503).json({
+        error: 'Unable to reach Trading 212 (network).'
+      });
+    }
+    return res.status(500).json({
+      error: 'Trading 212 stop sync failed.'
+    });
+  }
 });
 
 app.get('/api/market/low', auth, async (req, res) => {
@@ -4073,7 +4456,10 @@ module.exports = {
   ensureTradeJournal,
   flattenTrades,
   filterTrades,
-  cleanupExpiredGuests
+  cleanupExpiredGuests,
+  parseTrading212Orders,
+  matchStopOrderForTrade,
+  pickBestStopOrder
 };
 
 // global error handler
