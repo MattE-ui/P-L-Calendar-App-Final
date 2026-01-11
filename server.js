@@ -1198,8 +1198,10 @@ function applyInstrumentMappingToTrade(trade, db, username) {
   }
   const instrument = buildInstrumentFromTrade(trade);
   const resolved = resolveInstrumentMapping(db, instrument, username);
-  const fallbackTicker = trade.displaySymbol || instrument.ticker || trade.symbol || '';
-  const displayTicker = resolved.displayTicker || fallbackTicker;
+  const fallbackTicker = trade.displaySymbol || trade.symbol || instrument.ticker || '';
+  const displayTicker = resolved.scope === 'broker'
+    ? fallbackTicker
+    : (resolved.displayTicker || fallbackTicker);
   return {
     ...trade,
     displayTicker,
@@ -3367,6 +3369,8 @@ async function buildActiveTrades(user, rates = {}) {
         id: trade.id,
         symbol: quoteSymbol || symbol,
         displaySymbol: trade.displaySymbol,
+        createdAt: trade.createdAt,
+        date: trade.date,
         trading212Isin: trade.trading212Isin,
         trading212Ticker: trade.trading212Ticker,
         trading212Name: trade.trading212Name,
@@ -3451,6 +3455,8 @@ async function buildActiveTrades(user, rates = {}) {
       id: trade.id,
       symbol: quoteSymbol || symbol,
       displaySymbol: trade.displaySymbol,
+      createdAt: trade.createdAt,
+      date: trade.date,
       trading212Isin: trade.trading212Isin,
       trading212Ticker: trade.trading212Ticker,
       trading212Name: trade.trading212Name,
