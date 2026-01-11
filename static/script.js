@@ -35,6 +35,15 @@ const state = {
   manualStopOverride: false
 };
 
+const ACTIVE_TRADE_SORTS = new Set([
+  'newest',
+  'oldest',
+  'best-percent',
+  'worst-percent',
+  'best-amount',
+  'worst-amount'
+]);
+
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 
@@ -2326,11 +2335,24 @@ function bindControls() {
   if (sortBlocks.length > 1) {
     sortBlocks.slice(0, -1).forEach(block => block.remove());
   }
-  $('#active-trade-sort')?.addEventListener('change', event => {
-    const value = event.target?.value || 'newest';
-    state.activeTradeSort = value;
-    renderActiveTrades();
-  });
+  const activeTradeSortSelect = $('#active-trade-sort');
+  if (activeTradeSortSelect) {
+    activeTradeSortSelect.addEventListener('change', event => {
+      const value = event.target?.value || 'newest';
+      if (ACTIVE_TRADE_SORTS.has(value)) {
+        state.activeTradeSort = value;
+        try {
+          localStorage.setItem('plc-active-trade-sort', value);
+        } catch (e) {
+          console.warn('Failed to save active trade sort preference', e);
+        }
+      }
+      renderActiveTrades();
+    });
+    if (ACTIVE_TRADE_SORTS.has(state.activeTradeSort)) {
+      activeTradeSortSelect.value = state.activeTradeSort;
+    }
+  }
 
   const openPortfolioModal = () => {
     setNavOpen(false);
@@ -2868,6 +2890,10 @@ async function init() {
       if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
       state.riskPct = state.defaultRiskPct;
       state.riskCurrency = state.defaultRiskCurrency;
+    }
+    const savedTradeSort = localStorage.getItem('plc-active-trade-sort');
+    if (ACTIVE_TRADE_SORTS.has(savedTradeSort)) {
+      state.activeTradeSort = savedTradeSort;
     }
   } catch (e) {
     console.warn(e);
