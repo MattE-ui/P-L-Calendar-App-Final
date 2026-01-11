@@ -1198,7 +1198,7 @@ function applyInstrumentMappingToTrade(trade, db, username) {
   }
   const instrument = buildInstrumentFromTrade(trade);
   const resolved = resolveInstrumentMapping(db, instrument, username);
-  const fallbackTicker = trade.displaySymbol || instrument.ticker || trade.symbol || '';
+  const fallbackTicker = trade.displaySymbol || trade.symbol || instrument.ticker || '';
   const displayTicker = resolved.displayTicker || fallbackTicker;
   return {
     ...trade,
