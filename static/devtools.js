@@ -169,6 +169,14 @@ async function loadTrading212Payloads() {
     document.getElementById('devtools-portfolio').textContent = JSON.stringify(data.portfolio ?? null, null, 2);
     document.getElementById('devtools-positions').textContent = JSON.stringify(data.positions ?? null, null, 2);
     document.getElementById('devtools-transactions').textContent = JSON.stringify(data.transactions ?? null, null, 2);
+    const ordersEl = document.getElementById('devtools-orders');
+    if (ordersEl) {
+      if (data.ordersError) {
+        ordersEl.textContent = data.ordersError;
+      } else {
+        ordersEl.textContent = JSON.stringify(data.orders ?? null, null, 2);
+      }
+    }
   } catch (e) {
     const message = e?.data?.error || e.message || 'Unable to load payloads.';
     document.getElementById('devtools-portfolio').textContent = message;
