@@ -485,10 +485,13 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 36px;
 }
 .trade-pill .trade-source-logo img {
-  width: 18px;
   height: 18px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
   display: block;
 }
 .trade-pill .trade-meta {
@@ -517,6 +520,10 @@ select {
   font-size: 19.8px;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+.trade-pill .trade-title span:first-child {
+  font-size: 0.9em;
+  white-space: nowrap;
 }
 .trade-pill .trade-percent {
   margin-left: 10px;
