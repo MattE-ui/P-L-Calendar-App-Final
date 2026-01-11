@@ -117,11 +117,18 @@ const Trading212Error = (() => {
       this.name = 'Trading212NetworkError';
     }
   }
+  class Trading212ParseError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'parse_error' });
+      this.name = 'Trading212ParseError';
+    }
+  }
   global.__Trading212Error__ = Trading212ErrorImpl;
   global.__Trading212AuthError__ = Trading212AuthError;
   global.__Trading212HttpError__ = Trading212HttpError;
   global.__Trading212RateLimitError__ = Trading212RateLimitError;
   global.__Trading212NetworkError__ = Trading212NetworkError;
+  global.__Trading212ParseError__ = Trading212ParseError;
   return Trading212ErrorImpl;
 })();
 
@@ -129,6 +136,7 @@ const Trading212AuthError = global.__Trading212AuthError__;
 const Trading212HttpError = global.__Trading212HttpError__;
 const Trading212RateLimitError = global.__Trading212RateLimitError__;
 const Trading212NetworkError = global.__Trading212NetworkError__;
+const Trading212ParseError = global.__Trading212ParseError__;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1137,6 +1145,14 @@ function normalizeTrading212Name(raw) {
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function resolveTrading212BaseUrl(config) {
+  const base = String(config?.baseUrl || process.env.T212_BASE_URL || '').trim();
+  if (base) return base.replace(/\/+$/, '');
+  return config?.mode === 'practice'
+    ? 'https://demo.trading212.com'
+    : 'https://live.trading212.com';
+}
+
 function buildTrading212AuthHeaders(config) {
   const apiKey = String(config?.apiKey || '').trim();
   const apiSecret = String(config?.apiSecret || '').trim();
@@ -1163,11 +1179,12 @@ function extractTrading212Orders(payload) {
   if (Array.isArray(payload?.items)) return payload.items;
   if (Array.isArray(payload?.orders)) return payload.orders;
   if (Array.isArray(payload?.data)) return payload.data;
-  return [];
+  return null;
 }
 
 function parseTrading212Orders(payload) {
   const orders = extractTrading212Orders(payload);
+  if (!Array.isArray(orders)) return [];
   return orders.map(raw => {
     const instrument = raw?.instrument || {};
     const ticker = normalizeTrading212TickerValue(
@@ -1282,69 +1299,59 @@ function matchStopOrderForTrade(trade, orders, db, username) {
   return pickBestStopOrder(filtered, trade);
 }
 
-async function fetchTrading212Orders(config, username) {
+async function fetchTrading212Orders(config, username, { bypassCache = false } = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
-  const cacheKey = String(username || '');
+  const baseUrl = resolveTrading212BaseUrl(config);
+  const endpoint = '/api/v0/equity/orders';
+  const cacheKey = `${String(username || '')}|${baseUrl}|${endpoint}`;
   const cached = trading212OrdersCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < TRADING212_ORDERS_CACHE_MS) {
-    return cached.orders;
+  if (!bypassCache && cached && Date.now() - cached.fetchedAt < TRADING212_ORDERS_CACHE_MS) {
+    console.info(`[T212] cache hit orders key=${cacheKey}`);
+    return {
+      raw: cached.raw,
+      orders: cached.orders,
+      rawCount: cached.rawCount,
+      filteredCount: cached.filteredCount,
+      fromCache: true
+    };
   }
-  const baseCandidates = [];
-  const seenBases = new Set();
-  const appendBase = (value) => {
-    if (!value || typeof value !== 'string') return;
-    let normalized = value.trim();
-    if (!normalized) return;
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `https://${normalized.replace(/^\/+/, '')}`;
-    }
-    normalized = normalized.replace(/\/+$/, '');
-    if (seenBases.has(normalized)) return;
-    seenBases.add(normalized);
-    baseCandidates.push(normalized);
-  };
-  const practiceBases = [
-    config.baseUrl,
-    process.env.T212_BASE_URL,
-    process.env.T212_PRACTICE_BASE,
-    'https://demo.trading212.com',
-    'https://api-demo.trading212.com'
-  ];
-  const liveBases = [
-    config.baseUrl,
-    process.env.T212_BASE_URL,
-    process.env.T212_LIVE_BASE,
-    'https://api.trading212.com',
-    'https://live.trading212.com'
-  ];
-  const orderedBases = config.mode === 'practice'
-    ? [...practiceBases, ...liveBases]
-    : [...liveBases];
-  for (const candidate of orderedBases) appendBase(candidate);
-  if (!baseCandidates.length) {
-    throw new Trading212Error('Trading 212 base URL could not be determined.', { code: 'base_missing' });
-  }
+  console.info(`[T212] cache miss orders key=${cacheKey}`);
   const headers = buildTrading212AuthHeaders(config);
-  const endpoints = ['/api/v0/equity/orders'];
-  let lastError = null;
-  for (const base of baseCandidates) {
-    for (const pathSuffix of endpoints) {
-      try {
-        const payload = await requestTrading212RawEndpoint(`${base}${pathSuffix}`, headers, {
-          signal: AbortSignal.timeout(15000)
-        });
-        const orders = parseTrading212Orders(payload);
-        trading212OrdersCache.set(cacheKey, { fetchedAt: Date.now(), orders });
-        console.info(`Trading 212 orders fetched: ${orders.length} (user ${username})`);
-        return orders;
-      } catch (e) {
-        lastError = e;
-      }
-    }
+  const url = `${baseUrl}${endpoint}`;
+  console.info(`[T212] baseUrl=${baseUrl} endpoint=${endpoint}`);
+  const payload = await requestTrading212RawEndpoint(url, headers, {
+    signal: AbortSignal.timeout(15000)
+  });
+  if (payload === null) {
+    throw new Trading212ParseError('Trading 212 orders response was empty.', { status: 200 });
   }
-  throw lastError || new Trading212Error('Trading 212 orders request failed.');
+  const rawOrders = extractTrading212Orders(payload);
+  if (!Array.isArray(rawOrders)) {
+    throw new Trading212ParseError('Trading 212 orders response was in an unexpected format.', {
+      status: 200,
+      details: { sample: JSON.stringify(payload).slice(0, 500) }
+    });
+  }
+  const orders = parseTrading212Orders(payload);
+  const rawCount = rawOrders.length;
+  const filteredCount = orders.length;
+  trading212OrdersCache.set(cacheKey, {
+    fetchedAt: Date.now(),
+    raw: payload,
+    orders,
+    rawCount,
+    filteredCount
+  });
+  console.info(`[T212] orders rawCount=${rawCount} filteredCount=${filteredCount}`);
+  return {
+    raw: payload,
+    orders,
+    rawCount,
+    filteredCount,
+    fromCache: false
+  };
 }
 
 function computeSourceKey(instrument = {}) {
@@ -1645,6 +1652,7 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     const contentType = res.headers.get('content-type') || '';
     const bodyText = await res.text().catch(() => '');
     console.info(`Trading 212 request ${url} -> ${status}`);
+    console.info(`[T212] status=${status} content-type=${contentType} body=${bodyText.slice(0, 300)}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
       lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
@@ -1668,7 +1676,7 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     }
     if (bodyText) {
       if (!contentType.includes('application/json')) {
-        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+        throw new Trading212ParseError('Trading 212 returned an unexpected response format.', {
           status,
           code: 'invalid_payload'
         });
@@ -1676,13 +1684,13 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
       try {
         return JSON.parse(bodyText);
       } catch (e) {
-        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+        throw new Trading212ParseError('Trading 212 returned an unexpected response format.', {
           status,
           code: 'invalid_payload'
         });
       }
     }
-    return {};
+    return null;
   }
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
@@ -1691,41 +1699,8 @@ async function fetchTrading212Snapshot(config) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
-  const baseCandidates = [];
-  const seenBases = new Set();
-  const appendBase = (value) => {
-    if (!value || typeof value !== 'string') return;
-    let normalized = value.trim();
-    if (!normalized) return;
-    if (!/^https?:\/\//i.test(normalized)) {
-      normalized = `https://${normalized.replace(/^\/+/, '')}`;
-    }
-    normalized = normalized.replace(/\/+$/, '');
-    if (seenBases.has(normalized)) return;
-    seenBases.add(normalized);
-    baseCandidates.push(normalized);
-  };
-  const practiceBases = [
-    config.baseUrl,
-    process.env.T212_BASE_URL,
-    process.env.T212_PRACTICE_BASE,
-    'https://demo.trading212.com',
-    'https://api-demo.trading212.com'
-  ];
-  const liveBases = [
-    config.baseUrl,
-    process.env.T212_BASE_URL,
-    process.env.T212_LIVE_BASE,
-    'https://api.trading212.com',
-    'https://live.trading212.com'
-  ];
-  const orderedBases = config.mode === 'practice'
-    ? [...practiceBases, ...liveBases]
-    : [...liveBases, ...practiceBases];
-  for (const candidate of orderedBases) {
-    appendBase(candidate);
-  }
-  if (!baseCandidates.length) {
+  const baseUrl = resolveTrading212BaseUrl(config);
+  if (!baseUrl) {
     throw new Trading212Error('Trading 212 base URL could not be determined.');
   }
   const headers = buildTrading212AuthHeaders(config);
@@ -1754,83 +1729,82 @@ async function fetchTrading212Snapshot(config) {
   appendEndpoint('/api/v0/account/summary');
   appendEndpoint('/api/v0/portfolio/summary');
   let lastError = null;
-  for (const base of baseCandidates) {
-    for (const pathSuffix of endpointCandidates) {
-      const endpoint = `${base}${pathSuffix}`;
-      try {
-        const snapshot = await requestTrading212Endpoint(endpoint, headers);
-        const root = deriveTrading212Root(pathSuffix);
-        const positionsEndpoints = [
-          `${root}/equity/positions`,
-          `${root}/equity/portfolio`,
-          `${root}/equity/portfolio/positions`,
-          `${root}/equity/account/positions`,
-          `${root}/portfolio/positions`
-        ];
-        const transactionEndpoints = [
-          `${root}/equity/history/transactions?limit=50`,
-          `${root}/history/transactions`,
-          `${root}/history/transactions?type=CASH`,
-          `${root}/history/cash`,
-          `${root}/transactions`,
-          `${root}/cash/transactions`
-        ];
-        let positions = null;
-        let positionsRaw = null;
-        let transactions = null;
-        let transactionsRaw = null;
-        for (const candidate of positionsEndpoints) {
-          try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
-            if (Array.isArray(list)) {
-              positions = list;
-              positionsRaw = payload;
-              break;
-            }
-          } catch (e) {
-            if (e instanceof Trading212Error && e.status === 404) continue;
+  for (const pathSuffix of endpointCandidates) {
+    const endpoint = `${baseUrl}${pathSuffix}`;
+    try {
+      console.info(`[T212] baseUrl=${baseUrl} endpoint=${pathSuffix}`);
+      const snapshot = await requestTrading212Endpoint(endpoint, headers);
+      const root = deriveTrading212Root(pathSuffix);
+      const positionsEndpoints = [
+        `${root}/equity/positions`,
+        `${root}/equity/portfolio`,
+        `${root}/equity/portfolio/positions`,
+        `${root}/equity/account/positions`,
+        `${root}/portfolio/positions`
+      ];
+      const transactionEndpoints = [
+        `${root}/equity/history/transactions?limit=50`,
+        `${root}/history/transactions`,
+        `${root}/history/transactions?type=CASH`,
+        `${root}/history/cash`,
+        `${root}/transactions`,
+        `${root}/cash/transactions`
+      ];
+      let positions = null;
+      let positionsRaw = null;
+      let transactions = null;
+      let transactionsRaw = null;
+      for (const candidate of positionsEndpoints) {
+        try {
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
+          if (Array.isArray(list)) {
+            positions = list;
+            positionsRaw = payload;
+            break;
           }
+        } catch (e) {
+          if (e instanceof Trading212Error && e.status === 404) continue;
         }
-        for (const candidate of transactionEndpoints) {
-          try {
-            const payload = await requestTrading212RawEndpoint(`${base}${candidate}`, headers);
-            const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
-            if (Array.isArray(list)) {
-              transactions = list;
-              transactionsRaw = payload ?? { items: [] };
-              break;
-            }
-          } catch (e) {
-            if (e instanceof Trading212Error && e.status === 404) continue;
-          }
-        }
-        return {
-          ...snapshot,
-          baseUrl: base,
-          endpoint: pathSuffix,
-          positions,
-          positionsRaw,
-          transactions,
-          transactionsRaw
-        };
-      } catch (error) {
-        if (error instanceof Trading212Error && error.status === 404) {
-          const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
-            status: 404,
-            code: 'not_found'
-          });
-          notFoundError.baseUrl = base;
-          notFoundError.endpoint = pathSuffix;
-          lastError = notFoundError;
-          continue;
-        }
-        if (error instanceof Trading212Error) {
-          error.baseUrl = base;
-          error.endpoint = pathSuffix;
-        }
-        throw error;
       }
+      for (const candidate of transactionEndpoints) {
+        try {
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
+          if (Array.isArray(list)) {
+            transactions = list;
+            transactionsRaw = payload ?? { items: [] };
+            break;
+          }
+        } catch (e) {
+          if (e instanceof Trading212Error && e.status === 404) continue;
+        }
+      }
+      return {
+        ...snapshot,
+        baseUrl,
+        endpoint: pathSuffix,
+        positions,
+        positionsRaw,
+        transactions,
+        transactionsRaw
+      };
+    } catch (error) {
+      if (error instanceof Trading212Error && error.status === 404) {
+        const notFoundError = new Trading212Error(`Trading 212 could not find ${endpoint}`, {
+          status: 404,
+          code: 'not_found'
+        });
+        notFoundError.baseUrl = baseUrl;
+        notFoundError.endpoint = pathSuffix;
+        lastError = notFoundError;
+        continue;
+      }
+      if (error instanceof Trading212Error) {
+        error.baseUrl = baseUrl;
+        error.endpoint = pathSuffix;
+      }
+      throw error;
     }
   }
   throw lastError || new Trading212Error('Trading 212 portfolio summary endpoint not found.', { status: 404 });
@@ -2974,7 +2948,29 @@ app.get('/api/integrations/trading212/raw', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.trading212 || {};
-  res.json(cfg.lastRaw || { portfolio: null, positions: null, transactions: null });
+  let ordersPayload = null;
+  let ordersError = null;
+  if (cfg.apiKey && cfg.apiSecret) {
+    fetchTrading212Orders(cfg, req.username, { bypassCache: true })
+      .then(payload => {
+        ordersPayload = payload.raw ?? null;
+        cfg.lastRaw = {
+          ...(cfg.lastRaw || {}),
+          orders: ordersPayload
+        };
+        saveDB(db);
+      })
+      .catch(err => {
+        ordersError = err?.message || 'Unable to fetch orders.';
+      })
+      .finally(() => {
+        const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+        res.json({ ...raw, orders: ordersPayload ?? raw.orders ?? null, ordersError });
+      });
+    return;
+  }
+  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+  res.json({ ...raw, ordersError: ordersError || null });
 });
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
@@ -4264,8 +4260,8 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     });
   }
   try {
-    const orders = await fetchTrading212Orders(tradingCfg, req.username);
-    const matched = matchStopOrderForTrade(trade, orders, db, req.username);
+    const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
+    const matched = matchStopOrderForTrade(trade, ordersPayload.orders, db, req.username);
     const syncedAt = new Date().toISOString();
     if (matched) {
       trade.currentStop = matched.stopPrice;
@@ -4299,13 +4295,16 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     trade.t212StopOrderId = '';
     saveDB(db);
     console.info(`Trading 212 stop sync found no match for trade ${trade.id}`);
+    const noOrders = ordersPayload.rawCount === 0;
     return res.json({
       ok: true,
       currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
       source: trade.currentStopSource || 'manual',
       lastSyncedAt: syncedAt,
       stale: trade.currentStopStale === true,
-      message: 'No active stop order found.'
+      message: noOrders
+        ? 'No open equity orders returned by Trading 212 API.'
+        : 'No active stop order found.'
     });
   } catch (e) {
     console.warn('Trading 212 stop sync failed', e);
