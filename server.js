@@ -1137,6 +1137,20 @@ function normalizeTrading212Name(raw) {
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
+function buildTrading212AuthHeaders(config) {
+  const apiKey = String(config?.apiKey || '').trim();
+  const apiSecret = String(config?.apiSecret || '').trim();
+  if (!apiKey || !apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
+  }
+  const encodedCredentials = Buffer.from(`${apiKey}:${apiSecret}`, 'utf8').toString('base64');
+  return {
+    'Accept': 'application/json',
+    'User-Agent': 'VeracitySuite/1.0',
+    Authorization: `Basic ${encodedCredentials}`
+  };
+}
+
 const trading212OrdersCache = new Map();
 const TRADING212_ORDERS_CACHE_MS = 20000;
 
@@ -1269,8 +1283,8 @@ function matchStopOrderForTrade(trade, orders, db, username) {
 }
 
 async function fetchTrading212Orders(config, username) {
-  if (!config?.apiKey) {
-    throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
+  if (!config?.apiKey || !config?.apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
   const cacheKey = String(username || '');
   const cached = trading212OrdersCache.get(cacheKey);
@@ -1312,11 +1326,7 @@ async function fetchTrading212Orders(config, username) {
   if (!baseCandidates.length) {
     throw new Trading212Error('Trading 212 base URL could not be determined.', { code: 'base_missing' });
   }
-  const headers = {
-    'Accept': 'application/json',
-    'User-Agent': 'VeracitySuite/1.0',
-    Authorization: config.apiKey
-  };
+  const headers = buildTrading212AuthHeaders(config);
   const endpoints = ['/api/v0/equity/orders'];
   let lastError = null;
   for (const base of baseCandidates) {
@@ -1678,8 +1688,8 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
 }
 
 async function fetchTrading212Snapshot(config) {
-  if (!config.apiKey) {
-    throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
+  if (!config?.apiKey || !config?.apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
   const baseCandidates = [];
   const seenBases = new Set();
@@ -1718,17 +1728,7 @@ async function fetchTrading212Snapshot(config) {
   if (!baseCandidates.length) {
     throw new Trading212Error('Trading 212 base URL could not be determined.');
   }
-  const headers = {
-    'Accept': 'application/json',
-    'User-Agent': 'PL-Calendar-App/1.0'
-  };
-  if (config.apiKey && config.apiSecret) {
-    const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
-    headers.Authorization = `Basic ${encodedCredentials}`;
-  } else if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
-    headers['X-Api-Key'] = config.apiKey;
-  }
+  const headers = buildTrading212AuthHeaders(config);
   const endpointCandidates = [];
   const seenEndpoints = new Set();
   const appendEndpoint = (value) => {
@@ -1844,7 +1844,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   if (!user) return;
   ensureUserShape(user, username);
   const cfg = user.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const rates = await fetchRates();
   const now = Date.now();
   if (cfg.cooldownUntil) {
@@ -2250,7 +2250,7 @@ function stopTrading212Job(username) {
 function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey) return;
+  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
   const parsed = parseSnapshotTime(cfg.snapshotTime);
   const timezone = cfg.timezone || 'Europe/London';
   if (cfg.lastSyncAt) {
@@ -3013,8 +3013,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
       cfg.apiSecret = '';
     }
   }
-  if (cfg.enabled && !cfg.apiKey) {
-    return res.status(400).json({ error: 'Provide your Trading 212 API key to enable automation.' });
+  if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
+    return res.status(400).json({ error: 'Provide your Trading 212 API key and secret to enable automation.' });
   }
   if (cfg.enabled) {
     delete cfg.authoritativeSyncAt;
@@ -4258,7 +4258,7 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     });
   }
   const { config: tradingCfg } = ensureTrading212Config(user);
-  if (!tradingCfg?.apiKey) {
+  if (!tradingCfg?.apiKey || !tradingCfg?.apiSecret) {
     return res.status(401).json({
       error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
     });
