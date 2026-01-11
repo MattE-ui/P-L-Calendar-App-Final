@@ -4225,8 +4225,8 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
   const { config: tradingCfg } = ensureTrading212Config(user);
   if (!tradingCfg?.apiKey) {
     return res.json({
-      ok: false,
-      error: 'Trading 212 is not connected.',
+      ok: true,
+      warning: 'Trading 212 is not connected.',
       currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
       source: trade.currentStopSource || 'manual',
       lastSyncedAt: trade.currentStopLastSyncedAt || null,
@@ -4280,8 +4280,8 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
   } catch (e) {
     console.warn('Trading 212 stop sync failed', e);
     return res.json({
-      ok: false,
-      error: e?.message || 'Could not sync from Trading 212.',
+      ok: true,
+      warning: 'Could not sync from Trading 212.',
       currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
       source: trade.currentStopSource || 'manual',
       lastSyncedAt: trade.currentStopLastSyncedAt || null,

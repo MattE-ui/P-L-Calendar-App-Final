@@ -1388,9 +1388,9 @@ function openEditTradeModal(trade) {
   if (isTrading212) {
     api(`/api/trades/${trade.id}/stop-sync`)
       .then((payload) => {
-        if (payload?.ok === false && payload?.error) {
+        if (payload?.warning) {
           if (currentStopWarning) {
-            currentStopWarning.textContent = payload.error;
+            currentStopWarning.textContent = payload.warning;
             currentStopWarning.classList.remove('is-hidden');
           }
         }
