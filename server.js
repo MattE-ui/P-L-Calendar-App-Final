@@ -93,9 +93,42 @@ const Trading212Error = (() => {
       if (code !== undefined) this.code = code;
     }
   }
+  class Trading212AuthError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'auth_error' });
+      this.name = 'Trading212AuthError';
+    }
+  }
+  class Trading212HttpError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'http_error' });
+      this.name = 'Trading212HttpError';
+    }
+  }
+  class Trading212RateLimitError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'rate_limited' });
+      this.name = 'Trading212RateLimitError';
+    }
+  }
+  class Trading212NetworkError extends Trading212ErrorImpl {
+    constructor(message, meta = {}) {
+      super(message, { ...meta, code: meta.code || 'network_error' });
+      this.name = 'Trading212NetworkError';
+    }
+  }
   global.__Trading212Error__ = Trading212ErrorImpl;
+  global.__Trading212AuthError__ = Trading212AuthError;
+  global.__Trading212HttpError__ = Trading212HttpError;
+  global.__Trading212RateLimitError__ = Trading212RateLimitError;
+  global.__Trading212NetworkError__ = Trading212NetworkError;
   return Trading212ErrorImpl;
 })();
+
+const Trading212AuthError = global.__Trading212AuthError__;
+const Trading212HttpError = global.__Trading212HttpError__;
+const Trading212RateLimitError = global.__Trading212RateLimitError__;
+const Trading212NetworkError = global.__Trading212NetworkError__;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1260,42 +1293,38 @@ async function fetchTrading212Orders(config, username) {
   };
   const practiceBases = [
     config.baseUrl,
-    process.env.T212_PRACTICE_BASE,
     process.env.T212_BASE_URL,
+    process.env.T212_PRACTICE_BASE,
     'https://demo.trading212.com',
     'https://api-demo.trading212.com'
   ];
   const liveBases = [
     config.baseUrl,
-    process.env.T212_LIVE_BASE,
     process.env.T212_BASE_URL,
+    process.env.T212_LIVE_BASE,
     'https://api.trading212.com',
     'https://live.trading212.com'
   ];
   const orderedBases = config.mode === 'practice'
     ? [...practiceBases, ...liveBases]
-    : [...liveBases, ...practiceBases];
+    : [...liveBases];
   for (const candidate of orderedBases) appendBase(candidate);
   if (!baseCandidates.length) {
     throw new Trading212Error('Trading 212 base URL could not be determined.', { code: 'base_missing' });
   }
   const headers = {
     'Accept': 'application/json',
-    'User-Agent': 'PL-Calendar-App/1.0'
+    'User-Agent': 'VeracitySuite/1.0',
+    Authorization: config.apiKey
   };
-  if (config.apiKey && config.apiSecret) {
-    const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
-    headers.Authorization = `Basic ${encodedCredentials}`;
-  } else if (config.apiKey) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
-    headers['X-Api-Key'] = config.apiKey;
-  }
   const endpoints = ['/api/v0/equity/orders'];
   let lastError = null;
   for (const base of baseCandidates) {
     for (const pathSuffix of endpoints) {
       try {
-        const payload = await requestTrading212Endpoint(`${base}${pathSuffix}`, headers);
+        const payload = await requestTrading212RawEndpoint(`${base}${pathSuffix}`, headers, {
+          signal: AbortSignal.timeout(15000)
+        });
         const orders = parseTrading212Orders(payload);
         trading212OrdersCache.set(cacheKey, { fetchedAt: Date.now(), orders });
         console.info(`Trading 212 orders fetched: ${orders.length} (user ${username})`);
@@ -1452,7 +1481,7 @@ function deriveTrading212Root(endpointPath) {
   return '/api/v0';
 }
 
-async function requestTrading212Endpoint(url, headers) {
+async function requestTrading212Endpoint(url, headers, options = {}) {
   const maxAttempts = 3;
   let attempt = 0;
   let lastError = null;
@@ -1460,16 +1489,23 @@ async function requestTrading212Endpoint(url, headers) {
     attempt += 1;
     let res;
     try {
-      res = await fetch(url, { method: 'GET', headers });
+      res = await fetch(url, { method: 'GET', headers, signal: options.signal });
     } catch (networkErr) {
-      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      const code = networkErr?.code || networkErr?.cause?.code || networkErr?.name;
+      const isNetwork = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'AbortError'].includes(code);
+      lastError = isNetwork
+        ? new Trading212NetworkError('Unable to reach Trading 212', { code: 'network_error' })
+        : new Trading212Error('Trading 212 request failed.', { code: 'trading212_error' });
       await sleep(Math.min(1000 * attempt, 3000));
       continue;
     }
     const status = res.status;
+    const contentType = res.headers.get('content-type') || '';
+    const bodyText = await res.text().catch(() => '');
+    console.info(`Trading 212 request ${url} -> ${status}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
-      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+      lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter
       });
@@ -1481,31 +1517,25 @@ async function requestTrading212Endpoint(url, headers) {
       throw lastError;
     }
     if (status === 401 || status === 403) {
-      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
-        status,
-        code: 'unauthorised'
-      });
-    }
-    if (status === 404) {
-      throw new Trading212Error('Trading 212 could not find the portfolio summary endpoint.', {
-        status,
-        code: 'not_found'
-      });
+      console.warn(`Trading 212 auth failure ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212AuthError('Invalid API key or missing Orders Read permission.', { status });
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+      console.warn(`Trading 212 non-OK ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212HttpError(bodyText || `Trading 212 responded with ${status}`, { status });
     }
-    const contentType = res.headers.get('content-type') || '';
-    let data;
-    if (contentType.includes('application/json')) {
-      data = await res.json();
-    } else {
-      const raw = await res.text();
+    let data = {};
+    if (bodyText) {
+      if (!contentType.includes('application/json')) {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
       try {
-        data = JSON.parse(raw);
+        data = JSON.parse(bodyText);
       } catch (e) {
-        throw new Trading212Error('Trading 212 returned an unexpected response format.', {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
           status,
           code: 'invalid_payload'
         });
@@ -1583,7 +1613,7 @@ async function requestTrading212Endpoint(url, headers) {
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
-async function requestTrading212RawEndpoint(url, headers) {
+async function requestTrading212RawEndpoint(url, headers, options = {}) {
   const maxAttempts = 3;
   let attempt = 0;
   let lastError = null;
@@ -1591,16 +1621,23 @@ async function requestTrading212RawEndpoint(url, headers) {
     attempt += 1;
     let res;
     try {
-      res = await fetch(url, { method: 'GET', headers });
+      res = await fetch(url, { method: 'GET', headers, signal: options.signal });
     } catch (networkErr) {
-      lastError = new Trading212Error('Unable to reach Trading 212', { code: 'network_error' });
+      const code = networkErr?.code || networkErr?.cause?.code || networkErr?.name;
+      const isNetwork = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'AbortError'].includes(code);
+      lastError = isNetwork
+        ? new Trading212NetworkError('Unable to reach Trading 212', { code: 'network_error' })
+        : new Trading212Error('Trading 212 request failed.', { code: 'trading212_error' });
       await sleep(Math.min(1000 * attempt, 3000));
       continue;
     }
     const status = res.status;
+    const contentType = res.headers.get('content-type') || '';
+    const bodyText = await res.text().catch(() => '');
+    console.info(`Trading 212 request ${url} -> ${status}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
-      lastError = new Trading212Error('Trading 212 rate limited the request. Please try again later.', {
+      lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter
       });
@@ -1612,34 +1649,30 @@ async function requestTrading212RawEndpoint(url, headers) {
       throw lastError;
     }
     if (status === 401 || status === 403) {
-      throw new Trading212Error('Trading 212 rejected the provided credentials. Double-check your API key and secret.', {
-        status,
-        code: 'unauthorised'
-      });
-    }
-    if (status === 404) {
-      throw new Trading212Error('Trading 212 could not find the requested endpoint.', {
-        status,
-        code: 'not_found'
-      });
+      console.warn(`Trading 212 auth failure ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212AuthError('Invalid API key or missing Orders Read permission.', { status });
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Trading212Error(text || `Trading 212 responded with ${status}`, { status });
+      console.warn(`Trading 212 non-OK ${status} for ${url}: ${bodyText.slice(0, 500)}`);
+      throw new Trading212HttpError(bodyText || `Trading 212 responded with ${status}`, { status });
     }
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      return await res.json();
+    if (bodyText) {
+      if (!contentType.includes('application/json')) {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
+      try {
+        return JSON.parse(bodyText);
+      } catch (e) {
+        throw new Trading212HttpError('Trading 212 returned an unexpected response format.', {
+          status,
+          code: 'invalid_payload'
+        });
+      }
     }
-    const raw = await res.text();
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      throw new Trading212Error('Trading 212 returned an unexpected response format.', {
-        status,
-        code: 'invalid_payload'
-      });
-    }
+    return {};
   }
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
@@ -1664,12 +1697,14 @@ async function fetchTrading212Snapshot(config) {
   };
   const practiceBases = [
     config.baseUrl,
+    process.env.T212_BASE_URL,
     process.env.T212_PRACTICE_BASE,
     'https://demo.trading212.com',
     'https://api-demo.trading212.com'
   ];
   const liveBases = [
     config.baseUrl,
+    process.env.T212_BASE_URL,
     process.env.T212_LIVE_BASE,
     'https://api.trading212.com',
     'https://live.trading212.com'
@@ -4224,13 +4259,8 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
   }
   const { config: tradingCfg } = ensureTrading212Config(user);
   if (!tradingCfg?.apiKey) {
-    return res.json({
-      ok: true,
-      warning: 'Trading 212 is not connected.',
-      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
-      source: trade.currentStopSource || 'manual',
-      lastSyncedAt: trade.currentStopLastSyncedAt || null,
-      stale: trade.currentStopStale === true
+    return res.status(401).json({
+      error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
     });
   }
   try {
@@ -4279,13 +4309,23 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     });
   } catch (e) {
     console.warn('Trading 212 stop sync failed', e);
-    return res.json({
-      ok: true,
-      warning: 'Could not sync from Trading 212.',
-      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
-      source: trade.currentStopSource || 'manual',
-      lastSyncedAt: trade.currentStopLastSyncedAt || null,
-      stale: trade.currentStopStale === true
+    if (e instanceof Trading212AuthError) {
+      return res.status(e.status || 401).json({
+        error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
+      });
+    }
+    if (e instanceof Trading212RateLimitError) {
+      return res.status(429).json({
+        error: 'Rate limited by Trading 212, retry shortly.'
+      });
+    }
+    if (e instanceof Trading212NetworkError) {
+      return res.status(503).json({
+        error: 'Unable to reach Trading 212 (network).'
+      });
+    }
+    return res.status(500).json({
+      error: 'Trading 212 stop sync failed.'
     });
   }
 });
