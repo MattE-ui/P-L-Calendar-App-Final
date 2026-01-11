@@ -514,7 +514,7 @@ select {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 22px;
+  font-size: 19.8px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -701,7 +701,7 @@ select {
     gap: 16px;
   }
   .trade-pill .trade-title {
-    font-size: 24px;
+    font-size: 21.6px;
   }
   .trade-pill .trade-body {
     grid-template-columns: minmax(0, 1fr);
