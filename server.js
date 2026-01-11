@@ -1199,7 +1199,9 @@ function applyInstrumentMappingToTrade(trade, db, username) {
   const instrument = buildInstrumentFromTrade(trade);
   const resolved = resolveInstrumentMapping(db, instrument, username);
   const fallbackTicker = trade.displaySymbol || trade.symbol || instrument.ticker || '';
-  const displayTicker = resolved.displayTicker || fallbackTicker;
+  const displayTicker = resolved.scope === 'broker'
+    ? fallbackTicker
+    : (resolved.displayTicker || fallbackTicker);
   return {
     ...trade,
     displayTicker,
