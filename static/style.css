@@ -479,8 +479,7 @@ select {
 .trade-pill.trade-pill-alert {
   background: linear-gradient(145deg, rgba(255, 84, 84, 0.12), rgba(255,255,255,.015));
   border-color: rgba(255, 176, 46, 0.45);
-  box-shadow: 0 18px 40px rgba(255, 108, 94, 0.2);
-  overflow: hidden;
+  box-shadow: 0 18px 40px rgba(0,0,0,.35);
 }
 .trade-pill .trade-alert-banner {
   background: rgba(255, 193, 7, 0.18);
@@ -490,6 +489,7 @@ select {
   font-weight: 600;
   padding: 6px 10px;
   border-radius: 12px;
+  margin-bottom: 6px;
 }
 .trade-pill .trade-source-logo {
   width: 36px;
