@@ -44,25 +44,11 @@ test('parseTrading212Orders filters to open SELL stop orders', () => {
   assert.equal(parsed[0].stopPrice, 12.34);
 });
 
-test('matchStopOrderForTrade prefers mapped broker tickers and closest quantity', () => {
-  const db = {
-    instrumentMappings: [
-      {
-        status: 'active',
-        scope: 'user',
-        user_id: 'alice',
-        canonical_ticker: 'BBAI',
-        broker_ticker: 'BBAI1_US_EQ',
-        source: 'TRADING212',
-        source_key: 'TRADING212|TICKER:BBAI1_US_EQ|CCY:USD'
-      }
-    ]
-  };
+test('matchStopOrderForTrade matches Trading 212 instrument ticker and closest quantity', () => {
   const trade = {
     id: 'trade-1',
     sizeUnits: 100,
-    trading212Ticker: 'GIG_US_EQ',
-    displaySymbol: 'BBAI'
+    trading212Ticker: 'BBAI1_US_EQ'
   };
   const orders = [
     {
@@ -86,7 +72,7 @@ test('matchStopOrderForTrade prefers mapped broker tickers and closest quantity'
       createdAt: '2024-01-02T00:00:00Z'
     }
   ];
-  const matched = matchStopOrderForTrade(trade, orders, db, 'alice');
+  const matched = matchStopOrderForTrade(trade, orders);
   assert.equal(matched.id, 'b1');
 });
 
@@ -119,6 +105,6 @@ test('matchStopOrderForTrade honors stored Trading 212 stop order id', () => {
       createdAt: '2024-01-04T00:00:00Z'
     }
   ];
-  const matched = matchStopOrderForTrade(trade, orders, { instrumentMappings: [] }, 'alice');
+  const matched = matchStopOrderForTrade(trade, orders);
   assert.equal(matched.id, 'order-42');
 });

@@ -1228,7 +1228,7 @@ function parseTrading212Orders(payload) {
     const type = order.type;
     if (!['STOP', 'STOP_LIMIT'].includes(type)) return false;
     const status = order.status;
-    const isOpen = ['OPEN', 'PENDING', 'ACTIVE', 'WORKING', 'PLACED', 'TRIGGERED'].includes(status);
+    const isOpen = ['OPEN', 'PENDING', 'ACTIVE', 'WORKING', 'PLACED', 'TRIGGERED', 'NEW'].includes(status);
     if (!isOpen) return false;
     const isSell = order.side === 'SELL' || (Number.isFinite(order.quantity) && order.quantity < 0);
     return isSell;
@@ -1277,22 +1277,17 @@ function pickBestStopOrder(orders, trade) {
   return scored[0]?.order || null;
 }
 
-function matchStopOrderForTrade(trade, orders, db, username) {
+function matchStopOrderForTrade(trade, orders) {
   if (!trade || !orders.length) return null;
   if (trade.t212StopOrderId) {
     const found = orders.find(order => order.id && order.id === trade.t212StopOrderId);
     if (found) return found;
   }
-  const brokerTicker = normalizeTrading212TickerValue(
-    trade.trading212Ticker || trade.brokerTicker || trade.symbol || ''
-  );
-  const displayTicker = String(trade.displaySymbol || trade.displayTicker || '').trim().toUpperCase();
-  const mappedBrokerTicker = resolveMappedBrokerTicker(db, username, displayTicker);
-  const tickers = new Set([brokerTicker, mappedBrokerTicker].filter(Boolean));
+  const tradeTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '');
   const tradeIsin = String(trade.trading212Isin || '').trim().toUpperCase();
   const filtered = orders.filter(order => {
     const orderTicker = normalizeTrading212TickerValue(order.instrumentTicker || '');
-    if (orderTicker && tickers.has(orderTicker)) return true;
+    if (tradeTicker && orderTicker && orderTicker === tradeTicker) return true;
     if (tradeIsin && String(order.instrumentIsin || '').trim().toUpperCase() === tradeIsin) return true;
     return false;
   });
@@ -4261,7 +4256,9 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
   }
   try {
     const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
-    const matched = matchStopOrderForTrade(trade, ordersPayload.orders, db, req.username);
+    console.info(`[T212] stop sync trade=${trade.id} display=${trade.displaySymbol || trade.symbol || ''} t212Ticker=${trade.trading212Ticker || ''} isin=${trade.trading212Isin || ''}`);
+    console.info(`[T212] orders rawCount=${ordersPayload.rawCount} filteredCount=${ordersPayload.filteredCount}`);
+    const matched = matchStopOrderForTrade(trade, ordersPayload.orders);
     const syncedAt = new Date().toISOString();
     if (matched) {
       trade.currentStop = matched.stopPrice;
@@ -4294,7 +4291,9 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     }
     trade.t212StopOrderId = '';
     saveDB(db);
-    console.info(`Trading 212 stop sync found no match for trade ${trade.id}`);
+    const orderTickers = ordersPayload.orders.map(order => order.instrumentTicker).filter(Boolean);
+    const orderIsins = ordersPayload.orders.map(order => order.instrumentIsin).filter(Boolean);
+    console.info(`[T212] stop sync no match trade=${trade.id} t212Ticker=${trade.trading212Ticker || ''} isin=${trade.trading212Isin || ''} orderTickers=${orderTickers.join(',')} orderIsins=${orderIsins.join(',')}`);
     const noOrders = ordersPayload.rawCount === 0;
     return res.json({
       ok: true,
