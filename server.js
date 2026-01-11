@@ -1616,14 +1616,14 @@ async function requestTrading212Endpoint(url, headers, options = {}) {
       err.raw = data;
       throw err;
     }
-    return {
-      portfolioValue,
-      netDeposits: Number.isFinite(netDeposits) ? netDeposits : null,
-      raw: data
-    };
-  }
-  throw lastError || new Trading212Error('Trading 212 request failed.');
-}
+        return {
+          portfolioValue,
+          netDeposits: Number.isFinite(netDeposits) ? netDeposits : null,
+          raw: data
+        };
+      }
+      throw lastError || new Trading212Error('Trading 212 request failed.');
+    }
 
 async function requestTrading212RawEndpoint(url, headers, options = {}) {
   const maxAttempts = 3;
@@ -1688,6 +1688,33 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     return null;
   }
   throw lastError || new Trading212Error('Trading 212 request failed.');
+}
+
+function upsertTrading212StopOrders(user, ordersPayload) {
+  const orders = ordersPayload?.orders || [];
+  if (!orders.length) return { updated: 0 };
+  const journal = ensureTradeJournal(user);
+  let updated = 0;
+  for (const [dateKey, items] of Object.entries(journal)) {
+    for (const trade of items || []) {
+      if (!trade || trade.status === 'closed') continue;
+      if (trade.source !== 'trading212' && !trade.trading212Id) continue;
+      const matched = matchStopOrderForTrade(trade, orders);
+      if (!matched || !Number.isFinite(matched.stopPrice)) continue;
+      const stopPrice = Number(matched.stopPrice);
+      const shouldUpdate = trade.currentStopSource !== 'manual'
+        || !Number.isFinite(Number(trade.currentStop))
+        || Number(trade.currentStop) !== stopPrice;
+      if (!shouldUpdate) continue;
+      trade.currentStop = stopPrice;
+      trade.currentStopSource = 't212';
+      trade.currentStopLastSyncedAt = new Date().toISOString();
+      trade.currentStopStale = false;
+      trade.t212StopOrderId = matched.id || '';
+      updated += 1;
+    }
+  }
+  return { updated };
 }
 
 async function fetchTrading212Snapshot(config) {
@@ -1833,6 +1860,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   }
   try {
     const snapshot = await fetchTrading212Snapshot(cfg);
+    const ordersPayload = await fetchTrading212Orders(cfg, username);
+    const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload);
+    if (stopUpdates > 0) {
+      console.info(`[T212] synced current stops for ${stopUpdates} trade(s)`);
+    }
     const history = ensurePortfolioHistory(user);
     normalizePortfolioHistory(user);
     const { total: currentTotal } = computeNetDepositsTotals(user, history);
