@@ -1244,6 +1244,25 @@ button:disabled {
   margin-top: 6px;
 }
 
+.current-stop-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.subtle-note {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.warning-note {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #ffb86b;
+}
+
 .mapping-badge {
   display: inline-flex;
   align-items: center;

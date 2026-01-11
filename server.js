@@ -592,6 +592,11 @@ function normalizeTradeJournal(user) {
       const sizeUnits = Number(trade.sizeUnits ?? trade.quantity ?? trade.units ?? trade.shares);
       const perUnitRiskRaw = Number(trade.perUnitRisk);
       const currentStopRaw = Number(trade.currentStop);
+      const currentStopSourceRaw = typeof trade.currentStopSource === 'string' ? trade.currentStopSource.trim().toLowerCase() : '';
+      const currentStopLastSyncedAtRaw = typeof trade.currentStopLastSyncedAt === 'string' ? trade.currentStopLastSyncedAt : '';
+      const t212StopOrderIdRaw = typeof trade.t212StopOrderId === 'string' ? trade.t212StopOrderId : '';
+      const currentStopStale = trade.currentStopStale === true;
+      const originalStopRaw = Number(trade.originalStopPrice);
       const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
       const feesRaw = Number(trade.fees);
       const slippageRaw = Number(trade.slippage);
@@ -605,6 +610,9 @@ function normalizeTradeJournal(user) {
         continue;
       }
       const stopValue = Number.isFinite(stop) && stop > 0 ? stop : undefined;
+      const originalStopPrice = Number.isFinite(originalStopRaw) && originalStopRaw > 0
+        ? originalStopRaw
+        : stopValue;
       let perUnitRisk = Number.isFinite(perUnitRiskRaw) && perUnitRiskRaw > 0 ? perUnitRiskRaw : undefined;
       if (stopValue !== undefined) {
         const calculatedRisk = Math.abs(entry - stopValue);
@@ -651,10 +659,23 @@ function normalizeTradeJournal(user) {
         positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
         portfolioGBPAtCalc: Number.isFinite(portfolioGBPAtCalc) ? portfolioGBPAtCalc : undefined,
         portfolioCurrencyAtCalc: Number.isFinite(portfolioCurrencyAtCalc) ? portfolioCurrencyAtCalc : undefined,
-        createdAt
+        createdAt,
+        originalStopPrice
       };
       if (Number.isFinite(currentStopRaw) && currentStopRaw > 0) {
         normalizedTrade.currentStop = currentStopRaw;
+      }
+      if (currentStopSourceRaw === 'manual' || currentStopSourceRaw === 't212') {
+        normalizedTrade.currentStopSource = currentStopSourceRaw;
+      }
+      if (currentStopLastSyncedAtRaw) {
+        normalizedTrade.currentStopLastSyncedAt = currentStopLastSyncedAtRaw;
+      }
+      if (t212StopOrderIdRaw) {
+        normalizedTrade.t212StopOrderId = t212StopOrderIdRaw;
+      }
+      if (currentStopStale) {
+        normalizedTrade.currentStopStale = true;
       }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
@@ -1081,6 +1102,210 @@ function normalizeTrading212TickerValue(raw) {
 function normalizeTrading212Name(raw) {
   if (!raw) return '';
   return String(raw).trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+const trading212OrdersCache = new Map();
+const TRADING212_ORDERS_CACHE_MS = 20000;
+
+function normalizeTrading212OrderStatus(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
+function extractTrading212Orders(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.orders)) return payload.orders;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+function parseTrading212Orders(payload) {
+  const orders = extractTrading212Orders(payload);
+  return orders.map(raw => {
+    const instrument = raw?.instrument || {};
+    const ticker = normalizeTrading212TickerValue(
+      instrument?.ticker ?? raw?.ticker ?? raw?.symbol ?? ''
+    );
+    const isin = String(instrument?.isin ?? raw?.isin ?? '').trim();
+    const uid = String(instrument?.id ?? instrument?.uid ?? raw?.instrumentId ?? raw?.instrumentUid ?? '').trim();
+    const type = normalizeTrading212OrderStatus(raw?.type ?? raw?.orderType ?? raw?.orderTypeName ?? '');
+    const status = normalizeTrading212OrderStatus(raw?.status ?? raw?.state ?? raw?.orderStatus ?? '');
+    const side = normalizeTrading212OrderStatus(raw?.side ?? raw?.direction ?? '');
+    const quantity = parseTradingNumber(raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size ?? raw?.shares);
+    const stopPrice = parseTradingNumber(
+      raw?.stopPrice ??
+      raw?.stop ??
+      raw?.stop?.price ??
+      raw?.stop?.value
+    );
+    const limitPrice = parseTradingNumber(
+      raw?.limitPrice ??
+      raw?.limit ??
+      raw?.limit?.price ??
+      raw?.limit?.value
+    );
+    const createdAt = raw?.createdAt ?? raw?.createdAtUtc ?? raw?.dateCreated ?? raw?.created ?? null;
+    const id = raw?.id ?? raw?.orderId ?? raw?.uid ?? null;
+    return {
+      id: id ? String(id) : '',
+      instrumentTicker: ticker,
+      instrumentIsin: isin || '',
+      instrumentUid: uid || '',
+      type,
+      status,
+      side,
+      quantity,
+      stopPrice,
+      limitPrice,
+      createdAt
+    };
+  }).filter(order => {
+    if (!order.stopPrice || !Number.isFinite(order.stopPrice)) return false;
+    const type = order.type;
+    if (!['STOP', 'STOP_LIMIT'].includes(type)) return false;
+    const status = order.status;
+    const isOpen = ['OPEN', 'PENDING', 'ACTIVE', 'WORKING', 'PLACED', 'TRIGGERED'].includes(status);
+    if (!isOpen) return false;
+    const isSell = order.side === 'SELL' || (Number.isFinite(order.quantity) && order.quantity < 0);
+    return isSell;
+  });
+}
+
+function resolveMappedBrokerTicker(db, username, displayTicker) {
+  const trimmed = String(displayTicker || '').trim().toUpperCase();
+  if (!trimmed) return '';
+  const mappings = ensureInstrumentMappings(db);
+  const userMapping = mappings.find(mapping => (
+    mapping?.status === 'active'
+    && mapping.scope === 'user'
+    && mapping.user_id === username
+    && String(mapping.canonical_ticker || '').toUpperCase() === trimmed
+  ));
+  if (userMapping?.broker_ticker) return String(userMapping.broker_ticker).trim().toUpperCase();
+  const globalMapping = mappings.find(mapping => (
+    mapping?.status === 'active'
+    && mapping.scope === 'global'
+    && !mapping.user_id
+    && String(mapping.canonical_ticker || '').toUpperCase() === trimmed
+  ));
+  return globalMapping?.broker_ticker ? String(globalMapping.broker_ticker).trim().toUpperCase() : '';
+}
+
+function pickBestStopOrder(orders, trade) {
+  if (!orders.length) return null;
+  const tradeQty = Number(trade.sizeUnits);
+  const scored = orders.map(order => {
+    const orderQty = Number.isFinite(order.quantity) ? Math.abs(order.quantity) : null;
+    const qtyDiff = (Number.isFinite(tradeQty) && Number.isFinite(orderQty))
+      ? Math.abs(orderQty - tradeQty)
+      : Infinity;
+    const createdAt = Date.parse(order.createdAt || '');
+    return {
+      order,
+      qtyDiff,
+      createdAt: Number.isFinite(createdAt) ? createdAt : 0
+    };
+  });
+  scored.sort((a, b) => {
+    if (a.qtyDiff !== b.qtyDiff) return a.qtyDiff - b.qtyDiff;
+    return b.createdAt - a.createdAt;
+  });
+  return scored[0]?.order || null;
+}
+
+function matchStopOrderForTrade(trade, orders, db, username) {
+  if (!trade || !orders.length) return null;
+  if (trade.t212StopOrderId) {
+    const found = orders.find(order => order.id && order.id === trade.t212StopOrderId);
+    if (found) return found;
+  }
+  const brokerTicker = normalizeTrading212TickerValue(
+    trade.trading212Ticker || trade.brokerTicker || trade.symbol || ''
+  );
+  const displayTicker = String(trade.displaySymbol || trade.displayTicker || '').trim().toUpperCase();
+  const mappedBrokerTicker = resolveMappedBrokerTicker(db, username, displayTicker);
+  const tickers = new Set([brokerTicker, mappedBrokerTicker].filter(Boolean));
+  const tradeIsin = String(trade.trading212Isin || '').trim().toUpperCase();
+  const filtered = orders.filter(order => {
+    const orderTicker = normalizeTrading212TickerValue(order.instrumentTicker || '');
+    if (orderTicker && tickers.has(orderTicker)) return true;
+    if (tradeIsin && String(order.instrumentIsin || '').trim().toUpperCase() === tradeIsin) return true;
+    return false;
+  });
+  return pickBestStopOrder(filtered, trade);
+}
+
+async function fetchTrading212Orders(config, username) {
+  if (!config?.apiKey) {
+    throw new Trading212Error('Trading 212 credentials are incomplete', { code: 'credentials_incomplete' });
+  }
+  const cacheKey = String(username || '');
+  const cached = trading212OrdersCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < TRADING212_ORDERS_CACHE_MS) {
+    return cached.orders;
+  }
+  const baseCandidates = [];
+  const seenBases = new Set();
+  const appendBase = (value) => {
+    if (!value || typeof value !== 'string') return;
+    let normalized = value.trim();
+    if (!normalized) return;
+    if (!/^https?:\/\//i.test(normalized)) {
+      normalized = `https://${normalized.replace(/^\/+/, '')}`;
+    }
+    normalized = normalized.replace(/\/+$/, '');
+    if (seenBases.has(normalized)) return;
+    seenBases.add(normalized);
+    baseCandidates.push(normalized);
+  };
+  const practiceBases = [
+    config.baseUrl,
+    process.env.T212_PRACTICE_BASE,
+    process.env.T212_BASE_URL,
+    'https://demo.trading212.com',
+    'https://api-demo.trading212.com'
+  ];
+  const liveBases = [
+    config.baseUrl,
+    process.env.T212_LIVE_BASE,
+    process.env.T212_BASE_URL,
+    'https://api.trading212.com',
+    'https://live.trading212.com'
+  ];
+  const orderedBases = config.mode === 'practice'
+    ? [...practiceBases, ...liveBases]
+    : [...liveBases, ...practiceBases];
+  for (const candidate of orderedBases) appendBase(candidate);
+  if (!baseCandidates.length) {
+    throw new Trading212Error('Trading 212 base URL could not be determined.', { code: 'base_missing' });
+  }
+  const headers = {
+    'Accept': 'application/json',
+    'User-Agent': 'PL-Calendar-App/1.0'
+  };
+  if (config.apiKey && config.apiSecret) {
+    const encodedCredentials = Buffer.from(`${config.apiKey}:${config.apiSecret}`, 'utf8').toString('base64');
+    headers.Authorization = `Basic ${encodedCredentials}`;
+  } else if (config.apiKey) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
+    headers['X-Api-Key'] = config.apiKey;
+  }
+  const endpoints = ['/api/v0/equity/orders'];
+  let lastError = null;
+  for (const base of baseCandidates) {
+    for (const pathSuffix of endpoints) {
+      try {
+        const payload = await requestTrading212Endpoint(`${base}${pathSuffix}`, headers);
+        const orders = parseTrading212Orders(payload);
+        trading212OrdersCache.set(cacheKey, { fetchedAt: Date.now(), orders });
+        console.info(`Trading 212 orders fetched: ${orders.length} (user ${username})`);
+        return orders;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+  }
+  throw lastError || new Trading212Error('Trading 212 orders request failed.');
 }
 
 function computeSourceKey(instrument = {}) {
@@ -3397,6 +3622,10 @@ async function buildActiveTrades(user, rates = {}) {
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
         positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
         currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+        currentStopSource: trade.currentStopSource,
+        currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
+        currentStopStale: trade.currentStopStale === true,
+        originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
         note: trade.note
       });
@@ -3484,6 +3713,10 @@ async function buildActiveTrades(user, rates = {}) {
       guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
       positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
       currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+      currentStopSource: trade.currentStopSource,
+      currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
+      currentStopStale: trade.currentStopStale === true,
+      originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
       source: trade.source || (trade.trading212Id ? 'trading212' : 'manual'),
       note: trade.note
     });
@@ -3688,6 +3921,7 @@ app.post('/api/trades', auth, async (req, res) => {
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
     stop: stopNum,
+    originalStopPrice: stopNum,
     currentStop: Number.isFinite(currentStopNum) && currentStopNum > 0 ? currentStopNum : undefined,
     symbol: symbolClean || undefined,
     currency: tradeCurrency,
@@ -3790,6 +4024,13 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       trade.currentStop = stopVal;
     }
   }
+  const incomingStopSource = typeof updates.currentStopSource === 'string'
+    ? updates.currentStopSource.trim().toLowerCase()
+    : '';
+  if (incomingStopSource === 'manual') {
+    trade.currentStopSource = 'manual';
+    trade.currentStopStale = false;
+  }
   if (wantsRiskUpdate && trade.status !== 'closed') {
     const entryNum = Number(updates.entry ?? trade.entry);
     const stopNum = Number(updates.stop ?? trade.stop);
@@ -3839,6 +4080,9 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     trade.entry = entryNum;
     trade.stop = stopNum;
     trade.perUnitRisk = perUnitRisk;
+    if (!Number.isFinite(Number(trade.originalStopPrice))) {
+      trade.originalStopPrice = stopNum;
+    }
     trade.riskPct = pctToUse || pctNum || 0;
     trade.sizeUnits = sizeUnits;
     trade.riskAmountCurrency = riskAmountCurrency;
@@ -3956,6 +4200,94 @@ app.get('/api/trades/active', auth, async (req, res) => {
     liveOpenPnlMode,
     liveOpenPnlCurrency
   });
+});
+
+app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ ok: false, error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ ok: false, error: 'Trade not found' });
+  const trade = found.trade;
+  const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+  if (!isTrading212) {
+    return res.json({
+      ok: true,
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: trade.currentStopLastSyncedAt || null,
+      stale: trade.currentStopStale === true,
+      message: 'Trading 212 sync not enabled for this trade.'
+    });
+  }
+  const { config: tradingCfg } = ensureTrading212Config(user);
+  if (!tradingCfg?.apiKey) {
+    return res.json({
+      ok: false,
+      error: 'Trading 212 is not connected.',
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: trade.currentStopLastSyncedAt || null,
+      stale: trade.currentStopStale === true
+    });
+  }
+  try {
+    const orders = await fetchTrading212Orders(tradingCfg, req.username);
+    const matched = matchStopOrderForTrade(trade, orders, db, req.username);
+    const syncedAt = new Date().toISOString();
+    if (matched) {
+      trade.currentStop = matched.stopPrice;
+      trade.currentStopSource = 't212';
+      trade.currentStopLastSyncedAt = syncedAt;
+      trade.currentStopStale = false;
+      trade.t212StopOrderId = matched.id || '';
+      saveDB(db);
+      console.info(`Trading 212 stop sync matched trade ${trade.id} -> order ${matched.id || 'unknown'}`);
+      return res.json({
+        ok: true,
+        currentStopPrice: matched.stopPrice,
+        source: 't212',
+        lastSyncedAt: syncedAt,
+        stale: false,
+        matchedOrder: {
+          id: matched.id || null,
+          type: matched.type || null,
+          stopPrice: matched.stopPrice || null,
+          limitPrice: matched.limitPrice || null,
+          createdAt: matched.createdAt || null,
+          status: matched.status || null,
+          quantity: matched.quantity || null
+        }
+      });
+    }
+    trade.currentStopLastSyncedAt = syncedAt;
+    if (trade.currentStopSource === 't212') {
+      trade.currentStopStale = true;
+    }
+    trade.t212StopOrderId = '';
+    saveDB(db);
+    console.info(`Trading 212 stop sync found no match for trade ${trade.id}`);
+    return res.json({
+      ok: true,
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: syncedAt,
+      stale: trade.currentStopStale === true,
+      message: 'No active stop order found.'
+    });
+  } catch (e) {
+    console.warn('Trading 212 stop sync failed', e);
+    return res.json({
+      ok: false,
+      error: e?.message || 'Could not sync from Trading 212.',
+      currentStopPrice: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      source: trade.currentStopSource || 'manual',
+      lastSyncedAt: trade.currentStopLastSyncedAt || null,
+      stale: trade.currentStopStale === true
+    });
+  }
 });
 
 app.get('/api/market/low', auth, async (req, res) => {
@@ -4085,7 +4417,10 @@ module.exports = {
   ensureTradeJournal,
   flattenTrades,
   filterTrades,
-  cleanupExpiredGuests
+  cleanupExpiredGuests,
+  parseTrading212Orders,
+  matchStopOrderForTrade,
+  pickBestStopOrder
 };
 
 // global error handler

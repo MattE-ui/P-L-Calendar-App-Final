@@ -282,6 +282,10 @@ function normalizeTradeRecords(trades) {
     const fees = Number(trade.fees);
     const slippage = Number(trade.slippage);
     const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
+    const currentStop = Number(trade.currentStop);
+    const currentStopSource = typeof trade.currentStopSource === 'string' ? trade.currentStopSource : '';
+    const currentStopLastSyncedAt = typeof trade.currentStopLastSyncedAt === 'string' ? trade.currentStopLastSyncedAt : '';
+    const currentStopStale = trade.currentStopStale === true;
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
@@ -316,6 +320,10 @@ function normalizeTradeRecords(trades) {
       fees: Number.isFinite(fees) ? fees : 0,
       slippage: Number.isFinite(slippage) ? slippage : 0,
       rounding,
+      currentStop: Number.isFinite(currentStop) ? currentStop : null,
+      currentStopSource,
+      currentStopLastSyncedAt,
+      currentStopStale,
       createdAt
     };
   }).filter(Boolean);
@@ -1274,6 +1282,9 @@ function openEditTradeModal(trade) {
   const entryInput = $('#edit-trade-entry');
   const stopInput = $('#edit-trade-stop');
   const currentStopInput = $('#edit-trade-current-stop');
+  const currentStopSync = $('#edit-current-stop-sync');
+  const currentStopWarning = $('#edit-current-stop-warning');
+  const currentStopOverride = $('#edit-current-stop-override');
   const unitsInput = $('#edit-trade-units');
   const status = $('#edit-trade-status');
   const mappingBadge = $('#edit-mapping-badge');
@@ -1285,9 +1296,20 @@ function openEditTradeModal(trade) {
   if (symbolInput) symbolInput.value = getTradeDisplaySymbol(trade);
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
-  if (currentStopInput) currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
+  if (currentStopInput) {
+    currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
+    currentStopInput.readOnly = false;
+  }
   if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
   if (status) status.textContent = '';
+  if (currentStopSync) currentStopSync.textContent = '';
+  if (currentStopWarning) {
+    currentStopWarning.textContent = '';
+    currentStopWarning.classList.add('is-hidden');
+  }
+  if (currentStopOverride) {
+    currentStopOverride.classList.add('is-hidden');
+  }
   if (mappingBadge) {
     mappingBadge.classList.toggle('is-hidden', !shouldShowMappingBadge(trade));
   }
@@ -1304,6 +1326,8 @@ function openEditTradeModal(trade) {
   modal.dataset.tradeId = trade.id;
   modal.dataset.direction = trade.direction || 'long';
   modal.dataset.isTrading212 = isTrading212 ? 'true' : 'false';
+  modal.dataset.currentStopSource = trade.currentStopSource || 'manual';
+  modal.dataset.currentStopOverride = 'false';
   modal.dataset.brokerTicker = trade.brokerTicker || trade.trading212Ticker || trade.symbol || '';
   modal.dataset.brokerName = trade.trading212Name || '';
   modal.dataset.currency = trade.currency || '';
@@ -1311,6 +1335,83 @@ function openEditTradeModal(trade) {
   modal.dataset.uid = trade.trading212Id || '';
   modal.dataset.sourceKey = trade.sourceKey || '';
   modal.classList.remove('hidden');
+
+  const updateCurrentStopUi = (payload = {}) => {
+    if (!currentStopInput) return;
+    const source = payload.source || modal.dataset.currentStopSource || 'manual';
+    const lastSyncedAt = payload.lastSyncedAt || null;
+    const stale = payload.stale === true;
+    const hasOverride = modal.dataset.currentStopOverride === 'true';
+    const formattedTime = lastSyncedAt ? new Date(lastSyncedAt).toLocaleString() : '';
+    if (payload.currentStopPrice !== undefined && Number.isFinite(payload.currentStopPrice)) {
+      currentStopInput.value = payload.currentStopPrice;
+    }
+    currentStopInput.readOnly = source === 't212' && !hasOverride;
+    if (currentStopSync) {
+      if (source === 't212') {
+        currentStopSync.textContent = stale
+          ? `No active stop order found • last checked ${formattedTime || 'just now'}`
+          : `Synced from Trading 212 • ${formattedTime || 'just now'}`;
+      } else if (source === 'manual' && hasOverride) {
+        currentStopSync.textContent = 'Manual override enabled';
+      } else {
+        currentStopSync.textContent = '';
+      }
+    }
+    if (currentStopOverride) {
+      currentStopOverride.classList.toggle('is-hidden', source !== 't212');
+    }
+  };
+
+  updateCurrentStopUi({
+    currentStopPrice: Number.isFinite(trade.currentStop) ? trade.currentStop : undefined,
+    source: trade.currentStopSource,
+    lastSyncedAt: trade.currentStopLastSyncedAt,
+    stale: trade.currentStopStale
+  });
+
+  if (currentStopOverride) {
+    currentStopOverride.onclick = () => {
+      modal.dataset.currentStopOverride = 'true';
+      modal.dataset.currentStopSource = 'manual';
+      if (currentStopInput) {
+        currentStopInput.readOnly = false;
+        currentStopInput.focus();
+      }
+      updateCurrentStopUi({ source: 'manual' });
+    };
+  }
+
+  if (isTrading212 && currentStopSync) {
+    currentStopSync.textContent = 'Syncing Trading 212 stop...';
+  }
+  if (isTrading212) {
+    api(`/api/trades/${trade.id}/stop-sync`)
+      .then((payload) => {
+        if (payload?.ok === false && payload?.error) {
+          if (currentStopWarning) {
+            currentStopWarning.textContent = payload.error;
+            currentStopWarning.classList.remove('is-hidden');
+          }
+        }
+        if (payload?.source) {
+          modal.dataset.currentStopSource = payload.source;
+        }
+        updateCurrentStopUi({
+          currentStopPrice: payload?.currentStopPrice,
+          source: payload?.source,
+          lastSyncedAt: payload?.lastSyncedAt,
+          stale: payload?.stale
+        });
+      })
+      .catch((err) => {
+        if (currentStopWarning) {
+          currentStopWarning.textContent = err?.message || 'Could not sync Trading 212 stop.';
+          currentStopWarning.classList.remove('is-hidden');
+        }
+        updateCurrentStopUi();
+      });
+  }
 }
 
 function setMetricTrend(el, value) {
@@ -2537,6 +2638,7 @@ function bindControls() {
       }
       currentStopPayload = parsedCurrentStop;
     }
+    const currentStopSource = modal.dataset.currentStopSource;
     try {
       const isTrading212 = modal.dataset.isTrading212 === 'true';
       if (isTrading212 && typeof window.computeSourceKey === 'function') {
@@ -2567,6 +2669,9 @@ function bindControls() {
         currentStop: currentStopPayload ?? null,
         sizeUnits: unitsVal
       };
+      if (currentStopSource === 'manual') {
+        tradePayload.currentStopSource = 'manual';
+      }
       if (modal.dataset.isTrading212 !== 'true') {
         tradePayload.displaySymbol = symbolVal;
       }
