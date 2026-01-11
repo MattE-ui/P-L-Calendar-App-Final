@@ -43,6 +43,7 @@ const ACTIVE_TRADE_SORTS = new Set([
   'best-amount',
   'worst-amount'
 ]);
+const SHOW_MAPPING_BADGE = false;
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
@@ -326,6 +327,7 @@ function getTradeDisplaySymbol(trade) {
 }
 
 function shouldShowMappingBadge(trade) {
+  if (!SHOW_MAPPING_BADGE) return false;
   if (!trade?.mappingScope) return false;
   if (!trade.displayTicker || !trade.brokerTicker) return true;
   return trade.displayTicker !== trade.brokerTicker;
