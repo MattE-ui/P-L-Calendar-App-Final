@@ -476,6 +476,21 @@ select {
   position: relative;
   box-shadow: 0 18px 40px rgba(0,0,0,.35);
 }
+.trade-pill.trade-pill-alert {
+  background: linear-gradient(145deg, rgba(255, 84, 84, 0.12), rgba(255,255,255,.015));
+  border-color: rgba(255, 176, 46, 0.45);
+  box-shadow: 0 18px 40px rgba(255, 108, 94, 0.2);
+  overflow: hidden;
+}
+.trade-pill .trade-alert-banner {
+  background: rgba(255, 193, 7, 0.18);
+  border: 1px solid rgba(255, 193, 7, 0.4);
+  color: #ffd58a;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 12px;
+}
 .trade-pill .trade-source-logo {
   width: 36px;
   height: 36px;
@@ -485,10 +500,13 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 36px;
 }
 .trade-pill .trade-source-logo img {
-  width: 18px;
   height: 18px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
   display: block;
 }
 .trade-pill .trade-meta {
@@ -517,6 +535,10 @@ select {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+.trade-pill .trade-title span:first-child {
+  font-size: 0.9em;
+  white-space: nowrap;
 }
 .trade-pill .trade-percent {
   margin-left: 10px;
@@ -1235,6 +1257,25 @@ button:disabled {
   align-items: center;
   gap: 8px;
   margin-top: 6px;
+}
+
+.current-stop-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.subtle-note {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.warning-note {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #ffb86b;
 }
 
 .mapping-badge {
