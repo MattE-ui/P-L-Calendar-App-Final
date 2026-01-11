@@ -1887,8 +1887,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           }
           const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
           if (Number.isFinite(nextStop) && nextStop > 0) {
-            existingTrade.stop = nextStop;
-            existingTrade.perUnitRisk = Math.abs(entry - nextStop);
+            existingTrade.currentStop = nextStop;
+            if (!Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
+              existingTrade.stop = nextStop;
+              existingTrade.perUnitRisk = Math.abs(entry - nextStop);
+            }
           }
           positionsMutated = true;
           continue;
