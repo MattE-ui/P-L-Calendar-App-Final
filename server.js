@@ -4262,6 +4262,19 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+  const tradingCfg = user.trading212;
+  if (tradingCfg?.enabled && tradingCfg?.apiKey && tradingCfg?.apiSecret) {
+    try {
+      const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
+      const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload);
+      if (stopUpdates > 0) {
+        saveDB(db);
+        console.info(`[T212] refreshed ${stopUpdates} trade stop(s) during active trades poll`);
+      }
+    } catch (e) {
+      console.warn('Trading 212 stop refresh failed during active trades poll', e);
+    }
+  }
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
   const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
