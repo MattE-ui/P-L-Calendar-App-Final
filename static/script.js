@@ -927,13 +927,12 @@ function renderActiveTrades() {
       sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
       headerRow.appendChild(sourceLogo);
     }
-    if (trade.source === 'trading212' && trade.currentStopStale === true) {
+    const isMissingStop = trade.source === 'trading212' && trade.currentStopStale === true;
+    if (isMissingStop) {
       pill.classList.add('trade-pill-alert');
       const alertBanner = document.createElement('div');
       alertBanner.className = 'trade-alert-banner';
-      alertBanner.textContent = trade.currentStopLastSyncedAt
-        ? `No active stop order found • last checked ${new Date(trade.currentStopLastSyncedAt).toLocaleString()}`
-        : 'No active stop order found';
+      alertBanner.textContent = 'No active stop order found!';
       pill.appendChild(alertBanner);
     }
     pill.appendChild(headerRow);
@@ -957,7 +956,7 @@ function renderActiveTrades() {
     pnlCard.append(pnlLabel, pnlValue);
     pnlStack.appendChild(pnlCard);
 
-    if (guaranteed !== null) {
+    if (guaranteed !== null && !isMissingStop) {
       const guaranteedCard = document.createElement('div');
       guaranteedCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
       guaranteedCard.dataset.role = 'trade-guaranteed-card';
