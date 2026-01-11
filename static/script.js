@@ -927,6 +927,15 @@ function renderActiveTrades() {
       sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
       headerRow.appendChild(sourceLogo);
     }
+    if (trade.source === 'trading212' && trade.currentStopStale === true) {
+      pill.classList.add('trade-pill-alert');
+      const alertBanner = document.createElement('div');
+      alertBanner.className = 'trade-alert-banner';
+      alertBanner.textContent = trade.currentStopLastSyncedAt
+        ? `No active stop order found • last checked ${new Date(trade.currentStopLastSyncedAt).toLocaleString()}`
+        : 'No active stop order found';
+      pill.appendChild(alertBanner);
+    }
     pill.appendChild(headerRow);
 
     const bodyRow = document.createElement('div');
