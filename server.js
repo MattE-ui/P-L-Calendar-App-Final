@@ -1692,7 +1692,6 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
 
 function upsertTrading212StopOrders(user, ordersPayload) {
   const orders = ordersPayload?.orders || [];
-  if (!orders.length) return { updated: 0 };
   const journal = ensureTradeJournal(user);
   let updated = 0;
   for (const [dateKey, items] of Object.entries(journal)) {
@@ -1700,11 +1699,25 @@ function upsertTrading212StopOrders(user, ordersPayload) {
       if (!trade || trade.status === 'closed') continue;
       if (trade.source !== 'trading212' && !trade.trading212Id) continue;
       const matched = matchStopOrderForTrade(trade, orders);
-      if (!matched || !Number.isFinite(matched.stopPrice)) continue;
+      const shouldAutoSync = trade.currentStopSource !== 'manual';
+      if (!matched || !Number.isFinite(matched.stopPrice)) {
+        if (!shouldAutoSync) continue;
+        const hadStop = Number.isFinite(Number(trade.currentStop));
+        if (!hadStop && trade.currentStopStale === true) continue;
+        delete trade.currentStop;
+        trade.currentStopSource = 't212';
+        trade.currentStopLastSyncedAt = new Date().toISOString();
+        trade.currentStopStale = true;
+        trade.t212StopOrderId = '';
+        updated += 1;
+        continue;
+      }
       const stopPrice = Number(matched.stopPrice);
-      const shouldUpdate = trade.currentStopSource !== 'manual'
-        || !Number.isFinite(Number(trade.currentStop))
-        || Number(trade.currentStop) !== stopPrice;
+      const shouldUpdate = shouldAutoSync
+        && (!Number.isFinite(Number(trade.currentStop))
+          || Number(trade.currentStop) !== stopPrice
+          || trade.currentStopStale === true
+          || trade.t212StopOrderId !== (matched.id || ''));
       if (!shouldUpdate) continue;
       trade.currentStop = stopPrice;
       trade.currentStopSource = 't212';

@@ -1155,21 +1155,83 @@ function updateActiveTradeDisplay(trades) {
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const guaranteedCard = pill.querySelector('[data-role="trade-guaranteed-card"]');
     const guaranteedValue = pill.querySelector('[data-role="trade-guaranteed"]');
-    if (guaranteedValue && guaranteed !== null) {
-      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
-    }
-    if (guaranteedCard) {
-      guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0);
-      guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0);
-    }
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
     const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const isMissingStop = trade.source === 'trading212' && trade.currentStopStale === true;
+    const alertBanner = pill.querySelector('.trade-alert-banner');
+    if (isMissingStop) {
+      pill.classList.add('trade-pill-alert');
+      if (!alertBanner) {
+        const headerRow = pill.querySelector('.trade-header');
+        const newBanner = document.createElement('div');
+        newBanner.className = 'trade-alert-banner';
+        newBanner.textContent = 'No active stop order found!';
+        if (headerRow) {
+          pill.insertBefore(newBanner, headerRow);
+        } else {
+          pill.prepend(newBanner);
+        }
+      }
+    } else {
+      pill.classList.remove('trade-pill-alert');
+      if (alertBanner) alertBanner.remove();
+    }
+    if (guaranteedValue && guaranteed !== null && !isMissingStop) {
+      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+    }
+    if (guaranteedCard) {
+      guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0 && !isMissingStop);
+      guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0 && !isMissingStop);
+      guaranteedCard.classList.toggle('is-hidden', guaranteed === null || isMissingStop);
+    } else if (guaranteed !== null && !isMissingStop) {
+      const pnlStack = pill.querySelector('.trade-pnl-stack');
+      const pnlCardEl = pill.querySelector('[data-role="trade-pnl-card"]');
+      if (pnlStack && pnlCardEl) {
+        const newCard = document.createElement('div');
+        newCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
+        newCard.dataset.role = 'trade-guaranteed-card';
+        const label = document.createElement('span');
+        label.className = 'trade-pnl-label';
+        label.textContent = 'Guaranteed';
+        const value = document.createElement('strong');
+        value.className = 'trade-pnl-value';
+        value.dataset.role = 'trade-guaranteed';
+        value.textContent = formatSignedCurrency(guaranteed);
+        newCard.append(label, value);
+        pnlStack.insertBefore(newCard, pnlCardEl.nextSibling);
+      }
+    }
     const livePriceEl = pill.querySelector('[data-role="detail-live-price"]');
     if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
     const currentStopEl = pill.querySelector('[data-role="detail-current-stop"]');
-    if (currentStopEl && currentStop !== null) {
-      currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
+    if (currentStop !== null) {
+      if (currentStopEl) {
+        currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
+      } else {
+        const detailList = pill.querySelector('.trade-details');
+        const livePriceElNode = pill.querySelector('[data-role="detail-live-price"]');
+        if (detailList && livePriceElNode) {
+          const livePriceDt = livePriceElNode.previousElementSibling;
+          const dt = document.createElement('dt');
+          dt.textContent = 'Current Stop:';
+          const dd = document.createElement('dd');
+          dd.dataset.role = 'detail-current-stop';
+          dd.textContent = formatPrice(currentStop, trade.currency, 2);
+          if (livePriceDt && livePriceDt.parentElement === detailList) {
+            detailList.insertBefore(dt, livePriceDt);
+            detailList.insertBefore(dd, livePriceDt);
+          } else {
+            detailList.append(dt, dd);
+          }
+        }
+      }
+    } else if (currentStopEl) {
+      const currentStopDt = currentStopEl.previousElementSibling;
+      if (currentStopDt && currentStopDt.tagName === 'DT') {
+        currentStopDt.remove();
+      }
+      currentStopEl.remove();
     }
   });
 }
