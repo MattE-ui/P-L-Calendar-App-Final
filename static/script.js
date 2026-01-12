@@ -2207,6 +2207,8 @@ function renderGuestBanner() {
 function render() {
   renderGuestBanner();
   document.body.classList.toggle('safe-screenshot', state.safeScreenshot);
+  const safeAlert = $('#safe-screenshot-alert');
+  if (safeAlert) safeAlert.classList.toggle('hidden', !state.safeScreenshot);
   updateCurrencySelect();
   updatePortfolioPill();
   setActiveView();
@@ -3075,7 +3077,7 @@ function bindControls() {
       renderRiskCalculator();
     });
   });
-  $('#quick-settings-btn')?.addEventListener('click', () => {
+  const openQuickSettings = () => {
     setNavOpen(false);
     const modal = $('#quick-settings-modal');
     const riskSel = $('#qs-risk-select');
@@ -3085,7 +3087,9 @@ function bindControls() {
     if (curSel) curSel.value = state.defaultRiskCurrency || 'GBP';
     if (safeToggle) safeToggle.checked = !!state.safeScreenshot;
     modal?.classList.remove('hidden');
-  });
+  };
+  $('#quick-settings-btn')?.addEventListener('click', openQuickSettings);
+  $('#safe-screenshot-open-qs')?.addEventListener('click', openQuickSettings);
   const closeQs = () => $('#quick-settings-modal')?.classList.add('hidden');
   $('#close-qs-btn')?.addEventListener('click', closeQs);
   $('#save-qs-btn')?.addEventListener('click', () => {
