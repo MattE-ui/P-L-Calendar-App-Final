@@ -2396,6 +2396,7 @@ app.post('/api/signup', asyncHandler(async (req,res)=>{
   db.users[username] = {
     username,
     passwordHash,
+    nickname: '',
     portfolio: 0,
     initialPortfolio: 0,
     initialNetDeposits: 0,
@@ -2505,6 +2506,7 @@ app.post('/api/auth/guest', asyncHandler(async (req, res) => {
     guest: true,
     expiresAt,
     passwordHash: '',
+    nickname: '',
     portfolio: 0,
     initialPortfolio: 0,
     initialNetDeposits: 0,
