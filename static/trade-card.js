@@ -15,7 +15,8 @@ const TRADE_CARD_COLORS = {
   pillShortBg: 'rgba(255,114,133,0.12)'
 };
 
-const TRADE_CARD_BASE_LAYOUT = {
+const TRADE_CARD_LAYOUTS = {
+  landscape: {
   ticker: { x: 130, y: 275, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   roiValue: { x: 130, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
   roiLabel: { x: 130, y: 420, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
@@ -31,14 +32,33 @@ const TRADE_CARD_BASE_LAYOUT = {
   closeDateValue: { x: 430, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   directionPill: { x: 300, y: 239, height: 30 },
   footerLeft: { x: 130, y: 770, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
-  footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' }
+  footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
+  shareIcon: { x: 1190, y: 742, size: 30 }
+},
+  portrait: {
+    ticker: { x: 140, y: 700, fontSize: 44, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    roiValue: { x: 140, y: 520, fontSize: 62, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+    roiLabel: { x: 140, y: 575, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    rValue: { x: 600, y: 520, fontSize: 62, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+    rLabel: { x: 600, y: 575, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryLabel: { x: 140, y: 820, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryValue: { x: 140, y: 875, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    stopLabel: { x: 600, y: 820, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    stopValue: { x: 600, y: 875, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    entryDateLabel: { x: 140, y: 970, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryDateValue: { x: 140, y: 1025, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    closeDateLabel: { x: 600, y: 970, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    closeDateValue: { x: 600, y: 1025, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    directionPill: { x: 420, y: 665, height: 28 },
+    footerLeft: { x: 140, y: 1450, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
+    footerRight: { x: 900, y: 1450, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
+    shareIcon: { x: 860, y: 1422, size: 30 }
+  }
 };
-
-const LANDSCAPE_BASE_SIZE = { width: 1536, height: 1024 };
 
 let templateImagePromises = new Map();
 let templateBoundsPromises = new Map();
-let layoutCache = new Map();
+let iconImagePromise;
 
 function tradeCardFormatCurrencyUSD(value) {
   if (!Number.isFinite(value)) return '—';
@@ -116,6 +136,17 @@ function parseTemplateImage(templateUrl) {
   return promise;
 }
 
+function loadShareIcon() {
+  if (iconImagePromise) return iconImagePromise;
+  iconImagePromise = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = '/static/White-Share-Icon.png';
+  });
+  return iconImagePromise;
+}
+
 async function getTemplateBounds(templateUrl) {
   const url = templateUrl || TRADE_CARD_TEMPLATES.landscape;
   const existing = templateBoundsPromises.get(url);
@@ -155,31 +186,6 @@ async function getTemplateBounds(templateUrl) {
   });
   templateBoundsPromises.set(url, promise);
   return promise;
-}
-
-function scaleLayout(layout, scaleX, scaleY) {
-  const scaled = {};
-  Object.entries(layout).forEach(([key, value]) => {
-    if (!value || typeof value !== 'object') return;
-    const next = { ...value };
-    if (typeof next.x === 'number') next.x = next.x * scaleX;
-    if (typeof next.y === 'number') next.y = next.y * scaleY;
-    if (typeof next.fontSize === 'number') next.fontSize = next.fontSize * scaleY;
-    if (typeof next.height === 'number') next.height = next.height * scaleY;
-    scaled[key] = next;
-  });
-  return scaled;
-}
-
-function resolveLayout(orientation, template) {
-  const key = `${orientation}:${template.width}x${template.height}`;
-  const cached = layoutCache.get(key);
-  if (cached) return cached;
-  const scaleX = template.width / LANDSCAPE_BASE_SIZE.width;
-  const scaleY = template.height / LANDSCAPE_BASE_SIZE.height;
-  const layout = scaleLayout(TRADE_CARD_BASE_LAYOUT, scaleX, scaleY);
-  layoutCache.set(key, layout);
-  return layout;
 }
 
 function setFont(ctx, layout) {
@@ -227,7 +233,7 @@ async function renderTradeCard(trade) {
 
   const template = await parseTemplateImage(templateUrl);
   const bounds = await getTemplateBounds(templateUrl);
-  const layout = resolveLayout(orientation, template);
+  const layout = TRADE_CARD_LAYOUTS[orientation] || TRADE_CARD_LAYOUTS.landscape;
   const width = bounds.width;
   const height = bounds.height;
   const dpr = window.devicePixelRatio || 1;
@@ -288,6 +294,12 @@ async function renderTradeCard(trade) {
   const footerRight = `Shared ${tradeCardFormatTimestamp(sharedAt)}`;
   drawText(ctx, footerLeft, layout.footerLeft);
   drawText(ctx, footerRight, layout.footerRight);
+  if (layout.shareIcon) {
+    const icon = await loadShareIcon();
+    if (icon) {
+      ctx.drawImage(icon, layout.shareIcon.x, layout.shareIcon.y, layout.shareIcon.size, layout.shareIcon.size);
+    }
+  }
   ctx.restore();
 
   return new Promise(resolve => {
@@ -315,7 +327,7 @@ if (typeof window !== 'undefined') {
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
     formatTimestamp: tradeCardFormatTimestamp,
-    TRADE_CARD_LAYOUT: TRADE_CARD_BASE_LAYOUT,
+    TRADE_CARD_LAYOUTS,
     TRADE_CARD_TEMPLATES
   };
 }
@@ -330,7 +342,7 @@ if (typeof module !== 'undefined') {
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
     formatTimestamp: tradeCardFormatTimestamp,
-    TRADE_CARD_LAYOUT: TRADE_CARD_BASE_LAYOUT,
+    TRADE_CARD_LAYOUTS,
     TRADE_CARD_TEMPLATES
   };
 }
