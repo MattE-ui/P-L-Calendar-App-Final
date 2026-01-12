@@ -1356,6 +1356,13 @@ function buildTradeSummary(trade) {
   const pnl = Number.isFinite(trade.realizedPnlGBP)
     ? trade.realizedPnlGBP
     : (Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : null);
+  const riskGBP = Number.isFinite(trade.riskAmountGBP)
+    ? trade.riskAmountGBP
+    : (Number.isFinite(trade.riskAmountCurrency)
+      ? toGBP(trade.riskAmountCurrency, trade.currency || 'GBP')
+      : (Number.isFinite(trade.perUnitRisk) && Number.isFinite(trade.sizeUnits)
+        ? toGBP(trade.perUnitRisk * trade.sizeUnits, trade.currency || 'GBP')
+        : null));
   const positionBase = Number.isFinite(trade.positionGBP)
     ? trade.positionGBP
     : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
@@ -1366,8 +1373,8 @@ function buildTradeSummary(trade) {
     : undefined;
   const rMultiple = Number.isFinite(trade.rMultiple)
     ? trade.rMultiple
-    : (pnl !== null && Number.isFinite(trade.riskAmountGBP) && trade.riskAmountGBP !== 0
-      ? pnl / trade.riskAmountGBP
+    : (pnl !== null && Number.isFinite(riskGBP) && riskGBP !== 0
+      ? pnl / riskGBP
       : undefined);
   return {
     ticker: getTradeDisplaySymbol(trade) || '—',
