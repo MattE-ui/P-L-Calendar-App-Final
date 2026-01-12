@@ -159,9 +159,9 @@ async function renderTradeCard(trade) {
   const pillPaddingX = 16;
   const pillTextWidth = ctx.measureText(pillText).width;
   const pillWidth = pillTextWidth + pillPaddingX * 2;
-  const pillHeight = 34;
+  const pillHeight = 32;
   const pillX = TRADE_CARD_LAYOUT.ticker.x + ctx.measureText(ticker).width + 20;
-  const pillY = TRADE_CARD_LAYOUT.ticker.y - 34;
+  const pillY = TRADE_CARD_LAYOUT.ticker.y - 44;
   drawRoundedRect(ctx, pillX, pillY, pillWidth, pillHeight, 10);
   ctx.fillStyle = pillBg;
   ctx.fill();
