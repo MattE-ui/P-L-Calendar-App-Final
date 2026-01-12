@@ -80,6 +80,31 @@ function isStrongPassword(password) {
   return hasUpper && hasLower && hasNumber && hasSymbol;
 }
 
+function normalizeNickname(raw) {
+  if (typeof raw !== 'string') return { value: '', error: 'Nickname must be a string.' };
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: '' };
+  if (trimmed.length > 20) {
+    return { value: '', error: 'Nicknames must be 20 characters or less.' };
+  }
+  if (!/^[A-Za-z0-9 ]+$/.test(trimmed)) {
+    return { value: '', error: 'Nicknames can only contain letters, numbers, and spaces.' };
+  }
+  return { value: trimmed };
+}
+
+function isNicknameAvailable(db, nickname, username) {
+  if (!nickname) return true;
+  const candidate = nickname.toLowerCase();
+  return !Object.entries(db.users).some(([key, other]) => {
+    if (key === username) return false;
+    const otherUsername = typeof other?.username === 'string' ? other.username : key;
+    const otherNickname = typeof other?.nickname === 'string' ? other.nickname : '';
+    return (otherUsername && otherUsername.toLowerCase() === candidate)
+      || (otherNickname && otherNickname.toLowerCase() === candidate);
+  });
+}
+
 const Trading212Error = (() => {
   if (global.__Trading212Error__) {
     return global.__Trading212Error__;
@@ -390,6 +415,20 @@ function ensureUserShape(user, identifier) {
   if (!user.username && typeof user.email === 'string') {
     user.username = user.email;
     mutated = true;
+  }
+  if (user.nickname !== undefined && typeof user.nickname !== 'string') {
+    delete user.nickname;
+    mutated = true;
+  }
+  if (typeof user.nickname === 'string') {
+    const normalized = normalizeNickname(user.nickname);
+    if (normalized.error) {
+      user.nickname = '';
+      mutated = true;
+    } else if (normalized.value !== user.nickname) {
+      user.nickname = normalized.value;
+      mutated = true;
+    }
   }
   if (user.email !== undefined) {
     delete user.email;
@@ -2577,6 +2616,7 @@ app.get('/api/profile', auth, (req,res)=>{
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
     username: user.username || req.username,
+    nickname: user.nickname || '',
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username)
   });
@@ -2820,7 +2860,7 @@ app.post('/api/transactions/profiles', auth, (req, res) => {
 });
 
 app.post('/api/profile', auth, (req,res)=>{
-  const { portfolio, netDeposits, date } = req.body || {};
+  const { portfolio, netDeposits, date, nickname } = req.body || {};
   if (portfolio === '' || portfolio === null || portfolio === undefined) {
     return res.status(400).json({ error: 'Portfolio value is required' });
   }
@@ -2832,6 +2872,16 @@ app.post('/api/profile', auth, (req,res)=>{
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+  if (nickname !== undefined) {
+    const normalized = normalizeNickname(nickname);
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
+    }
+    if (!isNicknameAvailable(db, normalized.value, req.username)) {
+      return res.status(409).json({ error: 'That nickname is already taken.' });
+    }
+    user.nickname = normalized.value;
+  }
   const wasComplete = !!user.profileComplete;
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
@@ -2931,6 +2981,28 @@ app.post('/api/account/password', auth, async (req, res) => {
   user.security.passwordUpdatedAt = new Date().toISOString();
   saveDB(db);
   res.json({ ok: true });
+});
+
+app.post('/api/account/nickname', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  if (req.body?.nickname === undefined) {
+    return res.status(400).json({ error: 'Nickname is required.' });
+  }
+  const normalized = normalizeNickname(req.body.nickname);
+  if (normalized.error) {
+    return res.status(400).json({ error: normalized.error });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const nickname = normalized.value;
+  if (!isNicknameAvailable(db, nickname, req.username)) {
+    return res.status(409).json({ error: 'That nickname is already taken.' });
+  }
+  user.nickname = nickname;
+  saveDB(db);
+  res.json({ ok: true, nickname });
 });
 
 app.delete('/api/profile', auth, (req, res) => {
