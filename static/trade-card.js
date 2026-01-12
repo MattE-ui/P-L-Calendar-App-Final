@@ -32,6 +32,7 @@ const TRADE_CARD_LAYOUT = {
 };
 
 let templateImagePromise;
+let templateBoundsPromise;
 
 function tradeCardFormatCurrencyUSD(value) {
   if (!Number.isFinite(value)) return '—';
@@ -95,6 +96,44 @@ function parseTemplateImage() {
   return templateImagePromise;
 }
 
+async function getTemplateBounds() {
+  if (templateBoundsPromise) return templateBoundsPromise;
+  templateBoundsPromise = parseTemplateImage().then(img => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { x: 0, y: 0, width: img.width, height: img.height };
+    ctx.drawImage(img, 0, 0);
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = data[(y * width + x) * 4 + 3];
+        if (alpha > 0) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) {
+      return { x: 0, y: 0, width: img.width, height: img.height };
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1
+    };
+  });
+  return templateBoundsPromise;
+}
+
 function setFont(ctx, layout) {
   ctx.font = `${layout.fontWeight} ${layout.fontSize}px ${TRADE_CARD_FONT}`;
   ctx.fillStyle = layout.color;
@@ -137,8 +176,9 @@ async function renderTradeCard(trade) {
   }
 
   const template = await parseTemplateImage();
-  const width = template.width;
-  const height = template.height;
+  const bounds = await getTemplateBounds();
+  const width = bounds.width;
+  const height = bounds.height;
   const dpr = window.devicePixelRatio || 1;
   const canvas = document.createElement('canvas');
   canvas.width = width * dpr;
@@ -148,7 +188,9 @@ async function renderTradeCard(trade) {
   ctx.scale(dpr, dpr);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.drawImage(template, 0, 0, width, height);
+  ctx.save();
+  ctx.translate(-bounds.x, -bounds.y);
+  ctx.drawImage(template, 0, 0, template.width, template.height);
 
   const ticker = trade?.ticker || '—';
   drawText(ctx, ticker, TRADE_CARD_LAYOUT.ticker);
@@ -195,6 +237,7 @@ async function renderTradeCard(trade) {
   const footerRight = `Shared ${tradeCardFormatRelative(sharedAt)} - ${tradeCardFormatDate(sharedAt)}`;
   drawText(ctx, footerLeft, TRADE_CARD_LAYOUT.footerLeft);
   drawText(ctx, footerRight, TRADE_CARD_LAYOUT.footerRight);
+  ctx.restore();
 
   return new Promise(resolve => {
     canvas.toBlob(blob => resolve(blob), 'image/png', 1.0);
