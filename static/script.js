@@ -1353,6 +1353,15 @@ function openCloseTradeModal(trade) {
 }
 
 function buildTradeSummary(trade) {
+  const entryVal = Number(trade.entry);
+  const stopVal = Number(trade.stop);
+  const sizeUnitsVal = Number(trade.sizeUnits);
+  const derivedPerUnitRisk = Number.isFinite(entryVal) && Number.isFinite(stopVal)
+    ? Math.abs(entryVal - stopVal)
+    : null;
+  const derivedRiskCurrency = Number.isFinite(derivedPerUnitRisk) && Number.isFinite(sizeUnitsVal)
+    ? derivedPerUnitRisk * sizeUnitsVal
+    : null;
   const pnl = Number.isFinite(trade.realizedPnlGBP)
     ? trade.realizedPnlGBP
     : (Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : null);
@@ -1362,7 +1371,9 @@ function buildTradeSummary(trade) {
       ? toGBP(trade.riskAmountCurrency, trade.currency || 'GBP')
       : (Number.isFinite(trade.perUnitRisk) && Number.isFinite(trade.sizeUnits)
         ? toGBP(trade.perUnitRisk * trade.sizeUnits, trade.currency || 'GBP')
-        : null));
+        : (Number.isFinite(derivedRiskCurrency)
+          ? toGBP(derivedRiskCurrency, trade.currency || 'GBP')
+          : null)));
   const positionBase = Number.isFinite(trade.positionGBP)
     ? trade.positionGBP
     : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
