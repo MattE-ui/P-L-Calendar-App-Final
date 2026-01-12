@@ -48,7 +48,7 @@ const ACTIVE_TRADE_SORTS = new Set([
 const SHOW_MAPPING_BADGE = false;
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
-const shareCardState = { blob: null, url: null };
+const shareCardState = { blob: null, url: null, trade: null, orientation: 'landscape' };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 const SAFE_SCREENSHOT_LABEL = 'Hidden';
 
@@ -1141,13 +1141,7 @@ function renderActiveTrades() {
     });
     const shareBtn = document.createElement('button');
     shareBtn.className = 'ghost trade-share-btn';
-    shareBtn.type = 'button';
-    shareBtn.setAttribute('aria-label', 'Share card');
-    shareBtn.title = 'Share card';
-    const shareIcon = document.createElement('img');
-    shareIcon.src = '/static/White-Share-Icon.png';
-    shareIcon.alt = '';
-    shareBtn.appendChild(shareIcon);
+    shareBtn.textContent = 'Share card';
     shareBtn.addEventListener('click', () => {
       openShareCardModal(trade);
     });
@@ -1430,8 +1424,50 @@ function resetShareCardState() {
   }
   shareCardState.url = null;
   shareCardState.blob = null;
+  shareCardState.trade = null;
+  shareCardState.orientation = 'landscape';
   const preview = $('#share-card-preview-img');
   if (preview) preview.removeAttribute('src');
+}
+
+function getShareCardOrientation() {
+  const selector = $('#share-card-layout');
+  return selector?.value === 'portrait' ? 'portrait' : 'landscape';
+}
+
+async function renderShareCardPreview(trade) {
+  const status = $('#share-card-status');
+  const preview = $('#share-card-preview-img');
+  const download = $('#share-card-download');
+  const shareBtn = $('#share-card-share');
+  if (status) status.textContent = 'Generating card...';
+  try {
+    const renderer = window.tradeCardRenderer?.renderTradeCard;
+    if (!renderer) throw new Error('Trade card renderer unavailable.');
+    const summary = buildTradeSummary(trade);
+    const orientation = getShareCardOrientation();
+    const payload = { ...summary, orientation };
+    const blob = await renderer(payload);
+    if (!blob || blob.size === 0) throw new Error('Unable to generate trade card.');
+    shareCardState.blob = blob;
+    shareCardState.url = URL.createObjectURL(blob);
+    shareCardState.orientation = orientation;
+    if (preview) preview.src = shareCardState.url;
+    if (download) {
+      const safeTicker = summary.ticker ? summary.ticker.replace(/\W+/g, '-').toLowerCase() : 'trade';
+      const suffix = orientation === 'portrait' ? '-portrait' : '-landscape';
+      download.href = shareCardState.url;
+      download.download = `${safeTicker}-summary${suffix}.png`;
+    }
+    if (status) status.textContent = '';
+    if (shareBtn) {
+      const shareFile = new File([blob], 'trade-summary.png', { type: 'image/png' });
+      const canShare = !!navigator.share && (!navigator.canShare || navigator.canShare({ files: [shareFile] }));
+      shareBtn.classList.toggle('is-hidden', !canShare);
+    }
+  } catch (e) {
+    if (status) status.textContent = e?.message || 'Failed to generate card.';
+  }
 }
 
 function closeShareCardModal() {
@@ -1445,35 +1481,9 @@ async function openShareCardModal(trade) {
   const modal = $('#share-card-modal');
   if (!modal) return;
   modal.classList.remove('hidden');
-  const status = $('#share-card-status');
-  const preview = $('#share-card-preview-img');
-  const download = $('#share-card-download');
-  const shareBtn = $('#share-card-share');
   resetShareCardState();
-  if (status) status.textContent = 'Generating card...';
-  try {
-    const renderer = window.tradeCardRenderer?.renderTradeCard;
-    if (!renderer) throw new Error('Trade card renderer unavailable.');
-    const summary = buildTradeSummary(trade);
-    const blob = await renderer(summary);
-    if (!blob || blob.size === 0) throw new Error('Unable to generate trade card.');
-    shareCardState.blob = blob;
-    shareCardState.url = URL.createObjectURL(blob);
-    if (preview) preview.src = shareCardState.url;
-    if (download) {
-      const safeTicker = summary.ticker ? summary.ticker.replace(/\W+/g, '-').toLowerCase() : 'trade';
-      download.href = shareCardState.url;
-      download.download = `${safeTicker}-summary.png`;
-    }
-    if (status) status.textContent = '';
-    if (shareBtn) {
-      const shareFile = new File([blob], 'trade-summary.png', { type: 'image/png' });
-      const canShare = !!navigator.share && (!navigator.canShare || navigator.canShare({ files: [shareFile] }));
-      shareBtn.classList.toggle('is-hidden', !canShare);
-    }
-  } catch (e) {
-    if (status) status.textContent = e?.message || 'Failed to generate card.';
-  }
+  shareCardState.trade = trade;
+  await renderShareCardPreview(trade);
 }
 
 function openEditTradeModal(trade) {
@@ -2762,6 +2772,11 @@ function bindControls() {
     $('#close-trade-modal')?.classList.add('hidden');
   });
   $('#close-share-card-btn')?.addEventListener('click', closeShareCardModal);
+  $('#share-card-layout')?.addEventListener('change', () => {
+    if (shareCardState.trade) {
+      renderShareCardPreview(shareCardState.trade);
+    }
+  });
 
   $('#share-card-copy')?.addEventListener('click', async () => {
     const status = $('#share-card-status');

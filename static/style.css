@@ -1199,6 +1199,18 @@ select {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.share-card-controls {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.share-card-controls label {
+  margin: 0;
+  color: var(--muted);
+}
+.share-card-controls select {
+  min-width: 160px;
+}
 .trade-share-btn {
   white-space: nowrap;
 }
