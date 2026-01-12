@@ -471,6 +471,10 @@ async function handleNicknameUpdate() {
     if (error) error.textContent = 'Nicknames can only use letters, numbers, and spaces.';
     return;
   }
+  if (status) {
+    status.textContent = 'Updating nickname…';
+    status.classList.remove('is-hidden');
+  }
   try {
     const data = await api('/api/account/nickname', {
       method: 'POST',
