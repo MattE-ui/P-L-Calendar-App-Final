@@ -2604,7 +2604,7 @@ app.get('/api/profile', auth, (req,res)=>{
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
     username: user.username || req.username,
-    nickname: user.nickname || '',
+    displayName: user.displayName || user.username || req.username,
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username)
   });
