@@ -2066,14 +2066,15 @@ function renderMonthGrid(targetDate, grid) {
       if (change < 0) cell.classList.add('loss');
     }
     const changeText = state.safeScreenshot
-      ? (pct === null ? 'Δ —' : `Δ ${formatPercent(pct)}`)
+      ? ''
       : (change === null
         ? 'Δ —'
         : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`);
+    const pctDisplay = pct === null ? '—' : formatPercent(pct);
     const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
     cell.innerHTML = `
       <div class="date">${day}</div>
-      <div class="val">${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closing === null ? '—' : formatCurrency(closing))}</div>
+      <div class="val">${state.safeScreenshot ? pctDisplay : (closing === null ? '—' : formatCurrency(closing))}</div>
       <div class="pct">${changeText}</div>
       ${tradeHtml}
     `;
@@ -2205,6 +2206,7 @@ function renderGuestBanner() {
 
 function render() {
   renderGuestBanner();
+  document.body.classList.toggle('safe-screenshot', state.safeScreenshot);
   updateCurrencySelect();
   updatePortfolioPill();
   setActiveView();
