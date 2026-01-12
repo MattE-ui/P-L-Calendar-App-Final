@@ -28,6 +28,7 @@ const state = {
   },
   direction: 'long',
   defaultRiskPct: 1,
+  safeScreenshot: false,
   fees: 0,
   slippage: 0,
   rounding: 'fractional',
@@ -49,6 +50,7 @@ const SHOW_MAPPING_BADGE = false;
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const shareCardState = { blob: null, url: null };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
+const SAFE_SCREENSHOT_LABEL = 'Hidden';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -807,10 +809,12 @@ function renderActiveTrades() {
   if (!list) return;
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-  if (pnlEl) pnlEl.textContent = formatLiveOpenPnl(livePnl);
-  if (pnlCard) {
+  if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
+  if (pnlCard && !state.safeScreenshot) {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
+  } else if (pnlCard) {
+    pnlCard.classList.remove('positive', 'negative');
   }
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
@@ -954,7 +958,7 @@ function renderActiveTrades() {
     const pnlValue = document.createElement('strong');
     pnlValue.className = 'trade-pnl-value';
     pnlValue.dataset.role = 'trade-pnl';
-    pnlValue.textContent = formatSignedCurrency(pnl);
+    pnlValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
     pnlCard.append(pnlLabel, pnlValue);
     pnlStack.appendChild(pnlCard);
 
@@ -968,7 +972,7 @@ function renderActiveTrades() {
       const guaranteedValue = document.createElement('strong');
       guaranteedValue.className = 'trade-pnl-value';
       guaranteedValue.dataset.role = 'trade-guaranteed';
-      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+      guaranteedValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(guaranteed);
       guaranteedCard.append(guaranteedLabel, guaranteedValue);
       pnlStack.appendChild(guaranteedCard);
     }
@@ -1010,6 +1014,11 @@ function renderActiveTrades() {
       detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
     });
     bodyRow.appendChild(pnlStack);
+    if (state.safeScreenshot) {
+      pnlStack.classList.add('is-hidden');
+      detailsToggle.classList.add('is-hidden');
+      detailsWrap.classList.add('is-hidden');
+    }
     bodyRow.appendChild(detailsToggle);
     bodyRow.appendChild(detailsWrap);
     pill.appendChild(bodyRow);
@@ -1161,10 +1170,12 @@ function updateActiveTradeDisplay(trades) {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
     const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
-    if (pnlValue) pnlValue.textContent = formatSignedCurrency(pnl);
-    if (pnlCard) {
+    if (pnlValue) pnlValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+    if (pnlCard && !state.safeScreenshot) {
       pnlCard.classList.toggle('positive', pnl > 0);
       pnlCard.classList.toggle('negative', pnl < 0);
+    } else if (pnlCard) {
+      pnlCard.classList.remove('positive', 'negative');
     }
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const guaranteedCard = pill.querySelector('[data-role="trade-guaranteed-card"]');
@@ -1192,12 +1203,12 @@ function updateActiveTradeDisplay(trades) {
       if (alertBanner) alertBanner.remove();
     }
     if (guaranteedValue && guaranteed !== null && !isMissingStop) {
-      guaranteedValue.textContent = formatSignedCurrency(guaranteed);
+      guaranteedValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(guaranteed);
     }
     if (guaranteedCard) {
       guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0 && !isMissingStop);
       guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0 && !isMissingStop);
-      guaranteedCard.classList.toggle('is-hidden', guaranteed === null || isMissingStop);
+      guaranteedCard.classList.toggle('is-hidden', guaranteed === null || isMissingStop || state.safeScreenshot);
     } else if (guaranteed !== null && !isMissingStop) {
       const pnlStack = pill.querySelector('.trade-pnl-stack');
       const pnlCardEl = pill.querySelector('[data-role="trade-pnl-card"]');
@@ -1211,11 +1222,17 @@ function updateActiveTradeDisplay(trades) {
         const value = document.createElement('strong');
         value.className = 'trade-pnl-value';
         value.dataset.role = 'trade-guaranteed';
-        value.textContent = formatSignedCurrency(guaranteed);
+        value.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(guaranteed);
         newCard.append(label, value);
         pnlStack.insertBefore(newCard, pnlCardEl.nextSibling);
       }
     }
+    const pnlStack = pill.querySelector('.trade-pnl-stack');
+    if (pnlStack) pnlStack.classList.toggle('is-hidden', state.safeScreenshot);
+    const detailsToggle = pill.querySelector('.trade-details-toggle');
+    const detailsWrap = pill.querySelector('.trade-details-collapsible');
+    if (detailsToggle) detailsToggle.classList.toggle('is-hidden', state.safeScreenshot);
+    if (detailsWrap) detailsWrap.classList.toggle('is-hidden', state.safeScreenshot);
     const livePriceEl = pill.querySelector('[data-role="detail-live-price"]');
     if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
     const currentStopEl = pill.querySelector('[data-role="detail-current-stop"]');
@@ -1295,7 +1312,7 @@ function renderPortfolioTrend() {
   dot.setAttribute('r', '2.5');
   dot.setAttribute('class', 'line-dot');
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${formatCurrency(lastPoint.value)}`;
+  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
   svg.append(title, area, line, dot);
   el.appendChild(svg);
 }
@@ -1624,27 +1641,33 @@ function renderMetrics() {
 
   const portfolioValueEl = $('#metric-portfolio-value');
   if (portfolioValueEl) {
-    portfolioValueEl.textContent = formatCurrency(liveGBP);
+    portfolioValueEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
   }
   const portfolioSubEl = $('#metric-portfolio-sub');
   if (portfolioSubEl) {
-    const pieces = [];
-    if (altCurrency) {
-      const altValue = formatCurrency(liveGBP, altCurrency);
-      if (altValue !== '—') pieces.push(`≈ ${altValue}`);
+    if (state.safeScreenshot) {
+      portfolioSubEl.textContent = '';
+    } else {
+      const pieces = [];
+      if (altCurrency) {
+        const altValue = formatCurrency(liveGBP, altCurrency);
+        if (altValue !== '—') pieces.push(`≈ ${altValue}`);
+      }
+      const openPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+      if (openPnl !== 0) pieces.push(`Live PnL: ${formatLiveOpenPnl(openPnl)}`);
+      portfolioSubEl.textContent = pieces.join(' • ');
     }
-    const openPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-    if (openPnl !== 0) pieces.push(`Live PnL: ${formatLiveOpenPnl(openPnl)}`);
-    portfolioSubEl.textContent = pieces.join(' • ');
   }
 
   const netDepositsEl = $('#hero-net-deposits-value');
   if (netDepositsEl) {
-    netDepositsEl.textContent = formatSignedCurrency(netDepositsGBP);
+    netDepositsEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(netDepositsGBP);
   }
   const netDepositsSub = $('#hero-net-deposits-sub');
   if (netDepositsSub) {
-    if (altCurrency) {
+    if (state.safeScreenshot) {
+      netDepositsSub.textContent = '';
+    } else if (altCurrency) {
       const altDeposits = formatSignedCurrency(netDepositsGBP, altCurrency);
       netDepositsSub.textContent = altDeposits === '—' ? '' : `≈ ${altDeposits}`;
     } else {
@@ -1658,19 +1681,25 @@ function renderMetrics() {
 
   const netPerfEl = $('#hero-net-performance-value');
   if (netPerfEl) {
-    netPerfEl.textContent = formatSignedCurrency(netPerformanceGBP);
+    netPerfEl.textContent = state.safeScreenshot
+      ? formatPercent(netPerformancePct)
+      : formatSignedCurrency(netPerformanceGBP);
   }
   const netPerfSub = $('#hero-net-performance-sub');
   if (netPerfSub) {
-    const pieces = [];
-    if (altCurrency) {
-      const altPerf = formatSignedCurrency(netPerformanceGBP, altCurrency);
-      if (altPerf !== '—') pieces.push(`≈ ${altPerf}`);
+    if (state.safeScreenshot) {
+      netPerfSub.textContent = '';
+    } else {
+      const pieces = [];
+      if (altCurrency) {
+        const altPerf = formatSignedCurrency(netPerformanceGBP, altCurrency);
+        if (altPerf !== '—') pieces.push(`≈ ${altPerf}`);
+      }
+      if (netPerformancePct !== null && netPerformancePct !== undefined) {
+        pieces.push(formatPercent(netPerformancePct));
+      }
+      netPerfSub.textContent = pieces.join(' • ');
     }
-    if (netPerformancePct !== null && netPerformancePct !== undefined) {
-      pieces.push(formatPercent(netPerformancePct));
-    }
-    netPerfSub.textContent = pieces.join(' • ');
   }
   setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
 
@@ -1728,7 +1757,9 @@ function updatePortfolioPill() {
       ? formatCurrency(latestGBP, 'GBP')
       : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
   if (el) {
-    if (state.currency === 'USD') {
+    if (state.safeScreenshot) {
+      el.textContent = `Portfolio: ${SAFE_SCREENSHOT_LABEL}`;
+    } else if (state.currency === 'USD') {
       el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
     } else if (state.rates.USD) {
       el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
@@ -1737,10 +1768,10 @@ function updatePortfolioPill() {
     }
   }
   if (heroVal) {
-    heroVal.textContent = base;
+    heroVal.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : base;
   }
   if (heroSub) {
-    heroSub.textContent = alt ? `≈ ${alt}` : '';
+    heroSub.textContent = state.safeScreenshot ? '' : (alt ? `≈ ${alt}` : '');
   }
 }
 
@@ -1835,7 +1866,7 @@ function renderSummary() {
   const cashClass = cashSum > 0 ? 'positive' : cashSum < 0 ? 'negative' : '';
   const cashValue = formatSignedCurrency(cashSum);
   const cashClassName = cashClass ? ` ${cashClass}` : '';
-  const cashFlowHtml = state.view === 'year'
+  const cashFlowHtml = state.safeScreenshot || state.view === 'year'
     ? ''
     : `Net deposits this ${periodLabel}: <span class="cashflow${cashClassName}">${cashValue}</span>`;
   if (!changeCount) {
@@ -1849,9 +1880,16 @@ function renderSummary() {
   const label = viewAvgLabels[state.view] || 'Average';
   const pctText = avgPct === null ? '' : ` (${formatPercent(avgPct)})`;
   const cashRow = cashFlowHtml ? `<div class="summary-line">${cashFlowHtml}</div>` : '';
-  avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}</strong></div>${cashRow}`;
-  avgEl.classList.toggle('positive', avgGBP > 0);
-  avgEl.classList.toggle('negative', avgGBP < 0);
+  if (state.safeScreenshot) {
+    const avgPctText = avgPct === null ? '—' : formatPercent(avgPct);
+    avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${avgPctText}</strong></div>`;
+    avgEl.classList.toggle('positive', avgPct > 0);
+    avgEl.classList.toggle('negative', avgPct < 0);
+  } else {
+    avgEl.innerHTML = `<div class="summary-line"><strong>${label} avg change: ${formatSignedCurrency(avgGBP)}${pctText}</strong></div>${cashRow}`;
+    avgEl.classList.toggle('positive', avgGBP > 0);
+    avgEl.classList.toggle('negative', avgGBP < 0);
+  }
 }
 
 function renderDay() {
@@ -1864,15 +1902,17 @@ function renderDay() {
     const entry = getDailyEntry(date);
     const closing = entry?.closing ?? null;
     const change = entry?.change ?? null;
+    const pct = entry?.pct ?? null;
+    const cashFlow = entry?.cashFlow ?? 0;
     const tradeCount = entry?.tradesCount ?? 0;
     const row = document.createElement('div');
     row.className = 'list-row';
     if (change > 0) row.classList.add('profit');
     if (change < 0) row.classList.add('loss');
-    const changeText = change === null
-      ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}`;
-    const cashHtml = cashFlow === 0
+    const changeText = state.safeScreenshot
+      ? (pct === null ? 'Δ —' : `Δ ${formatPercent(pct)}`)
+      : (change === null ? 'Δ —' : `Δ ${formatSignedCurrency(change)}`);
+    const cashHtml = state.safeScreenshot || cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
     const tradesHtml = tradeCount
@@ -1884,7 +1924,7 @@ function renderDay() {
         <div class="row-sub">${key}</div>
       </div>
       <div class="row-value">
-        <strong>${closing === null ? '—' : formatCurrency(closing)}</strong>
+        <strong>${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closing === null ? '—' : formatCurrency(closing))}</strong>
         <span>${changeText}</span>
         ${cashHtml}
         ${tradesHtml}
@@ -1917,10 +1957,12 @@ function renderWeek() {
     if (week.totalChange < 0) row.classList.add('loss');
     const hasEntries = week.recordedDays > 0;
     const hasChange = week.hasChange;
-    const changeText = hasChange ? `Δ ${formatSignedCurrency(week.totalChange)}` : 'Δ —';
-    const pctText = hasChange ? formatPercent(week.pct) : '—';
+    const changeText = state.safeScreenshot
+      ? (hasChange ? `Δ ${formatPercent(week.pct)}` : 'Δ —')
+      : (hasChange ? `Δ ${formatSignedCurrency(week.totalChange)}` : 'Δ —');
+    const pctText = state.safeScreenshot ? '—' : (hasChange ? formatPercent(week.pct) : '—');
     const cashFlow = week.totalCashFlow ?? 0;
-    const cashHtml = cashFlow === 0
+    const cashHtml = state.safeScreenshot || cashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</span>`;
     const tradesHtml = week.totalTrades
@@ -1956,12 +1998,17 @@ function renderWeek() {
     detail.className = 'week-detail hidden';
     const summary = summarizeWeek(week.entries || []);
     const tradeList = (week.trades || []).map(t => `${getTradeDisplaySymbol(t)} ${t.tradeType || ''} ${t.status || ''}`.trim());
-    detail.innerHTML = `
-      <div class="week-detail-grid">
+    const detailMetricsHtml = state.safeScreenshot
+      ? `<div class="week-detail-grid">
+        <div><strong>Trades:</strong><span>${summary.totalTrades || 0}</span></div>
+      </div>`
+      : `<div class="week-detail-grid">
         <div><strong>Cash flow:</strong><span>${formatSignedCurrency(summary.totalCashFlow || 0)}</span></div>
         <div><strong>Realized P&L:</strong><span>${formatSignedCurrency(summary.realized || 0)}</span></div>
         <div><strong>Trades:</strong><span>${summary.totalTrades || 0}</span></div>
-      </div>
+      </div>`;
+    detail.innerHTML = `
+      ${detailMetricsHtml}
       ${tradeList.length
         ? `<div class="week-trades">${tradeList.map(t => `<span class="tag-chip">${t}</span>`).join('')}</div>`
         : `<p class="tool-note">No trades recorded this week.</p>`}
@@ -2018,13 +2065,15 @@ function renderMonthGrid(targetDate, grid) {
       if (change > 0) cell.classList.add('profit');
       if (change < 0) cell.classList.add('loss');
     }
-    const changeText = change === null
-      ? 'Δ —'
-      : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`;
+    const changeText = state.safeScreenshot
+      ? (pct === null ? 'Δ —' : `Δ ${formatPercent(pct)}`)
+      : (change === null
+        ? 'Δ —'
+        : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`);
     const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
     cell.innerHTML = `
       <div class="date">${day}</div>
-      <div class="val">${closing === null ? '—' : formatCurrency(closing)}</div>
+      <div class="val">${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closing === null ? '—' : formatCurrency(closing))}</div>
       <div class="pct">${changeText}</div>
       ${tradeHtml}
     `;
@@ -2050,17 +2099,20 @@ function renderYearGrid(targetDate, grid) {
     if (item.totalChange < 0) cell.classList.add('loss');
     const hasData = item.recordedDays > 0;
     const hasChange = item.hasChange;
-    const pctText = hasChange ? formatPercent(item.pct) : '—';
+    const pctText = state.safeScreenshot ? '' : (hasChange ? formatPercent(item.pct) : '—');
     const cashFlow = item.totalCashFlow ?? 0;
-    const cashHtml = cashFlow === 0
+    const cashHtml = state.safeScreenshot || cashFlow === 0
       ? ''
       : `<div class="cashflow">Cash flow: ${formatSignedCurrency(cashFlow)}</div>`;
     const metaText = hasData
       ? `${item.recordedDays} recorded day${item.recordedDays === 1 ? '' : 's'}`
       : 'No entries yet';
+    const changeText = state.safeScreenshot
+      ? (hasChange ? `Δ ${formatPercent(item.pct)}` : 'Δ —')
+      : (hasChange ? `Δ ${formatSignedCurrency(item.totalChange)}` : 'Δ —');
     cell.innerHTML = `
       <div class="date">${item.monthDate.toLocaleDateString('en-GB', { month: 'short' })}</div>
-      <div class="val">${hasChange ? `Δ ${formatSignedCurrency(item.totalChange)}` : 'Δ —'}</div>
+      <div class="val">${changeText}</div>
       <div class="pct">${pctText}</div>
       ${cashHtml}
       <div class="meta">${metaText}</div>
@@ -2097,9 +2149,11 @@ function renderYear() {
     row.className = 'list-row year-row';
     if (totalChange > 0) row.classList.add('profit');
     if (totalChange < 0) row.classList.add('loss');
-    const changeText = hasChange ? `Δ ${formatSignedCurrency(totalChange)}` : 'Δ —';
-    const pctText = hasChange && pct !== null ? formatPercent(pct) : '—';
-    const cashHtml = totalCashFlow === 0
+    const changeText = state.safeScreenshot
+      ? (hasChange && pct !== null ? `Δ ${formatPercent(pct)}` : 'Δ —')
+      : (hasChange ? `Δ ${formatSignedCurrency(totalChange)}` : 'Δ —');
+    const pctText = state.safeScreenshot ? '' : (hasChange && pct !== null ? formatPercent(pct) : '—');
+    const cashHtml = state.safeScreenshot || totalCashFlow === 0
       ? ''
       : `<span class="cashflow">Cash flow: ${formatSignedCurrency(totalCashFlow)}</span>`;
     const recordedDays = months.reduce((sum, item) => sum + (item.recordedDays ?? 0), 0);
@@ -2180,6 +2234,18 @@ async function loadRates() {
   }
 }
 
+function persistLocalPrefs() {
+  try {
+    localStorage.setItem('plc-prefs', JSON.stringify({
+      defaultRiskPct: state.defaultRiskPct,
+      defaultRiskCurrency: state.defaultRiskCurrency,
+      safeScreenshot: state.safeScreenshot
+    }));
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
 async function loadUiPrefs() {
   if (isGuestSession()) return;
   let localPrefs = null;
@@ -2188,6 +2254,9 @@ async function loadUiPrefs() {
     localPrefs = saved ? JSON.parse(saved) : null;
   } catch (e) {
     console.warn(e);
+  }
+  if (typeof localPrefs?.safeScreenshot === 'boolean') {
+    state.safeScreenshot = localPrefs.safeScreenshot;
   }
   try {
     const prefs = await api('/api/prefs');
@@ -2207,10 +2276,7 @@ async function loadUiPrefs() {
     }
     state.riskPct = state.defaultRiskPct;
     state.riskCurrency = state.defaultRiskCurrency;
-    localStorage.setItem('plc-prefs', JSON.stringify({
-      defaultRiskPct: state.defaultRiskPct,
-      defaultRiskCurrency: state.defaultRiskCurrency
-    }));
+    persistLocalPrefs();
   } catch (e) {
     console.warn('Failed to load ui prefs', e);
   }
@@ -3012,8 +3078,10 @@ function bindControls() {
     const modal = $('#quick-settings-modal');
     const riskSel = $('#qs-risk-select');
     const curSel = $('#qs-currency-select');
+    const safeToggle = $('#qs-safe-screenshot');
     if (riskSel) riskSel.value = String(state.defaultRiskPct || 1);
     if (curSel) curSel.value = state.defaultRiskCurrency || 'GBP';
+    if (safeToggle) safeToggle.checked = !!state.safeScreenshot;
     modal?.classList.remove('hidden');
   });
   const closeQs = () => $('#quick-settings-modal')?.classList.add('hidden');
@@ -3021,6 +3089,7 @@ function bindControls() {
   $('#save-qs-btn')?.addEventListener('click', () => {
     const riskSel = $('#qs-risk-select');
     const curSel = $('#qs-currency-select');
+    const safeToggle = $('#qs-safe-screenshot');
     const pct = Number(riskSel?.value);
     const cur = curSel?.value;
     if (Number.isFinite(pct) && pct > 0) {
@@ -3031,16 +3100,13 @@ function bindControls() {
       state.defaultRiskCurrency = cur;
       state.riskCurrency = cur;
     }
-    try {
-      localStorage.setItem('plc-prefs', JSON.stringify({
-        defaultRiskPct: state.defaultRiskPct,
-        defaultRiskCurrency: state.defaultRiskCurrency
-      }));
-    } catch (e) {
-      console.warn(e);
+    if (safeToggle) {
+      state.safeScreenshot = safeToggle.checked;
     }
+    persistLocalPrefs();
     saveUiPrefs();
     renderRiskCalculator();
+    render();
     closeQs();
   });
   $$('#risk-currency-toggle button').forEach(btn => {
@@ -3214,6 +3280,7 @@ async function init() {
       const prefs = JSON.parse(saved);
       if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
       if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      if (typeof prefs?.safeScreenshot === 'boolean') state.safeScreenshot = prefs.safeScreenshot;
       state.riskPct = state.defaultRiskPct;
       state.riskCurrency = state.defaultRiskCurrency;
     }
