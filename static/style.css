@@ -690,14 +690,15 @@ select {
 .trade-pill .trade-action-row {
   flex-wrap: nowrap;
   justify-content: space-between;
+  gap: 8px;
 }
 .trade-pill .trade-actions {
   margin-top: 2px;
 }
 .trade-pill .trade-actions button {
-  min-width: 120px;
-  padding: 6px 12px;
-  font-size: 12px;
+  min-width: 96px;
+  padding: 5px 10px;
+  font-size: 11px;
 }
 .trade-sort {
   display: flex;
@@ -743,9 +744,9 @@ select {
     font-size: 20px;
   }
   .trade-pill .trade-actions button {
-    min-width: 130px;
-    padding: 8px 14px;
-    font-size: 13px;
+    min-width: 110px;
+    padding: 7px 12px;
+    font-size: 12px;
   }
 }
 .trade-pill .close-row input[type="date"],
