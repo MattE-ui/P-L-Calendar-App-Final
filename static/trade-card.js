@@ -27,8 +27,8 @@ const TRADE_CARD_LAYOUT = {
   closeDateLabel: { x: 430, y: 620, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
   closeDateValue: { x: 430, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   directionPill: { x: 310, y: 245, height: 30 },
-  footerLeft: { x: 130, y: 760, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
-  footerRight: { x: 1406, y: 760, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' }
+  footerLeft: { x: 130, y: 770, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
+  footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' }
 };
 
 let templateImagePromise;
