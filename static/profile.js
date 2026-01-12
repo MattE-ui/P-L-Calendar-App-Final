@@ -41,6 +41,7 @@ const profileState = {
   netDeposits: 0,
   netDepositsBaseline: 0,
   username: '',
+  nickname: '',
   isGuest: false,
   currency: 'GBP',
   rates: { GBP: 1 }
@@ -236,6 +237,7 @@ async function loadProfile() {
       ? netDepositsTotal
       : profileState.netDepositsBaseline;
     profileState.username = data.username || '';
+    profileState.nickname = data.nickname || '';
     profileState.isGuest = !!data.isGuest;
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
@@ -344,6 +346,8 @@ function applyGuestRestrictions() {
     'account-password-current',
     'account-password-new',
     'account-password-submit',
+    'account-nickname',
+    'account-nickname-submit',
     'profile-reset',
     't212-enabled',
     't212-api-key',
@@ -375,6 +379,10 @@ function renderSecurityState() {
   if (usernameInput) {
     usernameInput.value = profileState.username || '';
   }
+  const nicknameInput = document.getElementById('account-nickname');
+  if (nicknameInput) {
+    nicknameInput.value = profileState.nickname || '';
+  }
   const currentPasswordInput = document.getElementById('account-password-current');
   if (currentPasswordInput) {
     currentPasswordInput.value = '';
@@ -391,6 +399,15 @@ function renderSecurityState() {
   const errorLine = document.getElementById('account-security-error');
   if (errorLine) {
     errorLine.textContent = '';
+  }
+  const nicknameStatus = document.getElementById('account-nickname-status');
+  if (nicknameStatus) {
+    nicknameStatus.textContent = '';
+    nicknameStatus.classList.add('is-hidden');
+  }
+  const nicknameError = document.getElementById('account-nickname-error');
+  if (nicknameError) {
+    nicknameError.textContent = '';
   }
 }
 
@@ -432,6 +449,49 @@ async function handlePasswordChange() {
   } catch (e) {
     console.error('Unable to update password', e);
     if (error) error.textContent = e?.data?.error || 'Unable to update your password right now.';
+  }
+}
+
+async function handleNicknameUpdate() {
+  const input = document.getElementById('account-nickname');
+  const error = document.getElementById('account-nickname-error');
+  const status = document.getElementById('account-nickname-status');
+  if (!input) return;
+  const raw = input.value.trim();
+  if (error) error.textContent = '';
+  if (status) {
+    status.textContent = '';
+    status.classList.add('is-hidden');
+  }
+  if (raw.length > 20) {
+    if (error) error.textContent = 'Nicknames must be 20 characters or less.';
+    return;
+  }
+  if (raw && !/^[A-Za-z0-9 ]+$/.test(raw)) {
+    if (error) error.textContent = 'Nicknames can only use letters, numbers, and spaces.';
+    return;
+  }
+  if (status) {
+    status.textContent = 'Updating nickname…';
+    status.classList.remove('is-hidden');
+  }
+  try {
+    const data = await api('/api/account/nickname', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname: raw })
+    });
+    profileState.nickname = data.nickname || '';
+    input.value = profileState.nickname;
+    if (status) {
+      status.textContent = profileState.nickname
+        ? 'Nickname updated successfully.'
+        : 'Nickname removed successfully.';
+      status.classList.remove('is-hidden');
+    }
+  } catch (e) {
+    console.error('Unable to update nickname', e);
+    if (error) error.textContent = e?.data?.error || 'Unable to update nickname right now.';
   }
 }
 
@@ -658,11 +718,23 @@ async function saveProfile() {
   const portfolioInput = document.getElementById('profile-portfolio');
   const netInput = document.getElementById('profile-net-deposits');
   const deltaInput = document.getElementById('profile-net-deposits-delta');
+  const nicknameInput = document.getElementById('account-nickname');
+  const nicknameError = document.getElementById('account-nickname-error');
   const portfolioRaw = portfolioInput?.value.trim() ?? '';
   const netRaw = netInput?.value.trim() ?? '';
   const portfolio = Number(portfolioRaw);
+  const nicknameRaw = nicknameInput?.value.trim() ?? '';
+  if (nicknameError) nicknameError.textContent = '';
   if (!portfolioRaw || Number.isNaN(portfolio) || portfolio < 0) {
     if (errEl) errEl.textContent = 'Enter a non-negative portfolio value to continue.';
+    return;
+  }
+  if (nicknameRaw.length > 20) {
+    if (nicknameError) nicknameError.textContent = 'Nicknames must be 20 characters or less.';
+    return;
+  }
+  if (nicknameRaw && !/^[A-Za-z0-9 ]+$/.test(nicknameRaw)) {
+    if (nicknameError) nicknameError.textContent = 'Nicknames can only use letters, numbers, and spaces.';
     return;
   }
   let netDepositsTotal = Number(netRaw);
@@ -694,7 +766,11 @@ async function saveProfile() {
     await api('/api/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portfolio, netDeposits: netDepositsTotal })
+      body: JSON.stringify({
+        portfolio,
+        netDeposits: netDepositsTotal,
+        nickname: nicknameInput ? nicknameRaw : undefined
+      })
     });
     window.location.href = '/';
   } catch (e) {
@@ -785,6 +861,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
+  document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       helpModal?.classList.add('hidden');
