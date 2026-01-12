@@ -32,7 +32,7 @@ const TRADE_CARD_LAYOUT = {
 
 let templateImagePromise;
 
-function formatCurrencyUSD(value) {
+function tradeCardFormatCurrencyUSD(value) {
   if (!Number.isFinite(value)) return '—';
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -42,13 +42,13 @@ function formatCurrencyUSD(value) {
   }).format(value);
 }
 
-function formatROI(value) {
+function tradeCardFormatROI(value) {
   if (!Number.isFinite(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
   return `${sign}${Math.abs(value).toFixed(2)}%`;
 }
 
-function formatR(value) {
+function tradeCardFormatR(value) {
   if (!Number.isFinite(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
   const abs = Math.abs(value);
@@ -56,7 +56,7 @@ function formatR(value) {
   return `${sign}${formatted}R`;
 }
 
-function formatDate(value) {
+function tradeCardFormatDate(value) {
   const date = value instanceof Date ? value : value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return '—';
   return new Intl.DateTimeFormat('en-US', {
@@ -66,7 +66,7 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatRelative(value) {
+function tradeCardFormatRelative(value) {
   const date = value instanceof Date ? value : value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return '—';
   const diffMs = Date.now() - date.getTime();
@@ -173,24 +173,24 @@ async function renderTradeCard(trade) {
   ctx.textBaseline = 'middle';
   ctx.fillText(pillText, pillX + pillWidth / 2, pillY + pillHeight / 2 + 1);
 
-  drawText(ctx, formatROI(trade?.roiPct), TRADE_CARD_LAYOUT.roiValue);
+  drawText(ctx, tradeCardFormatROI(trade?.roiPct), TRADE_CARD_LAYOUT.roiValue);
   drawText(ctx, 'ROI', TRADE_CARD_LAYOUT.roiLabel);
-  drawText(ctx, formatR(trade?.rMultiple), TRADE_CARD_LAYOUT.rValue);
+  drawText(ctx, tradeCardFormatR(trade?.rMultiple), TRADE_CARD_LAYOUT.rValue);
   drawText(ctx, 'R-MULTIPLE', TRADE_CARD_LAYOUT.rLabel);
 
   drawText(ctx, 'Entry Price', TRADE_CARD_LAYOUT.entryLabel);
-  drawText(ctx, formatCurrencyUSD(trade?.entryPrice), TRADE_CARD_LAYOUT.entryValue);
+  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.entryPrice), TRADE_CARD_LAYOUT.entryValue);
   drawText(ctx, 'Stop Price', TRADE_CARD_LAYOUT.stopLabel);
-  drawText(ctx, formatCurrencyUSD(trade?.stopPrice), TRADE_CARD_LAYOUT.stopValue);
+  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.stopPrice), TRADE_CARD_LAYOUT.stopValue);
 
   drawText(ctx, 'Entry Date', TRADE_CARD_LAYOUT.entryDateLabel);
-  drawText(ctx, formatDate(trade?.entryDate), TRADE_CARD_LAYOUT.entryDateValue);
+  drawText(ctx, tradeCardFormatDate(trade?.entryDate), TRADE_CARD_LAYOUT.entryDateValue);
   drawText(ctx, 'Close Date', TRADE_CARD_LAYOUT.closeDateLabel);
-  drawText(ctx, formatDate(trade?.closeDate), TRADE_CARD_LAYOUT.closeDateValue);
+  drawText(ctx, tradeCardFormatDate(trade?.closeDate), TRADE_CARD_LAYOUT.closeDateValue);
 
   const footerLeft = trade?.username || '—';
   const sharedAt = trade?.sharedAt ? new Date(trade.sharedAt) : new Date();
-  const footerRight = `Shared ${formatRelative(sharedAt)} - ${formatDate(sharedAt)}`;
+  const footerRight = `Shared ${tradeCardFormatRelative(sharedAt)} - ${tradeCardFormatDate(sharedAt)}`;
   drawText(ctx, footerLeft, TRADE_CARD_LAYOUT.footerLeft);
   drawText(ctx, footerRight, TRADE_CARD_LAYOUT.footerRight);
 
@@ -212,11 +212,11 @@ if (typeof window !== 'undefined') {
   window.tradeCardRenderer = {
     renderTradeCard,
     renderTradeCardDataUrl,
-    formatCurrencyUSD,
-    formatROI,
-    formatR,
-    formatDate,
-    formatRelative,
+    formatCurrencyUSD: tradeCardFormatCurrencyUSD,
+    formatROI: tradeCardFormatROI,
+    formatR: tradeCardFormatR,
+    formatDate: tradeCardFormatDate,
+    formatRelative: tradeCardFormatRelative,
     TRADE_CARD_LAYOUT
   };
 }
@@ -225,11 +225,11 @@ if (typeof module !== 'undefined') {
   module.exports = {
     renderTradeCard,
     renderTradeCardDataUrl,
-    formatCurrencyUSD,
-    formatROI,
-    formatR,
-    formatDate,
-    formatRelative,
+    formatCurrencyUSD: tradeCardFormatCurrencyUSD,
+    formatROI: tradeCardFormatROI,
+    formatR: tradeCardFormatR,
+    formatDate: tradeCardFormatDate,
+    formatRelative: tradeCardFormatRelative,
     TRADE_CARD_LAYOUT
   };
 }
