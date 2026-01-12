@@ -1396,7 +1396,7 @@ function buildTradeSummary(trade) {
     stopPrice: trade.stop,
     entryDate: trade.openDate || trade.createdAt || trade.date,
     closeDate: trade.closeDate ?? null,
-    username: state.profile?.displayName || state.profile?.username,
+    username: state.profile?.nickname || state.profile?.displayName || state.profile?.username,
     sharedAt: new Date()
   };
 }
