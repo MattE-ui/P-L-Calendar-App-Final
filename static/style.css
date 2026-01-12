@@ -700,6 +700,20 @@ select {
   padding: 5px 10px;
   font-size: 11px;
 }
+.trade-pill .trade-actions .trade-share-btn {
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.trade-pill .trade-actions .trade-share-btn img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
 .trade-sort {
   display: flex;
   flex-direction: column;
@@ -747,6 +761,16 @@ select {
     min-width: 110px;
     padding: 7px 12px;
     font-size: 12px;
+  }
+  .trade-pill .trade-actions .trade-share-btn {
+    min-width: 38px;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+  }
+  .trade-pill .trade-actions .trade-share-btn img {
+    width: 20px;
+    height: 20px;
   }
 }
 .trade-pill .close-row input[type="date"],
