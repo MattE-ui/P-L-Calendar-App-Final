@@ -18,6 +18,7 @@ const state = {
   liveOpenPnlCurrency: 'GBP',
   isGuest: false,
   isAdmin: false,
+  profile: null,
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -46,6 +47,7 @@ const ACTIVE_TRADE_SORTS = new Set([
 const SHOW_MAPPING_BADGE = false;
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
+const shareCardState = { blob: null, url: null };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 
 const $ = selector => document.querySelector(selector);
@@ -1128,7 +1130,13 @@ function renderActiveTrades() {
     closeBtn.addEventListener('click', () => {
       openCloseTradeModal(trade);
     });
-    actionRow.append(editToggle, closeBtn);
+    const shareBtn = document.createElement('button');
+    shareBtn.className = 'ghost trade-share-btn';
+    shareBtn.textContent = 'Share card';
+    shareBtn.addEventListener('click', () => {
+      openShareCardModal(trade);
+    });
+    actionRow.append(editToggle, closeBtn, shareBtn);
     pill.appendChild(actionRow);
     list.appendChild(pill);
   });
@@ -1342,6 +1350,107 @@ function openCloseTradeModal(trade) {
   modal.dataset.fxFeeEligible = trade.fxFeeEligible ? 'true' : 'false';
   modal.dataset.fxFeeRate = Number.isFinite(trade.fxFeeRate) ? trade.fxFeeRate : '';
   modal.classList.remove('hidden');
+}
+
+function buildTradeSummary(trade) {
+  const entryVal = Number(trade.entry);
+  const stopVal = Number(trade.stop);
+  const sizeUnitsVal = Number(trade.sizeUnits);
+  const derivedPerUnitRisk = Number.isFinite(entryVal) && Number.isFinite(stopVal)
+    ? Math.abs(entryVal - stopVal)
+    : null;
+  const derivedRiskCurrency = Number.isFinite(derivedPerUnitRisk) && Number.isFinite(sizeUnitsVal)
+    ? derivedPerUnitRisk * sizeUnitsVal
+    : null;
+  const pnl = Number.isFinite(trade.realizedPnlGBP)
+    ? trade.realizedPnlGBP
+    : (Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : null);
+  const riskGBP = Number.isFinite(trade.riskAmountGBP)
+    ? trade.riskAmountGBP
+    : (Number.isFinite(trade.riskAmountCurrency)
+      ? toGBP(trade.riskAmountCurrency, trade.currency || 'GBP')
+      : (Number.isFinite(trade.perUnitRisk) && Number.isFinite(trade.sizeUnits)
+        ? toGBP(trade.perUnitRisk * trade.sizeUnits, trade.currency || 'GBP')
+        : (Number.isFinite(derivedRiskCurrency)
+          ? toGBP(derivedRiskCurrency, trade.currency || 'GBP')
+          : null)));
+  const positionBase = Number.isFinite(trade.positionGBP)
+    ? trade.positionGBP
+    : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
+      ? trade.entry * trade.sizeUnits
+      : null);
+  const roiPct = pnl !== null && Number.isFinite(positionBase) && positionBase !== 0
+    ? (pnl / positionBase) * 100
+    : undefined;
+  const rMultiple = Number.isFinite(trade.rMultiple)
+    ? trade.rMultiple
+    : (pnl !== null && Number.isFinite(riskGBP) && riskGBP !== 0
+      ? pnl / riskGBP
+      : undefined);
+  return {
+    ticker: getTradeDisplaySymbol(trade) || '—',
+    direction: trade.direction === 'short' ? 'SHORT' : 'LONG',
+    roiPct,
+    rMultiple,
+    entryPrice: trade.entry,
+    stopPrice: trade.stop,
+    entryDate: trade.openDate || trade.createdAt || trade.date,
+    closeDate: trade.closeDate ?? null,
+    username: state.profile?.nickname || state.profile?.displayName || state.profile?.username,
+    sharedAt: new Date()
+  };
+}
+
+function resetShareCardState() {
+  if (shareCardState.url) {
+    URL.revokeObjectURL(shareCardState.url);
+  }
+  shareCardState.url = null;
+  shareCardState.blob = null;
+  const preview = $('#share-card-preview-img');
+  if (preview) preview.removeAttribute('src');
+}
+
+function closeShareCardModal() {
+  resetShareCardState();
+  const status = $('#share-card-status');
+  if (status) status.textContent = '';
+  $('#share-card-modal')?.classList.add('hidden');
+}
+
+async function openShareCardModal(trade) {
+  const modal = $('#share-card-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const status = $('#share-card-status');
+  const preview = $('#share-card-preview-img');
+  const download = $('#share-card-download');
+  const shareBtn = $('#share-card-share');
+  resetShareCardState();
+  if (status) status.textContent = 'Generating card...';
+  try {
+    const renderer = window.tradeCardRenderer?.renderTradeCard;
+    if (!renderer) throw new Error('Trade card renderer unavailable.');
+    const summary = buildTradeSummary(trade);
+    const blob = await renderer(summary);
+    if (!blob || blob.size === 0) throw new Error('Unable to generate trade card.');
+    shareCardState.blob = blob;
+    shareCardState.url = URL.createObjectURL(blob);
+    if (preview) preview.src = shareCardState.url;
+    if (download) {
+      const safeTicker = summary.ticker ? summary.ticker.replace(/\W+/g, '-').toLowerCase() : 'trade';
+      download.href = shareCardState.url;
+      download.download = `${safeTicker}-summary.png`;
+    }
+    if (status) status.textContent = '';
+    if (shareBtn) {
+      const shareFile = new File([blob], 'trade-summary.png', { type: 'image/png' });
+      const canShare = !!navigator.share && (!navigator.canShare || navigator.canShare({ files: [shareFile] }));
+      shareBtn.classList.toggle('is-hidden', !canShare);
+    }
+  } catch (e) {
+    if (status) status.textContent = e?.message || 'Failed to generate card.';
+  }
 }
 
 function openEditTradeModal(trade) {
@@ -2576,6 +2685,37 @@ function bindControls() {
   $('#close-close-trade-btn')?.addEventListener('click', () => {
     $('#close-trade-modal')?.classList.add('hidden');
   });
+  $('#close-share-card-btn')?.addEventListener('click', closeShareCardModal);
+
+  $('#share-card-copy')?.addEventListener('click', async () => {
+    const status = $('#share-card-status');
+    if (!shareCardState.blob) return;
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      if (status) status.textContent = 'Copy is not supported in this browser.';
+      return;
+    }
+    try {
+      const item = new ClipboardItem({ 'image/png': shareCardState.blob });
+      await navigator.clipboard.write([item]);
+      if (status) status.textContent = 'Copied to clipboard.';
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to copy image.';
+    }
+  });
+
+  $('#share-card-share')?.addEventListener('click', async () => {
+    const status = $('#share-card-status');
+    if (!shareCardState.blob || !navigator.share) return;
+    try {
+      const file = new File([shareCardState.blob], 'trade-summary.png', { type: 'image/png' });
+      await navigator.share({ files: [file], title: 'Trade summary card' });
+      if (status) status.textContent = '';
+    } catch (e) {
+      if (status && e?.name !== 'AbortError') {
+        status.textContent = e?.message || 'Failed to share image.';
+      }
+    }
+  });
 
   const updateCloseTradePreview = () => {
     const modal = $('#close-trade-modal');
@@ -2982,6 +3122,7 @@ function bindControls() {
       $('#profit-modal')?.classList.add('hidden');
       $('#edit-trade-modal')?.classList.add('hidden');
       $('#close-trade-modal')?.classList.add('hidden');
+      closeShareCardModal();
     }
   });
   window.addEventListener('resize', () => {
@@ -3010,8 +3151,10 @@ async function loadProfile() {
   try {
     const profile = await api('/api/profile');
     state.isAdmin = !!profile?.isAdmin;
+    state.profile = profile || null;
   } catch (e) {
     state.isAdmin = false;
+    state.profile = null;
   }
 }
 
