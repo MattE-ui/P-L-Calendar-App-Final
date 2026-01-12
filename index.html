@@ -388,6 +388,23 @@
       </div>
     </div>
   </div>
+  <div id="share-card-modal" class="modal hidden">
+    <div class="modal-card share-card-modal">
+      <div class="modal-header">
+        <h3>Share trade card</h3>
+        <button id="close-share-card-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <div class="share-card-preview">
+        <img id="share-card-preview-img" alt="Trade summary card preview">
+      </div>
+      <div class="share-card-actions">
+        <a id="share-card-download" class="primary" download="trade-summary.png">Download PNG</a>
+        <button id="share-card-copy" class="ghost" type="button">Copy image</button>
+        <button id="share-card-share" class="ghost is-hidden" type="button">Share</button>
+      </div>
+      <div id="share-card-status" class="trade-note-status" aria-live="polite"></div>
+    </div>
+  </div>
 
   <!-- Portfolio modal -->
   <div id="portfolio-modal" class="modal hidden">
@@ -403,6 +420,7 @@
 
   <script src="static/guest.js"></script>
   <script src="static/instrument-mappings.js"></script>
+  <script src="static/trade-card.js"></script>
   <script src="static/script.js"></script>
   <script> if ('serviceWorker' in navigator) navigator.serviceWorker.register('/serviceWorker.js'); </script>
 </body>
