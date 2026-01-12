@@ -105,6 +105,11 @@
         <input id="account-username" type="text" readonly>
       </div>
       <div class="profile-field">
+        <label for="account-nickname">Nickname</label>
+        <input id="account-nickname" type="text" maxlength="20" placeholder="Optional nickname (max 20 characters)">
+        <p class="helper">Letters, numbers, and spaces only. This is separate from your login username.</p>
+      </div>
+      <div class="profile-field">
         <label for="account-password-current">Current password</label>
         <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password">
       </div>
@@ -116,6 +121,11 @@
       <div class="profile-actions">
         <button id="account-password-submit" class="ghost">Update password</button>
       </div>
+      <div class="profile-actions">
+        <button id="account-nickname-submit" class="ghost">Update nickname</button>
+      </div>
+      <div id="account-nickname-status" class="status-line"></div>
+      <div id="account-nickname-error" class="error"></div>
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>
     </section>
