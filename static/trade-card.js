@@ -13,7 +13,7 @@ const TRADE_CARD_COLORS = {
 };
 
 const TRADE_CARD_LAYOUT = {
-  ticker: { x: 130, y: 300, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  ticker: { x: 130, y: 230, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   roiValue: { x: 130, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
   roiLabel: { x: 130, y: 420, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
   rValue: { x: 480, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
