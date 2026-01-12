@@ -13,21 +13,21 @@ const TRADE_CARD_COLORS = {
 };
 
 const TRADE_CARD_LAYOUT = {
-  ticker: { x: 120, y: 170, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  roiValue: { x: 120, y: 310, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
-  roiLabel: { x: 120, y: 360, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  rValue: { x: 470, y: 310, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
-  rLabel: { x: 470, y: 360, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  entryLabel: { x: 120, y: 465, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  entryValue: { x: 120, y: 520, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  stopLabel: { x: 420, y: 465, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  stopValue: { x: 420, y: 520, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  entryDateLabel: { x: 120, y: 615, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  entryDateValue: { x: 120, y: 670, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  closeDateLabel: { x: 420, y: 615, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
-  closeDateValue: { x: 420, y: 670, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  footerLeft: { x: 120, y: 940, fontSize: 26, fontWeight: 600, color: '#20242c', align: 'left' },
-  footerRight: { x: 1416, y: 940, fontSize: 24, fontWeight: 500, color: '#20242c', align: 'right' }
+  ticker: { x: 130, y: 230, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  roiValue: { x: 130, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+  roiLabel: { x: 130, y: 420, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  rValue: { x: 480, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+  rLabel: { x: 480, y: 420, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  entryLabel: { x: 130, y: 520, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  entryValue: { x: 130, y: 575, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  stopLabel: { x: 430, y: 520, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  stopValue: { x: 430, y: 575, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  entryDateLabel: { x: 130, y: 670, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  entryDateValue: { x: 130, y: 725, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  closeDateLabel: { x: 430, y: 670, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+  closeDateValue: { x: 430, y: 725, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  footerLeft: { x: 130, y: 905, fontSize: 26, fontWeight: 600, color: '#20242c', align: 'left' },
+  footerRight: { x: 1406, y: 905, fontSize: 24, fontWeight: 500, color: '#20242c', align: 'right' }
 };
 
 let templateImagePromise;
