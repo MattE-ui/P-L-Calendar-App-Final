@@ -26,6 +26,7 @@ const TRADE_CARD_LAYOUT = {
   entryDateValue: { x: 130, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   closeDateLabel: { x: 430, y: 620, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
   closeDateValue: { x: 430, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+  directionPill: { y: 240, height: 30 },
   footerLeft: { x: 130, y: 860, fontSize: 26, fontWeight: 600, color: '#14171f', align: 'left' },
   footerRight: { x: 1406, y: 860, fontSize: 24, fontWeight: 500, color: '#14171f', align: 'right' }
 };
@@ -159,9 +160,9 @@ async function renderTradeCard(trade) {
   const pillPaddingX = 16;
   const pillTextWidth = ctx.measureText(pillText).width;
   const pillWidth = pillTextWidth + pillPaddingX * 2;
-  const pillHeight = 30;
+  const pillHeight = TRADE_CARD_LAYOUT.directionPill?.height ?? 30;
   const pillX = TRADE_CARD_LAYOUT.ticker.x + ctx.measureText(ticker).width + 20;
-  const pillY = TRADE_CARD_LAYOUT.ticker.y - 26;
+  const pillY = TRADE_CARD_LAYOUT.directionPill?.y ?? (TRADE_CARD_LAYOUT.ticker.y - 26);
   drawRoundedRect(ctx, pillX, pillY, pillWidth, pillHeight, 10);
   ctx.fillStyle = pillBg;
   ctx.fill();
