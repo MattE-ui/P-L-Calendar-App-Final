@@ -85,6 +85,17 @@ function tradeCardFormatRelative(value) {
   return rtf.format(-diffWeek, 'week');
 }
 
+function tradeCardFormatTimestamp(value) {
+  const date = value instanceof Date ? value : value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return '—';
+  const datePart = tradeCardFormatDate(date);
+  const timePart = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(date);
+  return `${timePart} - ${datePart}`;
+}
+
 function parseTemplateImage() {
   if (templateImagePromise) return templateImagePromise;
   templateImagePromise = new Promise((resolve, reject) => {
@@ -234,7 +245,7 @@ async function renderTradeCard(trade) {
 
   const footerLeft = trade?.username || '—';
   const sharedAt = trade?.sharedAt ? new Date(trade.sharedAt) : new Date();
-  const footerRight = `Shared ${tradeCardFormatRelative(sharedAt)} - ${tradeCardFormatDate(sharedAt)}`;
+  const footerRight = `Shared ${tradeCardFormatTimestamp(sharedAt)}`;
   drawText(ctx, footerLeft, TRADE_CARD_LAYOUT.footerLeft);
   drawText(ctx, footerRight, TRADE_CARD_LAYOUT.footerRight);
   ctx.restore();
@@ -262,6 +273,7 @@ if (typeof window !== 'undefined') {
     formatR: tradeCardFormatR,
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
+    formatTimestamp: tradeCardFormatTimestamp,
     TRADE_CARD_LAYOUT
   };
 }
@@ -275,6 +287,7 @@ if (typeof module !== 'undefined') {
     formatR: tradeCardFormatR,
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
+    formatTimestamp: tradeCardFormatTimestamp,
     TRADE_CARD_LAYOUT
   };
 }
