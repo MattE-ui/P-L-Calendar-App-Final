@@ -26,7 +26,7 @@ const TRADE_CARD_LAYOUT = {
   entryDateValue: { x: 130, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   closeDateLabel: { x: 430, y: 620, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
   closeDateValue: { x: 430, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
-  directionPill: { x: 300, y: 238, height: 30 },
+  directionPill: { x: 300, y: 239, height: 30 },
   footerLeft: { x: 130, y: 770, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
   footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' }
 };
