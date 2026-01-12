@@ -1148,6 +1148,47 @@ select {
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
 .modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); }
 .modal-header { display:flex; justify-content: space-between; align-items: center; gap: 8px; }
+.share-card-modal {
+  width: min(720px, 96vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.share-card-preview {
+  background: #0b0d12;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 240px;
+}
+.share-card-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+.share-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.share-card-controls {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.share-card-controls label {
+  margin: 0;
+  color: var(--muted);
+}
+.share-card-controls select {
+  min-width: 160px;
+}
+.trade-share-btn {
+  white-space: nowrap;
+}
 .close-btn { width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .row { display:flex; gap:8px; margin-top:12px; }
 .modal-field { display:flex; flex-direction: column; gap:6px; margin-top:12px; }
@@ -1180,6 +1221,18 @@ select {
 button { cursor:pointer; }
 button.primary { background: var(--primary); color:#001; border: none; border-radius: 10px; padding:10px 14px; font-weight:700; }
 button.primary.outline { background:transparent; color:var(--primary); border:1px solid var(--primary); }
+a.primary {
+  background: var(--primary);
+  color: #001;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 button.ghost { background:transparent; color: var(--text); border:1px solid var(--border); }
 button.danger {
   background: rgba(208, 52, 44, 0.18);
