@@ -1513,6 +1513,25 @@ td .mapping-badge {
 .toggle-field { align-items: center; }
 .toggle { display: inline-flex; align-items: center; gap: 12px; font-weight: 600; font-size: 15px; }
 .toggle input[type="checkbox"] { width: 48px; height: 24px; accent-color: var(--accent); }
+.safe-screenshot .grid.view-month .cell {
+  justify-content: center;
+  gap: 6px;
+}
+
+.safe-screenshot .grid.view-month .cell .val {
+  font-size: 20px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.safe-screenshot .grid.view-month .cell .pct {
+  display: none;
+}
+
+.safe-screenshot .trade-percent {
+  font-size: 18px;
+  font-weight: 700;
+}
 .integration-fields { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .integration-fields.is-hidden { display: none; }
 #transactions-split-list { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
