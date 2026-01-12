@@ -718,11 +718,23 @@ async function saveProfile() {
   const portfolioInput = document.getElementById('profile-portfolio');
   const netInput = document.getElementById('profile-net-deposits');
   const deltaInput = document.getElementById('profile-net-deposits-delta');
+  const nicknameInput = document.getElementById('account-nickname');
+  const nicknameError = document.getElementById('account-nickname-error');
   const portfolioRaw = portfolioInput?.value.trim() ?? '';
   const netRaw = netInput?.value.trim() ?? '';
   const portfolio = Number(portfolioRaw);
+  const nicknameRaw = nicknameInput?.value.trim() ?? '';
+  if (nicknameError) nicknameError.textContent = '';
   if (!portfolioRaw || Number.isNaN(portfolio) || portfolio < 0) {
     if (errEl) errEl.textContent = 'Enter a non-negative portfolio value to continue.';
+    return;
+  }
+  if (nicknameRaw.length > 20) {
+    if (nicknameError) nicknameError.textContent = 'Nicknames must be 20 characters or less.';
+    return;
+  }
+  if (nicknameRaw && !/^[A-Za-z0-9 ]+$/.test(nicknameRaw)) {
+    if (nicknameError) nicknameError.textContent = 'Nicknames can only use letters, numbers, and spaces.';
     return;
   }
   let netDepositsTotal = Number(netRaw);
@@ -754,7 +766,11 @@ async function saveProfile() {
     await api('/api/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ portfolio, netDeposits: netDepositsTotal })
+      body: JSON.stringify({
+        portfolio,
+        netDeposits: netDepositsTotal,
+        nickname: nicknameInput ? nicknameRaw : undefined
+      })
     });
     window.location.href = '/';
   } catch (e) {

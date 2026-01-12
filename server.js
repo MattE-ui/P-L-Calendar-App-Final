@@ -93,6 +93,18 @@ function normalizeNickname(raw) {
   return { value: trimmed };
 }
 
+function isNicknameAvailable(db, nickname, username) {
+  if (!nickname) return true;
+  const candidate = nickname.toLowerCase();
+  return !Object.entries(db.users).some(([key, other]) => {
+    if (key === username) return false;
+    const otherUsername = typeof other?.username === 'string' ? other.username : key;
+    const otherNickname = typeof other?.nickname === 'string' ? other.nickname : '';
+    return (otherUsername && otherUsername.toLowerCase() === candidate)
+      || (otherNickname && otherNickname.toLowerCase() === candidate);
+  });
+}
+
 const Trading212Error = (() => {
   if (global.__Trading212Error__) {
     return global.__Trading212Error__;
@@ -2604,7 +2616,7 @@ app.get('/api/profile', auth, (req,res)=>{
     today: currentDateKey(),
     netDepositsAnchor: user.netDepositsAnchor || null,
     username: user.username || req.username,
-    displayName: user.displayName || user.username || req.username,
+    nickname: user.nickname || '',
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username)
   });
@@ -2848,7 +2860,7 @@ app.post('/api/transactions/profiles', auth, (req, res) => {
 });
 
 app.post('/api/profile', auth, (req,res)=>{
-  const { portfolio, netDeposits, date } = req.body || {};
+  const { portfolio, netDeposits, date, nickname } = req.body || {};
   if (portfolio === '' || portfolio === null || portfolio === undefined) {
     return res.status(400).json({ error: 'Portfolio value is required' });
   }
@@ -2860,6 +2872,16 @@ app.post('/api/profile', auth, (req,res)=>{
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+  if (nickname !== undefined) {
+    const normalized = normalizeNickname(nickname);
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
+    }
+    if (!isNicknameAvailable(db, normalized.value, req.username)) {
+      return res.status(409).json({ error: 'That nickname is already taken.' });
+    }
+    user.nickname = normalized.value;
+  }
   const wasComplete = !!user.profileComplete;
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
@@ -2975,18 +2997,8 @@ app.post('/api/account/nickname', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const nickname = normalized.value;
-  if (nickname) {
-    const candidate = nickname.toLowerCase();
-    const taken = Object.entries(db.users).some(([key, other]) => {
-      if (key === req.username) return false;
-      const otherUsername = typeof other?.username === 'string' ? other.username : key;
-      const otherNickname = typeof other?.nickname === 'string' ? other.nickname : '';
-      return (otherUsername && otherUsername.toLowerCase() === candidate)
-        || (otherNickname && otherNickname.toLowerCase() === candidate);
-    });
-    if (taken) {
-      return res.status(409).json({ error: 'That nickname is already taken.' });
-    }
+  if (!isNicknameAvailable(db, nickname, req.username)) {
+    return res.status(409).json({ error: 'That nickname is already taken.' });
   }
   user.nickname = nickname;
   saveDB(db);
