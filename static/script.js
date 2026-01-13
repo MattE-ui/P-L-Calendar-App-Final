@@ -1141,7 +1141,13 @@ function renderActiveTrades() {
     });
     const shareBtn = document.createElement('button');
     shareBtn.className = 'ghost trade-share-btn';
-    shareBtn.textContent = 'Share card';
+    shareBtn.type = 'button';
+    shareBtn.setAttribute('aria-label', 'Share card');
+    shareBtn.title = 'Share card';
+    const shareIcon = document.createElement('img');
+    shareIcon.src = '/static/White-Share-Icon.png';
+    shareIcon.alt = '';
+    shareBtn.appendChild(shareIcon);
     shareBtn.addEventListener('click', () => {
       openShareCardModal(trade);
     });
