@@ -1,4 +1,7 @@
-const TRADE_CARD_TEMPLATE_URL = '/static/Trade-Summary-Card-Template.png';
+const TRADE_CARD_TEMPLATES = {
+  landscape: '/static/Trade-Summary-Card-Template.png',
+  portrait: '/static/Trade-Summary-Card-Template-Portrait.png'
+};
 const TRADE_CARD_FONT = "system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans'";
 const TRADE_CARD_COLORS = {
   text: '#f5f7fb',
@@ -12,7 +15,8 @@ const TRADE_CARD_COLORS = {
   pillShortBg: 'rgba(255,114,133,0.12)'
 };
 
-const TRADE_CARD_LAYOUT = {
+const TRADE_CARD_LAYOUTS = {
+  landscape: {
   ticker: { x: 130, y: 275, fontSize: 52, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   roiValue: { x: 130, y: 370, fontSize: 68, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
   roiLabel: { x: 130, y: 420, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
@@ -28,11 +32,33 @@ const TRADE_CARD_LAYOUT = {
   closeDateValue: { x: 430, y: 665, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
   directionPill: { x: 300, y: 239, height: 30 },
   footerLeft: { x: 130, y: 770, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
-  footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' }
+  footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
+  shareIcon: { x: 1190, y: 742, size: 30 }
+},
+  portrait: {
+    ticker: { x: 215, y: 250, fontSize: 44, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    roiValue: { x: 75, y: 350, fontSize: 60, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+    roiLabel: { x: 75, y: 380, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    rValue: { x: 350, y: 350, fontSize: 60, fontWeight: 700, color: TRADE_CARD_COLORS.positive, align: 'left' },
+    rLabel: { x: 350, y: 380, fontSize: 22, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryLabel: { x: 120, y: 500, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryValue: { x: 120, y: 470, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    stopLabel: { x: 400, y: 500, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    stopValue: { x: 400, y: 470, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    entryDateLabel: { x: 120, y: 600, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    entryDateValue: { x: 120, y: 565, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    closeDateLabel: { x: 400, y: 600, fontSize: 24, fontWeight: 600, color: TRADE_CARD_COLORS.label, align: 'left' },
+    closeDateValue: { x: 400, y: 565, fontSize: 32, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
+    directionPill: { x: 355, y: 220, height: 28 },
+    footerLeft: { x: 300, y: 1150, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
+    footerRight: { x: 500, y: 1200, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
+    shareIcon: { x: 860, y: 1436, size: 30 }
+  }
 };
 
-let templateImagePromise;
-let templateBoundsPromise;
+let templateImagePromises = new Map();
+let templateBoundsPromises = new Map();
+let iconImagePromise;
 
 function tradeCardFormatCurrencyUSD(value) {
   if (!Number.isFinite(value)) return '—';
@@ -96,20 +122,36 @@ function tradeCardFormatTimestamp(value) {
   return `${timePart} - ${datePart}`;
 }
 
-function parseTemplateImage() {
-  if (templateImagePromise) return templateImagePromise;
-  templateImagePromise = new Promise((resolve, reject) => {
+function parseTemplateImage(templateUrl) {
+  const url = templateUrl || TRADE_CARD_TEMPLATES.landscape;
+  const existing = templateImagePromises.get(url);
+  if (existing) return existing;
+  const promise = new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Failed to load trade summary template.'));
-    img.src = TRADE_CARD_TEMPLATE_URL;
+    img.src = url;
   });
-  return templateImagePromise;
+  templateImagePromises.set(url, promise);
+  return promise;
 }
 
-async function getTemplateBounds() {
-  if (templateBoundsPromise) return templateBoundsPromise;
-  templateBoundsPromise = parseTemplateImage().then(img => {
+function loadShareIcon() {
+  if (iconImagePromise) return iconImagePromise;
+  iconImagePromise = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = '/static/White-Share-Icon.png';
+  });
+  return iconImagePromise;
+}
+
+async function getTemplateBounds(templateUrl) {
+  const url = templateUrl || TRADE_CARD_TEMPLATES.landscape;
+  const existing = templateBoundsPromises.get(url);
+  if (existing) return existing;
+  const promise = parseTemplateImage(url).then(img => {
     const canvas = document.createElement('canvas');
     canvas.width = img.width;
     canvas.height = img.height;
@@ -142,7 +184,8 @@ async function getTemplateBounds() {
       height: maxY - minY + 1
     };
   });
-  return templateBoundsPromise;
+  templateBoundsPromises.set(url, promise);
+  return promise;
 }
 
 function setFont(ctx, layout) {
@@ -174,6 +217,8 @@ function drawRoundedRect(ctx, x, y, width, height, radius) {
 }
 
 async function renderTradeCard(trade) {
+  const orientation = trade?.orientation === 'portrait' ? 'portrait' : 'landscape';
+  const templateUrl = TRADE_CARD_TEMPLATES[orientation] || TRADE_CARD_TEMPLATES.landscape;
   if (typeof document === 'undefined' || typeof window === 'undefined') {
     const placeholder = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
     const bytes = typeof atob === 'function'
@@ -186,8 +231,9 @@ async function renderTradeCard(trade) {
     await document.fonts.ready;
   }
 
-  const template = await parseTemplateImage();
-  const bounds = await getTemplateBounds();
+  const template = await parseTemplateImage(templateUrl);
+  const bounds = await getTemplateBounds(templateUrl);
+  const layout = TRADE_CARD_LAYOUTS[orientation] || TRADE_CARD_LAYOUTS.landscape;
   const width = bounds.width;
   const height = bounds.height;
   const dpr = window.devicePixelRatio || 1;
@@ -204,7 +250,7 @@ async function renderTradeCard(trade) {
   ctx.drawImage(template, 0, 0, template.width, template.height);
 
   const ticker = trade?.ticker || '—';
-  drawText(ctx, ticker, TRADE_CARD_LAYOUT.ticker);
+  drawText(ctx, ticker, layout.ticker);
 
   const pillText = trade?.direction === 'SHORT' ? 'SHORT' : 'LONG';
   const pillColor = trade?.direction === 'SHORT' ? TRADE_CARD_COLORS.pillShort : TRADE_CARD_COLORS.pillLong;
@@ -213,10 +259,10 @@ async function renderTradeCard(trade) {
   const pillPaddingX = 16;
   const pillTextWidth = ctx.measureText(pillText).width;
   const pillWidth = pillTextWidth + pillPaddingX * 2;
-  const pillHeight = TRADE_CARD_LAYOUT.directionPill?.height ?? 30;
-  const pillX = TRADE_CARD_LAYOUT.directionPill?.x
-    ?? (TRADE_CARD_LAYOUT.ticker.x + ctx.measureText(ticker).width + 20);
-  const pillY = TRADE_CARD_LAYOUT.directionPill?.y ?? (TRADE_CARD_LAYOUT.ticker.y - 26);
+  const pillHeight = layout.directionPill?.height ?? 30;
+  const pillX = layout.directionPill?.x
+    ?? (layout.ticker.x + ctx.measureText(ticker).width + 20);
+  const pillY = layout.directionPill?.y ?? (layout.ticker.y - 26);
   drawRoundedRect(ctx, pillX, pillY, pillWidth, pillHeight, 10);
   ctx.fillStyle = pillBg;
   ctx.fill();
@@ -228,26 +274,36 @@ async function renderTradeCard(trade) {
   ctx.textBaseline = 'middle';
   ctx.fillText(pillText, pillX + pillWidth / 2, pillY + pillHeight / 2 + 1);
 
-  drawText(ctx, tradeCardFormatROI(trade?.roiPct), TRADE_CARD_LAYOUT.roiValue);
-  drawText(ctx, 'ROI', TRADE_CARD_LAYOUT.roiLabel);
-  drawText(ctx, tradeCardFormatR(trade?.rMultiple), TRADE_CARD_LAYOUT.rValue);
-  drawText(ctx, 'R-MULTIPLE', TRADE_CARD_LAYOUT.rLabel);
+  drawText(ctx, tradeCardFormatROI(trade?.roiPct), layout.roiValue);
+  if (orientation !== 'portrait') {
+    drawText(ctx, 'ROI', layout.roiLabel);
+  }
+  drawText(ctx, tradeCardFormatR(trade?.rMultiple), layout.rValue);
+  if (orientation !== 'portrait') {
+    drawText(ctx, 'R-MULTIPLE', layout.rLabel);
+  }
 
-  drawText(ctx, 'Entry Price', TRADE_CARD_LAYOUT.entryLabel);
-  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.entryPrice), TRADE_CARD_LAYOUT.entryValue);
-  drawText(ctx, 'Stop Price', TRADE_CARD_LAYOUT.stopLabel);
-  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.stopPrice), TRADE_CARD_LAYOUT.stopValue);
+  drawText(ctx, 'Entry Price', layout.entryLabel);
+  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.entryPrice), layout.entryValue);
+  drawText(ctx, 'Stop Price', layout.stopLabel);
+  drawText(ctx, tradeCardFormatCurrencyUSD(trade?.stopPrice), layout.stopValue);
 
-  drawText(ctx, 'Entry Date', TRADE_CARD_LAYOUT.entryDateLabel);
-  drawText(ctx, tradeCardFormatDate(trade?.entryDate), TRADE_CARD_LAYOUT.entryDateValue);
-  drawText(ctx, 'Close Date', TRADE_CARD_LAYOUT.closeDateLabel);
-  drawText(ctx, tradeCardFormatDate(trade?.closeDate), TRADE_CARD_LAYOUT.closeDateValue);
+  drawText(ctx, 'Entry Date', layout.entryDateLabel);
+  drawText(ctx, tradeCardFormatDate(trade?.entryDate), layout.entryDateValue);
+  drawText(ctx, 'Close Date', layout.closeDateLabel);
+  drawText(ctx, tradeCardFormatDate(trade?.closeDate), layout.closeDateValue);
 
   const footerLeft = trade?.username || '—';
   const sharedAt = trade?.sharedAt ? new Date(trade.sharedAt) : new Date();
   const footerRight = `Shared ${tradeCardFormatTimestamp(sharedAt)}`;
-  drawText(ctx, footerLeft, TRADE_CARD_LAYOUT.footerLeft);
-  drawText(ctx, footerRight, TRADE_CARD_LAYOUT.footerRight);
+  drawText(ctx, footerLeft, layout.footerLeft);
+  drawText(ctx, footerRight, layout.footerRight);
+  if (layout.shareIcon) {
+    const icon = await loadShareIcon();
+    if (icon) {
+      ctx.drawImage(icon, layout.shareIcon.x, layout.shareIcon.y, layout.shareIcon.size, layout.shareIcon.size);
+    }
+  }
   ctx.restore();
 
   return new Promise(resolve => {
@@ -255,8 +311,9 @@ async function renderTradeCard(trade) {
   });
 }
 
-async function renderTradeCardDataUrl(trade) {
-  const blob = await renderTradeCard(trade);
+async function renderTradeCardDataUrl(trade, options = {}) {
+  const payload = options?.orientation ? { ...trade, orientation: options.orientation } : trade;
+  const blob = await renderTradeCard(payload);
   return new Promise(resolve => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -274,7 +331,8 @@ if (typeof window !== 'undefined') {
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
     formatTimestamp: tradeCardFormatTimestamp,
-    TRADE_CARD_LAYOUT
+    TRADE_CARD_LAYOUTS,
+    TRADE_CARD_TEMPLATES
   };
 }
 
@@ -288,6 +346,7 @@ if (typeof module !== 'undefined') {
     formatDate: tradeCardFormatDate,
     formatRelative: tradeCardFormatRelative,
     formatTimestamp: tradeCardFormatTimestamp,
-    TRADE_CARD_LAYOUT
+    TRADE_CARD_LAYOUTS,
+    TRADE_CARD_TEMPLATES
   };
 }
