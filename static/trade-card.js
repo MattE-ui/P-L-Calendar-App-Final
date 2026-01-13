@@ -275,9 +275,13 @@ async function renderTradeCard(trade) {
   ctx.fillText(pillText, pillX + pillWidth / 2, pillY + pillHeight / 2 + 1);
 
   drawText(ctx, tradeCardFormatROI(trade?.roiPct), layout.roiValue);
-  drawText(ctx, 'ROI', layout.roiLabel);
+  if (orientation !== 'portrait') {
+    drawText(ctx, 'ROI', layout.roiLabel);
+  }
   drawText(ctx, tradeCardFormatR(trade?.rMultiple), layout.rValue);
-  drawText(ctx, 'R-MULTIPLE', layout.rLabel);
+  if (orientation !== 'portrait') {
+    drawText(ctx, 'R-MULTIPLE', layout.rLabel);
+  }
 
   drawText(ctx, 'Entry Price', layout.entryLabel);
   drawText(ctx, tradeCardFormatCurrencyUSD(trade?.entryPrice), layout.entryValue);
