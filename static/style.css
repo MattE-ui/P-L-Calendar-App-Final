@@ -690,14 +690,35 @@ select {
 .trade-pill .trade-action-row {
   flex-wrap: nowrap;
   justify-content: space-between;
+  gap: 8px;
 }
 .trade-pill .trade-actions {
   margin-top: 2px;
 }
 .trade-pill .trade-actions button {
-  min-width: 120px;
-  padding: 6px 12px;
-  font-size: 12px;
+  min-width: 96px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.trade-pill .trade-actions .trade-share-btn {
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-image: url('/static/White-Share-Icon.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
+  font-size: 0;
+  color: transparent;
+}
+.trade-pill .trade-actions .trade-share-btn img {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .trade-sort {
   display: flex;
@@ -743,9 +764,20 @@ select {
     font-size: 20px;
   }
   .trade-pill .trade-actions button {
-    min-width: 130px;
-    padding: 8px 14px;
-    font-size: 13px;
+    min-width: 110px;
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .trade-pill .trade-actions .trade-share-btn {
+    min-width: 38px;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    background-size: 20px 20px;
+  }
+  .trade-pill .trade-actions .trade-share-btn img {
+    width: 20px;
+    height: 20px;
   }
 }
 .trade-pill .close-row input[type="date"],
