@@ -1178,7 +1178,7 @@ select {
 
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
-.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); }
+.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); max-height: 90vh; overflow-y: auto; }
 .modal-header { display:flex; justify-content: space-between; align-items: center; gap: 8px; }
 .share-card-modal {
   width: min(760px, 96vw);
