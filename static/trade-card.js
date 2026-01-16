@@ -33,7 +33,7 @@ const TRADE_CARD_LAYOUTS = {
   directionPill: { x: 300, y: 239, height: 30 },
   footerLeft: { x: 130, y: 770, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
   footerRight: { x: 1406, y: 770, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
-  shareIcon: { x: 1190, y: 742, size: 30 }
+  shareIcon: null
 },
   portrait: {
     ticker: { x: 215, y: 250, fontSize: 44, fontWeight: 700, color: TRADE_CARD_COLORS.text, align: 'left' },
@@ -52,13 +52,12 @@ const TRADE_CARD_LAYOUTS = {
     directionPill: { x: 355, y: 220, height: 28 },
     footerLeft: { x: 300, y: 1150, fontSize: 26, fontWeight: 600, color: '#000000', align: 'left' },
     footerRight: { x: 500, y: 1200, fontSize: 24, fontWeight: 500, color: '#000000', align: 'right' },
-    shareIcon: { x: 860, y: 1436, size: 30 }
+    shareIcon: null
   }
 };
 
 let templateImagePromises = new Map();
 let templateBoundsPromises = new Map();
-let iconImagePromise;
 
 function tradeCardFormatCurrencyUSD(value) {
   if (!Number.isFinite(value)) return '—';
@@ -134,17 +133,6 @@ function parseTemplateImage(templateUrl) {
   });
   templateImagePromises.set(url, promise);
   return promise;
-}
-
-function loadShareIcon() {
-  if (iconImagePromise) return iconImagePromise;
-  iconImagePromise = new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = '/static/White-Share-Icon.png';
-  });
-  return iconImagePromise;
 }
 
 async function getTemplateBounds(templateUrl) {
@@ -298,12 +286,6 @@ async function renderTradeCard(trade) {
   const footerRight = `Shared ${tradeCardFormatTimestamp(sharedAt)}`;
   drawText(ctx, footerLeft, layout.footerLeft);
   drawText(ctx, footerRight, layout.footerRight);
-  if (layout.shareIcon) {
-    const icon = await loadShareIcon();
-    if (icon) {
-      ctx.drawImage(icon, layout.shareIcon.x, layout.shareIcon.y, layout.shareIcon.size, layout.shareIcon.size);
-    }
-  }
   ctx.restore();
 
   return new Promise(resolve => {
