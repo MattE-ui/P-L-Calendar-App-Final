@@ -769,7 +769,7 @@ function getPortfolioPerformanceFactor(depositDateMs) {
   if (!depositDateMs || !state.data) return 1;
   const entry = findClosestEntry(depositDateMs);
   if (!entry) return 1;
-  const baseline = Number.isFinite(entry.closing) ? entry.closing : entry.opening;
+  const baseline = Number.isFinite(entry.opening) ? entry.opening : entry.closing;
   const latest = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
   if (!Number.isFinite(baseline) || !Number.isFinite(latest) || baseline <= 0) return 1;
   const netDepositsAfter = sumNetDepositsAfter(depositDateMs);
