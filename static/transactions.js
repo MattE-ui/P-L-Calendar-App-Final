@@ -664,7 +664,7 @@ function calculateProfileStats(profileName) {
     const isWithdrawal = split.type === 'Withdrawal';
     if (!isDeposit && !isWithdrawal) return;
     const dateMs = parseTransactionDate(split.noteKey, split.type);
-    const performanceFactor = getPortfolioPerformanceFactor(dateMs);
+    const performanceFactor = isDeposit ? getPortfolioPerformanceFactor(dateMs) : 1;
     const hasRawSplits = Array.isArray(split.rawSplits);
     if (hasRawSplits) {
       split.rawSplits.forEach(item => {
@@ -672,7 +672,7 @@ function calculateProfileStats(profileName) {
         if (!Number.isFinite(amount)) return;
         const signedAmount = isDeposit ? amount : -amount;
         const ratio = Number(item.profitSplitRatio || 0);
-        const splitEnabled = item.profitSplitEnabled
+        const splitEnabled = isDeposit && item.profitSplitEnabled
           && item.profitSplitProfile
           && item.profitSplitProfile !== item.profile
           && Number.isFinite(ratio)
@@ -702,7 +702,7 @@ function calculateProfileStats(profileName) {
       if (isDeposit) deposits += amount;
       if (isWithdrawal) withdrawals += amount;
       netDeposits += signedAmount;
-      portfolioValue += signedAmount * performanceFactor;
+      portfolioValue += signedAmount * (isDeposit ? performanceFactor : 1);
     });
   });
   const netPerformance = portfolioValue - netDeposits;

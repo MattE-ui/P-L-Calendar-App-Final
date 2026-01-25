@@ -972,6 +972,12 @@ function updateHistoryForClose(user, history, closeDateKey, pnlGBP) {
   history[ym][closeDateKey] = payload;
 }
 
+function revertHistoryForClose(user, history, closeDateKey, pnlGBP) {
+  if (!Number.isFinite(pnlGBP) || pnlGBP === 0) return;
+  updateHistoryForClose(user, history, closeDateKey, -pnlGBP);
+  refreshAnchors(user, history);
+}
+
 function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate) {
   const history = ensurePortfolioHistory(user);
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
@@ -4285,8 +4291,20 @@ app.delete('/api/trades/:id', auth, (req, res) => {
   normalizeTradeJournal(user);
   const found = findTradeById(user, req.params.id);
   if (!found) return res.status(404).json({ error: 'Trade not found' });
-  const { dateKey, index } = found;
+  const { dateKey, index, trade } = found;
   const journal = ensureTradeJournal(user);
+  const isProviderTrade = trade?.source === 'trading212' || trade?.trading212Id;
+  const closedDate = typeof trade?.closeDate === 'string' ? trade.closeDate : dateKey;
+  const pnl = Number(trade?.realizedPnlGBP);
+  if (
+    trade?.status === 'closed'
+    && !isProviderTrade
+    && /^\d{4}-\d{2}-\d{2}$/.test(closedDate)
+    && Number.isFinite(pnl)
+  ) {
+    const history = ensurePortfolioHistory(user);
+    revertHistoryForClose(user, history, closedDate, pnl);
+  }
   journal[dateKey].splice(index, 1);
   if (!journal[dateKey].length) {
     delete journal[dateKey];
