@@ -767,6 +767,11 @@ function parseTransactionDate(noteKey, type) {
 
 function getPortfolioPerformanceFactor(depositDateMs) {
   if (!depositDateMs || !state.data) return 1;
+  const totalNetDeposits = Number(state.metrics?.netDepositsTotal);
+  const latestValue = Number(state.metrics?.latestGBP);
+  if (Number.isFinite(totalNetDeposits) && totalNetDeposits > 0 && Number.isFinite(latestValue)) {
+    return latestValue / totalNetDeposits;
+  }
   const entry = findClosestEntry(depositDateMs);
   if (!entry) return 1;
   const baseline = Number.isFinite(entry.opening) ? entry.opening : entry.closing;
@@ -833,7 +838,7 @@ async function loadHeroMetrics() {
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
-    state.metrics = { latestGBP: portfolioValue };
+    state.metrics = { latestGBP: portfolioValue, netDepositsTotal: netDepositsValue };
     const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
     const altCurrency = state.currency === 'GBP'
       ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
