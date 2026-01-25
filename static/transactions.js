@@ -664,7 +664,7 @@ function calculateProfileStats(profileName) {
     const isWithdrawal = split.type === 'Withdrawal';
     if (!isDeposit && !isWithdrawal) return;
     const dateMs = parseTransactionDate(split.noteKey, split.type);
-    const performanceFactor = getPortfolioPerformanceFactor(dateMs);
+    const performanceFactor = isDeposit ? getPortfolioPerformanceFactor(dateMs) : 1;
     const hasRawSplits = Array.isArray(split.rawSplits);
     if (hasRawSplits) {
       split.rawSplits.forEach(item => {
@@ -672,7 +672,7 @@ function calculateProfileStats(profileName) {
         if (!Number.isFinite(amount)) return;
         const signedAmount = isDeposit ? amount : -amount;
         const ratio = Number(item.profitSplitRatio || 0);
-        const splitEnabled = item.profitSplitEnabled
+        const splitEnabled = isDeposit && item.profitSplitEnabled
           && item.profitSplitProfile
           && item.profitSplitProfile !== item.profile
           && Number.isFinite(ratio)
@@ -702,7 +702,7 @@ function calculateProfileStats(profileName) {
       if (isDeposit) deposits += amount;
       if (isWithdrawal) withdrawals += amount;
       netDeposits += signedAmount;
-      portfolioValue += signedAmount * performanceFactor;
+      portfolioValue += signedAmount * (isDeposit ? performanceFactor : 1);
     });
   });
   const netPerformance = portfolioValue - netDeposits;
@@ -767,9 +767,14 @@ function parseTransactionDate(noteKey, type) {
 
 function getPortfolioPerformanceFactor(depositDateMs) {
   if (!depositDateMs || !state.data) return 1;
+  const totalNetDeposits = Number(state.metrics?.netDepositsTotal);
+  const latestValue = Number(state.metrics?.latestGBP);
+  if (Number.isFinite(totalNetDeposits) && totalNetDeposits > 0 && Number.isFinite(latestValue)) {
+    return latestValue / totalNetDeposits;
+  }
   const entry = findClosestEntry(depositDateMs);
   if (!entry) return 1;
-  const baseline = Number.isFinite(entry.closing) ? entry.closing : entry.opening;
+  const baseline = Number.isFinite(entry.opening) ? entry.opening : entry.closing;
   const latest = Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : null;
   if (!Number.isFinite(baseline) || !Number.isFinite(latest) || baseline <= 0) return 1;
   const netDepositsAfter = sumNetDepositsAfter(depositDateMs);
@@ -833,7 +838,7 @@ async function loadHeroMetrics() {
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
-    state.metrics = { latestGBP: portfolioValue };
+    state.metrics = { latestGBP: portfolioValue, netDepositsTotal: netDepositsValue };
     const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
     const altCurrency = state.currency === 'GBP'
       ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
