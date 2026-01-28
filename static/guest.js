@@ -34,6 +34,16 @@ const DEFAULT_GUEST_DATA = {
       lastEndpoint: null,
       cooldownUntil: null,
       lastRaw: null
+    },
+    ibkr: {
+      enabled: false,
+      mode: 'gateway',
+      accountId: '',
+      connectionStatus: 'disconnected',
+      lastSyncAt: null,
+      lastStatus: null,
+      lastSessionCheckAt: null,
+      gatewayUrl: '/api/integrations/ibkr/gateway'
     }
   }
 };
@@ -372,6 +382,36 @@ window.handleGuestRequest = (path, opts = {}) => {
     data.integrations.trading212 = next;
     saveGuestData(data);
     return next;
+  }
+  if (path.startsWith('/api/integrations/ibkr')) {
+    data.integrations ||= { ibkr: {} };
+    const ibkr = data.integrations.ibkr || {};
+    if (method === 'POST') {
+      const payload = opts.body ? JSON.parse(opts.body) : {};
+      if (typeof payload.enabled === 'boolean') {
+        ibkr.enabled = payload.enabled;
+      }
+      if (typeof payload.accountId === 'string') {
+        ibkr.accountId = payload.accountId;
+      }
+      if (payload.runNow) {
+        ibkr.lastSyncAt = new Date().toISOString();
+        ibkr.lastStatus = { ok: true, message: 'Guest mode simulated sync.' };
+        ibkr.connectionStatus = 'connected';
+      }
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+    }
+    return {
+      enabled: !!ibkr.enabled,
+      mode: ibkr.mode || 'gateway',
+      accountId: ibkr.accountId || '',
+      connectionStatus: ibkr.connectionStatus || 'disconnected',
+      lastSyncAt: ibkr.lastSyncAt || null,
+      lastStatus: ibkr.lastStatus || null,
+      lastSessionCheckAt: ibkr.lastSessionCheckAt || null,
+      gatewayUrl: ibkr.gatewayUrl || '/api/integrations/ibkr/gateway'
+    };
   }
   if (path.startsWith('/api/trades/export')) {
     return { ok: true };
