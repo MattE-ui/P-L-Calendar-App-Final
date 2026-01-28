@@ -629,10 +629,18 @@ function populateIbkrAccounts(accounts, selected) {
   accountSelect.innerHTML = '';
   const list = Array.isArray(accounts) ? accounts : [];
   if (!list.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'No accounts found yet';
-    accountSelect.appendChild(option);
+    if (selected) {
+      const option = document.createElement('option');
+      option.value = selected;
+      option.textContent = selected;
+      option.selected = true;
+      accountSelect.appendChild(option);
+    } else {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No accounts found yet';
+      accountSelect.appendChild(option);
+    }
     return;
   }
   list.forEach(account => {
@@ -713,6 +721,9 @@ async function loadIbkrIntegration() {
     setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
     populateIbkrAccounts(ibkrState.accounts, ibkrState.accountId);
     renderIbkrStatus(ibkrState);
+    if (ibkrState.enabled && !profileState.isGuest) {
+      await checkIbkrSession();
+    }
   } catch (e) {
     console.error('Unable to load IBKR settings', e);
     const statusEl = document.getElementById('ibkr-status');
@@ -765,6 +776,9 @@ async function startIbkrSession() {
     ibkrState.enabled = true;
     ibkrState.connectionStatus = 'pending';
     renderIbkrStatus(ibkrState);
+    if (!profileState.isGuest) {
+      await checkIbkrSession();
+    }
   } catch (e) {
     console.error('Unable to start IBKR session', e);
     if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to start IBKR session.';
