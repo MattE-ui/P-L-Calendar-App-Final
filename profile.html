@@ -180,6 +180,49 @@
       <p id="t212-status" class="status-line"></p>
       <button id="t212-raw-btn" class="ghost info-btn is-hidden" type="button">View raw JSON</button>
     </section>
+    <section class="card profile-card automation-card" id="ibkr-card">
+      <header class="profile-automation-header">
+        <div class="profile-automation-title">
+          <h2>Interactive Brokers (IBKR)</h2>
+        </div>
+        <p class="helper">Connect IBKR via the Client Portal Gateway to sync portfolio value, positions, and active stop orders.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="ibkr-enabled">
+          <span>Enable IBKR sync</span>
+        </label>
+      </div>
+      <div id="ibkr-fields" class="integration-fields">
+        <div class="profile-field">
+          <label for="ibkr-account">IBKR account</label>
+          <select id="ibkr-account"></select>
+          <p class="helper">Select the account to use for portfolio value and positions (if multiple are returned).</p>
+        </div>
+      </div>
+      <section class="integration-instructions">
+        <h3>Connect IBKR (Local Connector)</h3>
+        <ol>
+          <li>Install and run the local IBKR connector on your machine (it talks to your Client Portal Gateway).</li>
+          <li>Click <strong>Generate connector token</strong> and copy it into the connector CLI.</li>
+          <li>Complete IBKR login + 2FA in the official gateway UI on your machine.</li>
+          <li>Keep the connector running to stream portfolio value, positions, and stop orders.</li>
+        </ol>
+      </section>
+      <div class="profile-field">
+        <label for="ibkr-connector-token">Connector token</label>
+        <div class="inline-field">
+          <input id="ibkr-connector-token" type="text" readonly placeholder="Generate a token to connect your local agent">
+          <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
+        </div>
+        <p class="helper">Store this token securely. It is shown only once after generation.</p>
+      </div>
+      <div class="profile-actions integration-actions">
+        <button id="ibkr-sync" class="ghost">Refresh status</button>
+      </div>
+      <div id="ibkr-error" class="error"></div>
+      <p id="ibkr-status" class="status-line"></p>
+    </section>
       <section class="card profile-card danger-zone" id="profile-reset-card">
       <header class="profile-automation-header">
         <h2>Reset your data</h2>
