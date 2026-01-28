@@ -73,7 +73,7 @@ The IBKR integration uses the official Client Portal Gateway and IBKR Client Por
 
 Environment variables:
 - `IBKR_API_BASE_URL`: Client Portal Web API base URL (default `http://localhost:5000/v1/api`).
-- `IBKR_GATEWAY_URL`: Gateway UI base URL for the authenticated proxy (default `http://localhost:5000`).
+- `IBKR_GATEWAY_URL`: Gateway UI base URL for the authenticated proxy (defaults to the host of `IBKR_API_BASE_URL`).
 - `IBKR_TOKEN_SECRET`: Secret used to encrypt OAuth tokens at rest (required if you enable OAuth mode).
 - `IBKR_CACHE_TTL_MS`: Optional cache TTL for IBKR polling (default `15000`).
 - `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.

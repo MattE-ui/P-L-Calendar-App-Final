@@ -38,7 +38,11 @@ const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
 const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
 const IBKR_API_BASE_URL = (process.env.IBKR_API_BASE_URL || 'http://localhost:5000/v1/api').replace(/\/+$/, '');
-const IBKR_GATEWAY_URL = (process.env.IBKR_GATEWAY_URL || 'http://localhost:5000').replace(/\/+$/, '');
+const IBKR_GATEWAY_URL = (
+  process.env.IBKR_GATEWAY_URL
+  || IBKR_API_BASE_URL.replace(/\/v1\/api$/i, '')
+  || 'http://localhost:5000'
+).replace(/\/+$/, '');
 const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || process.env.APP_SECRET || '';
 const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
 const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
@@ -3806,7 +3810,10 @@ app.use('/api/integrations/ibkr/gateway', auth, asyncHandler(async (req, res) =>
   const suffix = req.originalUrl.replace('/api/integrations/ibkr/gateway', '') || '/';
   const targetUrl = `${IBKR_GATEWAY_URL}${suffix}`;
   if (!IBKR_GATEWAY_URL) {
-    return res.status(500).json({ error: 'IBKR gateway URL is not configured.' });
+    return res.status(500).json({
+      error: 'IBKR gateway URL is not configured.',
+      details: 'Set IBKR_GATEWAY_URL or IBKR_API_BASE_URL to a reachable Client Portal Gateway.'
+    });
   }
   const headers = { ...req.headers };
   delete headers.host;
