@@ -3805,6 +3805,9 @@ app.use('/api/integrations/ibkr/gateway', auth, asyncHandler(async (req, res) =>
   if (!checkIbkrRateLimit(`${req.username}:ibkr-gateway`, res)) return;
   const suffix = req.originalUrl.replace('/api/integrations/ibkr/gateway', '') || '/';
   const targetUrl = `${IBKR_GATEWAY_URL}${suffix}`;
+  if (!IBKR_GATEWAY_URL) {
+    return res.status(500).json({ error: 'IBKR gateway URL is not configured.' });
+  }
   const headers = { ...req.headers };
   delete headers.host;
   delete headers['content-length'];
@@ -3826,12 +3829,21 @@ app.use('/api/integrations/ibkr/gateway', auth, asyncHandler(async (req, res) =>
       body = req.body;
     }
   }
-  const response = await fetch(targetUrl, {
-    method: req.method,
-    headers,
-    body,
-    redirect: 'manual'
-  });
+  let response;
+  try {
+    response = await fetch(targetUrl, {
+      method: req.method,
+      headers,
+      body,
+      redirect: 'manual'
+    });
+  } catch (error) {
+    console.error('IBKR gateway proxy error', error);
+    return res.status(502).json({
+      error: 'Unable to reach IBKR Client Portal Gateway.',
+      details: IBKR_GATEWAY_URL
+    });
+  }
   res.status(response.status);
   response.headers.forEach((value, key) => {
     if (key.toLowerCase() === 'transfer-encoding') return;
