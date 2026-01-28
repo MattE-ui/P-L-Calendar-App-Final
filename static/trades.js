@@ -308,7 +308,9 @@ function renderTrades() {
     tr.appendChild(pnlCell);
 
     const sourceCell = document.createElement('td');
-    sourceCell.textContent = trade.source === 'trading212' ? 'Trading 212' : 'Manual';
+    sourceCell.textContent = trade.source === 'trading212'
+      ? 'Trading 212'
+      : (trade.source === 'ibkr' ? 'IBKR' : 'Manual');
     tr.appendChild(sourceCell);
 
     const tagsCell = document.createElement('td');
@@ -387,7 +389,7 @@ function populateForm(trade) {
   document.querySelector('#form-strategy').value = trade.strategyTag || '';
   document.querySelector('#form-market-condition').value = trade.marketCondition || '';
   document.querySelector('#form-screenshot').value = trade.screenshotUrl || '';
-  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id;
+  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
   const setupTags = (trade.setupTags && trade.setupTags.length) ? trade.setupTags : (isProviderTrade ? state.defaults.setupTags : []);
   const emotionTags = (trade.emotionTags && trade.emotionTags.length) ? trade.emotionTags : (isProviderTrade ? state.defaults.emotionTags : []);
   setCheckboxes('form-setup', setupTags);
