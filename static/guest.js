@@ -37,13 +37,16 @@ const DEFAULT_GUEST_DATA = {
     },
     ibkr: {
       enabled: false,
-      mode: 'gateway',
+      mode: 'connector',
       accountId: '',
       connectionStatus: 'disconnected',
       lastSyncAt: null,
+      lastHeartbeatAt: null,
+      lastSnapshotAt: null,
       lastStatus: null,
       lastSessionCheckAt: null,
-      gatewayUrl: '/api/integrations/ibkr/gateway'
+      gatewayUrl: '/api/integrations/ibkr/gateway',
+      connectorConfigured: false
     }
   }
 };
@@ -386,6 +389,16 @@ window.handleGuestRequest = (path, opts = {}) => {
   if (path.startsWith('/api/integrations/ibkr')) {
     data.integrations ||= { ibkr: {} };
     const ibkr = data.integrations.ibkr || {};
+    if (path.startsWith('/api/integrations/ibkr/connector/register')) {
+      ibkr.enabled = true;
+      ibkr.mode = 'connector';
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { connectorToken: 'guest-connector-token' };
+    }
     if (method === 'POST') {
       const payload = opts.body ? JSON.parse(opts.body) : {};
       if (typeof payload.enabled === 'boolean') {
@@ -404,13 +417,16 @@ window.handleGuestRequest = (path, opts = {}) => {
     }
     return {
       enabled: !!ibkr.enabled,
-      mode: ibkr.mode || 'gateway',
+      mode: ibkr.mode || 'connector',
       accountId: ibkr.accountId || '',
       connectionStatus: ibkr.connectionStatus || 'disconnected',
       lastSyncAt: ibkr.lastSyncAt || null,
+      lastHeartbeatAt: ibkr.lastHeartbeatAt || null,
+      lastSnapshotAt: ibkr.lastSnapshotAt || null,
       lastStatus: ibkr.lastStatus || null,
       lastSessionCheckAt: ibkr.lastSessionCheckAt || null,
-      gatewayUrl: ibkr.gatewayUrl || '/api/integrations/ibkr/gateway'
+      gatewayUrl: ibkr.gatewayUrl || '/api/integrations/ibkr/gateway',
+      connectorConfigured: !!ibkr.connectorConfigured
     };
   }
   if (path.startsWith('/api/trades/export')) {

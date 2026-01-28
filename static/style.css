@@ -1481,6 +1481,8 @@ td .mapping-badge {
 .profile-field { display: flex; flex-direction: column; gap: 8px; }
 .profile-field label { margin-top: 0; }
 .profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
+.inline-field { display: flex; gap: 10px; align-items: center; }
+.inline-field input { flex: 1; }
 .profile-field.readonly input,
 .profile-card input.readonly {
   background: rgba(255, 255, 255, 0.04);

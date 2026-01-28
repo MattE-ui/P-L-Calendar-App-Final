@@ -66,14 +66,16 @@ If Trading 212 responds with **404**, double-check that the account type (live v
 ## Interactive Brokers (IBKR) integration
 The IBKR integration uses the official Client Portal Gateway and IBKR Client Portal Web API (CPAPI v1). Authentication is manual (username/password + 2FA) and cannot be automated.
 
-1. Start the gateway service (recommended via Docker). The backend talks to `IBKR_API_BASE_URL` (default `http://localhost:5000/v1/api`) and exposes a protected proxy route for the login UI at `/api/integrations/ibkr/gateway`.
-2. Open the **Interactive Brokers (IBKR)** card on the profile page, toggle **Enable IBKR sync**, and click **Start session**.
-3. Complete your IBKR login + 2FA in the gateway window (manual step). Once authenticated, return and click **Check session**.
-4. Pick the account ID if multiple accounts are returned, then click **Sync now** to pull portfolio value, positions, and stop orders.
+1. Run the IBKR Client Portal Gateway locally (recommended via Docker) and open its UI to complete login + 2FA.
+2. Open the **Interactive Brokers (IBKR)** card on the profile page and click **Generate connector token**.
+3. Run the local connector with the token and gateway URL (see `docs/ibkr-connector.md`).
+4. Keep the connector running to stream portfolio value, positions, and stop orders into Veracity.
+
+See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector installation and CLI usage.
 
 Environment variables:
-- `IBKR_API_BASE_URL`: Client Portal Web API base URL (defaults to `http://localhost:5000/v1/api` in development; empty in production unless set).
-- `IBKR_GATEWAY_URL`: Gateway UI base URL for the authenticated proxy (defaults to the host of `IBKR_API_BASE_URL` when set).
+- `IBKR_API_BASE_URL`: Client Portal Web API base URL (used only for local development mode).
+- `IBKR_GATEWAY_URL`: Gateway UI base URL for the authenticated proxy (used only for local development mode).
 - `IBKR_TOKEN_SECRET`: Secret used to encrypt OAuth tokens at rest (required if you enable OAuth mode).
 - `IBKR_CACHE_TTL_MS`: Optional cache TTL for IBKR polling (default `15000`).
 - `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.

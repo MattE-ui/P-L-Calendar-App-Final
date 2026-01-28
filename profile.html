@@ -201,19 +201,24 @@
         </div>
       </div>
       <section class="integration-instructions">
-        <h3>Connect IBKR</h3>
+        <h3>Connect IBKR (Local Connector)</h3>
         <ol>
-          <li>Start a session to open the IBKR Client Portal Gateway login.</li>
-          <li>Complete your IBKR username/password + 2FA in the gateway window (manual login required).</li>
-          <li>Return here and click <strong>Check session</strong> to confirm the brokerage session is active.</li>
-          <li>Use <strong>Sync now</strong> to pull the latest portfolio value and positions.</li>
+          <li>Install and run the local IBKR connector on your machine (it talks to your Client Portal Gateway).</li>
+          <li>Click <strong>Generate connector token</strong> and copy it into the connector CLI.</li>
+          <li>Complete IBKR login + 2FA in the official gateway UI on your machine.</li>
+          <li>Keep the connector running to stream portfolio value, positions, and stop orders.</li>
         </ol>
       </section>
+      <div class="profile-field">
+        <label for="ibkr-connector-token">Connector token</label>
+        <div class="inline-field">
+          <input id="ibkr-connector-token" type="text" readonly placeholder="Generate a token to connect your local agent">
+          <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
+        </div>
+        <p class="helper">Store this token securely. It is shown only once after generation.</p>
+      </div>
       <div class="profile-actions integration-actions">
-        <button id="ibkr-start" class="primary">Start session</button>
-        <button id="ibkr-check" class="ghost">Check session</button>
-        <button id="ibkr-sync" class="ghost">Sync now</button>
-        <button id="ibkr-end" class="ghost">End session</button>
+        <button id="ibkr-sync" class="ghost">Refresh status</button>
       </div>
       <div id="ibkr-error" class="error"></div>
       <p id="ibkr-status" class="status-line"></p>
