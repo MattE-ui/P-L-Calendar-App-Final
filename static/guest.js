@@ -397,7 +397,7 @@ window.handleGuestRequest = (path, opts = {}) => {
       ibkr.lastSnapshotAt = new Date().toISOString();
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
-      return { connectorToken: 'guest-connector-token' };
+      return { connectorToken: 'guest-connector-token', expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString() };
     }
     if (path.startsWith('/api/integrations/ibkr/connector/exchange')) {
       ibkr.enabled = true;
@@ -406,6 +406,8 @@ window.handleGuestRequest = (path, opts = {}) => {
       ibkr.lastHeartbeatAt = new Date().toISOString();
       ibkr.lastSnapshotAt = new Date().toISOString();
       ibkr.connectorKeys = [{ id: 'guest', createdAt: new Date().toISOString() }];
+      ibkr.lastPortfolioValue = 25000;
+      ibkr.lastPortfolioCurrency = 'USD';
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
       return { connectorKey: 'guest-connector-key' };
@@ -413,6 +415,7 @@ window.handleGuestRequest = (path, opts = {}) => {
     if (path.startsWith('/api/integrations/ibkr/connector/heartbeat')) {
       ibkr.connectionStatus = 'online';
       ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastConnectorStatus = { status: 'online', receivedAt: ibkr.lastHeartbeatAt };
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
       return { ok: true };
@@ -421,6 +424,15 @@ window.handleGuestRequest = (path, opts = {}) => {
       ibkr.connectionStatus = 'online';
       ibkr.lastHeartbeatAt = new Date().toISOString();
       ibkr.lastSnapshotAt = new Date().toISOString();
+      ibkr.lastConnectorStatus = { status: 'online', receivedAt: ibkr.lastSnapshotAt };
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { ok: true };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/revoke')) {
+      ibkr.connectionStatus = 'disconnected';
+      ibkr.connectorKeys = [];
+      ibkr.lastConnectorStatus = { status: 'disconnected', reason: 'Connector key revoked.' };
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
       return { ok: true };
@@ -430,13 +442,10 @@ window.handleGuestRequest = (path, opts = {}) => {
       if (typeof payload.enabled === 'boolean') {
         ibkr.enabled = payload.enabled;
       }
-      if (typeof payload.accountId === 'string') {
-        ibkr.accountId = payload.accountId;
-      }
       if (payload.runNow) {
         ibkr.lastSyncAt = new Date().toISOString();
         ibkr.lastStatus = { ok: true, message: 'Guest mode simulated sync.' };
-        ibkr.connectionStatus = 'connected';
+        ibkr.connectionStatus = 'online';
       }
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
@@ -451,6 +460,9 @@ window.handleGuestRequest = (path, opts = {}) => {
       lastSnapshotAt: ibkr.lastSnapshotAt || null,
       lastStatus: ibkr.lastStatus || null,
       lastSessionCheckAt: ibkr.lastSessionCheckAt || null,
+      lastPortfolioValue: ibkr.lastPortfolioValue ?? null,
+      lastPortfolioCurrency: ibkr.lastPortfolioCurrency || null,
+      lastConnectorStatus: ibkr.lastConnectorStatus || null,
       connectorConfigured: Array.isArray(ibkr.connectorKeys) ? ibkr.connectorKeys.length > 0 : !!ibkr.connectorConfigured
     };
   }

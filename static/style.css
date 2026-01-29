@@ -1483,6 +1483,13 @@ td .mapping-badge {
 .profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
 .inline-field { display: flex; gap: 10px; align-items: center; }
 .inline-field input { flex: 1; }
+.read-only-field {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
 .profile-field.readonly input,
 .profile-card input.readonly {
   background: rgba(255, 255, 255, 0.04);

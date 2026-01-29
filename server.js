@@ -41,6 +41,7 @@ const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS
 const isProduction = process.env.RENDER || process.env.NODE_ENV === 'production';
 const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || process.env.APP_SECRET || '';
 const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
+const IBKR_CONNECTOR_TOKEN_TTL_MS = Number(process.env.IBKR_CONNECTOR_TOKEN_TTL_MS) || 15 * 60 * 1000;
 const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
 const IBKR_RATE_LIMIT_WINDOW_MS = Number(process.env.IBKR_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
 
@@ -539,6 +540,18 @@ function ensureIbkrConfig(user) {
   }
   if (cfg.sessionMetadata && typeof cfg.sessionMetadata !== 'object') {
     delete cfg.sessionMetadata;
+    mutated = true;
+  }
+  if (cfg.lastPortfolioValue !== undefined && !Number.isFinite(Number(cfg.lastPortfolioValue))) {
+    delete cfg.lastPortfolioValue;
+    mutated = true;
+  }
+  if (cfg.lastPortfolioCurrency !== undefined && typeof cfg.lastPortfolioCurrency !== 'string') {
+    delete cfg.lastPortfolioCurrency;
+    mutated = true;
+  }
+  if (cfg.lastConnectorStatus !== undefined && typeof cfg.lastConnectorStatus !== 'object') {
+    delete cfg.lastConnectorStatus;
     mutated = true;
   }
   if (!Array.isArray(cfg.connectorKeys)) {
@@ -1361,6 +1374,7 @@ function getActiveIbkrConnectorToken(db, username) {
 async function createIbkrConnectorToken(db, username) {
   const tokens = ensureConnectorTokens(db);
   const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + IBKR_CONNECTOR_TOKEN_TTL_MS).toISOString();
   for (const token of tokens) {
     if (token.userId === username && token.provider === 'IBKR' && !token.revokedAt) {
       token.revokedAt = now;
@@ -1375,15 +1389,17 @@ async function createIbkrConnectorToken(db, username) {
     mode: 'CONNECTOR',
     tokenHash,
     createdAt: now,
+    expiresAt,
     revokedAt: null
   });
-  return rawToken;
+  return { rawToken, expiresAt };
 }
 
 async function verifyIbkrConnectorToken(db, token) {
   const tokens = ensureConnectorTokens(db);
   for (const entry of tokens) {
     if (entry.provider !== 'IBKR' || entry.revokedAt) continue;
+    if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
     if (!entry.tokenHash) continue;
     const matches = await bcrypt.compare(token, entry.tokenHash);
     if (matches) {
@@ -1627,9 +1643,25 @@ const ibkrOrderSchema = z.object({
 const ibkrSnapshotSchema = z.object({
   accountId: z.string().optional(),
   portfolioValue: z.number(),
-  currency: z.string().optional(),
+  rootCurrency: z.string().min(1),
   positions: z.array(ibkrPositionSchema),
-  orders: z.array(ibkrOrderSchema).optional()
+  orders: z.array(ibkrOrderSchema).optional(),
+  meta: z.object({
+    gatewayUrl: z.string().optional(),
+    connectorVersion: z.string().optional(),
+    ts: z.string().optional(),
+    rootCurrencySource: z.string().optional()
+  }).optional()
+});
+const ibkrHeartbeatSchema = z.object({
+  status: z.enum(['online', 'disconnected', 'error']).optional(),
+  reason: z.string().optional(),
+  authStatus: z.object({
+    authenticated: z.boolean().optional(),
+    connected: z.boolean().optional()
+  }).optional(),
+  connectorVersion: z.string().optional(),
+  gatewayUrl: z.string().optional()
 });
 
 function getIbkrCacheEntry(key) {
@@ -1661,7 +1693,7 @@ function recordBrokerSnapshot(db, username, provider, snapshot) {
     provider,
     timestamp: new Date().toISOString(),
     portfolioValue: snapshot.portfolioValue,
-    currency: snapshot.currency || 'USD',
+    rootCurrency: snapshot.rootCurrency,
     positions: snapshot.positions,
     orders: snapshot.orders || [],
     derivedStopByTicker: snapshot.derivedStopByTicker || {}
@@ -1761,7 +1793,12 @@ function mapIbkrPosition(raw) {
 
 function extractIbkrOrders(payload) {
   if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.orders)) return payload.orders;
+  if (Array.isArray(payload?.orders)) {
+    return payload.orders.flatMap(entry => {
+      if (Array.isArray(entry?.orders)) return entry.orders;
+      return entry;
+    }).filter(Boolean);
+  }
   if (Array.isArray(payload?.order)) return payload.order;
   if (Array.isArray(payload?.data)) return payload.data;
   return [];
@@ -3158,32 +3195,18 @@ async function fetchIbkrAuthStatus() {
 }
 
 function applyIbkrSnapshotToUser(user, snapshot, rates, runDate = new Date()) {
-  const history = ensurePortfolioHistory(user);
-  normalizePortfolioHistory(user);
-  const timezone = 'Europe/London';
-  const dateKey = dateKeyInTimezone(timezone, runDate);
-  const ym = dateKey.slice(0, 7);
-  history[ym] ||= {};
-  const existing = history[ym][dateKey] || {};
-  const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
-  const payload = {
-    end: snapshot.portfolioValue,
-    cashIn: Number(existing.cashIn ?? 0),
-    cashOut: Number(existing.cashOut ?? 0)
-  };
-  if (existing.preBaseline) payload.preBaseline = true;
-  if (existingNote) payload.note = existingNote;
-  history[ym][dateKey] = payload;
-  user.portfolio = snapshot.portfolioValue;
-  if (user.initialPortfolio === undefined) {
-    user.initialPortfolio = snapshot.portfolioValue;
+  const cfg = user?.ibkr;
+  if (cfg) {
+    cfg.lastPortfolioValue = snapshot.portfolioValue;
+    cfg.lastPortfolioCurrency = snapshot.rootCurrency;
   }
-  user.profileComplete = true;
+  const timezone = 'Europe/London';
   const journal = ensureTradeJournal(user);
   const openTrades = [];
   for (const [tradeDate, items] of Object.entries(journal)) {
     for (const trade of items || []) {
       if (!trade || trade.status === 'closed') continue;
+      if (trade.source !== 'ibkr' && !trade.ibkrPositionId) continue;
       openTrades.push({ tradeDate, trade });
     }
   }
@@ -3272,7 +3295,13 @@ function applyIbkrSnapshotToUser(user, snapshot, rates, runDate = new Date()) {
 
 function updateIbkrConnectorStatus(cfg) {
   const lastHeartbeat = cfg.lastHeartbeatAt ? Date.parse(cfg.lastHeartbeatAt) : null;
-  const isOnline = lastHeartbeat && Number.isFinite(lastHeartbeat) && (Date.now() - lastHeartbeat < 90 * 1000);
+  const now = Date.now();
+  const isOnline = lastHeartbeat && Number.isFinite(lastHeartbeat) && (now - lastHeartbeat < 90 * 1000);
+  const reportedStatus = cfg.lastConnectorStatus?.status;
+  if (reportedStatus === 'disconnected' || reportedStatus === 'error') {
+    cfg.connectionStatus = reportedStatus;
+    return cfg.connectionStatus;
+  }
   cfg.connectionStatus = isOnline ? 'online' : 'offline';
   return cfg.connectionStatus;
 }
@@ -3294,20 +3323,15 @@ async function syncIbkrForUser(username, runDate = new Date()) {
     saveDB(db);
     return;
   }
-  const latestSnapshot = getLatestBrokerSnapshot(db, username, 'IBKR');
-  if (!latestSnapshot) {
+  if (!cfg.lastSnapshotAt) {
     cfg.lastStatus = {
       ok: false,
       status: 404,
       message: 'No IBKR snapshots received yet.'
     };
-    saveDB(db);
-    return;
+  } else {
+    cfg.lastStatus = { ok: true, status: 200 };
   }
-  const rates = await fetchRates();
-  applyIbkrSnapshotToUser(user, latestSnapshot, rates, runDate);
-  cfg.lastSyncAt = new Date().toISOString();
-  cfg.lastStatus = { ok: true, status: 200 };
   saveDB(db);
 }
 
@@ -4135,6 +4159,9 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
     lastSessionCheckAt: cfg.lastSessionCheckAt || null,
+    lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
+    lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
+    lastConnectorStatus: cfg.lastConnectorStatus || null,
     connectorConfigured: !!activeToken || !!activeKey
   });
 });
@@ -4175,6 +4202,9 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
     lastSessionCheckAt: cfg.lastSessionCheckAt || null,
+    lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
+    lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
+    lastConnectorStatus: cfg.lastConnectorStatus || null,
     connectorConfigured: !!activeToken || !!activeKey
   });
 }));
@@ -4187,14 +4217,15 @@ app.post('/api/integrations/ibkr/connector/token', auth, asyncHandler(async (req
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.ibkr;
-  const token = await createIbkrConnectorToken(db, req.username);
+  const { rawToken, expiresAt } = await createIbkrConnectorToken(db, req.username);
   cfg.enabled = true;
   cfg.mode = 'connector';
   cfg.connectionStatus = 'offline';
   cfg.lastStatus = { ok: true, status: 200, message: 'Connector token generated for exchange.' };
   saveDB(db);
   res.json({
-    connectorToken: token,
+    connectorToken: rawToken,
+    expiresAt,
     message: 'Store this token securely. It will be shown only once.'
   });
 }));
@@ -4214,6 +4245,42 @@ app.post('/api/integrations/ibkr/connector/exchange', asyncHandler(async (req, r
   cfg.lastStatus = { ok: true, status: 200, message: 'Connector key exchanged.' };
   saveDB(db);
   res.json({ connectorKey });
+}));
+
+app.post('/api/integrations/ibkr/connector/revoke', auth, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  if (!checkIbkrRateLimit(`${req.username}:ibkr-connector-revoke`, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.ibkr;
+  if (Array.isArray(cfg.connectorKeys)) {
+    const now = new Date().toISOString();
+    cfg.connectorKeys.forEach(entry => {
+      if (entry && !entry.revokedAt) entry.revokedAt = now;
+    });
+  }
+  if (Array.isArray(db.connectorTokens)) {
+    const now = new Date().toISOString();
+    db.connectorTokens.forEach(entry => {
+      if (entry?.provider === 'IBKR' && entry.userId === req.username && !entry.revokedAt) {
+        entry.revokedAt = now;
+      }
+    });
+  }
+  cfg.connectionStatus = 'disconnected';
+  cfg.lastConnectorStatus = {
+    status: 'disconnected',
+    reason: 'Connector key revoked.',
+    authStatus: null,
+    connectorVersion: '',
+    gatewayUrl: '',
+    receivedAt: new Date().toISOString()
+  };
+  cfg.lastStatus = { ok: true, status: 200, message: 'Connector key revoked.' };
+  saveDB(db);
+  res.json({ ok: true });
 }));
 
 app.post('/api/integrations/ibkr/connector/verify', asyncHandler(async (req, res) => {
@@ -4238,11 +4305,24 @@ app.post('/api/integrations/ibkr/connector/heartbeat', asyncHandler(async (req, 
   const { username, user, keyRecord } = match;
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, username);
+  const parseResult = ibkrHeartbeatSchema.safeParse(req.body || {});
+  if (!parseResult.success) {
+    return res.status(400).json({ error: 'Invalid heartbeat payload.', details: parseResult.error.flatten() });
+  }
+  const heartbeat = parseResult.data;
   const cfg = user.ibkr;
   cfg.enabled = true;
   cfg.mode = 'connector';
   cfg.lastHeartbeatAt = new Date().toISOString();
-  cfg.connectionStatus = 'online';
+  cfg.lastConnectorStatus = {
+    status: heartbeat.status || 'online',
+    reason: heartbeat.reason || '',
+    authStatus: heartbeat.authStatus || null,
+    connectorVersion: heartbeat.connectorVersion || '',
+    gatewayUrl: heartbeat.gatewayUrl || '',
+    receivedAt: cfg.lastHeartbeatAt
+  };
+  cfg.connectionStatus = cfg.lastConnectorStatus.status;
   keyRecord.lastUsedAt = cfg.lastHeartbeatAt;
   saveDB(db);
   res.json({ ok: true });
@@ -4282,6 +4362,16 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
   applyIbkrDerivedStopsToTrades(user, derivedStopByTicker);
   recordBrokerSnapshot(db, username, 'IBKR', snapshot);
   cfg.lastStatus = { ok: true, status: 200, message: 'Snapshot received.' };
+  cfg.lastPortfolioValue = snapshot.portfolioValue;
+  cfg.lastPortfolioCurrency = snapshot.rootCurrency;
+  cfg.lastConnectorStatus = {
+    status: 'online',
+    reason: '',
+    authStatus: cfg.lastConnectorStatus?.authStatus || null,
+    connectorVersion: snapshot.meta?.connectorVersion || cfg.lastConnectorStatus?.connectorVersion || '',
+    gatewayUrl: snapshot.meta?.gatewayUrl || cfg.lastConnectorStatus?.gatewayUrl || '',
+    receivedAt: cfg.lastSnapshotAt
+  };
   keyRecord.lastUsedAt = cfg.lastSnapshotAt;
   saveDB(db);
   res.json({ ok: true });
@@ -4332,7 +4422,10 @@ app.post('/api/integrations/ibkr/sync', auth, asyncHandler(async (req, res) => {
     lastSnapshotAt: cfg.lastSnapshotAt || null,
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
-    lastSessionCheckAt: cfg.lastSessionCheckAt || null
+    lastSessionCheckAt: cfg.lastSessionCheckAt || null,
+    lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
+    lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
+    lastConnectorStatus: cfg.lastConnectorStatus || null
   });
 }));
 
@@ -5940,6 +6033,7 @@ module.exports = {
   matchIbkrStopOrderForTrade,
   createIbkrConnectorToken,
   verifyIbkrConnectorToken,
+  ibkrSnapshotSchema,
   createIbkrConnectorKey,
   verifyIbkrConnectorKey,
   exchangeIbkrConnectorToken

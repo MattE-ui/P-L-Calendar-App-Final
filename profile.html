@@ -192,12 +192,20 @@
           <input type="checkbox" id="ibkr-enabled">
           <span>Enable IBKR sync</span>
         </label>
+        <p class="helper">Run the local connector on your machine to sync IBKR data.</p>
       </div>
       <div id="ibkr-fields" class="integration-fields">
         <div class="profile-field">
-          <label for="ibkr-account">IBKR account</label>
-          <select id="ibkr-account"></select>
-          <p class="helper">Select the account to use for portfolio value and positions (if multiple are returned).</p>
+          <label>Connected account</label>
+          <div id="ibkr-account-id" class="read-only-field">Not connected</div>
+        </div>
+        <div class="profile-field">
+          <label>Portfolio currency</label>
+          <div id="ibkr-root-currency" class="read-only-field">—</div>
+        </div>
+        <div class="profile-field">
+          <label>Latest portfolio value</label>
+          <div id="ibkr-portfolio-value" class="read-only-field">—</div>
         </div>
       </div>
       <section class="integration-instructions">
@@ -220,6 +228,7 @@
       </div>
       <div class="profile-actions integration-actions">
         <button id="ibkr-sync" class="ghost">Refresh status</button>
+        <button id="ibkr-revoke" class="ghost danger" type="button">Revoke connector key</button>
       </div>
       <div id="ibkr-error" class="error"></div>
       <p id="ibkr-status" class="status-line"></p>
