@@ -183,6 +183,40 @@ async function loadTrading212Payloads() {
   }
 }
 
+async function loadIbkrPayloads() {
+  try {
+    const data = await api('/api/integrations/ibkr/raw');
+    const accounts = data.accounts ?? null;
+    const summary = data.summary ?? null;
+    const ledger = data.ledger ?? null;
+    const positions = data.positions ?? null;
+    const orders = data.orders ?? null;
+    const hasPayloads = [accounts, summary, ledger, positions, orders]
+      .some(value => value !== null && value !== undefined);
+    if (!hasPayloads) {
+      const message = 'No IBKR payloads received yet. Run the connector and refresh.';
+      ['devtools-ibkr-accounts', 'devtools-ibkr-summary', 'devtools-ibkr-ledger', 'devtools-ibkr-positions', 'devtools-ibkr-orders']
+        .forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.textContent = message;
+        });
+      return;
+    }
+    document.getElementById('devtools-ibkr-accounts').textContent = JSON.stringify(accounts, null, 2);
+    document.getElementById('devtools-ibkr-summary').textContent = JSON.stringify(summary, null, 2);
+    document.getElementById('devtools-ibkr-ledger').textContent = JSON.stringify(ledger, null, 2);
+    document.getElementById('devtools-ibkr-positions').textContent = JSON.stringify(positions, null, 2);
+    document.getElementById('devtools-ibkr-orders').textContent = JSON.stringify(orders, null, 2);
+  } catch (e) {
+    const message = e?.data?.error || e.message || 'Unable to load IBKR payloads.';
+    const fallback = ['devtools-ibkr-accounts', 'devtools-ibkr-summary', 'devtools-ibkr-ledger', 'devtools-ibkr-positions', 'devtools-ibkr-orders'];
+    fallback.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = message;
+    });
+  }
+}
+
 function bindNav() {
   const closeNav = setupNavDrawer();
   document.getElementById('calendar-btn')?.addEventListener('click', () => window.location.href = '/');
@@ -212,4 +246,5 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadHeroMetrics();
   loadTrading212Payloads();
+  loadIbkrPayloads();
 });
