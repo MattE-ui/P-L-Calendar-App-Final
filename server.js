@@ -607,6 +607,10 @@ function ensureIbkrConfig(user) {
     delete cfg.live.updatedAt;
     mutated = true;
   }
+  if (cfg.raw !== undefined && (typeof cfg.raw !== 'object' || Array.isArray(cfg.raw))) {
+    delete cfg.raw;
+    mutated = true;
+  }
   if (cfg.connectorKeys !== undefined) {
     delete cfg.connectorKeys;
     mutated = true;
@@ -4558,14 +4562,58 @@ app.get('/api/integrations/ibkr/raw', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.ibkr || {};
-  const raw = cfg.lastRaw || {
-    accounts: null,
-    summary: null,
-    ledger: null,
-    positions: null,
-    orders: null
-  };
-  res.json(raw);
+  const lastUserSnapshot = Array.isArray(user.ibkrSnapshots) && user.ibkrSnapshots.length
+    ? user.ibkrSnapshots[user.ibkrSnapshots.length - 1]
+    : null;
+  const brokerSnapshot = lastUserSnapshot ? null : getLatestBrokerSnapshot(db, req.username, 'IBKR');
+  const snapshot = lastUserSnapshot || brokerSnapshot;
+  const snapshotRaw = lastUserSnapshot?.raw || {};
+  const rawStore = cfg.raw && typeof cfg.raw === 'object' ? cfg.raw : {};
+  const legacyRaw = cfg.lastRaw || {};
+  const accountsRaw = snapshotRaw.accounts ?? rawStore.accountsRaw ?? legacyRaw.accounts ?? null;
+  const summaryRaw = snapshotRaw.summary ?? rawStore.summaryRaw ?? legacyRaw.summary ?? null;
+  const ledgerRaw = snapshotRaw.ledger ?? rawStore.ledgerRaw ?? legacyRaw.ledger ?? null;
+  const positionsRaw = snapshotRaw.positions ?? rawStore.positionsRaw ?? legacyRaw.positions ?? null;
+  const ordersRaw = snapshotRaw.orders ?? rawStore.ordersRaw ?? legacyRaw.orders ?? null;
+  const accountId = cfg.accountId
+    || snapshot?.accountId
+    || pickIbkrAccountId(extractIbkrAccounts(accountsRaw), cfg.accountId)
+    || '';
+  const snapshotPositions = Array.isArray(snapshot?.positions) ? snapshot.positions : null;
+  const snapshotOrders = Array.isArray(snapshot?.orders) ? snapshot.orders : null;
+  const livePositions = Array.isArray(cfg.live?.positions) ? cfg.live.positions : cfg.livePositions;
+  const liveOrders = Array.isArray(cfg.live?.orders) ? cfg.live.orders : cfg.liveOrders;
+  const portfolioValue = Number.isFinite(Number(snapshot?.portfolioValue))
+    ? Number(snapshot.portfolioValue)
+    : (Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null);
+  const rootCurrency = snapshot?.rootCurrency || cfg.lastPortfolioCurrency || null;
+  const summary = (portfolioValue !== null || rootCurrency || summaryRaw)
+    ? {
+      portfolioValue,
+      rootCurrency,
+      raw: summaryRaw
+    }
+    : null;
+  const accounts = accountId || accountsRaw
+    ? {
+      accountId,
+      raw: accountsRaw
+    }
+    : null;
+  const positions = snapshotPositions ?? (Array.isArray(livePositions) ? livePositions : null);
+  const orders = snapshotOrders ?? (Array.isArray(liveOrders) ? liveOrders : null);
+  const ledger = ledgerRaw ?? (snapshot ? { message: 'Ledger payload not available yet.' } : null);
+  res.json({
+    accounts,
+    summary,
+    ledger,
+    positions,
+    orders,
+    ibkr: {
+      lastSnapshotTs: snapshot?.meta?.ts || cfg.lastSnapshotAt || null,
+      lastHeartbeatAt: cfg.lastHeartbeatAt || null
+    }
+  });
 });
 
 app.use('/api/integrations/ibkr/gateway', auth, (req, res) => {
@@ -4884,6 +4932,15 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
     ledger: snapshot.raw?.ledger ?? null,
     positions: snapshot.raw?.positions ?? null,
     orders: snapshot.raw?.orders ?? null
+  };
+  cfg.raw = {
+    ...(cfg.raw && typeof cfg.raw === 'object' ? cfg.raw : {}),
+    accountsRaw: snapshot.raw?.accounts ?? null,
+    summaryRaw: snapshot.raw?.summary ?? null,
+    ledgerRaw: snapshot.raw?.ledger ?? null,
+    positionsRaw: snapshot.raw?.positions ?? null,
+    ordersRaw: snapshot.raw?.orders ?? null,
+    lastUpdated: cfg.lastSnapshotAt
   };
   cfg.lastConnectorStatus = {
     status: 'online',
