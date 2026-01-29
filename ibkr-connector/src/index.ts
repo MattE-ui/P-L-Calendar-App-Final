@@ -24,6 +24,7 @@ const keyFileArg = getArg(
 ) || '';
 const insecure = args.includes('--insecure') || process.env.IBKR_INSECURE_TLS === '1';
 const connectorVersion = process.env.VERACITY_CONNECTOR_VERSION || 'ibkr-connector';
+const debug = args.includes('--debug') || process.env.VERACITY_DEBUG === '1';
 
 const loadStoredConnectorKey = () => {
   if (!keyFileArg || !fs.existsSync(keyFileArg)) return '';
@@ -90,6 +91,70 @@ const ibkrClient: AxiosInstance = createHttpClient({
 });
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const buildFullUrl = (baseURL?: string, url?: string) => {
+  const base = baseURL ? String(baseURL).replace(/\/+$/, '') : '';
+  if (!url) return base;
+  if (!base) return url;
+  return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
+};
+
+const safeStringify = (value: any) => {
+  if (value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return String(value);
+  }
+};
+
+const logAxiosError = (prefix: string, error: any) => {
+  if (axios.isAxiosError(error)) {
+    const method = (error.config?.method || 'GET').toUpperCase();
+    const fullUrl = buildFullUrl(error.config?.baseURL, error.config?.url);
+    const status = error.response?.status;
+    const payload = safeStringify(error.response?.data);
+    const payloadSuffix = payload ? ` ${payload}` : '';
+    console.error(`${prefix} ${status ?? 'ERR'} ${method} ${fullUrl}${payloadSuffix}`.trim());
+    return;
+  }
+  console.error(`${prefix} ${error?.message || error}`);
+};
+
+const logAxiosSuccess = (prefix: string, response: any) => {
+  if (!debug || !response) return;
+  const method = (response.config?.method || 'GET').toUpperCase();
+  const fullUrl = buildFullUrl(response.config?.baseURL, response.config?.url);
+  console.log(`${prefix} ${response.status} ${method} ${fullUrl}`);
+};
+
+const requestIbkr = async (method: 'GET' | 'POST', url: string) => {
+  try {
+    const response = await ibkrClient.request({ method, url });
+    logAxiosSuccess('[IBKR]', response);
+    return response;
+  } catch (error) {
+    logAxiosError('[IBKR]', error);
+    throw error;
+  }
+};
+
+const requestVeracity = async (method: 'GET' | 'POST', url: string, payload?: any) => {
+  try {
+    const response = await connectorClient.request({
+      method,
+      url,
+      data: payload,
+      headers: { Authorization: `Bearer ${connectorKey}` }
+    });
+    logAxiosSuccess('[VERACITY]', response);
+    return response;
+  } catch (error) {
+    logAxiosError('[VERACITY]', error);
+    throw error;
+  }
+};
 
 const normalizePosition = (raw: any) => {
   const ticker = String(raw?.ticker || raw?.symbol || raw?.contract?.symbol || raw?.contractDesc || '').trim();
@@ -245,13 +310,13 @@ const extractPortfolioValue = (summary: any) => {
 };
 
 const fetchSnapshot = async () => {
-  const accountsRes = await ibkrClient.get('/portfolio/accounts');
+  const accountsRes = await requestIbkr('GET', '/portfolio/accounts');
   const accounts = Array.isArray(accountsRes.data) ? accountsRes.data : accountsRes.data?.accounts || [];
   const accountId = accountOverride || accounts[0]?.accountId || accounts[0]?.id || accounts[0] || '';
   if (!accountId) {
     throw new Error('No IBKR account found.');
   }
-  const summaryRes = await ibkrClient.get(`/portfolio/${accountId}/summary`);
+  const summaryRes = await requestIbkr('GET', `/portfolio/${accountId}/summary`);
   const summary = summaryRes.data;
   const portfolioMeta = extractPortfolioValue(summary);
   if (!portfolioMeta) {
@@ -260,7 +325,7 @@ const fetchSnapshot = async () => {
   }
   let ledger = null;
   try {
-    const ledgerRes = await ibkrClient.get(`/portfolio/${accountId}/ledger`);
+    const ledgerRes = await requestIbkr('GET', `/portfolio/${accountId}/ledger`);
     ledger = ledgerRes.data;
   } catch (error) {
     ledger = null;
@@ -269,10 +334,10 @@ const fetchSnapshot = async () => {
   if (rootCurrencyMeta.currency === 'UNKNOWN') {
     console.warn('Unable to determine IBKR account currency; reporting UNKNOWN.');
   }
-  const positionsRes = await ibkrClient.get(`/portfolio2/${accountId}/positions`);
+  const positionsRes = await requestIbkr('GET', `/portfolio2/${accountId}/positions`);
   const positionsRaw = Array.isArray(positionsRes.data) ? positionsRes.data : positionsRes.data?.positions || [];
   const positions = positionsRaw.map(normalizePosition).filter(Boolean);
-  const ordersRes = await ibkrClient.get('/iserver/account/orders');
+  const ordersRes = await requestIbkr('GET', '/iserver/account/orders');
   const ordersRaw = extractOrdersFromIserverResponse(ordersRes.data);
   const orders = ordersRaw.map(normalizeOrder).filter(Boolean);
   return {
@@ -298,6 +363,7 @@ const exchangeConnectorKey = async () => {
       null,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+    logAxiosSuccess('[VERACITY]', response);
     const exchangedKey = response.data?.connectorKey;
     if (!exchangedKey) {
       throw new Error('Connector key was not returned by server.');
@@ -307,10 +373,12 @@ const exchangeConnectorKey = async () => {
     return connectorKey;
   } catch (error: any) {
     if (error?.response?.status === 401) {
+      logAxiosError('[VERACITY]', error);
       console.error('Connector token rejected; please generate a fresh token.');
       clearStoredConnectorKey();
       process.exit(1);
     }
+    logAxiosError('[VERACITY]', error);
     throw error;
   }
 };
@@ -324,41 +392,43 @@ const isRetryable = (error: any) => {
   return typeof status === 'number' && status >= 500;
 };
 
-const postWithRetry = async (path: string, payload: any) => {
-  const maxAttempts = 3;
-  let attempt = 0;
-  let delay = 1000;
-  while (attempt < maxAttempts) {
-    try {
-      await connectorClient.post(
-        path,
-        payload,
-        { headers: { Authorization: `Bearer ${connectorKey}` } }
-      );
-      return true;
-    } catch (error: any) {
-      if (error?.response?.status === 401) {
-        console.error('connectorKey rejected; delete local config and re-run with a fresh token.');
-        clearStoredConnectorKey();
-        process.exit(1);
-      }
-      attempt += 1;
-      if (attempt >= maxAttempts || !isRetryable(error)) {
-        throw error;
-      }
-      await sleep(delay);
-      delay *= 2;
-    }
-  }
-  return false;
-};
-
 const sendHeartbeat = async (payload: any) => {
-  await postWithRetry('/api/integrations/ibkr/connector/heartbeat', payload);
+  await requestVeracity('POST', '/api/integrations/ibkr/connector/heartbeat', payload);
 };
 
 const sendSnapshot = async (snapshot: any) => {
-  await postWithRetry('/api/integrations/ibkr/connector/snapshot', snapshot);
+  await requestVeracity('POST', '/api/integrations/ibkr/connector/snapshot', snapshot);
+};
+
+const handleVeracityError = async (error: any) => {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    const errorBody = error.response?.data;
+    const message = typeof errorBody === 'string' ? errorBody : (errorBody?.error || '');
+    const normalized = String(message).toLowerCase();
+    if (status === 401) {
+      if (normalized.includes('connector key') || normalized.includes('missing connector key')) {
+        console.error('Connector key rejected by server. Delete local config and re-run with a fresh one-time token.');
+        clearStoredConnectorKey();
+        process.exit(1);
+      }
+      return { backoffMs: 0, handled: true };
+    }
+    if (status === 429) {
+      const jitter = Math.floor(Math.random() * 1000);
+      const backoffMs = Math.min(60000, 2000 + jitter);
+      console.error(`[VERACITY] Rate limited. Backing off ${backoffMs}ms.`);
+      return { backoffMs, handled: true };
+    }
+    if (status && status >= 500) {
+      return { backoffMs: 2000, handled: true };
+    }
+  }
+  if (isRetryable(error)) {
+    console.error('Veracity unreachable; backing off.');
+    return { backoffMs: 2000, handled: true };
+  }
+  return { backoffMs: 0, handled: false };
 };
 
 const run = async () => {
@@ -373,69 +443,62 @@ const run = async () => {
       connectorVersion,
       gatewayUrl: normalizeGateway
     };
+    let snapshot = null;
     try {
-      const authRes = await ibkrClient.get('/iserver/auth/status');
+      const authRes = await requestIbkr('GET', '/iserver/auth/status');
       const authFlags = extractAuthFlags(authRes.data);
       heartbeatPayload.authStatus = authFlags;
       if (!authFlags.authenticated || !authFlags.connected) {
         heartbeatPayload.status = 'disconnected';
         heartbeatPayload.reason = 'IBKR session not authenticated. Open https://localhost:5000 and login/2FA in Client Portal Gateway.';
-        console.warn(heartbeatPayload.reason);
-        await sendHeartbeat(heartbeatPayload);
-        veracityBackoffMs = 0;
-        await sleep(pollSeconds * 1000);
-        continue;
+        console.warn(`[IBKR] ${heartbeatPayload.reason}`);
+      } else {
+        await requestIbkr('POST', '/tickle');
+        snapshot = await fetchSnapshot();
       }
-      await ibkrClient.post('/tickle');
     } catch (error: any) {
-      heartbeatPayload.status = 'error';
-      heartbeatPayload.reason = 'Unable to reach IBKR Client Portal Gateway.';
-      try {
-        await sendHeartbeat(heartbeatPayload);
-        veracityBackoffMs = 0;
-      } catch (sendError) {
-        veracityBackoffMs = veracityBackoffMs ? Math.min(veracityBackoffMs * 2, 60000) : 2000;
-        console.error('Veracity unreachable; backing off.', sendError?.message || sendError);
+      const status = error?.response?.status;
+      if (status === 401 || status === 403) {
+        heartbeatPayload.status = 'disconnected';
+        heartbeatPayload.reason = 'IBKR session not authenticated. Open https://localhost:5000 and login/2FA in Client Portal Gateway.';
+        console.warn(`[IBKR] ${heartbeatPayload.reason}`);
+      } else {
+        heartbeatPayload.status = 'error';
+        heartbeatPayload.reason = 'Unable to reach IBKR Client Portal Gateway.';
+        console.error(`[IBKR] ${heartbeatPayload.reason}`);
       }
-      await sleep((pollSeconds * 1000) + veracityBackoffMs);
-      continue;
     }
+
     try {
       await sendHeartbeat(heartbeatPayload);
+      if (snapshot) {
+        const {
+          rootCurrencySource,
+          rootCurrencyConfidence,
+          rootCurrencyReason,
+          ...snapshotPayload
+        } = snapshot as any;
+        const payload = {
+          ...snapshotPayload,
+          meta: {
+            gatewayUrl: normalizeGateway,
+            connectorVersion,
+            ts: new Date().toISOString(),
+            rootCurrencySource: rootCurrencySource || '',
+            currencyConfidence: rootCurrencyConfidence || 'low',
+            currencyReason: rootCurrencyReason || ''
+          }
+        };
+        await sendSnapshot(payload);
+        console.log(`Snapshot sent at ${new Date().toISOString()} for account ${snapshot.accountId}`);
+      }
       veracityBackoffMs = 0;
-      const snapshot = await fetchSnapshot();
-      if (!snapshot) {
-        await sleep((pollSeconds * 1000) + veracityBackoffMs);
-        continue;
-      }
-      const {
-        rootCurrencySource,
-        rootCurrencyConfidence,
-        rootCurrencyReason,
-        ...snapshotPayload
-      } = snapshot as any;
-      const payload = {
-        ...snapshotPayload,
-        meta: {
-          gatewayUrl: normalizeGateway,
-          connectorVersion,
-          ts: new Date().toISOString(),
-          rootCurrencySource: rootCurrencySource || '',
-          currencyConfidence: rootCurrencyConfidence || 'low',
-          currencyReason: rootCurrencyReason || ''
-        }
-      };
-      await sendSnapshot(payload);
-      console.log(`Snapshot sent at ${new Date().toISOString()} for account ${snapshot.accountId}`);
     } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || 'Unknown error';
-      if (isRetryable(error)) {
-        veracityBackoffMs = veracityBackoffMs ? Math.min(veracityBackoffMs * 2, 60000) : 2000;
-        console.error(`Veracity error: ${message}. Backing off ${veracityBackoffMs}ms.`);
-      } else {
-        veracityBackoffMs = 0;
-        console.error(`Connector error: ${message}`);
+      const { backoffMs, handled } = await handleVeracityError(error);
+      if (!handled) {
+        console.error(`[VERACITY] ${error?.message || 'Unknown error'}`);
       }
+      veracityBackoffMs = backoffMs || 0;
     }
     await sleep((pollSeconds * 1000) + veracityBackoffMs);
   }
