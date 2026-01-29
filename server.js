@@ -1735,15 +1735,7 @@ function parseTrading212Orders(payload) {
 }
 
 const ibkrCache = new Map();
-const ibkrPositionSchema = z.object({
-  ticker: z.string().min(1),
-  units: z.number(),
-  buyPrice: z.number(),
-  pnlValue: z.number().nullable().optional(),
-  currency: z.string().min(1),
-  livePrice: z.number().nullable().optional(),
-  conid: z.string().optional().nullable()
-});
+const ibkrPositionSchema = z.object({});
 const ibkrOrderSchema = z.object({
   id: z.string().optional(),
   ticker: z.string().optional(),
@@ -1761,13 +1753,7 @@ const ibkrSnapshotSchema = z.object({
   rootCurrency: z.string().min(1),
   positions: z.array(ibkrPositionSchema),
   orders: z.array(ibkrOrderSchema).optional(),
-  raw: z.object({
-    accounts: z.any().optional(),
-    summary: z.any().optional(),
-    ledger: z.any().optional(),
-    positions: z.any().optional(),
-    orders: z.any().optional()
-  }).optional(),
+  raw: z.object({}).optional(),
   meta: z.object({
     gatewayUrl: z.string().optional(),
     connectorVersion: z.string().optional(),
@@ -1846,9 +1832,12 @@ function updateIbkrLivePositions(user, snapshot, derivedStopByTicker = {}) {
   const cfg = user.ibkr;
   const next = [];
   const now = new Date().toISOString();
-  for (const position of snapshot.positions || []) {
+  const normalized = normalizeIbkrPositions(snapshot.positions || []);
+  for (const position of normalized) {
     const symbol = normalizeIbkrTicker(position.ticker);
     if (!symbol) continue;
+    const units = Number(position.units);
+    if (!Number.isFinite(units) || units === 0) continue;
     const conid = position.conid ? String(position.conid) : '';
     const key = conid || symbol;
     const derived = derivedStopByTicker[symbol] || null;
@@ -1856,9 +1845,10 @@ function updateIbkrLivePositions(user, snapshot, derivedStopByTicker = {}) {
       id: key,
       symbol,
       conid,
-      quantity: Number(position.units),
+      quantity: units,
       avgPrice: Number(position.buyPrice),
       marketPrice: Number.isFinite(position.livePrice) ? Number(position.livePrice) : null,
+      marketValue: Number.isFinite(position.marketValue) ? Number(position.marketValue) : null,
       unrealizedPnl: Number.isFinite(position.pnlValue) ? Number(position.pnlValue) : null,
       currency: position.currency || 'USD',
       derivedStopPrice: derived ? Number(derived.stopPrice) : null,
@@ -1951,6 +1941,13 @@ function extractIbkrSummaryValue(summary, tags = []) {
 }
 
 function extractIbkrSummaryAmount(summary, key) {
+  if (!summary) return null;
+  if (Array.isArray(summary)) {
+    return extractIbkrSummaryValue(summary, [key]);
+  }
+  if (summary?.data && Array.isArray(summary.data)) {
+    return extractIbkrSummaryValue(summary.data, [key]);
+  }
   const entry = summary?.[key];
   if (!entry) return null;
   if (typeof entry.amount === 'number') return entry.amount;
@@ -1963,6 +1960,14 @@ function extractIbkrSummaryAmount(summary, key) {
 }
 
 function extractIbkrSummaryCurrency(summary, key) {
+  if (Array.isArray(summary)) {
+    const found = summary.find(item => String(item?.tag || item?.key || '').toLowerCase() === key.toLowerCase());
+    return found?.currency && typeof found.currency === 'string' ? found.currency : null;
+  }
+  if (summary?.data && Array.isArray(summary.data)) {
+    const found = summary.data.find(item => String(item?.tag || item?.key || '').toLowerCase() === key.toLowerCase());
+    return found?.currency && typeof found.currency === 'string' ? found.currency : null;
+  }
   const entry = summary?.[key];
   if (entry && typeof entry.currency === 'string' && entry.currency) {
     return entry.currency;
@@ -1998,19 +2003,31 @@ function extractIbkrPortfolioValue(summary) {
     ?? extractIbkrSummaryAmount(summary, 'equitywithloanvalue')
     ?? extractIbkrSummaryAmount(summary, 'totalcashvalue');
   if (!Number.isFinite(value)) return null;
-  const currency = extractIbkrSummaryCurrency(summary, 'netliquidation')
-    ?? extractIbkrSummaryCurrency(summary, 'equitywithloanvalue')
-    ?? extractIbkrSummaryCurrency(summary, 'totalcashvalue');
-  return { value, currency: currency || 'UNKNOWN' };
+  return value;
 }
 
 function mapIbkrPosition(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const ticker = normalizeIbkrTicker(raw?.ticker ?? raw?.symbol ?? raw?.contract?.symbol ?? raw?.contractDesc ?? '');
+  const ticker = normalizeIbkrTicker(
+    raw?.ticker
+    ?? raw?.symbol
+    ?? raw?.contract?.symbol
+    ?? raw?.contractDesc
+    ?? raw?.description
+    ?? raw?.name
+    ?? ''
+  );
   const units = parseTradingNumber(raw?.position ?? raw?.quantity ?? raw?.qty ?? raw?.units ?? raw?.size);
-  const buyPrice = parseTradingNumber(raw?.avgPrice ?? raw?.avgCost ?? raw?.avgFillPrice ?? raw?.averagePrice);
-  const pnlValue = parseTradingNumber(raw?.unrealizedPnl ?? raw?.unrealizedPnL ?? raw?.pnl ?? raw?.pnlUnrealized);
-  const livePrice = parseTradingNumber(raw?.mktPrice ?? raw?.marketPrice ?? raw?.lastPrice ?? raw?.price);
+  const buyPrice = parseTradingNumber(
+    raw?.avgPrice ?? raw?.avgCost ?? raw?.avgFillPrice ?? raw?.averagePrice ?? raw?.buyPrice
+  );
+  const pnlValue = parseTradingNumber(
+    raw?.unrealizedPnl ?? raw?.unrealizedPnL ?? raw?.pnl ?? raw?.pnlUnrealized ?? raw?.pnlValue
+  );
+  const livePrice = parseTradingNumber(
+    raw?.mktPrice ?? raw?.marketPrice ?? raw?.lastPrice ?? raw?.price ?? raw?.livePrice
+  );
+  const marketValue = parseTradingNumber(raw?.marketValue ?? raw?.mktValue ?? raw?.value);
   const currency = String(raw?.currency || raw?.asset?.currency || raw?.fxCurrency || '').trim() || 'USD';
   const conid = raw?.conid ?? raw?.conidex ?? raw?.contract?.conid ?? raw?.contract?.conidex ?? null;
   if (!ticker || !Number.isFinite(units) || !Number.isFinite(buyPrice)) return null;
@@ -2021,8 +2038,47 @@ function mapIbkrPosition(raw) {
     pnlValue: Number.isFinite(pnlValue) ? pnlValue : null,
     currency,
     livePrice: Number.isFinite(livePrice) ? livePrice : null,
-    conid: conid ? String(conid) : ''
+    conid: conid ? String(conid) : '',
+    marketValue: Number.isFinite(marketValue) ? marketValue : null
   };
+}
+
+function normalizeIbkrPositions(positions = []) {
+  if (!Array.isArray(positions)) return [];
+  return positions.map(mapIbkrPosition).filter(Boolean);
+}
+
+function normalizeIbkrPayloadArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.positions)) return payload.positions;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+function buildIbkrActivePositionSummaries(positions = []) {
+  const normalized = normalizeIbkrPositions(positions);
+  return normalized.filter(position => Number.isFinite(position.units) && position.units !== 0).map(position => {
+    const costBasis = Math.abs(position.units) * Number(position.buyPrice);
+    const unrealizedPnl = Number.isFinite(position.pnlValue) ? position.pnlValue : null;
+    const unrealizedPct = Number.isFinite(unrealizedPnl) && costBasis > 0
+      ? (unrealizedPnl / costBasis) * 100
+      : 0;
+    const marketPrice = Number.isFinite(position.livePrice) ? position.livePrice : null;
+    const marketValue = Number.isFinite(position.marketValue)
+      ? position.marketValue
+      : (Number.isFinite(marketPrice) ? position.units * marketPrice : null);
+    return {
+      symbol: position.ticker,
+      position: position.units,
+      avgCost: position.buyPrice,
+      marketPrice,
+      marketValue,
+      unrealizedPnl,
+      unrealizedPct,
+      currency: position.currency,
+      conid: position.conid
+    };
+  });
 }
 
 function extractIbkrOrders(payload) {
@@ -2110,7 +2166,8 @@ function computeIbkrDerivedStops(positions = [], orders = []) {
     return isOpen;
   });
   const derived = {};
-  for (const position of positions) {
+  const normalizedPositions = normalizeIbkrPositions(positions);
+  for (const position of normalizedPositions) {
     const ticker = normalizeIbkrTicker(position.ticker);
     const conid = position.conid ? String(position.conid) : '';
     const livePrice = Number.isFinite(position.livePrice) ? Number(position.livePrice) : null;
@@ -2232,7 +2289,7 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
     }
   }
   let positionsMutated = false;
-  const positions = Array.isArray(snapshot.positions) ? snapshot.positions : [];
+  const positions = normalizeIbkrPositions(snapshot.positions || []);
   if (positions.length) {
     for (const position of positions) {
       const ticker = normalizeIbkrTicker(position.ticker);
@@ -2241,6 +2298,7 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
       const positionId = conid || ticker;
       const entryValue = Number(position.buyPrice);
       const units = Number(position.units);
+      if (!Number.isFinite(units) || units === 0) continue;
       const sizeUnits = Math.abs(units);
       const direction = units < 0 ? 'short' : 'long';
       const tradeCurrency = position.currency || 'USD';
@@ -4600,9 +4658,17 @@ app.get('/api/integrations/ibkr/raw', auth, (req, res) => {
       raw: accountsRaw
     }
     : null;
-  const positions = snapshotPositions ?? (Array.isArray(livePositions) ? livePositions : null);
-  const orders = snapshotOrders ?? (Array.isArray(liveOrders) ? liveOrders : null);
+  const positions = positionsRaw
+    ?? snapshotPositions
+    ?? (Array.isArray(livePositions) ? livePositions : null);
+  const orders = ordersRaw
+    ?? snapshotOrders
+    ?? (Array.isArray(liveOrders) ? liveOrders : null);
   const ledger = ledgerRaw ?? (snapshot ? { message: 'Ledger payload not available yet.' } : null);
+  const hasSnapshot = Boolean(snapshot || positions || orders || accounts || summary || ledger);
+  if (!hasSnapshot) {
+    console.debug('[IBKR] DevTools payload requested without any stored snapshot.');
+  }
   res.json({
     accounts,
     summary,
@@ -4612,7 +4678,8 @@ app.get('/api/integrations/ibkr/raw', auth, (req, res) => {
     ibkr: {
       lastSnapshotTs: snapshot?.meta?.ts || cfg.lastSnapshotAt || null,
       lastHeartbeatAt: cfg.lastHeartbeatAt || null
-    }
+    },
+    message: hasSnapshot ? null : 'No IBKR snapshot received yet.'
   });
 });
 
@@ -4660,31 +4727,17 @@ app.get('/api/integrations/ibkr/positions', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.ibkr || {};
-  let positions = Array.isArray(cfg.livePositions) ? cfg.livePositions : [];
+  const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
+  const snapshotPositions = Array.isArray(snapshot?.positions)
+    ? snapshot.positions
+    : normalizeIbkrPayloadArray(snapshot?.raw?.positions);
+  const sourcePositions = snapshotPositions.length
+    ? snapshotPositions
+    : (Array.isArray(cfg.livePositions) ? cfg.livePositions : []);
+  const positions = buildIbkrActivePositionSummaries(sourcePositions || []);
   let updatedAt = cfg.lastSnapshotAt || cfg.lastHeartbeatAt || null;
-  if (!positions.length) {
-    const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
-    if (snapshot) {
-      const derived = snapshot.derivedStopByTicker || {};
-      positions = (snapshot.positions || []).map(position => {
-        const symbol = normalizeIbkrTicker(position.ticker);
-        const conid = position.conid ? String(position.conid) : '';
-        const derivedStop = derived[symbol] || null;
-        return {
-          id: conid || symbol,
-          symbol,
-          conid,
-          quantity: Number(position.units),
-          avgPrice: Number(position.buyPrice),
-          marketPrice: Number.isFinite(position.livePrice) ? Number(position.livePrice) : null,
-          unrealizedPnl: Number.isFinite(position.pnlValue) ? Number(position.pnlValue) : null,
-          currency: position.currency || 'USD',
-          derivedStopPrice: derivedStop ? Number(derivedStop.stopPrice) : null,
-          updatedAt: snapshot.meta?.ts || snapshot.timestamp || cfg.lastSnapshotAt || null
-        };
-      });
-      updatedAt = snapshot.meta?.ts || snapshot.timestamp || updatedAt;
-    }
+  if (snapshot) {
+    updatedAt = snapshot.meta?.ts || snapshot.timestamp || updatedAt;
   }
   res.json({
     positions,
@@ -4921,6 +4974,7 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
     derivedStopByTicker,
     orders: payload.orders || []
   };
+  console.debug(`[IBKR] Snapshot received: ${snapshot.positions?.length || 0} positions, ${snapshot.orders?.length || 0} orders.`);
   await applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker);
   recordBrokerSnapshot(db, username, 'IBKR', snapshot);
   cfg.lastStatus = { ok: true, status: 200, message: 'Snapshot received.' };
@@ -5700,12 +5754,15 @@ async function buildActiveTrades(user, rates = {}) {
     const fxFeeEligible = trade.fxFeeEligible === true;
     const syncPpl = parseTradingNumber(trade.ppl);
     if (isProvider && Number.isFinite(syncPpl)) {
+      const ibkrPnlGBP = isIbkr ? convertToGBP(syncPpl, tradeCurrency, rates) : null;
+      const providerPnlGBP = Number.isFinite(ibkrPnlGBP) ? ibkrPnlGBP : syncPpl;
       const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
-      liveOpenPnlGBP += syncPpl;
+      liveOpenPnlGBP += providerPnlGBP;
       providerTrades += 1;
+      const providerCurrencyValue = isIbkr && Number.isFinite(ibkrPnlGBP) ? 'GBP' : tradeCurrency;
       if (providerCurrency === null) {
-        providerCurrency = tradeCurrency;
-      } else if (providerCurrency !== tradeCurrency) {
+        providerCurrency = providerCurrencyValue;
+      } else if (providerCurrency !== providerCurrencyValue) {
         providerCurrency = null;
       }
       const liveFromProvider = Number.isFinite(Number(trade.lastSyncPrice)) ? Number(trade.lastSyncPrice) : null;
@@ -5738,7 +5795,7 @@ async function buildActiveTrades(user, rates = {}) {
         fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined,
         livePrice: liveFromProvider !== null ? liveFromProvider : undefined,
         liveCurrency: tradeCurrency,
-        unrealizedGBP: syncPpl,
+        unrealizedGBP: providerPnlGBP,
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
         positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
         currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
@@ -6660,6 +6717,7 @@ module.exports = {
   createIbkrConnectorToken,
   verifyIbkrConnectorToken,
   ibkrSnapshotSchema,
+  buildIbkrActivePositionSummaries,
   updateIbkrLivePositions,
   applyIbkrHeartbeat,
   createIbkrConnectorKey,
