@@ -510,6 +510,23 @@ const integrationState = {
   lastRaw: null
 };
 
+const ibkrState = {
+  enabled: false,
+  mode: 'connector',
+  accountId: '',
+  connectionStatus: 'disconnected',
+  lastHeartbeatAt: null,
+  lastSnapshotAt: null,
+  lastSyncAt: null,
+  lastStatus: null,
+  lastSessionCheckAt: null,
+  lastPortfolioValue: null,
+  lastPortfolioCurrency: null,
+  lastConnectorStatus: null,
+  connectorConfigured: false,
+  tokenExpiresAt: null
+};
+
 function setIntegrationFieldsDisabled(disabled) {
   const container = document.getElementById('t212-fields');
   const apiInput = document.getElementById('t212-api-key');
@@ -574,6 +591,72 @@ function renderIntegrationStatus(data) {
   }
 }
 
+function setIbkrFieldsDisabled(disabled) {
+  const container = document.getElementById('ibkr-fields');
+  if (container) container.classList.toggle('is-hidden', disabled);
+}
+
+function renderIbkrStatus(data) {
+  const statusEl = document.getElementById('ibkr-status');
+  if (!statusEl) return;
+  statusEl.classList.remove('is-error');
+  if (!data.enabled) {
+    statusEl.textContent = 'IBKR sync is currently switched off.';
+    return;
+  }
+  const connection = data.connectionStatus || 'offline';
+  const heartbeat = data.lastHeartbeatAt ? new Date(data.lastHeartbeatAt) : null;
+  const snapshot = data.lastSnapshotAt ? new Date(data.lastSnapshotAt) : null;
+  const heartbeatText = heartbeat && !Number.isNaN(heartbeat.getTime())
+    ? `Last heartbeat ${heartbeat.toLocaleString('en-GB')}.`
+    : 'No heartbeat yet.';
+  const snapshotText = snapshot && !Number.isNaN(snapshot.getTime())
+    ? `Last snapshot ${snapshot.toLocaleString('en-GB')}.`
+    : 'No snapshot yet.';
+  const connectorStatus = data.lastConnectorStatus || {};
+  const statusLabel = connection === 'online'
+    ? 'Connector online'
+    : connection === 'disconnected'
+      ? 'Connector disconnected'
+      : connection === 'error'
+        ? 'Connector error'
+        : 'Connector offline';
+  const authStatus = connectorStatus.authStatus;
+  if (connection !== 'online' && authStatus && authStatus.authenticated === false) {
+    statusEl.classList.add('is-error');
+    statusEl.textContent = 'IBKR session expired. Please login in the Client Portal Gateway.';
+    return;
+  }
+  if (connectorStatus.reason) {
+    if (connection === 'error' || connection === 'disconnected') {
+      statusEl.classList.add('is-error');
+    }
+    statusEl.textContent = `${statusLabel} • ${connectorStatus.reason} ${heartbeatText}`;
+    return;
+  }
+  statusEl.textContent = `${statusLabel} • ${heartbeatText} ${snapshotText}`;
+}
+
+function renderIbkrSummary(data) {
+  const accountEl = document.getElementById('ibkr-account-id');
+  const currencyEl = document.getElementById('ibkr-root-currency');
+  const portfolioEl = document.getElementById('ibkr-portfolio-value');
+  if (accountEl) {
+    accountEl.textContent = data.accountId ? data.accountId : 'Not connected';
+  }
+  if (currencyEl) {
+    currencyEl.textContent = data.lastPortfolioCurrency || '—';
+  }
+  if (portfolioEl) {
+    if (data.lastPortfolioValue !== null && data.lastPortfolioValue !== undefined) {
+      const currency = data.lastPortfolioCurrency || '';
+      portfolioEl.textContent = `${Number(data.lastPortfolioValue).toLocaleString('en-GB', { maximumFractionDigits: 2 })} ${currency}`.trim();
+    } else {
+      portfolioEl.textContent = '—';
+    }
+  }
+}
+
 async function loadIntegration() {
   try {
     const data = await api('/api/integrations/trading212');
@@ -622,6 +705,149 @@ async function loadIntegration() {
     console.error('Unable to load Trading 212 settings', e);
     const statusEl = document.getElementById('t212-status');
     if (statusEl) statusEl.textContent = 'Trading 212 settings could not be loaded.';
+  }
+}
+
+async function loadIbkrIntegration() {
+  try {
+    const data = await api('/api/integrations/ibkr');
+    ibkrState.enabled = !!data.enabled;
+    ibkrState.mode = data.mode || 'connector';
+    ibkrState.accountId = data.accountId || '';
+    ibkrState.connectionStatus = data.connectionStatus || 'disconnected';
+    ibkrState.lastSyncAt = data.lastSyncAt || null;
+    ibkrState.lastStatus = data.lastStatus || null;
+    ibkrState.lastSessionCheckAt = data.lastSessionCheckAt || null;
+    ibkrState.lastHeartbeatAt = data.lastHeartbeatAt || null;
+    ibkrState.lastSnapshotAt = data.lastSnapshotAt || null;
+    ibkrState.lastPortfolioValue = data.lastPortfolioValue ?? null;
+    ibkrState.lastPortfolioCurrency = data.lastPortfolioCurrency || null;
+    ibkrState.lastConnectorStatus = data.lastConnectorStatus || null;
+    ibkrState.connectorConfigured = !!data.connectorConfigured;
+    const tokenInput = document.getElementById('ibkr-connector-token');
+    if (tokenInput && !ibkrState.connectorConfigured) {
+      tokenInput.value = '';
+    }
+    const copyBtn = document.getElementById('ibkr-copy-token');
+    if (copyBtn) {
+      copyBtn.disabled = !tokenInput?.value;
+    }
+    const toggle = document.getElementById('ibkr-enabled');
+    if (toggle) toggle.checked = ibkrState.enabled;
+    setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
+    renderIbkrSummary(ibkrState);
+    renderIbkrStatus(ibkrState);
+  } catch (e) {
+    console.error('Unable to load IBKR settings', e);
+    const statusEl = document.getElementById('ibkr-status');
+    if (statusEl) statusEl.textContent = 'IBKR settings could not be loaded.';
+  }
+}
+
+async function saveIbkrIntegration({ runNow = false } = {}) {
+  const errorEl = document.getElementById('ibkr-error');
+  if (errorEl) errorEl.textContent = '';
+  const toggle = document.getElementById('ibkr-enabled');
+  const enabled = !!toggle?.checked;
+  const payload = {
+    enabled,
+    mode: ibkrState.mode
+  };
+  if (runNow) payload.runNow = true;
+  try {
+    const data = await api('/api/integrations/ibkr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    ibkrState.enabled = !!data.enabled;
+    ibkrState.accountId = data.accountId || ibkrState.accountId;
+    ibkrState.connectionStatus = data.connectionStatus || ibkrState.connectionStatus;
+    ibkrState.lastSyncAt = data.lastSyncAt || ibkrState.lastSyncAt;
+    ibkrState.lastStatus = data.lastStatus || ibkrState.lastStatus;
+    ibkrState.lastSessionCheckAt = data.lastSessionCheckAt || ibkrState.lastSessionCheckAt;
+    ibkrState.lastHeartbeatAt = data.lastHeartbeatAt || ibkrState.lastHeartbeatAt;
+    ibkrState.lastSnapshotAt = data.lastSnapshotAt || ibkrState.lastSnapshotAt;
+    ibkrState.lastPortfolioValue = data.lastPortfolioValue ?? ibkrState.lastPortfolioValue;
+    ibkrState.lastPortfolioCurrency = data.lastPortfolioCurrency || ibkrState.lastPortfolioCurrency;
+    ibkrState.lastConnectorStatus = data.lastConnectorStatus || ibkrState.lastConnectorStatus;
+    ibkrState.connectorConfigured = !!data.connectorConfigured;
+    setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
+    renderIbkrSummary(ibkrState);
+    renderIbkrStatus(ibkrState);
+  } catch (e) {
+    console.error('Unable to save IBKR settings', e);
+    if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to save IBKR settings.';
+  }
+}
+
+async function refreshIbkrStatus() {
+  const errorEl = document.getElementById('ibkr-error');
+  if (errorEl) errorEl.textContent = '';
+  try {
+    await loadIbkrIntegration();
+  } catch (e) {
+    console.error('Unable to refresh IBKR status', e);
+    if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to refresh IBKR status.';
+  }
+}
+
+async function generateIbkrConnectorToken() {
+  const errorEl = document.getElementById('ibkr-error');
+  if (errorEl) errorEl.textContent = '';
+  try {
+    const data = await api('/api/integrations/ibkr/connector/token', { method: 'POST' });
+    const tokenInput = document.getElementById('ibkr-connector-token');
+    if (tokenInput) {
+      tokenInput.value = data.connectorToken || '';
+    }
+    ibkrState.connectorConfigured = true;
+    ibkrState.enabled = true;
+    const toggle = document.getElementById('ibkr-enabled');
+    if (toggle) toggle.checked = true;
+    const copyBtn = document.getElementById('ibkr-copy-token');
+    if (copyBtn && tokenInput?.value) {
+      copyBtn.disabled = false;
+    }
+    const warning = document.getElementById('ibkr-token-warning');
+    if (warning) {
+      const expiryText = data.expiresAt ? ` Valid until ${new Date(data.expiresAt).toLocaleTimeString('en-GB')}.` : '';
+      warning.textContent = `This token will not be shown again and is exchanged for a connector key stored locally.${expiryText}`;
+    }
+    renderIbkrStatus(ibkrState);
+  } catch (e) {
+    console.error('Unable to generate IBKR connector token', e);
+    if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to generate connector token.';
+  }
+}
+
+async function copyIbkrConnectorToken() {
+  const tokenInput = document.getElementById('ibkr-connector-token');
+  const warning = document.getElementById('ibkr-token-warning');
+  const copyBtn = document.getElementById('ibkr-copy-token');
+  if (!tokenInput || !tokenInput.value) return;
+  try {
+    await navigator.clipboard.writeText(tokenInput.value);
+    if (warning) warning.textContent = 'Token copied to clipboard.';
+    if (copyBtn) copyBtn.disabled = true;
+  } catch (e) {
+    if (warning) warning.textContent = 'Unable to copy token automatically. Please copy manually.';
+  }
+}
+
+async function revokeIbkrConnectorKey() {
+  const errorEl = document.getElementById('ibkr-error');
+  if (errorEl) errorEl.textContent = '';
+  try {
+    await api('/api/integrations/ibkr/connector/revoke', { method: 'POST' });
+    ibkrState.connectorConfigured = false;
+    ibkrState.connectionStatus = 'disconnected';
+    ibkrState.lastConnectorStatus = { status: 'disconnected', reason: 'Connector key revoked.' };
+    renderIbkrStatus(ibkrState);
+    renderIbkrSummary(ibkrState);
+  } catch (e) {
+    console.error('Unable to revoke IBKR connector key', e);
+    if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to revoke connector key.';
   }
 }
 
@@ -813,6 +1039,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadProfile();
   loadIntegration();
+  loadIbkrIntegration();
   const rawModal = document.getElementById('t212-raw-modal');
   const rawContent = document.getElementById('t212-raw-content');
   document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
@@ -857,8 +1084,17 @@ window.addEventListener('DOMContentLoaded', () => {
     const checked = ev.target.checked;
     setIntegrationFieldsDisabled(!checked);
   });
+  document.getElementById('ibkr-enabled')?.addEventListener('change', (ev) => {
+    const checked = ev.target.checked;
+    setIbkrFieldsDisabled(!checked);
+    saveIbkrIntegration();
+  });
   document.getElementById('t212-save')?.addEventListener('click', () => saveIntegration());
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
+  document.getElementById('ibkr-generate-token')?.addEventListener('click', generateIbkrConnectorToken);
+  document.getElementById('ibkr-sync')?.addEventListener('click', refreshIbkrStatus);
+  document.getElementById('ibkr-copy-token')?.addEventListener('click', copyIbkrConnectorToken);
+  document.getElementById('ibkr-revoke')?.addEventListener('click', revokeIbkrConnectorKey);
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
   document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
