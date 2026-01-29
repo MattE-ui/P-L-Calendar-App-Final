@@ -48,6 +48,8 @@ const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
 const IBKR_CONNECTOR_TOKEN_TTL_MS = Number(process.env.IBKR_CONNECTOR_TOKEN_TTL_MS) || 15 * 60 * 1000;
 const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
 const IBKR_RATE_LIMIT_WINDOW_MS = Number(process.env.IBKR_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
+const PORTFOLIO_SOURCE_T212_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_T212_STALE_MS) || 36 * 60 * 60 * 1000;
+const PORTFOLIO_SOURCE_IBKR_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_IBKR_STALE_MS) || 5 * 60 * 1000;
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -281,6 +283,14 @@ function loadDB() {
     }
     if (!Array.isArray(db.ibkrConnectorKeys)) {
       db.ibkrConnectorKeys = [];
+    }
+    const mutated = reconcileIbkrTokenSecret(db);
+    if (mutated) {
+      try {
+        saveDB(db);
+      } catch (error) {
+        console.warn('Unable to persist IBKR connector secret migration:', error);
+      }
     }
     return db;
   } catch (e) {
@@ -573,6 +583,26 @@ function ensureIbkrConfig(user) {
     cfg.livePositions = [];
     mutated = true;
   }
+  if (!Array.isArray(cfg.liveOrders)) {
+    cfg.liveOrders = [];
+    mutated = true;
+  }
+  if (!cfg.live || typeof cfg.live !== 'object') {
+    cfg.live = {};
+    mutated = true;
+  }
+  if (!Array.isArray(cfg.live.positions)) {
+    cfg.live.positions = [];
+    mutated = true;
+  }
+  if (!Array.isArray(cfg.live.orders)) {
+    cfg.live.orders = [];
+    mutated = true;
+  }
+  if (cfg.live.updatedAt !== undefined && typeof cfg.live.updatedAt !== 'string') {
+    delete cfg.live.updatedAt;
+    mutated = true;
+  }
   if (cfg.connectorKeys !== undefined) {
     delete cfg.connectorKeys;
     mutated = true;
@@ -666,6 +696,26 @@ function ensureUserShape(user, identifier) {
     user.portfolio = Number.isFinite(user.initialPortfolio) ? Number(user.initialPortfolio) : 0;
     mutated = true;
   }
+  if (user.portfolioSource !== undefined && typeof user.portfolioSource !== 'string') {
+    delete user.portfolioSource;
+    mutated = true;
+  }
+  if (!user.portfolioSource || !['manual', 'trading212', 'ibkr'].includes(user.portfolioSource)) {
+    user.portfolioSource = 'manual';
+    mutated = true;
+  }
+  if (user.portfolioCurrency !== undefined && typeof user.portfolioCurrency !== 'string') {
+    delete user.portfolioCurrency;
+    mutated = true;
+  }
+  if (!user.portfolioCurrency) {
+    user.portfolioCurrency = 'GBP';
+    mutated = true;
+  }
+  if (user.lastPortfolioSyncAt !== undefined && typeof user.lastPortfolioSyncAt !== 'string') {
+    delete user.lastPortfolioSyncAt;
+    mutated = true;
+  }
   if (user.netDepositsAnchor === undefined) {
     user.netDepositsAnchor = null;
     mutated = true;
@@ -687,6 +737,10 @@ function ensureUserShape(user, identifier) {
   }
   if (!Array.isArray(user.transactionProfiles)) {
     user.transactionProfiles = [];
+    mutated = true;
+  }
+  if (!Array.isArray(user.ibkrSnapshots)) {
+    user.ibkrSnapshots = [];
     mutated = true;
   }
   return mutated;
@@ -1279,7 +1333,8 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
       user.initialPortfolio = baseline;
       mutated = true;
     }
-    if (user.portfolio !== latest) {
+    const allowPortfolioUpdate = !user.portfolioSource || user.portfolioSource === 'manual';
+    if (allowPortfolioUpdate && user.portfolio !== latest) {
       user.portfolio = latest;
       mutated = true;
     }
@@ -1293,7 +1348,8 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
     user.initialPortfolio = normalized;
     mutated = true;
   }
-  if (user.portfolio !== normalized) {
+  const allowPortfolioUpdate = !user.portfolioSource || user.portfolioSource === 'manual';
+  if (allowPortfolioUpdate && user.portfolio !== normalized) {
     user.portfolio = normalized;
     mutated = true;
   }
@@ -1382,6 +1438,38 @@ function hashConnectorKey(rawKey) {
 
 function hashConnectorCredential(value) {
   return hmacHex(IBKR_TOKEN_SECRET_FALLBACK, value);
+}
+
+function getIbkrTokenSecretHash() {
+  if (!IBKR_TOKEN_SECRET) return null;
+  return crypto.createHash('sha256').update(IBKR_TOKEN_SECRET, 'utf8').digest('hex');
+}
+
+function reconcileIbkrTokenSecret(db) {
+  if (!db) return false;
+  const secretHash = getIbkrTokenSecretHash();
+  if (!secretHash) return false;
+  let mutated = false;
+  const now = new Date().toISOString();
+  if (db.ibkrTokenSecretHash && db.ibkrTokenSecretHash !== secretHash) {
+    console.warn('[IBKR] Token secret changed; revoking existing connector keys/tokens.');
+    ensureIbkrConnectorTokens(db).forEach(entry => {
+      if (entry && !entry.usedAt) {
+        entry.usedAt = now;
+      }
+    });
+    ensureIbkrConnectorKeys(db).forEach(entry => {
+      if (entry && !entry.revokedAt) {
+        entry.revokedAt = now;
+      }
+    });
+    mutated = true;
+  }
+  if (db.ibkrTokenSecretHash !== secretHash) {
+    db.ibkrTokenSecretHash = secretHash;
+    mutated = true;
+  }
+  return mutated;
 }
 
 function parseBearerToken(authHeader) {
@@ -1731,6 +1819,20 @@ function recordBrokerSnapshot(db, username, provider, snapshot) {
   }
 }
 
+function recordIbkrUserSnapshot(user, snapshot) {
+  if (!user) return;
+  if (!Array.isArray(user.ibkrSnapshots)) {
+    user.ibkrSnapshots = [];
+  }
+  user.ibkrSnapshots.push({
+    ...snapshot,
+    receivedAt: new Date().toISOString()
+  });
+  if (user.ibkrSnapshots.length > 250) {
+    user.ibkrSnapshots.splice(0, user.ibkrSnapshots.length - 250);
+  }
+}
+
 function updateIbkrLivePositions(user, snapshot, derivedStopByTicker = {}) {
   if (!user?.ibkr) return;
   const cfg = user.ibkr;
@@ -1756,6 +1858,21 @@ function updateIbkrLivePositions(user, snapshot, derivedStopByTicker = {}) {
     });
   }
   cfg.livePositions = next;
+  if (cfg.live && typeof cfg.live === 'object') {
+    cfg.live.positions = next;
+    cfg.live.updatedAt = new Date().toISOString();
+  }
+}
+
+function updateIbkrLiveOrders(user, orders = []) {
+  if (!user?.ibkr) return;
+  const cfg = user.ibkr;
+  const normalized = normalizeIbkrSnapshotOrders(orders);
+  cfg.liveOrders = normalized;
+  if (cfg.live && typeof cfg.live === 'object') {
+    cfg.live.orders = normalized;
+    cfg.live.updatedAt = new Date().toISOString();
+  }
 }
 
 function applyIbkrDerivedStopsToLivePositions(user, derivedStops = {}) {
@@ -2061,6 +2178,50 @@ function applyIbkrDerivedStopsToTrades(user, derivedStops = {}) {
     }
   }
   return { updated };
+}
+
+function isFreshTimestamp(value, windowMs) {
+  if (!value) return false;
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) <= windowMs;
+}
+
+function getCurrentPortfolioValue(user) {
+  const portfolioValue = Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : 0;
+  const portfolioCurrency = typeof user?.portfolioCurrency === 'string' && user.portfolioCurrency
+    ? user.portfolioCurrency
+    : 'GBP';
+  const fallbackUpdatedAt = typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null;
+  const tradingCfg = user?.trading212;
+  if (tradingCfg?.enabled && tradingCfg?.apiKey && tradingCfg?.apiSecret) {
+    if (isFreshTimestamp(tradingCfg.lastSyncAt, PORTFOLIO_SOURCE_T212_STALE_MS)) {
+      return {
+        value: portfolioValue,
+        currency: portfolioCurrency,
+        source: 'trading212',
+        lastUpdatedAt: tradingCfg.lastSyncAt || fallbackUpdatedAt
+      };
+    }
+  }
+  const ibkrCfg = user?.ibkr;
+  if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
+    updateIbkrConnectorStatus(ibkrCfg);
+    if (ibkrCfg.connectionStatus === 'online' && isFreshTimestamp(ibkrCfg.lastSnapshotAt, PORTFOLIO_SOURCE_IBKR_STALE_MS)) {
+      return {
+        value: portfolioValue,
+        currency: portfolioCurrency,
+        source: 'ibkr',
+        lastUpdatedAt: ibkrCfg.lastSnapshotAt || fallbackUpdatedAt
+      };
+    }
+  }
+  return {
+    value: portfolioValue,
+    currency: portfolioCurrency,
+    source: user?.portfolioSource === 'trading212' || user?.portfolioSource === 'ibkr' ? user.portfolioSource : 'manual',
+    lastUpdatedAt: fallbackUpdatedAt
+  };
 }
 
 function matchIbkrStopOrderForTrade(trade, orders) {
@@ -2985,6 +3146,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     }
     history[ym][dateKey] = payload;
     user.portfolio = snapshot.portfolioValue;
+    user.portfolioCurrency = 'GBP';
+    user.portfolioSource = 'trading212';
+    user.lastPortfolioSyncAt = new Date().toISOString();
     if (user.initialPortfolio === undefined) {
       user.initialPortfolio = snapshot.portfolioValue;
     }
@@ -3280,8 +3444,28 @@ async function fetchIbkrAuthStatus() {
   return requestIbkrEndpoint('/iserver/auth/status');
 }
 
-function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {}) {
+async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {}) {
   updateIbkrLivePositions(user, snapshot, derivedStopByTicker);
+  updateIbkrLiveOrders(user, snapshot.orders || []);
+  recordIbkrUserSnapshot(user, snapshot);
+  const rates = await fetchRates();
+  const rootCurrency = snapshot.rootCurrency || 'GBP';
+  const nextPortfolio = rootCurrency !== 'GBP'
+    ? convertToGBP(snapshot.portfolioValue, rootCurrency, rates)
+    : snapshot.portfolioValue;
+  if (Number.isFinite(nextPortfolio)) {
+    user.portfolio = nextPortfolio;
+    user.portfolioCurrency = 'GBP';
+    user.portfolioSource = 'ibkr';
+    user.lastPortfolioSyncAt = new Date().toISOString();
+    if (user.initialPortfolio === undefined) {
+      user.initialPortfolio = nextPortfolio;
+    }
+  }
+  const { updated: stopUpdates } = applyIbkrDerivedStopsToTrades(user, derivedStopByTicker);
+  if (stopUpdates > 0) {
+    console.info(`[IBKR] synced current stops for ${stopUpdates} trade(s)`);
+  }
 }
 
 function updateIbkrConnectorStatus(cfg) {
@@ -3611,10 +3795,14 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const anchors = refreshAnchors(user, history);
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP } = await buildActiveTrades(user, rates);
-  const livePortfolio = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
+  const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const livePortfolio = portfolioSnapshot.value;
   if (mutated || normalized || anchors.mutated) saveDB(db);
   res.json({
-    portfolio: Number.isFinite(user.portfolio) ? user.portfolio : 0,
+    portfolio: portfolioSnapshot.value,
+    portfolioSource: portfolioSnapshot.source,
+    portfolioCurrency: portfolioSnapshot.currency,
+    portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: totals.baseline,
     netDepositsTotal: totals.total,
     profileComplete: !!user.profileComplete,
@@ -3622,6 +3810,21 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     livePortfolio,
     activeTrades: trades.length,
     isGuest: !!user.guest
+  });
+});
+
+app.get('/api/portfolio/snapshot', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const mutated = ensureUserShape(user, req.username);
+  const snapshot = getCurrentPortfolioValue(user);
+  if (mutated) saveDB(db);
+  res.json({
+    portfolio: snapshot.value,
+    portfolioSource: snapshot.source,
+    portfolioCurrency: snapshot.currency,
+    portfolioLastUpdatedAt: snapshot.lastUpdatedAt
   });
 });
 
@@ -3635,6 +3838,9 @@ app.post('/api/portfolio', auth, (req,res)=>{
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   user.portfolio = portfolio;
+  user.portfolioCurrency = 'GBP';
+  user.portfolioSource = 'manual';
+  user.lastPortfolioSyncAt = new Date().toISOString();
   const history = ensurePortfolioHistory(user);
   const dateKey = currentDateKey();
   const ym = dateKey.slice(0, 7);
@@ -3660,9 +3866,16 @@ app.get('/api/profile', auth, (req,res)=>{
   const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
+  const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const portfolioValue = Number.isFinite(portfolioSnapshot.value)
+    ? portfolioSnapshot.value
+    : (portfolioBaseline || 0);
   res.json({
     profileComplete: !!user.profileComplete,
-    portfolio: Number.isFinite(user.portfolio) ? user.portfolio : portfolioBaseline || 0,
+    portfolio: portfolioValue,
+    portfolioSource: portfolioSnapshot.source,
+    portfolioCurrency: portfolioSnapshot.currency,
+    portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: baseline,
     netDepositsTotal: total,
     today: currentDateKey(),
@@ -4196,6 +4409,65 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
   });
 });
 
+app.get('/api/integrations/ibkr/positions', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.ibkr || {};
+  let positions = Array.isArray(cfg.livePositions) ? cfg.livePositions : [];
+  let updatedAt = cfg.lastSnapshotAt || cfg.lastHeartbeatAt || null;
+  if (!positions.length) {
+    const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
+    if (snapshot) {
+      const derived = snapshot.derivedStopByTicker || {};
+      positions = (snapshot.positions || []).map(position => {
+        const symbol = normalizeIbkrTicker(position.ticker);
+        const conid = position.conid ? String(position.conid) : '';
+        const derivedStop = derived[symbol] || null;
+        return {
+          id: conid || symbol,
+          symbol,
+          conid,
+          quantity: Number(position.units),
+          avgPrice: Number(position.buyPrice),
+          marketPrice: Number.isFinite(position.livePrice) ? Number(position.livePrice) : null,
+          unrealizedPnl: Number.isFinite(position.pnlValue) ? Number(position.pnlValue) : null,
+          currency: position.currency || 'USD',
+          derivedStopPrice: derivedStop ? Number(derivedStop.stopPrice) : null,
+          updatedAt: snapshot.meta?.ts || snapshot.timestamp || cfg.lastSnapshotAt || null
+        };
+      });
+      updatedAt = snapshot.meta?.ts || snapshot.timestamp || updatedAt;
+    }
+  }
+  res.json({
+    positions,
+    updatedAt
+  });
+});
+
+app.get('/api/integrations/ibkr/orders', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.ibkr || {};
+  let orders = Array.isArray(cfg.liveOrders) ? cfg.liveOrders : [];
+  let updatedAt = cfg.lastSnapshotAt || cfg.lastHeartbeatAt || null;
+  if (!orders.length) {
+    const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
+    if (snapshot) {
+      orders = normalizeIbkrSnapshotOrders(snapshot.orders || []);
+      updatedAt = snapshot.meta?.ts || snapshot.timestamp || updatedAt;
+    }
+  }
+  res.json({
+    orders,
+    updatedAt
+  });
+});
+
 app.use('/api/integrations/ibkr/connector', (req, res, next) => {
   res.set('X-Veracity-Instance', INSTANCE_ID);
   const startedAt = Date.now();
@@ -4404,7 +4676,7 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
     derivedStopByTicker,
     orders: payload.orders || []
   };
-  applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker);
+  await applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker);
   recordBrokerSnapshot(db, username, 'IBKR', snapshot);
   cfg.lastStatus = { ok: true, status: 200, message: 'Snapshot received.' };
   cfg.lastPortfolioValue = snapshot.portfolioValue;
@@ -4705,10 +4977,9 @@ async function fetchRates() {
     const res = await fetch('https://open.er-api.com/v6/latest/GBP');
     if (!res.ok) throw new Error(`Rate fetch failed: ${res.status}`);
     const data = await res.json();
-    const usd = data?.rates?.USD;
-    const eur = data?.rates?.EUR;
-    if (usd && typeof usd === 'number') {
-      cachedRates = { GBP: 1, USD: usd, ...(eur && typeof eur === 'number' ? { EUR: eur } : {}) };
+    const rates = data?.rates;
+    if (rates && typeof rates === 'object') {
+      cachedRates = { ...rates, GBP: 1 };
       cachedRatesAt = now;
     }
   } catch (e) {
