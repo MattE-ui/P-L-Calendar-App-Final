@@ -1665,6 +1665,13 @@ const ibkrSnapshotSchema = z.object({
   rootCurrency: z.string().min(1),
   positions: z.array(ibkrPositionSchema),
   orders: z.array(ibkrOrderSchema).optional(),
+  raw: z.object({
+    accounts: z.any().optional(),
+    summary: z.any().optional(),
+    ledger: z.any().optional(),
+    positions: z.any().optional(),
+    orders: z.any().optional()
+  }).optional(),
   meta: z.object({
     gatewayUrl: z.string().optional(),
     connectorVersion: z.string().optional(),
@@ -4132,6 +4139,25 @@ app.get('/api/integrations/trading212/raw', auth, (req, res) => {
   res.json({ ...raw, ordersError: ordersError || null });
 });
 
+app.get('/api/integrations/ibkr/raw', auth, (req, res) => {
+  if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.ibkr || {};
+  const raw = cfg.lastRaw || {
+    accounts: null,
+    summary: null,
+    ledger: null,
+    positions: null,
+    orders: null
+  };
+  res.json(raw);
+});
+
 app.use('/api/integrations/ibkr/gateway', auth, (req, res) => {
   res.status(410).json({
     error: 'IBKR gateway proxy has been disabled.',
@@ -4383,6 +4409,13 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
   cfg.lastStatus = { ok: true, status: 200, message: 'Snapshot received.' };
   cfg.lastPortfolioValue = snapshot.portfolioValue;
   cfg.lastPortfolioCurrency = snapshot.rootCurrency;
+  cfg.lastRaw = {
+    accounts: snapshot.raw?.accounts ?? null,
+    summary: snapshot.raw?.summary ?? null,
+    ledger: snapshot.raw?.ledger ?? null,
+    positions: snapshot.raw?.positions ?? null,
+    orders: snapshot.raw?.orders ?? null
+  };
   cfg.lastConnectorStatus = {
     status: 'online',
     reason: '',

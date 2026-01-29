@@ -311,7 +311,8 @@ const extractPortfolioValue = (summary: any) => {
 
 const fetchSnapshot = async () => {
   const accountsRes = await requestIbkr('GET', '/portfolio/accounts');
-  const accounts = Array.isArray(accountsRes.data) ? accountsRes.data : accountsRes.data?.accounts || [];
+  const accountsRaw = accountsRes.data;
+  const accounts = Array.isArray(accountsRaw) ? accountsRaw : accountsRaw?.accounts || [];
   const accountId = accountOverride || accounts[0]?.accountId || accounts[0]?.id || accounts[0] || '';
   if (!accountId) {
     throw new Error('No IBKR account found.');
@@ -335,10 +336,12 @@ const fetchSnapshot = async () => {
     console.warn('Unable to determine IBKR account currency; reporting UNKNOWN.');
   }
   const positionsRes = await requestIbkr('GET', `/portfolio2/${accountId}/positions`);
-  const positionsRaw = Array.isArray(positionsRes.data) ? positionsRes.data : positionsRes.data?.positions || [];
+  const positionsRawPayload = positionsRes.data;
+  const positionsRaw = Array.isArray(positionsRawPayload) ? positionsRawPayload : positionsRawPayload?.positions || [];
   const positions = positionsRaw.map(normalizePosition).filter(Boolean);
   const ordersRes = await requestIbkr('GET', '/iserver/account/orders');
-  const ordersRaw = extractOrdersFromIserverResponse(ordersRes.data);
+  const ordersRawPayload = ordersRes.data;
+  const ordersRaw = extractOrdersFromIserverResponse(ordersRawPayload);
   const orders = ordersRaw.map(normalizeOrder).filter(Boolean);
   return {
     accountId: String(accountId),
@@ -348,7 +351,14 @@ const fetchSnapshot = async () => {
     rootCurrencyConfidence: rootCurrencyMeta.confidence,
     rootCurrencyReason: rootCurrencyMeta.reason,
     positions,
-    orders
+    orders,
+    raw: {
+      accounts: accountsRaw ?? null,
+      summary: summary ?? null,
+      ledger: ledger ?? null,
+      positions: positionsRawPayload ?? null,
+      orders: ordersRawPayload ?? null
+    }
   };
 };
 
