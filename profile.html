@@ -204,7 +204,7 @@
         <h3>Connect IBKR (Local Connector)</h3>
         <ol>
           <li>Install and run the local IBKR connector on your machine (it talks to your Client Portal Gateway).</li>
-          <li>Click <strong>Generate connector token</strong> and copy it into the connector CLI.</li>
+          <li>Click <strong>Generate connector token</strong> and run the connector once to exchange it for a connector key stored locally.</li>
           <li>Complete IBKR login + 2FA in the official gateway UI on your machine.</li>
           <li>Keep the connector running to stream portfolio value, positions, and stop orders.</li>
         </ol>
@@ -216,7 +216,7 @@
           <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
           <button id="ibkr-copy-token" class="ghost" type="button" disabled>Copy</button>
         </div>
-        <p class="helper" id="ibkr-token-warning">Store this token securely. It is shown only once after generation.</p>
+        <p class="helper" id="ibkr-token-warning">This token is shown only once and is exchanged for a connector key stored on your machine.</p>
       </div>
       <div class="profile-actions integration-actions">
         <button id="ibkr-sync" class="ghost">Refresh status</button>

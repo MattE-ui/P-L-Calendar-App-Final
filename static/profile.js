@@ -809,7 +809,7 @@ async function generateIbkrConnectorToken() {
     }
     const warning = document.getElementById('ibkr-token-warning');
     if (warning) {
-      warning.textContent = 'This token will not be shown again. Copy it now.';
+      warning.textContent = 'This token will not be shown again and is exchanged for a connector key stored locally.';
     }
     renderIbkrStatus(ibkrState);
   } catch (e) {

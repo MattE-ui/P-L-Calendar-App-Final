@@ -399,6 +399,32 @@ window.handleGuestRequest = (path, opts = {}) => {
       saveGuestData(data);
       return { connectorToken: 'guest-connector-token' };
     }
+    if (path.startsWith('/api/integrations/ibkr/connector/exchange')) {
+      ibkr.enabled = true;
+      ibkr.mode = 'connector';
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      ibkr.connectorKeys = [{ id: 'guest', createdAt: new Date().toISOString() }];
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { connectorKey: 'guest-connector-key' };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/heartbeat')) {
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { ok: true };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/snapshot')) {
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { ok: true };
+    }
     if (method === 'POST') {
       const payload = opts.body ? JSON.parse(opts.body) : {};
       if (typeof payload.enabled === 'boolean') {
@@ -425,8 +451,7 @@ window.handleGuestRequest = (path, opts = {}) => {
       lastSnapshotAt: ibkr.lastSnapshotAt || null,
       lastStatus: ibkr.lastStatus || null,
       lastSessionCheckAt: ibkr.lastSessionCheckAt || null,
-      gatewayUrl: ibkr.gatewayUrl || '/api/integrations/ibkr/gateway',
-      connectorConfigured: !!ibkr.connectorConfigured
+      connectorConfigured: Array.isArray(ibkr.connectorKeys) ? ibkr.connectorKeys.length > 0 : !!ibkr.connectorConfigured
     };
   }
   if (path.startsWith('/api/trades/export')) {

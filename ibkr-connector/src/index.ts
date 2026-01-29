@@ -1,4 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const args = process.argv.slice(2);
 const getArg = (flag: string, fallback: string | null = null) => {
@@ -9,12 +12,41 @@ const getArg = (flag: string, fallback: string | null = null) => {
 
 const server = getArg('--server', process.env.VERACITY_SERVER || '') || '';
 const token = getArg('--token', process.env.VERACITY_CONNECTOR_TOKEN || '') || '';
+const connectorKeyArg = getArg('--connector-key', process.env.VERACITY_CONNECTOR_KEY || '') || '';
 const gateway = getArg('--gateway', process.env.IBKR_GATEWAY_URL || 'http://127.0.0.1:5000') || '';
 const poll = Number(getArg('--poll', process.env.IBKR_POLL_INTERVAL || '15')) || 15;
 const accountOverride = getArg('--account', process.env.IBKR_ACCOUNT_ID || '') || '';
+const keyFileArg = getArg(
+  '--key-file',
+  process.env.VERACITY_CONNECTOR_KEY_FILE || path.join(os.homedir(), '.veracity', 'ibkr-connector.json')
+) || '';
 
-if (!server || !token) {
-  console.error('Missing required --server or --token.');
+const loadStoredConnectorKey = () => {
+  if (!keyFileArg || !fs.existsSync(keyFileArg)) return '';
+  try {
+    const raw = fs.readFileSync(keyFileArg, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.connectorKey === 'string') {
+      return parsed.connectorKey;
+    }
+  } catch (error) {
+    console.warn('Unable to read stored connector key.', error);
+  }
+  return '';
+};
+
+const storeConnectorKey = (connectorKey: string) => {
+  if (!keyFileArg) return;
+  const dir = path.dirname(keyFileArg);
+  fs.mkdirSync(dir, { recursive: true });
+  const payload = { connectorKey, storedAt: new Date().toISOString() };
+  fs.writeFileSync(keyFileArg, JSON.stringify(payload, null, 2), 'utf8');
+};
+
+let connectorKey = connectorKeyArg || loadStoredConnectorKey();
+
+if (!server || (!token && !connectorKey)) {
+  console.error('Missing required --server and either --token or --connector-key.');
   process.exit(1);
 }
 
@@ -23,7 +55,6 @@ const ibkrApiBase = `${normalizeGateway}/v1/api`;
 
 const connectorClient: AxiosInstance = axios.create({
   baseURL: server.replace(/\/+$/, ''),
-  headers: { Authorization: `Bearer ${token}` },
   timeout: 15000
 });
 
@@ -103,15 +134,43 @@ const fetchSnapshot = async () => {
   return { accountId: String(accountId), portfolioValue, positions, orders };
 };
 
+const exchangeConnectorKey = async () => {
+  if (connectorKey) return connectorKey;
+  if (!token) {
+    throw new Error('Connector key missing and no exchange token provided.');
+  }
+  const response = await connectorClient.post(
+    '/api/integrations/ibkr/connector/exchange',
+    null,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const exchangedKey = response.data?.connectorKey;
+  if (!exchangedKey) {
+    throw new Error('Connector key was not returned by server.');
+  }
+  connectorKey = exchangedKey;
+  storeConnectorKey(connectorKey);
+  return connectorKey;
+};
+
 const sendHeartbeat = async () => {
-  await connectorClient.post('/api/integrations/ibkr/connector/heartbeat');
+  await connectorClient.post(
+    '/api/integrations/ibkr/connector/heartbeat',
+    null,
+    { headers: { Authorization: `Bearer ${connectorKey}` } }
+  );
 };
 
 const sendSnapshot = async (snapshot: any) => {
-  await connectorClient.post('/api/integrations/ibkr/connector/snapshot', snapshot);
+  await connectorClient.post(
+    '/api/integrations/ibkr/connector/snapshot',
+    snapshot,
+    { headers: { Authorization: `Bearer ${connectorKey}` } }
+  );
 };
 
 const run = async () => {
+  connectorKey = await exchangeConnectorKey();
   console.log(`Veracity IBKR connector running. Gateway=${normalizeGateway} Server=${server}`);
   while (true) {
     try {
