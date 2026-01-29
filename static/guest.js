@@ -34,6 +34,19 @@ const DEFAULT_GUEST_DATA = {
       lastEndpoint: null,
       cooldownUntil: null,
       lastRaw: null
+    },
+    ibkr: {
+      enabled: false,
+      mode: 'connector',
+      accountId: '',
+      connectionStatus: 'disconnected',
+      lastSyncAt: null,
+      lastHeartbeatAt: null,
+      lastSnapshotAt: null,
+      lastStatus: null,
+      lastSessionCheckAt: null,
+      gatewayUrl: '/api/integrations/ibkr/gateway',
+      connectorConfigured: false
     }
   }
 };
@@ -372,6 +385,74 @@ window.handleGuestRequest = (path, opts = {}) => {
     data.integrations.trading212 = next;
     saveGuestData(data);
     return next;
+  }
+  if (path.startsWith('/api/integrations/ibkr')) {
+    data.integrations ||= { ibkr: {} };
+    const ibkr = data.integrations.ibkr || {};
+    if (path.startsWith('/api/integrations/ibkr/connector/token')) {
+      ibkr.enabled = true;
+      ibkr.mode = 'connector';
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { connectorToken: 'guest-connector-token' };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/exchange')) {
+      ibkr.enabled = true;
+      ibkr.mode = 'connector';
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      ibkr.connectorKeys = [{ id: 'guest', createdAt: new Date().toISOString() }];
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { connectorKey: 'guest-connector-key' };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/heartbeat')) {
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { ok: true };
+    }
+    if (path.startsWith('/api/integrations/ibkr/connector/snapshot')) {
+      ibkr.connectionStatus = 'online';
+      ibkr.lastHeartbeatAt = new Date().toISOString();
+      ibkr.lastSnapshotAt = new Date().toISOString();
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+      return { ok: true };
+    }
+    if (method === 'POST') {
+      const payload = opts.body ? JSON.parse(opts.body) : {};
+      if (typeof payload.enabled === 'boolean') {
+        ibkr.enabled = payload.enabled;
+      }
+      if (typeof payload.accountId === 'string') {
+        ibkr.accountId = payload.accountId;
+      }
+      if (payload.runNow) {
+        ibkr.lastSyncAt = new Date().toISOString();
+        ibkr.lastStatus = { ok: true, message: 'Guest mode simulated sync.' };
+        ibkr.connectionStatus = 'connected';
+      }
+      data.integrations.ibkr = ibkr;
+      saveGuestData(data);
+    }
+    return {
+      enabled: !!ibkr.enabled,
+      mode: ibkr.mode || 'connector',
+      accountId: ibkr.accountId || '',
+      connectionStatus: ibkr.connectionStatus || 'disconnected',
+      lastSyncAt: ibkr.lastSyncAt || null,
+      lastHeartbeatAt: ibkr.lastHeartbeatAt || null,
+      lastSnapshotAt: ibkr.lastSnapshotAt || null,
+      lastStatus: ibkr.lastStatus || null,
+      lastSessionCheckAt: ibkr.lastSessionCheckAt || null,
+      connectorConfigured: Array.isArray(ibkr.connectorKeys) ? ibkr.connectorKeys.length > 0 : !!ibkr.connectorConfigured
+    };
   }
   if (path.startsWith('/api/trades/export')) {
     return { ok: true };

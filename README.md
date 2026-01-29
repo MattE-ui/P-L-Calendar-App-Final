@@ -63,6 +63,38 @@ The backend authenticates with Trading 212 using HTTP Basic auth, sending your A
 
 If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted. The integration will automatically fan out across the documented live and practice hosts and a wider set of portfolio-summary endpoints (plus any custom URL/path you provide) before surfacing the error, and shows which combination failed in the profile status. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
 
+## Interactive Brokers (IBKR) integration
+The IBKR integration uses the official Client Portal Gateway and IBKR Client Portal Web API (CPAPI v1). Authentication is manual (username/password + 2FA) and cannot be automated.
+
+1. Run the IBKR Client Portal Gateway locally (recommended via Docker) and open its UI to complete login + 2FA.
+2. Open the **Interactive Brokers (IBKR)** card on the profile page and click **Generate connector token**.
+3. Run the local connector with the token and gateway URL (see `docs/ibkr-connector.md`).
+4. Keep the connector running to stream portfolio value, positions, and stop orders into Veracity.
+
+See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector installation and CLI usage.
+
+Environment variables:
+- `IBKR_API_BASE_URL`: Client Portal Web API base URL (used only for local development mode).
+- `IBKR_GATEWAY_URL`: Gateway UI base URL for the authenticated proxy (used only for local development mode).
+- `IBKR_TOKEN_SECRET`: Secret used to encrypt OAuth tokens at rest (required if you enable OAuth mode).
+- `IBKR_CACHE_TTL_MS`: Optional cache TTL for IBKR polling (default `15000`).
+- `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.
+
+Optional Docker compose snippet for the Client Portal Gateway:
+
+```yaml
+services:
+  ibkr-gateway:
+    image: ghcr.io/interactivate-brokers/ib-gateway:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - TZ=Europe/London
+    restart: unless-stopped
+```
+
+The gateway should be deployed on the same private network as this app. Do **not** expose it publicly without authentication—use the built-in `/api/integrations/ibkr/gateway` proxy or place it behind your own auth-aware reverse proxy.
+
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in a JSON file whose location you can configure:
 
