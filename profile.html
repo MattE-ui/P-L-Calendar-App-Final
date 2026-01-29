@@ -214,8 +214,9 @@
         <div class="inline-field">
           <input id="ibkr-connector-token" type="text" readonly placeholder="Generate a token to connect your local agent">
           <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
+          <button id="ibkr-copy-token" class="ghost" type="button" disabled>Copy</button>
         </div>
-        <p class="helper">Store this token securely. It is shown only once after generation.</p>
+        <p class="helper" id="ibkr-token-warning">Store this token securely. It is shown only once after generation.</p>
       </div>
       <div class="profile-actions integration-actions">
         <button id="ibkr-sync" class="ghost">Refresh status</button>

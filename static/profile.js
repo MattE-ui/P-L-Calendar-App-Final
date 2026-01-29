@@ -726,6 +726,10 @@ async function loadIbkrIntegration() {
     if (tokenInput && !ibkrState.connectorConfigured) {
       tokenInput.value = '';
     }
+    const copyBtn = document.getElementById('ibkr-copy-token');
+    if (copyBtn) {
+      copyBtn.disabled = !tokenInput?.value;
+    }
     const toggle = document.getElementById('ibkr-enabled');
     if (toggle) toggle.checked = ibkrState.enabled;
     setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
@@ -790,7 +794,7 @@ async function generateIbkrConnectorToken() {
   const errorEl = document.getElementById('ibkr-error');
   if (errorEl) errorEl.textContent = '';
   try {
-    const data = await api('/api/integrations/ibkr/connector/register', { method: 'POST' });
+    const data = await api('/api/integrations/ibkr/connector/token', { method: 'POST' });
     const tokenInput = document.getElementById('ibkr-connector-token');
     if (tokenInput) {
       tokenInput.value = data.connectorToken || '';
@@ -799,10 +803,32 @@ async function generateIbkrConnectorToken() {
     ibkrState.enabled = true;
     const toggle = document.getElementById('ibkr-enabled');
     if (toggle) toggle.checked = true;
+    const copyBtn = document.getElementById('ibkr-copy-token');
+    if (copyBtn && tokenInput?.value) {
+      copyBtn.disabled = false;
+    }
+    const warning = document.getElementById('ibkr-token-warning');
+    if (warning) {
+      warning.textContent = 'This token will not be shown again. Copy it now.';
+    }
     renderIbkrStatus(ibkrState);
   } catch (e) {
     console.error('Unable to generate IBKR connector token', e);
     if (errorEl) errorEl.textContent = e?.data?.error || e.message || 'Unable to generate connector token.';
+  }
+}
+
+async function copyIbkrConnectorToken() {
+  const tokenInput = document.getElementById('ibkr-connector-token');
+  const warning = document.getElementById('ibkr-token-warning');
+  const copyBtn = document.getElementById('ibkr-copy-token');
+  if (!tokenInput || !tokenInput.value) return;
+  try {
+    await navigator.clipboard.writeText(tokenInput.value);
+    if (warning) warning.textContent = 'Token copied to clipboard.';
+    if (copyBtn) copyBtn.disabled = true;
+  } catch (e) {
+    if (warning) warning.textContent = 'Unable to copy token automatically. Please copy manually.';
   }
 }
 
@@ -1048,6 +1074,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('t212-run-now')?.addEventListener('click', () => saveIntegration({ runNow: true }));
   document.getElementById('ibkr-generate-token')?.addEventListener('click', generateIbkrConnectorToken);
   document.getElementById('ibkr-sync')?.addEventListener('click', refreshIbkrStatus);
+  document.getElementById('ibkr-copy-token')?.addEventListener('click', copyIbkrConnectorToken);
   document.getElementById('ibkr-account')?.addEventListener('change', () => saveIbkrIntegration());
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);

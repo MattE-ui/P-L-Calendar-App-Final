@@ -389,7 +389,7 @@ window.handleGuestRequest = (path, opts = {}) => {
   if (path.startsWith('/api/integrations/ibkr')) {
     data.integrations ||= { ibkr: {} };
     const ibkr = data.integrations.ibkr || {};
-    if (path.startsWith('/api/integrations/ibkr/connector/register')) {
+    if (path.startsWith('/api/integrations/ibkr/connector/token')) {
       ibkr.enabled = true;
       ibkr.mode = 'connector';
       ibkr.connectionStatus = 'online';

@@ -277,10 +277,13 @@ function loadDB() {
     if (!Array.isArray(db.brokerSnapshots)) {
       db.brokerSnapshots = [];
     }
+    if (!Array.isArray(db.connectorTokens)) {
+      db.connectorTokens = [];
+    }
     return db;
   } catch (e) {
     console.warn('Falling back to empty database in loadDB:', e?.message || e);
-    return { users: {}, sessions: {}, instrumentMappings: [], brokerSnapshots: [] };
+    return { users: {}, sessions: {}, instrumentMappings: [], brokerSnapshots: [], connectorTokens: [] };
   }
 }
 
@@ -507,10 +510,6 @@ function ensureIbkrConfig(user) {
   }
   if (typeof cfg.accountId !== 'string') {
     cfg.accountId = '';
-    mutated = true;
-  }
-  if (typeof cfg.connectorTokenHash !== 'string') {
-    cfg.connectorTokenHash = '';
     mutated = true;
   }
   if (typeof cfg.lastHeartbeatAt !== 'string') {
@@ -1344,15 +1343,48 @@ function hashConnectorToken(token) {
   return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
 }
 
-function findUserByConnectorToken(db, token) {
-  const tokenHash = hashConnectorToken(token);
-  if (!tokenHash) return null;
-  const entries = Object.entries(db.users || {});
-  for (const [username, user] of entries) {
-    ensureUserShape(user, username);
-    const cfg = user.ibkr;
-    if (cfg?.connectorTokenHash && cfg.connectorTokenHash === tokenHash) {
-      return { user, username };
+function ensureConnectorTokens(db) {
+  if (!Array.isArray(db.connectorTokens)) {
+    db.connectorTokens = [];
+  }
+  return db.connectorTokens;
+}
+
+function getActiveIbkrConnectorToken(db, username) {
+  const tokens = ensureConnectorTokens(db);
+  return tokens.find(token => token.userId === username && token.provider === 'IBKR' && !token.revokedAt);
+}
+
+async function createIbkrConnectorToken(db, username) {
+  const tokens = ensureConnectorTokens(db);
+  const now = new Date().toISOString();
+  for (const token of tokens) {
+    if (token.userId === username && token.provider === 'IBKR' && !token.revokedAt) {
+      token.revokedAt = now;
+    }
+  }
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = await bcrypt.hash(rawToken, 10);
+  tokens.push({
+    id: crypto.randomBytes(8).toString('hex'),
+    userId: username,
+    provider: 'IBKR',
+    mode: 'CONNECTOR',
+    tokenHash,
+    createdAt: now,
+    revokedAt: null
+  });
+  return rawToken;
+}
+
+async function verifyIbkrConnectorToken(db, token) {
+  const tokens = ensureConnectorTokens(db);
+  for (const entry of tokens) {
+    if (entry.provider !== 'IBKR' || entry.revokedAt) continue;
+    if (!entry.tokenHash) continue;
+    const matches = await bcrypt.compare(token, entry.tokenHash);
+    if (matches) {
+      return entry;
     }
   }
   return null;
@@ -4074,6 +4106,7 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
   if (cfg.mode === 'connector') {
     updateIbkrConnectorStatus(cfg);
   }
+  const activeToken = getActiveIbkrConnectorToken(db, req.username);
   res.json({
     enabled: !!cfg.enabled,
     mode: cfg.mode || 'connector',
@@ -4085,7 +4118,7 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
     lastStatus: cfg.lastStatus || null,
     lastSessionCheckAt: cfg.lastSessionCheckAt || null,
     gatewayUrl: cfg.gatewayUrl || '/api/integrations/ibkr/gateway',
-    connectorConfigured: !!cfg.connectorTokenHash
+    connectorConfigured: !!activeToken
   });
 });
 
@@ -4119,6 +4152,7 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
   if (runNow && cfg.enabled) {
     await syncIbkrForUser(req.username);
   }
+  const activeToken = getActiveIbkrConnectorToken(db, req.username);
   res.json({
     enabled: !!cfg.enabled,
     mode: cfg.mode || 'connector',
@@ -4130,20 +4164,19 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
     lastStatus: cfg.lastStatus || null,
     lastSessionCheckAt: cfg.lastSessionCheckAt || null,
     gatewayUrl: cfg.gatewayUrl || '/api/integrations/ibkr/gateway',
-    connectorConfigured: !!cfg.connectorTokenHash
+    connectorConfigured: !!activeToken
   });
 }));
 
-app.post('/api/integrations/ibkr/connector/register', auth, asyncHandler(async (req, res) => {
+app.post('/api/integrations/ibkr/connector/token', auth, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  if (!checkIbkrRateLimit(`${req.username}:ibkr-connector-register`, res)) return;
+  if (!checkIbkrRateLimit(`${req.username}:ibkr-connector-token`, res)) return;
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.ibkr;
-  const token = crypto.randomBytes(32).toString('hex');
-  cfg.connectorTokenHash = hashConnectorToken(token);
+  const token = await createIbkrConnectorToken(db, req.username);
   cfg.enabled = true;
   cfg.mode = 'connector';
   cfg.connectionStatus = 'offline';
@@ -4155,14 +4188,26 @@ app.post('/api/integrations/ibkr/connector/register', auth, asyncHandler(async (
   });
 }));
 
+app.post('/api/integrations/ibkr/connector/verify', asyncHandler(async (req, res) => {
+  const authHeader = String(req.headers.authorization || '');
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  if (!token) return res.status(401).json({ error: 'Missing connector token.' });
+  const db = loadDB();
+  const tokenRecord = await verifyIbkrConnectorToken(db, token);
+  if (!tokenRecord) return res.status(401).json({ error: 'Invalid connector token.' });
+  res.json({ ok: true, userId: tokenRecord.userId });
+}));
+
 app.post('/api/integrations/ibkr/connector/heartbeat', asyncHandler(async (req, res) => {
   const authHeader = String(req.headers.authorization || '');
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   if (!checkIbkrRateLimit(`ibkr-connector-heartbeat:${hashConnectorToken(token)}`, res)) return;
   const db = loadDB();
-  const match = findUserByConnectorToken(db, token);
-  if (!match) return res.status(401).json({ error: 'Invalid connector token.' });
-  const { user, username } = match;
+  const tokenRecord = await verifyIbkrConnectorToken(db, token);
+  if (!tokenRecord) return res.status(401).json({ error: 'Invalid connector token.' });
+  const username = tokenRecord.userId;
+  const user = db.users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, username);
   const cfg = user.ibkr;
   cfg.enabled = true;
@@ -4178,14 +4223,16 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   if (!checkIbkrRateLimit(`ibkr-connector-snapshot:${hashConnectorToken(token)}`, res)) return;
   const db = loadDB();
-  const match = findUserByConnectorToken(db, token);
-  if (!match) return res.status(401).json({ error: 'Invalid connector token.' });
+  const tokenRecord = await verifyIbkrConnectorToken(db, token);
+  if (!tokenRecord) return res.status(401).json({ error: 'Invalid connector token.' });
   const parseResult = ibkrSnapshotSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({ error: 'Invalid snapshot payload.', details: parseResult.error.flatten() });
   }
   const payload = parseResult.data;
-  const { user, username } = match;
+  const username = tokenRecord.userId;
+  const user = db.users[username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, username);
   const cfg = user.ibkr;
   cfg.enabled = true;
@@ -5927,7 +5974,9 @@ module.exports = {
   extractIbkrPortfolioValue,
   mapIbkrPosition,
   parseIbkrOrders,
-  matchIbkrStopOrderForTrade
+  matchIbkrStopOrderForTrade,
+  createIbkrConnectorToken,
+  verifyIbkrConnectorToken
 };
 
 // global error handler
