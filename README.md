@@ -63,12 +63,40 @@ The backend authenticates with Trading 212 using HTTP Basic auth, sending your A
 
 If Trading 212 responds with **404**, double-check that the account type (live vs. practice) you selected matches the key you generated and that the permissions above were granted. The integration will automatically fan out across the documented live and practice hosts and a wider set of portfolio-summary endpoints (plus any custom URL/path you provide) before surfacing the error, and shows which combination failed in the profile status. A **429** rate-limit response places the integration in a short cooldown and the profile page will show how long to wait before retrying.
 
+## Interactive Brokers (IBKR) integration
+The IBKR integration uses the official Client Portal Gateway and IBKR Client Portal Web API (CPAPI v1). Authentication is manual (username/password + 2FA) and cannot be automated.
+
+1. Run the IBKR Client Portal Gateway locally (recommended via Docker) and open its UI to complete login + 2FA.
+2. Open the **Interactive Brokers (IBKR)** card on the profile page and click **Generate connector token** (valid for ~15 minutes).
+3. Run the local connector with the token and gateway URL (default `https://localhost:5000`) and pass `--insecure` if your gateway uses a self-signed cert.
+4. Keep the connector running to stream portfolio value, positions, and stop orders into Veracity.
+
+The gateway and connector run on your machine; the hosted server never reaches into your network. See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector installation and CLI usage.
+
+Environment variables:
+- `IBKR_CONNECTOR_TOKEN_TTL_MS`: Optional TTL for connector tokens in milliseconds (default `900000`).
+- `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.
+- `IBKR_TOKEN_SECRET`: Required in production to keep connector tokens/keys valid across deploys.
+
+Optional Docker compose snippet for the Client Portal Gateway:
+
+```yaml
+services:
+  ibkr-gateway:
+    image: ghcr.io/interactivate-brokers/ib-gateway:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - TZ=Europe/London
+    restart: unless-stopped
+```
+
 ## Persisted Data
 User accounts, sessions, and P&L entries are stored in a JSON file whose location you can configure:
 
 - By default the app reads and writes `storage/data.json` (the directory is created automatically on boot).
-- Set the `DATA_DIR` environment variable to a directory mounted on persistent storage (for example `/var/data/pl-calendar`) to keep data across redeploys, or set `DATA_FILE` to point to an explicit file path.
-- On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DATA_DIR=/var/data/pl-calendar` in the service environment so user records survive code pushes and restarts.
+- Set `DB_PATH` to an absolute file path (for example `/var/data/pl-calendar/db.json`) to keep data across redeploys. You can also use `DATA_DIR` (directory) or `DATA_FILE` (explicit file path) if preferred.
+- On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DB_PATH=/var/data/pl-calendar/db.json` in the service environment so user records and connector keys survive code pushes and restarts.
 - Guest sessions expire automatically; configure the TTL with `GUEST_TTL_HOURS` (defaults to 24 hours).
 
 When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
