@@ -1390,6 +1390,10 @@ function parseBearerToken(authHeader) {
   return raw.startsWith('Bearer ') ? raw.slice(7).trim() : raw;
 }
 
+function logIbkrConnectorAuthFailure(endpoint, reason) {
+  console.warn(`[IBKR] ${endpoint} auth failed: ${reason}`);
+}
+
 function ensureIbkrConnectorTokens(db) {
   if (!Array.isArray(db.ibkrConnectorTokens)) {
     db.ibkrConnectorTokens = [];
@@ -4296,10 +4300,16 @@ app.post('/api/integrations/ibkr/connector/revoke', auth, asyncHandler(async (re
 
 app.post('/api/integrations/ibkr/connector/verify', asyncHandler(async (req, res) => {
   const connectorKey = parseBearerToken(req.headers.authorization);
-  if (!connectorKey) return res.status(401).json({ error: 'Missing connector key.' });
+  if (!connectorKey) {
+    logIbkrConnectorAuthFailure('verify', 'missing connector key');
+    return res.status(401).json({ error: 'Missing connector key.' });
+  }
   const db = loadDB();
   const match = await findIbkrConnectorKeyOwner(db, connectorKey);
-  if (!match) return res.status(401).json({ error: 'Invalid connector key.' });
+  if (!match) {
+    logIbkrConnectorAuthFailure('verify', 'invalid connector key');
+    return res.status(401).json({ error: 'Invalid connector key.' });
+  }
   const { username, keyRecord } = match;
   keyRecord.lastUsedAt = new Date().toISOString();
   saveDB(db);
@@ -4308,11 +4318,17 @@ app.post('/api/integrations/ibkr/connector/verify', asyncHandler(async (req, res
 
 app.post('/api/integrations/ibkr/connector/heartbeat', asyncHandler(async (req, res) => {
   const connectorKey = parseBearerToken(req.headers.authorization);
-  if (!connectorKey) return res.status(401).json({ error: 'Missing connector key.' });
+  if (!connectorKey) {
+    logIbkrConnectorAuthFailure('heartbeat', 'missing connector key');
+    return res.status(401).json({ error: 'Missing connector key.' });
+  }
   if (!checkIbkrRateLimit(`ibkr-connector-heartbeat:${hashConnectorCredential(connectorKey)}`, res)) return;
   const db = loadDB();
   const match = await findIbkrConnectorKeyOwner(db, connectorKey);
-  if (!match) return res.status(401).json({ error: 'Invalid connector key.' });
+  if (!match) {
+    logIbkrConnectorAuthFailure('heartbeat', 'invalid connector key');
+    return res.status(401).json({ error: 'Invalid connector key.' });
+  }
   const { username, user, keyRecord } = match;
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, username);
@@ -4329,11 +4345,17 @@ app.post('/api/integrations/ibkr/connector/heartbeat', asyncHandler(async (req, 
 
 app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, res) => {
   const connectorKey = parseBearerToken(req.headers.authorization);
-  if (!connectorKey) return res.status(401).json({ error: 'Missing connector key.' });
+  if (!connectorKey) {
+    logIbkrConnectorAuthFailure('snapshot', 'missing connector key');
+    return res.status(401).json({ error: 'Missing connector key.' });
+  }
   if (!checkIbkrRateLimit(`ibkr-connector-snapshot:${hashConnectorCredential(connectorKey)}`, res)) return;
   const db = loadDB();
   const match = await findIbkrConnectorKeyOwner(db, connectorKey);
-  if (!match) return res.status(401).json({ error: 'Invalid connector key.' });
+  if (!match) {
+    logIbkrConnectorAuthFailure('snapshot', 'invalid connector key');
+    return res.status(401).json({ error: 'Invalid connector key.' });
+  }
   const { username, user, keyRecord } = match;
   const parseResult = ibkrSnapshotSchema.safeParse(req.body);
   if (!parseResult.success) {

@@ -360,7 +360,7 @@ const exchangeConnectorKey = async () => {
   try {
     const response = await connectorClient.post(
       '/api/integrations/ibkr/connector/exchange',
-      null,
+      {},
       { headers: { Authorization: `Bearer ${token}` } }
     );
     logAxiosSuccess('[VERACITY]', response);

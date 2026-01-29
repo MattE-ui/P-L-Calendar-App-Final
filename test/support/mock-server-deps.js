@@ -6,7 +6,7 @@ Module._load = function load(request, parent, isMain) {
   if (request === 'dotenv') {
     return { config: () => ({}) };
   }
-  if (request === 'express') {
+  if (request === 'express' && process.env.TEST_USE_REAL_EXPRESS !== '1') {
     const express = () => ({
       use: () => {},
       get: () => {},
@@ -19,7 +19,7 @@ Module._load = function load(request, parent, isMain) {
     express.urlencoded = () => (req, res, next) => next && next();
     return express;
   }
-  if (request === 'body-parser') {
+  if (request === 'body-parser' && process.env.TEST_USE_REAL_EXPRESS !== '1') {
     return {
       json: () => (req, res, next) => next && next(),
       urlencoded: () => (req, res, next) => next && next()
