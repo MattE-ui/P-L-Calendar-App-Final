@@ -183,6 +183,24 @@ async function loadTrading212Payloads() {
   }
 }
 
+async function loadIbkrPayloads() {
+  try {
+    const data = await api('/api/integrations/ibkr/raw');
+    document.getElementById('devtools-ibkr-accounts').textContent = JSON.stringify(data.accounts ?? null, null, 2);
+    document.getElementById('devtools-ibkr-summary').textContent = JSON.stringify(data.summary ?? null, null, 2);
+    document.getElementById('devtools-ibkr-ledger').textContent = JSON.stringify(data.ledger ?? null, null, 2);
+    document.getElementById('devtools-ibkr-positions').textContent = JSON.stringify(data.positions ?? null, null, 2);
+    document.getElementById('devtools-ibkr-orders').textContent = JSON.stringify(data.orders ?? null, null, 2);
+  } catch (e) {
+    const message = e?.data?.error || e.message || 'Unable to load IBKR payloads.';
+    const fallback = ['devtools-ibkr-accounts', 'devtools-ibkr-summary', 'devtools-ibkr-ledger', 'devtools-ibkr-positions', 'devtools-ibkr-orders'];
+    fallback.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = message;
+    });
+  }
+}
+
 function bindNav() {
   const closeNav = setupNavDrawer();
   document.getElementById('calendar-btn')?.addEventListener('click', () => window.location.href = '/');
@@ -212,4 +230,5 @@ window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadHeroMetrics();
   loadTrading212Payloads();
+  loadIbkrPayloads();
 });

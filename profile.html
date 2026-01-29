@@ -180,6 +180,60 @@
       <p id="t212-status" class="status-line"></p>
       <button id="t212-raw-btn" class="ghost info-btn is-hidden" type="button">View raw JSON</button>
     </section>
+    <section class="card profile-card automation-card" id="ibkr-card">
+      <header class="profile-automation-header">
+        <div class="profile-automation-title">
+          <h2>Interactive Brokers (IBKR)</h2>
+        </div>
+        <p class="helper">Connect IBKR via the Client Portal Gateway to sync portfolio value, positions, and active stop orders.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="ibkr-enabled">
+          <span>Enable IBKR sync</span>
+        </label>
+        <p class="helper">Run the local connector on your machine to sync IBKR data.</p>
+      </div>
+      <div id="ibkr-fields" class="integration-fields">
+        <div class="profile-field">
+          <label>Connected account</label>
+          <div id="ibkr-account-id" class="read-only-field">Not connected</div>
+        </div>
+        <div class="profile-field">
+          <label>Portfolio currency</label>
+          <div id="ibkr-root-currency" class="read-only-field">—</div>
+        </div>
+        <div class="profile-field">
+          <label>Latest portfolio value</label>
+          <div id="ibkr-portfolio-value" class="read-only-field">—</div>
+        </div>
+      </div>
+      <section class="integration-instructions">
+        <h3>Connect IBKR (Local Connector)</h3>
+        <ol>
+          <li>Install and run the local IBKR connector on your machine (it talks to your Client Portal Gateway).</li>
+          <li>Click <strong>Generate connector token</strong> and run the connector once to exchange it for a connector key stored locally.</li>
+          <li>Complete IBKR login + 2FA in the official gateway UI on your machine.</li>
+          <li>Keep the connector running to stream portfolio value, positions, and stop orders.</li>
+        </ol>
+      </section>
+      <div class="profile-field">
+        <label for="ibkr-connector-token">Connector token</label>
+        <div class="inline-field">
+          <input id="ibkr-connector-token" type="text" readonly placeholder="Generate a token to connect your local agent">
+          <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
+          <button id="ibkr-copy-token" class="ghost" type="button" disabled>Copy</button>
+        </div>
+        <p class="helper" id="ibkr-token-warning">This token is shown only once and is exchanged for a connector key stored on your machine.</p>
+      </div>
+      <div class="profile-actions integration-actions">
+        <button id="ibkr-sync" class="ghost">Refresh status</button>
+        <button id="ibkr-revoke" class="ghost danger" type="button">Revoke connector key</button>
+      </div>
+      <div id="ibkr-error" class="error"></div>
+      <p id="ibkr-connector-banner" class="status-line"></p>
+      <p id="ibkr-status" class="status-line"></p>
+    </section>
       <section class="card profile-card danger-zone" id="profile-reset-card">
       <header class="profile-automation-header">
         <h2>Reset your data</h2>

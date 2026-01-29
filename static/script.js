@@ -927,13 +927,17 @@ function renderActiveTrades() {
     }
     title.appendChild(pctSpan);
     headerRow.appendChild(title);
-    if (trade.source === 'trading212') {
+    if (trade.source === 'trading212' || trade.source === 'ibkr') {
       const sourceLogo = document.createElement('div');
       sourceLogo.className = 'trade-source-logo';
-      sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      if (trade.source === 'trading212') {
+        sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
+      } else {
+        sourceLogo.textContent = 'IBKR';
+      }
       headerRow.appendChild(sourceLogo);
     }
-    const isMissingStop = trade.source === 'trading212' && trade.currentStopStale === true;
+    const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
     if (isMissingStop) {
       pill.classList.add('trade-pill-alert');
       const alertBanner = document.createElement('div');
@@ -1177,7 +1181,7 @@ function updateActiveTradeDisplay(trades) {
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
     const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
-    const isMissingStop = trade.source === 'trading212' && trade.currentStopStale === true;
+    const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
     const alertBanner = pill.querySelector('.trade-alert-banner');
     if (isMissingStop) {
       pill.classList.add('trade-pill-alert');
@@ -1535,12 +1539,14 @@ function openEditTradeModal(trade) {
     }
   }
   const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+  const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
   modal.dataset.tradeId = trade.id;
   modal.dataset.direction = trade.direction || 'long';
   modal.dataset.isTrading212 = isTrading212 ? 'true' : 'false';
+  modal.dataset.isIbkr = isIbkr ? 'true' : 'false';
   modal.dataset.currentStopSource = trade.currentStopSource || 'manual';
   modal.dataset.currentStopOverride = 'false';
-  modal.dataset.brokerTicker = trade.brokerTicker || trade.trading212Ticker || trade.symbol || '';
+  modal.dataset.brokerTicker = trade.brokerTicker || trade.trading212Ticker || trade.ibkrTicker || trade.symbol || '';
   modal.dataset.brokerName = trade.trading212Name || '';
   modal.dataset.currency = trade.currency || '';
   modal.dataset.isin = trade.trading212Isin || '';
@@ -1558,12 +1564,13 @@ function openEditTradeModal(trade) {
     if (payload.currentStopPrice !== undefined && Number.isFinite(payload.currentStopPrice)) {
       currentStopInput.value = payload.currentStopPrice;
     }
-    currentStopInput.readOnly = source === 't212' && !hasOverride;
+    const isProviderSource = source === 't212' || source === 'ibkr';
+    currentStopInput.readOnly = isProviderSource && !hasOverride;
     if (currentStopSync) {
-      if (source === 't212') {
+      if (source === 't212' || source === 'ibkr') {
         currentStopSync.textContent = stale
           ? `No active stop order found • last checked ${formattedTime || 'just now'}`
-          : `Synced from Trading 212 • ${formattedTime || 'just now'}`;
+          : `Synced from ${source === 't212' ? 'Trading 212' : 'IBKR'} • ${formattedTime || 'just now'}`;
       } else if (source === 'manual' && hasOverride) {
         currentStopSync.textContent = 'Manual override enabled';
       } else {
@@ -1571,7 +1578,7 @@ function openEditTradeModal(trade) {
       }
     }
     if (currentStopOverride) {
-      currentStopOverride.classList.toggle('is-hidden', source !== 't212');
+      currentStopOverride.classList.toggle('is-hidden', !(source === 't212' || source === 'ibkr'));
     }
   };
 
@@ -1594,10 +1601,10 @@ function openEditTradeModal(trade) {
     };
   }
 
-  if (isTrading212 && currentStopSync) {
-    currentStopSync.textContent = 'Syncing Trading 212 stop...';
+  if ((isTrading212 || isIbkr) && currentStopSync) {
+    currentStopSync.textContent = `Syncing ${isTrading212 ? 'Trading 212' : 'IBKR'} stop...`;
   }
-  if (isTrading212) {
+  if (isTrading212 || isIbkr) {
     api(`/api/trades/${trade.id}/stop-sync`)
       .then((payload) => {
         if (payload?.warning) {
@@ -1618,7 +1625,7 @@ function openEditTradeModal(trade) {
       })
       .catch((err) => {
         if (currentStopWarning) {
-          currentStopWarning.textContent = err?.message || 'Could not sync Trading 212 stop.';
+          currentStopWarning.textContent = err?.message || 'Could not sync broker stop.';
           currentStopWarning.classList.remove('is-hidden');
         }
         updateCurrentStopUi();
