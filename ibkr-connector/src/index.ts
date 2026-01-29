@@ -26,6 +26,15 @@ const insecure = args.includes('--insecure') || process.env.IBKR_INSECURE_TLS ==
 const connectorVersion = process.env.VERACITY_CONNECTOR_VERSION || 'ibkr-connector';
 const debug = args.includes('--debug') || process.env.VERACITY_DEBUG === '1';
 
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch (stringifyError) {
+    return String(error);
+  }
+};
+
 const loadStoredConnectorKey = () => {
   if (!keyFileArg || !fs.existsSync(keyFileArg)) return '';
   try {
@@ -35,7 +44,7 @@ const loadStoredConnectorKey = () => {
       return parsed.connectorKey;
     }
   } catch (error) {
-    console.warn('Unable to read stored connector key.', error);
+    console.warn('Unable to read stored connector key.', getErrorMessage(error));
   }
   return '';
 };
@@ -55,7 +64,7 @@ const clearStoredConnectorKey = () => {
       fs.unlinkSync(keyFileArg);
     }
   } catch (error) {
-    console.warn('Unable to remove stored connector key.', error);
+    console.warn('Unable to remove stored connector key.', getErrorMessage(error));
   }
 };
 
@@ -119,7 +128,7 @@ const logAxiosError = (prefix: string, error: any) => {
     console.error(`${prefix} ${status ?? 'ERR'} ${method} ${fullUrl}${payloadSuffix}`.trim());
     return;
   }
-  console.error(`${prefix} ${error?.message || error}`);
+  console.error(`${prefix} ${getErrorMessage(error)}`);
 };
 
 const logAxiosSuccess = (prefix: string, response: any) => {
@@ -414,14 +423,18 @@ const handleVeracityError = async (error: any) => {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     const errorBody = error.response?.data;
+    const bodyText = safeStringify(errorBody);
     const message = typeof errorBody === 'string' ? errorBody : (errorBody?.error || '');
     const normalized = String(message).toLowerCase();
     if (status === 401) {
+      const responseSuffix = bodyText ? ` Server response: ${bodyText}` : '';
+      console.error(`[VERACITY] Unauthorized response.${responseSuffix}`);
       if (normalized.includes('connector key') || normalized.includes('missing connector key')) {
-        console.error('Connector key rejected by server. Delete local config and re-run with a fresh one-time token.');
+        console.error(`Connector key rejected by server. Delete ${keyFileArg} and re-run with a fresh one-time token.`);
         clearStoredConnectorKey();
         process.exit(1);
       }
+      console.error(`If this persists, delete ${keyFileArg} and re-run the connector with a fresh token.`);
       return { backoffMs: 0, handled: true };
     }
     if (status === 429) {
@@ -515,6 +528,6 @@ const run = async () => {
 };
 
 run().catch(error => {
-  console.error('Connector failed to start', error?.message || error);
+  console.error('Connector failed to start', getErrorMessage(error));
   process.exit(1);
 });
