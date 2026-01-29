@@ -1,0 +1,19 @@
+{
+  "name": "veracity-ibkr-connector",
+  "version": "0.1.0",
+  "description": "Local connector for Veracity Trading Suite IBKR integration",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.7"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
