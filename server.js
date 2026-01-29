@@ -53,19 +53,20 @@ const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
-const DATA_FILE = process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
+const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
 const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
+const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
 
 function ensureDataStore() {
-  const dataDir = path.dirname(DATA_FILE);
+  const dataDir = path.dirname(DB_PATH);
   fs.mkdirSync(dataDir, { recursive: true });
 
-  if (!fs.existsSync(DATA_FILE)) {
-    if (fs.existsSync(LEGACY_DATA_FILE) && LEGACY_DATA_FILE !== DATA_FILE) {
+  if (!fs.existsSync(DB_PATH)) {
+    if (fs.existsSync(LEGACY_DATA_FILE) && LEGACY_DATA_FILE !== DB_PATH) {
       try {
         const legacy = fs.readFileSync(LEGACY_DATA_FILE, 'utf-8');
         if (legacy && legacy.trim()) {
-          fs.writeFileSync(DATA_FILE, legacy, 'utf-8');
+          fs.writeFileSync(DB_PATH, legacy, 'utf-8');
           return;
         }
       } catch (error) {
@@ -77,7 +78,7 @@ function ensureDataStore() {
       users: {},
       sessions: {}
     }, null, 2);
-    fs.writeFileSync(DATA_FILE, initialPayload, 'utf-8');
+    fs.writeFileSync(DB_PATH, initialPayload, 'utf-8');
   }
 }
 
@@ -263,7 +264,7 @@ function checkIbkrRateLimit(key, res) {
 // --- helpers ---
 function loadDB() {
   try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+    const raw = fs.readFileSync(DB_PATH, 'utf-8');
     const db = JSON.parse(raw);
     db.users ||= {};
     db.sessions ||= {};
@@ -296,7 +297,7 @@ function loadDB() {
 }
 
 function saveDB(db) {
-  const dir = path.dirname(DATA_FILE);
+  const dir = path.dirname(DB_PATH);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(
     dir,
@@ -306,7 +307,7 @@ function saveDB(db) {
   const payload = JSON.stringify(db, null, 2);
   try {
     fs.writeFileSync(tmp, payload, 'utf-8');
-    fs.renameSync(tmp, DATA_FILE);
+    fs.renameSync(tmp, DB_PATH);
   } catch (error) {
     console.error('Failed to persist database snapshot:', error);
     throw error;
@@ -4163,6 +4164,15 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
     lastDisconnectReason: cfg.lastConnectorStatus?.reason || null,
     connectorConfigured: !!activeToken || !!activeKey
   });
+});
+
+app.use('/api/integrations/ibkr/connector', (req, res, next) => {
+  res.set('X-Veracity-Instance', INSTANCE_ID);
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    console.log(`[IBKR][${INSTANCE_ID}] ${req.method} ${req.originalUrl} ${res.statusCode} (${Date.now() - startedAt}ms)`);
+  });
+  next();
 });
 
 app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {

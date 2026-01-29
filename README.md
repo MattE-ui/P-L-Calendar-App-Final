@@ -76,6 +76,7 @@ The gateway and connector run on your machine; the hosted server never reaches i
 Environment variables:
 - `IBKR_CONNECTOR_TOKEN_TTL_MS`: Optional TTL for connector tokens in milliseconds (default `900000`).
 - `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.
+- `IBKR_TOKEN_SECRET`: Required in production to keep connector tokens/keys valid across deploys.
 
 Optional Docker compose snippet for the Client Portal Gateway:
 
@@ -94,8 +95,8 @@ services:
 User accounts, sessions, and P&L entries are stored in a JSON file whose location you can configure:
 
 - By default the app reads and writes `storage/data.json` (the directory is created automatically on boot).
-- Set the `DATA_DIR` environment variable to a directory mounted on persistent storage (for example `/var/data/pl-calendar`) to keep data across redeploys, or set `DATA_FILE` to point to an explicit file path.
-- On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DATA_DIR=/var/data/pl-calendar` in the service environment so user records survive code pushes and restarts.
+- Set `DB_PATH` to an absolute file path (for example `/var/data/pl-calendar/db.json`) to keep data across redeploys. You can also use `DATA_DIR` (directory) or `DATA_FILE` (explicit file path) if preferred.
+- On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DB_PATH=/var/data/pl-calendar/db.json` in the service environment so user records and connector keys survive code pushes and restarts.
 - Guest sessions expire automatically; configure the TTL with `GUEST_TTL_HOURS` (defaults to 24 hours).
 
 When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
