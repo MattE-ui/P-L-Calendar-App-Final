@@ -2048,6 +2048,13 @@ function normalizeIbkrPositions(positions = []) {
   return positions.map(mapIbkrPosition).filter(Boolean);
 }
 
+function normalizeIbkrPayloadArray(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.positions)) return payload.positions;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
 function buildIbkrActivePositionSummaries(positions = []) {
   const normalized = normalizeIbkrPositions(positions);
   return normalized.filter(position => Number.isFinite(position.units) && position.units !== 0).map(position => {
@@ -4721,9 +4728,12 @@ app.get('/api/integrations/ibkr/positions', auth, (req, res) => {
   ensureUserShape(user, req.username);
   const cfg = user.ibkr || {};
   const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
-  const snapshotPositions = snapshot?.raw?.positions ?? snapshot?.positions ?? null;
-  const sourcePositions = snapshotPositions
-    ?? (Array.isArray(cfg.livePositions) ? cfg.livePositions : []);
+  const snapshotPositions = Array.isArray(snapshot?.positions)
+    ? snapshot.positions
+    : normalizeIbkrPayloadArray(snapshot?.raw?.positions);
+  const sourcePositions = snapshotPositions.length
+    ? snapshotPositions
+    : (Array.isArray(cfg.livePositions) ? cfg.livePositions : []);
   const positions = buildIbkrActivePositionSummaries(sourcePositions || []);
   let updatedAt = cfg.lastSnapshotAt || cfg.lastHeartbeatAt || null;
   if (snapshot) {

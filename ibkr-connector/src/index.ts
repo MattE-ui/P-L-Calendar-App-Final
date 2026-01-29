@@ -199,6 +199,13 @@ const extractOrdersFromIserverResponse = (data: any): any[] => {
   return [];
 };
 
+const normalizeArray = (data: any): any[] => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.positions)) return data.positions;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+};
+
 const normalizeOrderType = (raw: any) => String(raw ?? '').trim().toUpperCase();
 const normalizeOrderStatus = (raw: any) => String(raw ?? '').trim().toUpperCase();
 const normalizeOrderSide = (raw: any) => String(raw ?? '').trim().toUpperCase();
@@ -346,12 +353,16 @@ const fetchSnapshot = async () => {
   }
   const positionsRes = await requestIbkr('GET', `/portfolio2/${accountId}/positions`);
   const positionsRawPayload = positionsRes.data;
-  const positionsRaw = Array.isArray(positionsRawPayload) ? positionsRawPayload : positionsRawPayload?.positions || [];
-  const positions = positionsRaw.map(normalizePosition).filter(Boolean);
+  const positionsRaw = normalizeArray(positionsRawPayload);
+  if (debug && !Array.isArray(positionsRawPayload) && positionsRawPayload && typeof positionsRawPayload === 'object') {
+    console.log('[IBKR] Positions payload wrapper keys:', Object.keys(positionsRawPayload));
+  }
+  const positions = positionsRaw;
   const ordersRes = await requestIbkr('GET', '/iserver/account/orders');
   const ordersRawPayload = ordersRes.data;
   const ordersRaw = extractOrdersFromIserverResponse(ordersRawPayload);
   const orders = ordersRaw.map(normalizeOrder).filter(Boolean);
+  console.log(`[IBKR] Snapshot prepared: ${positions.length} positions, ${orders.length} orders.`);
   return {
     accountId: String(accountId),
     portfolioValue: portfolioMeta.value,
@@ -519,7 +530,7 @@ const run = async () => {
     } catch (error: any) {
       const { backoffMs, handled } = await handleVeracityError(error);
       if (!handled) {
-        console.error(`[VERACITY] ${error?.message || 'Unknown error'}`);
+        console.error(`[VERACITY] ${getErrorMessage(error) || 'Unknown error'}`);
       }
       veracityBackoffMs = backoffMs || 0;
     }
