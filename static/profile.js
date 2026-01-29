@@ -524,7 +524,9 @@ const ibkrState = {
   lastPortfolioCurrency: null,
   lastConnectorStatus: null,
   connectorConfigured: false,
-  tokenExpiresAt: null
+  tokenExpiresAt: null,
+  connectorOnline: false,
+  lastDisconnectReason: null
 };
 
 function setIntegrationFieldsDisabled(disabled) {
@@ -598,10 +600,12 @@ function setIbkrFieldsDisabled(disabled) {
 
 function renderIbkrStatus(data) {
   const statusEl = document.getElementById('ibkr-status');
+  const bannerEl = document.getElementById('ibkr-connector-banner');
   if (!statusEl) return;
   statusEl.classList.remove('is-error');
   if (!data.enabled) {
     statusEl.textContent = 'IBKR sync is currently switched off.';
+    if (bannerEl) bannerEl.textContent = '';
     return;
   }
   const connection = data.connectionStatus || 'offline';
@@ -625,6 +629,7 @@ function renderIbkrStatus(data) {
   if (connection !== 'online' && authStatus && authStatus.authenticated === false) {
     statusEl.classList.add('is-error');
     statusEl.textContent = 'IBKR session expired. Please login in the Client Portal Gateway.';
+    if (bannerEl) bannerEl.textContent = 'Connector offline — run the IBKR connector on your machine to sync.';
     return;
   }
   if (connectorStatus.reason) {
@@ -632,9 +637,15 @@ function renderIbkrStatus(data) {
       statusEl.classList.add('is-error');
     }
     statusEl.textContent = `${statusLabel} • ${connectorStatus.reason} ${heartbeatText}`;
+    if (bannerEl) bannerEl.textContent = data.connectorOnline
+      ? ''
+      : 'Connector offline — run the IBKR connector on your machine to sync.';
     return;
   }
   statusEl.textContent = `${statusLabel} • ${heartbeatText} ${snapshotText}`;
+  if (bannerEl) bannerEl.textContent = data.connectorOnline
+    ? ''
+    : 'Connector offline — run the IBKR connector on your machine to sync.';
 }
 
 function renderIbkrSummary(data) {
@@ -650,11 +661,18 @@ function renderIbkrSummary(data) {
   if (portfolioEl) {
     if (data.lastPortfolioValue !== null && data.lastPortfolioValue !== undefined) {
       const currency = data.lastPortfolioCurrency || '';
-      portfolioEl.textContent = `${Number(data.lastPortfolioValue).toLocaleString('en-GB', { maximumFractionDigits: 2 })} ${currency}`.trim();
+      const suffix = currency === 'UNKNOWN' ? ' (currency unknown)' : '';
+      portfolioEl.textContent = `${Number(data.lastPortfolioValue).toLocaleString('en-GB', { maximumFractionDigits: 2 })} ${currency}${suffix}`.trim();
     } else {
       portfolioEl.textContent = '—';
     }
   }
+}
+
+function updateIbkrToggleState(data) {
+  const toggle = document.getElementById('ibkr-enabled');
+  if (!toggle) return;
+  toggle.disabled = !data.connectorOnline;
 }
 
 async function loadIntegration() {
@@ -723,6 +741,8 @@ async function loadIbkrIntegration() {
     ibkrState.lastPortfolioValue = data.lastPortfolioValue ?? null;
     ibkrState.lastPortfolioCurrency = data.lastPortfolioCurrency || null;
     ibkrState.lastConnectorStatus = data.lastConnectorStatus || null;
+    ibkrState.connectorOnline = !!data.connectorOnline;
+    ibkrState.lastDisconnectReason = data.lastDisconnectReason || null;
     ibkrState.connectorConfigured = !!data.connectorConfigured;
     const tokenInput = document.getElementById('ibkr-connector-token');
     if (tokenInput && !ibkrState.connectorConfigured) {
@@ -734,6 +754,7 @@ async function loadIbkrIntegration() {
     }
     const toggle = document.getElementById('ibkr-enabled');
     if (toggle) toggle.checked = ibkrState.enabled;
+    updateIbkrToggleState(ibkrState);
     setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
     renderIbkrSummary(ibkrState);
     renderIbkrStatus(ibkrState);
@@ -771,7 +792,10 @@ async function saveIbkrIntegration({ runNow = false } = {}) {
     ibkrState.lastPortfolioValue = data.lastPortfolioValue ?? ibkrState.lastPortfolioValue;
     ibkrState.lastPortfolioCurrency = data.lastPortfolioCurrency || ibkrState.lastPortfolioCurrency;
     ibkrState.lastConnectorStatus = data.lastConnectorStatus || ibkrState.lastConnectorStatus;
+    ibkrState.connectorOnline = !!data.connectorOnline;
+    ibkrState.lastDisconnectReason = data.lastDisconnectReason || ibkrState.lastDisconnectReason;
     ibkrState.connectorConfigured = !!data.connectorConfigured;
+    updateIbkrToggleState(ibkrState);
     setIbkrFieldsDisabled(!ibkrState.enabled || profileState.isGuest);
     renderIbkrSummary(ibkrState);
     renderIbkrStatus(ibkrState);

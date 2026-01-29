@@ -1,14 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Module = require('node:module');
-
-const originalLoad = Module._load;
-Module._load = function load(request, parent, isMain) {
-  if (request === 'dotenv') {
-    return { config: () => ({}) };
-  }
-  return originalLoad(request, parent, isMain);
-};
+require('./support/mock-server-deps');
 
 const { ibkrSnapshotSchema } = require('../server');
 

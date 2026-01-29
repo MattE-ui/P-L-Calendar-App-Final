@@ -554,6 +554,10 @@ function ensureIbkrConfig(user) {
     delete cfg.lastConnectorStatus;
     mutated = true;
   }
+  if (!Array.isArray(cfg.livePositions)) {
+    cfg.livePositions = [];
+    mutated = true;
+  }
   if (!Array.isArray(cfg.connectorKeys)) {
     cfg.connectorKeys = [];
     mutated = true;
@@ -1650,7 +1654,9 @@ const ibkrSnapshotSchema = z.object({
     gatewayUrl: z.string().optional(),
     connectorVersion: z.string().optional(),
     ts: z.string().optional(),
-    rootCurrencySource: z.string().optional()
+    rootCurrencySource: z.string().optional(),
+    currencyConfidence: z.enum(['high', 'medium', 'low']).optional(),
+    currencyReason: z.string().optional()
   }).optional()
 });
 const ibkrHeartbeatSchema = z.object({
@@ -1701,6 +1707,48 @@ function recordBrokerSnapshot(db, username, provider, snapshot) {
   if (list.length > 5000) {
     list.splice(0, list.length - 5000);
   }
+}
+
+function updateIbkrLivePositions(user, snapshot, derivedStopByTicker = {}) {
+  if (!user?.ibkr) return;
+  const cfg = user.ibkr;
+  const next = [];
+  const now = new Date().toISOString();
+  for (const position of snapshot.positions || []) {
+    const symbol = normalizeIbkrTicker(position.ticker);
+    if (!symbol) continue;
+    const conid = position.conid ? String(position.conid) : '';
+    const key = conid || symbol;
+    const derived = derivedStopByTicker[symbol] || null;
+    next.push({
+      id: key,
+      symbol,
+      conid,
+      quantity: Number(position.units),
+      avgPrice: Number(position.buyPrice),
+      marketPrice: Number.isFinite(position.livePrice) ? Number(position.livePrice) : null,
+      unrealizedPnl: Number.isFinite(position.pnlValue) ? Number(position.pnlValue) : null,
+      currency: position.currency || 'USD',
+      derivedStopPrice: derived ? Number(derived.stopPrice) : null,
+      updatedAt: now
+    });
+  }
+  cfg.livePositions = next;
+}
+
+function applyIbkrDerivedStopsToLivePositions(user, derivedStops = {}) {
+  const cfg = user?.ibkr;
+  if (!cfg?.livePositions || !Array.isArray(cfg.livePositions)) return { updated: 0 };
+  let updated = 0;
+  cfg.livePositions.forEach(position => {
+    const derived = derivedStops[normalizeIbkrTicker(position.symbol)] || null;
+    const nextStop = derived ? Number(derived.stopPrice) : null;
+    if (position.derivedStopPrice !== nextStop) {
+      position.derivedStopPrice = nextStop;
+      updated += 1;
+    }
+  });
+  return { updated };
 }
 
 function getLatestBrokerSnapshot(db, username, provider) {
@@ -3194,103 +3242,8 @@ async function fetchIbkrAuthStatus() {
   return requestIbkrEndpoint('/iserver/auth/status');
 }
 
-function applyIbkrSnapshotToUser(user, snapshot, rates, runDate = new Date()) {
-  const cfg = user?.ibkr;
-  if (cfg) {
-    cfg.lastPortfolioValue = snapshot.portfolioValue;
-    cfg.lastPortfolioCurrency = snapshot.rootCurrency;
-  }
-  const timezone = 'Europe/London';
-  const journal = ensureTradeJournal(user);
-  const openTrades = [];
-  for (const [tradeDate, items] of Object.entries(journal)) {
-    for (const trade of items || []) {
-      if (!trade || trade.status === 'closed') continue;
-      if (trade.source !== 'ibkr' && !trade.ibkrPositionId) continue;
-      openTrades.push({ tradeDate, trade });
-    }
-  }
-  const positions = snapshot.positions || [];
-  if (positions.length) {
-    for (const position of positions) {
-      const symbol = normalizeTrading212Symbol(position.ticker);
-      if (!symbol) continue;
-      const positionId = position.conid || position.ticker;
-      const existingTradeEntry = openTrades.find(entry => (
-        entry.trade?.ibkrPositionId === positionId ||
-        (position.conid && entry.trade?.ibkrConid === position.conid) ||
-        (position.ticker && normalizeIbkrTicker(entry.trade?.ibkrTicker) === normalizeIbkrTicker(position.ticker)) ||
-        entry.trade?.symbol === symbol
-      ));
-      const existingTrade = existingTradeEntry?.trade;
-      const createdAtDate = runDate;
-      const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
-      journal[normalizedDate] ||= [];
-      const direction = Number(position.units) < 0 ? 'short' : 'long';
-      const sizeUnits = Math.abs(Number(position.units));
-      const tradeCurrency = position.currency || 'USD';
-      if (existingTrade) {
-        if (!existingTrade.symbol) {
-          existingTrade.symbol = symbol;
-        }
-        existingTrade.entry = position.buyPrice;
-        existingTrade.sizeUnits = sizeUnits;
-        existingTrade.currency = tradeCurrency;
-        existingTrade.direction = direction;
-        existingTrade.status = 'open';
-        existingTrade.source = 'ibkr';
-        existingTrade.ibkrPositionId = positionId;
-        existingTrade.ibkrTicker = position.ticker;
-        existingTrade.ibkrConid = position.conid;
-        if (Number.isFinite(position.livePrice) && position.livePrice > 0) {
-          existingTrade.lastSyncPrice = position.livePrice;
-        }
-        if (Number.isFinite(position.pnlValue)) {
-          existingTrade.ppl = position.pnlValue;
-        }
-        continue;
-      }
-      const trade = normalizeTradeMeta({
-        id: crypto.randomBytes(8).toString('hex'),
-        symbol,
-        currency: tradeCurrency,
-        entry: position.buyPrice,
-        sizeUnits,
-        lastSyncPrice: Number.isFinite(position.livePrice) && position.livePrice > 0 ? position.livePrice : undefined,
-        riskPct: 0,
-        perUnitRisk: 0,
-        riskAmountCurrency: 0,
-        positionCurrency: position.buyPrice * sizeUnits,
-        riskAmountGBP: 0,
-        positionGBP: convertToGBP(position.buyPrice * sizeUnits, tradeCurrency, rates),
-        portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
-        portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
-        createdAt: createdAtDate.toISOString(),
-        direction,
-        status: 'open',
-        tradeType: 'day',
-        assetClass: 'stocks',
-        source: 'ibkr',
-        ibkrPositionId: positionId,
-        ibkrTicker: position.ticker,
-        ibkrConid: position.conid,
-        ppl: Number.isFinite(position.pnlValue) ? position.pnlValue : undefined
-      });
-      journal[normalizedDate].push(trade);
-    }
-  } else if (Array.isArray(snapshot.positions)) {
-    const closeDate = new Date(runDate).toISOString();
-    for (const entry of openTrades) {
-      const trade = entry.trade;
-      if (!trade || (!trade.ibkrPositionId && trade.source !== 'ibkr')) continue;
-      trade.status = 'closed';
-      trade.closeDate = trade.closeDate || dateKeyInTimezone(timezone, runDate);
-      trade.closedAt = trade.closedAt || closeDate;
-      if (!Number.isFinite(Number(trade.closePrice)) && Number.isFinite(Number(trade.lastSyncPrice))) {
-        trade.closePrice = Number(trade.lastSyncPrice);
-      }
-    }
-  }
+function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {}) {
+  updateIbkrLivePositions(user, snapshot, derivedStopByTicker);
 }
 
 function updateIbkrConnectorStatus(cfg) {
@@ -3304,6 +3257,23 @@ function updateIbkrConnectorStatus(cfg) {
   }
   cfg.connectionStatus = isOnline ? 'online' : 'offline';
   return cfg.connectionStatus;
+}
+
+function applyIbkrHeartbeat(user, heartbeat) {
+  const cfg = user?.ibkr;
+  if (!cfg) return;
+  cfg.enabled = true;
+  cfg.mode = 'connector';
+  cfg.lastHeartbeatAt = new Date().toISOString();
+  cfg.lastConnectorStatus = {
+    status: heartbeat.status || 'online',
+    reason: heartbeat.reason || '',
+    authStatus: heartbeat.authStatus || null,
+    connectorVersion: heartbeat.connectorVersion || '',
+    gatewayUrl: heartbeat.gatewayUrl || '',
+    receivedAt: cfg.lastHeartbeatAt
+  };
+  cfg.connectionStatus = cfg.lastConnectorStatus.status;
 }
 
 async function syncIbkrForUser(username, runDate = new Date()) {
@@ -4149,6 +4119,7 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
   }
   const activeToken = getActiveIbkrConnectorToken(db, req.username);
   const activeKey = getActiveIbkrConnectorKey(user);
+  const connectorOnline = cfg.connectionStatus === 'online';
   res.json({
     enabled: !!cfg.enabled,
     mode: cfg.mode || 'connector',
@@ -4162,6 +4133,8 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
     lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
     lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
     lastConnectorStatus: cfg.lastConnectorStatus || null,
+    connectorOnline,
+    lastDisconnectReason: cfg.lastConnectorStatus?.reason || null,
     connectorConfigured: !!activeToken || !!activeKey
   });
 });
@@ -4192,6 +4165,7 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
   }
   const activeToken = getActiveIbkrConnectorToken(db, req.username);
   const activeKey = getActiveIbkrConnectorKey(user);
+  const connectorOnline = cfg.connectionStatus === 'online';
   res.json({
     enabled: !!cfg.enabled,
     mode: cfg.mode || 'connector',
@@ -4205,6 +4179,8 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
     lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
     lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
     lastConnectorStatus: cfg.lastConnectorStatus || null,
+    connectorOnline,
+    lastDisconnectReason: cfg.lastConnectorStatus?.reason || null,
     connectorConfigured: !!activeToken || !!activeKey
   });
 }));
@@ -4310,20 +4286,8 @@ app.post('/api/integrations/ibkr/connector/heartbeat', asyncHandler(async (req, 
     return res.status(400).json({ error: 'Invalid heartbeat payload.', details: parseResult.error.flatten() });
   }
   const heartbeat = parseResult.data;
-  const cfg = user.ibkr;
-  cfg.enabled = true;
-  cfg.mode = 'connector';
-  cfg.lastHeartbeatAt = new Date().toISOString();
-  cfg.lastConnectorStatus = {
-    status: heartbeat.status || 'online',
-    reason: heartbeat.reason || '',
-    authStatus: heartbeat.authStatus || null,
-    connectorVersion: heartbeat.connectorVersion || '',
-    gatewayUrl: heartbeat.gatewayUrl || '',
-    receivedAt: cfg.lastHeartbeatAt
-  };
-  cfg.connectionStatus = cfg.lastConnectorStatus.status;
-  keyRecord.lastUsedAt = cfg.lastHeartbeatAt;
+  applyIbkrHeartbeat(user, heartbeat);
+  keyRecord.lastUsedAt = user.ibkr.lastHeartbeatAt;
   saveDB(db);
   res.json({ ok: true });
 }));
@@ -4357,9 +4321,7 @@ app.post('/api/integrations/ibkr/connector/snapshot', asyncHandler(async (req, r
     derivedStopByTicker,
     orders: payload.orders || []
   };
-  const rates = await fetchRates();
-  applyIbkrSnapshotToUser(user, snapshot, rates, new Date());
-  applyIbkrDerivedStopsToTrades(user, derivedStopByTicker);
+  applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker);
   recordBrokerSnapshot(db, username, 'IBKR', snapshot);
   cfg.lastStatus = { ok: true, status: 200, message: 'Snapshot received.' };
   cfg.lastPortfolioValue = snapshot.portfolioValue;
@@ -4413,6 +4375,7 @@ app.post('/api/integrations/ibkr/sync', auth, asyncHandler(async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   const cfg = user.ibkr || {};
+  const connectorOnline = cfg.connectionStatus === 'online';
   res.json({
     enabled: !!cfg.enabled,
     mode: cfg.mode || 'connector',
@@ -4425,7 +4388,9 @@ app.post('/api/integrations/ibkr/sync', auth, asyncHandler(async (req, res) => {
     lastSessionCheckAt: cfg.lastSessionCheckAt || null,
     lastPortfolioValue: Number.isFinite(Number(cfg.lastPortfolioValue)) ? Number(cfg.lastPortfolioValue) : null,
     lastPortfolioCurrency: cfg.lastPortfolioCurrency || null,
-    lastConnectorStatus: cfg.lastConnectorStatus || null
+    lastConnectorStatus: cfg.lastConnectorStatus || null,
+    connectorOnline,
+    lastDisconnectReason: cfg.lastConnectorStatus?.reason || null
   });
 }));
 
@@ -5042,6 +5007,33 @@ async function buildActiveTrades(user, rates = {}) {
       const base = { ...trade, date: dateKey };
       trades.push(base);
     }
+  }
+  const ibkrLivePositions = user?.ibkr?.livePositions;
+  if (Array.isArray(ibkrLivePositions) && ibkrLivePositions.length) {
+    const timezone = 'Europe/London';
+    ibkrLivePositions.forEach(position => {
+      const updatedAt = position.updatedAt ? new Date(position.updatedAt) : new Date();
+      const dateKey = dateKeyInTimezone(timezone, updatedAt);
+      trades.push({
+        id: `ibkr-live-${position.id || position.symbol}`,
+        symbol: position.symbol,
+        currency: position.currency || 'USD',
+        entry: position.avgPrice,
+        sizeUnits: Math.abs(Number(position.quantity)),
+        direction: Number(position.quantity) < 0 ? 'short' : 'long',
+        status: 'open',
+        source: 'ibkr',
+        ibkrPositionId: position.id || position.symbol,
+        ibkrTicker: position.symbol,
+        ibkrConid: position.conid || '',
+        lastSyncPrice: position.marketPrice,
+        ppl: position.unrealizedPnl,
+        currentStop: position.derivedStopPrice,
+        currentStopSource: position.derivedStopPrice ? 'ibkr' : undefined,
+        createdAt: updatedAt.toISOString(),
+        date: dateKey
+      });
+    });
   }
   const enriched = [];
   for (const trade of trades) {
@@ -5718,10 +5710,10 @@ app.get('/api/trades/active', auth, async (req, res) => {
     const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
     if (snapshot) {
       const derived = snapshot.derivedStopByTicker || computeIbkrDerivedStops(snapshot.positions || [], snapshot.orders || []);
-      const { updated: stopUpdates } = applyIbkrDerivedStopsToTrades(user, derived);
+      const { updated: stopUpdates } = applyIbkrDerivedStopsToLivePositions(user, derived);
       if (stopUpdates > 0) {
         saveDB(db);
-        console.info(`[IBKR] refreshed ${stopUpdates} trade stop(s) during active trades poll`);
+        console.info(`[IBKR] refreshed ${stopUpdates} live position stop(s) during active trades poll`);
       }
     }
   }
@@ -6034,6 +6026,8 @@ module.exports = {
   createIbkrConnectorToken,
   verifyIbkrConnectorToken,
   ibkrSnapshotSchema,
+  updateIbkrLivePositions,
+  applyIbkrHeartbeat,
   createIbkrConnectorKey,
   verifyIbkrConnectorKey,
   exchangeIbkrConnectorToken

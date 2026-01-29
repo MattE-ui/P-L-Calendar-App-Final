@@ -463,6 +463,8 @@ window.handleGuestRequest = (path, opts = {}) => {
       lastPortfolioValue: ibkr.lastPortfolioValue ?? null,
       lastPortfolioCurrency: ibkr.lastPortfolioCurrency || null,
       lastConnectorStatus: ibkr.lastConnectorStatus || null,
+      connectorOnline: ibkr.connectionStatus === 'online',
+      lastDisconnectReason: ibkr.lastConnectorStatus?.reason || null,
       connectorConfigured: Array.isArray(ibkr.connectorKeys) ? ibkr.connectorKeys.length > 0 : !!ibkr.connectorConfigured
     };
   }

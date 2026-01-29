@@ -155,27 +155,37 @@ const normalizeOrder = (raw: any) => {
   };
 };
 
-const extractRootCurrency = (summary: any, accounts: any[]) => {
-  const candidates = [
-    summary?.baseCurrency,
-    summary?.currency,
-    summary?.accountCurrency,
-    summary?.acctCurrency
-  ];
-  if (summary?.baseCurrency) return { currency: String(summary.baseCurrency).trim().toUpperCase(), source: 'summary.baseCurrency' };
-  if (summary?.currency) return { currency: String(summary.currency).trim().toUpperCase(), source: 'summary.currency' };
+const determineRootCurrency = (summary: any, ledger: any, accounts: any[]) => {
+  if (summary?.baseCurrency) {
+    return { currency: String(summary.baseCurrency).trim().toUpperCase(), confidence: 'high', reason: 'summary.baseCurrency' };
+  }
+  if (summary?.currency) {
+    return { currency: String(summary.currency).trim().toUpperCase(), confidence: 'high', reason: 'summary.currency' };
+  }
   if (Array.isArray(summary)) {
     const currencyRow = summary.find((entry: any) => String(entry?.tag || entry?.key || '').toUpperCase() === 'BASECURRENCY');
     if (currencyRow?.value) {
-      return { currency: String(currencyRow.value).trim().toUpperCase(), source: 'summary.tag.BASECURRENCY' };
+      return { currency: String(currencyRow.value).trim().toUpperCase(), confidence: 'high', reason: 'summary.tag.BASECURRENCY' };
+    }
+  }
+  if (ledger?.baseCurrency) {
+    return { currency: String(ledger.baseCurrency).trim().toUpperCase(), confidence: 'medium', reason: 'ledger.baseCurrency' };
+  }
+  if (ledger && typeof ledger === 'object') {
+    const keys = Object.keys(ledger).filter(key => typeof key === 'string' && key.length === 3);
+    if (keys.length === 1) {
+      return { currency: keys[0].toUpperCase(), confidence: 'medium', reason: 'ledger.singleCurrency' };
     }
   }
   for (const account of accounts || []) {
-    if (account?.currency) return { currency: String(account.currency).trim().toUpperCase(), source: 'accounts.currency' };
-    if (account?.baseCurrency) return { currency: String(account.baseCurrency).trim().toUpperCase(), source: 'accounts.baseCurrency' };
+    if (account?.currency) {
+      return { currency: String(account.currency).trim().toUpperCase(), confidence: 'medium', reason: 'accounts.currency' };
+    }
+    if (account?.baseCurrency) {
+      return { currency: String(account.baseCurrency).trim().toUpperCase(), confidence: 'medium', reason: 'accounts.baseCurrency' };
+    }
   }
-  const value = candidates.find(item => typeof item === 'string' && item.trim());
-  return { currency: value ? value.trim().toUpperCase() : 'USD', source: 'default' };
+  return { currency: 'UNKNOWN', confidence: 'low', reason: 'unresolved' };
 };
 
 const extractAuthFlags = (payload: any) => ({
@@ -199,7 +209,17 @@ const fetchSnapshot = async () => {
   if (!Number.isFinite(portfolioValue)) {
     throw new Error('Net liquidation value missing from summary.');
   }
-  const rootCurrencyMeta = extractRootCurrency(summary, accounts);
+  let ledger = null;
+  try {
+    const ledgerRes = await ibkrClient.get(`/portfolio/${accountId}/ledger`);
+    ledger = ledgerRes.data;
+  } catch (error) {
+    ledger = null;
+  }
+  const rootCurrencyMeta = determineRootCurrency(summary, ledger, accounts);
+  if (rootCurrencyMeta.currency === 'UNKNOWN') {
+    console.warn('Unable to determine IBKR account currency; reporting UNKNOWN.');
+  }
   const positionsRes = await ibkrClient.get(`/portfolio2/${accountId}/positions`);
   const positionsRaw = Array.isArray(positionsRes.data) ? positionsRes.data : positionsRes.data?.positions || [];
   const positions = positionsRaw.map(normalizePosition).filter(Boolean);
@@ -210,7 +230,9 @@ const fetchSnapshot = async () => {
     accountId: String(accountId),
     portfolioValue,
     rootCurrency: rootCurrencyMeta.currency,
-    rootCurrencySource: rootCurrencyMeta.source,
+    rootCurrencySource: rootCurrencyMeta.reason,
+    rootCurrencyConfidence: rootCurrencyMeta.confidence,
+    rootCurrencyReason: rootCurrencyMeta.reason,
     positions,
     orders
   };
@@ -319,14 +341,21 @@ const run = async () => {
       await sendHeartbeat(heartbeatPayload);
       veracityBackoffMs = 0;
       const snapshot = await fetchSnapshot();
-      const { rootCurrencySource, ...snapshotPayload } = snapshot as any;
+      const {
+        rootCurrencySource,
+        rootCurrencyConfidence,
+        rootCurrencyReason,
+        ...snapshotPayload
+      } = snapshot as any;
       const payload = {
         ...snapshotPayload,
         meta: {
           gatewayUrl: normalizeGateway,
           connectorVersion,
           ts: new Date().toISOString(),
-          rootCurrencySource: rootCurrencySource || ''
+          rootCurrencySource: rootCurrencySource || '',
+          currencyConfidence: rootCurrencyConfidence || 'low',
+          currencyReason: rootCurrencyReason || ''
         }
       };
       await sendSnapshot(payload);
