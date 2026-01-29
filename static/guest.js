@@ -405,7 +405,7 @@ window.handleGuestRequest = (path, opts = {}) => {
       ibkr.connectionStatus = 'online';
       ibkr.lastHeartbeatAt = new Date().toISOString();
       ibkr.lastSnapshotAt = new Date().toISOString();
-      ibkr.connectorKeys = [{ id: 'guest', createdAt: new Date().toISOString() }];
+      ibkr.connectorConfigured = true;
       ibkr.lastPortfolioValue = 25000;
       ibkr.lastPortfolioCurrency = 'USD';
       data.integrations.ibkr = ibkr;
@@ -431,7 +431,7 @@ window.handleGuestRequest = (path, opts = {}) => {
     }
     if (path.startsWith('/api/integrations/ibkr/connector/revoke')) {
       ibkr.connectionStatus = 'disconnected';
-      ibkr.connectorKeys = [];
+      ibkr.connectorConfigured = false;
       ibkr.lastConnectorStatus = { status: 'disconnected', reason: 'Connector key revoked.' };
       data.integrations.ibkr = ibkr;
       saveGuestData(data);
@@ -465,7 +465,7 @@ window.handleGuestRequest = (path, opts = {}) => {
       lastConnectorStatus: ibkr.lastConnectorStatus || null,
       connectorOnline: ibkr.connectionStatus === 'online',
       lastDisconnectReason: ibkr.lastConnectorStatus?.reason || null,
-      connectorConfigured: Array.isArray(ibkr.connectorKeys) ? ibkr.connectorKeys.length > 0 : !!ibkr.connectorConfigured
+      connectorConfigured: !!ibkr.connectorConfigured
     };
   }
   if (path.startsWith('/api/trades/export')) {

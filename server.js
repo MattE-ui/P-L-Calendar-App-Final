@@ -39,7 +39,11 @@ const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
 const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
 const isProduction = process.env.RENDER || process.env.NODE_ENV === 'production';
-const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || process.env.APP_SECRET || '';
+const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || '';
+const IBKR_TOKEN_SECRET_FALLBACK = IBKR_TOKEN_SECRET || (isProduction ? crypto.randomBytes(32).toString('hex') : 'ibkr-dev-secret');
+if (!IBKR_TOKEN_SECRET) {
+  console.warn('[IBKR] IBKR_TOKEN_SECRET is not set. Connector token exchange will not work reliably across deploys.');
+}
 const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
 const IBKR_CONNECTOR_TOKEN_TTL_MS = Number(process.env.IBKR_CONNECTOR_TOKEN_TTL_MS) || 15 * 60 * 1000;
 const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
@@ -271,13 +275,23 @@ function loadDB() {
     if (!Array.isArray(db.brokerSnapshots)) {
       db.brokerSnapshots = [];
     }
-    if (!Array.isArray(db.connectorTokens)) {
-      db.connectorTokens = [];
+    if (!Array.isArray(db.ibkrConnectorTokens)) {
+      db.ibkrConnectorTokens = [];
+    }
+    if (!Array.isArray(db.ibkrConnectorKeys)) {
+      db.ibkrConnectorKeys = [];
     }
     return db;
   } catch (e) {
     console.warn('Falling back to empty database in loadDB:', e?.message || e);
-    return { users: {}, sessions: {}, instrumentMappings: [], brokerSnapshots: [], connectorTokens: [] };
+    return {
+      users: {},
+      sessions: {},
+      instrumentMappings: [],
+      brokerSnapshots: [],
+      ibkrConnectorTokens: [],
+      ibkrConnectorKeys: []
+    };
   }
 }
 
@@ -558,8 +572,8 @@ function ensureIbkrConfig(user) {
     cfg.livePositions = [];
     mutated = true;
   }
-  if (!Array.isArray(cfg.connectorKeys)) {
-    cfg.connectorKeys = [];
+  if (cfg.connectorKeys !== undefined) {
+    delete cfg.connectorKeys;
     mutated = true;
   }
   return { mutated, config: cfg };
@@ -1353,8 +1367,20 @@ function normalizeIbkrTicker(raw) {
   return String(raw || '').trim().toUpperCase();
 }
 
-function hashConnectorCredential(token) {
-  return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+function hmacHex(secret, value) {
+  return crypto.createHmac('sha256', secret).update(String(value)).digest('hex');
+}
+
+function hashConnectorToken(rawToken) {
+  return hmacHex(IBKR_TOKEN_SECRET_FALLBACK, rawToken);
+}
+
+function hashConnectorKey(rawKey) {
+  return hmacHex(IBKR_TOKEN_SECRET_FALLBACK, rawKey);
+}
+
+function hashConnectorCredential(value) {
+  return hmacHex(IBKR_TOKEN_SECRET_FALLBACK, value);
 }
 
 function parseBearerToken(authHeader) {
@@ -1363,118 +1389,102 @@ function parseBearerToken(authHeader) {
   return raw.startsWith('Bearer ') ? raw.slice(7).trim() : raw;
 }
 
-function ensureConnectorTokens(db) {
-  if (!Array.isArray(db.connectorTokens)) {
-    db.connectorTokens = [];
+function ensureIbkrConnectorTokens(db) {
+  if (!Array.isArray(db.ibkrConnectorTokens)) {
+    db.ibkrConnectorTokens = [];
   }
-  return db.connectorTokens;
+  return db.ibkrConnectorTokens;
 }
 
 function getActiveIbkrConnectorToken(db, username) {
-  const tokens = ensureConnectorTokens(db);
-  return tokens.find(token => token.userId === username && token.provider === 'IBKR' && !token.revokedAt);
+  const tokens = ensureIbkrConnectorTokens(db);
+  const now = Date.now();
+  return tokens.find(token => token.username === username && !token.usedAt && Date.parse(token.expiresAt) > now);
 }
 
 async function createIbkrConnectorToken(db, username) {
-  const tokens = ensureConnectorTokens(db);
+  const tokens = ensureIbkrConnectorTokens(db);
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + IBKR_CONNECTOR_TOKEN_TTL_MS).toISOString();
   for (const token of tokens) {
-    if (token.userId === username && token.provider === 'IBKR' && !token.revokedAt) {
-      token.revokedAt = now;
+    if (token.username === username && !token.usedAt) {
+      token.usedAt = now;
     }
   }
   const rawToken = crypto.randomBytes(32).toString('hex');
-  const tokenHash = await bcrypt.hash(rawToken, 10);
+  const tokenHash = hashConnectorToken(rawToken);
   tokens.push({
-    id: crypto.randomBytes(8).toString('hex'),
-    userId: username,
-    provider: 'IBKR',
-    mode: 'CONNECTOR',
     tokenHash,
+    username,
     createdAt: now,
     expiresAt,
-    revokedAt: null
+    usedAt: null
   });
   return { rawToken, expiresAt };
 }
 
 async function verifyIbkrConnectorToken(db, token) {
-  const tokens = ensureConnectorTokens(db);
-  for (const entry of tokens) {
-    if (entry.provider !== 'IBKR' || entry.revokedAt) continue;
-    if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
-    if (!entry.tokenHash) continue;
-    const matches = await bcrypt.compare(token, entry.tokenHash);
-    if (matches) {
-      return entry;
-    }
+  const tokens = ensureIbkrConnectorTokens(db);
+  const tokenHash = hashConnectorToken(token);
+  const entry = tokens.find(item => item.tokenHash === tokenHash);
+  if (!entry) return null;
+  if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) return null;
+  if (entry.usedAt) return null;
+  return entry;
+}
+
+function ensureIbkrConnectorKeys(db) {
+  if (!Array.isArray(db.ibkrConnectorKeys)) {
+    db.ibkrConnectorKeys = [];
   }
-  return null;
+  return db.ibkrConnectorKeys;
 }
 
-function getActiveIbkrConnectorKey(user) {
-  const keys = user?.ibkr?.connectorKeys;
-  if (!Array.isArray(keys)) return null;
-  return keys.find(entry => entry && !entry.revokedAt);
+function getActiveIbkrConnectorKey(db, username) {
+  const keys = ensureIbkrConnectorKeys(db);
+  return keys.find(entry => entry && entry.username === username && !entry.revokedAt);
 }
 
-async function createIbkrConnectorKey(user) {
-  if (!user?.ibkr) return null;
-  const keys = Array.isArray(user.ibkr.connectorKeys) ? user.ibkr.connectorKeys : [];
+async function createIbkrConnectorKey(db, username) {
+  const keys = ensureIbkrConnectorKeys(db);
   const now = new Date().toISOString();
   for (const entry of keys) {
-    if (!entry.revokedAt) {
+    if (entry.username === username && !entry.revokedAt) {
       entry.revokedAt = now;
     }
   }
   const rawKey = crypto.randomBytes(32).toString('hex');
-  const keyHash = await bcrypt.hash(rawKey, 10);
+  const keyHash = hashConnectorKey(rawKey);
   keys.push({
-    id: crypto.randomBytes(8).toString('hex'),
     keyHash,
+    username,
     createdAt: now,
     revokedAt: null,
     lastUsedAt: null
   });
-  user.ibkr.connectorKeys = keys;
   return rawKey;
 }
 
-async function verifyIbkrConnectorKey(user, connectorKey) {
-  const keys = user?.ibkr?.connectorKeys;
-  if (!Array.isArray(keys)) return null;
-  for (const entry of keys) {
-    if (!entry || entry.revokedAt || !entry.keyHash) continue;
-    const matches = await bcrypt.compare(connectorKey, entry.keyHash);
-    if (matches) {
-      return entry;
-    }
-  }
-  return null;
-}
-
 async function findIbkrConnectorKeyOwner(db, connectorKey) {
-  const users = db?.users || {};
-  for (const [username, user] of Object.entries(users)) {
-    if (!user?.ibkr?.connectorKeys?.length) continue;
-    const keyRecord = await verifyIbkrConnectorKey(user, connectorKey);
-    if (keyRecord) {
-      return { username, user, keyRecord };
-    }
-  }
-  return null;
+  const keys = ensureIbkrConnectorKeys(db);
+  const keyHash = hashConnectorKey(connectorKey);
+  const keyRecord = keys.find(entry => entry && !entry.revokedAt && entry.keyHash === keyHash);
+  if (!keyRecord) return null;
+  const username = keyRecord.username;
+  const user = db.users?.[username];
+  if (!user) return null;
+  return { username, user, keyRecord };
 }
 
 async function exchangeIbkrConnectorToken(db, token) {
   const tokenRecord = await verifyIbkrConnectorToken(db, token);
   if (!tokenRecord) return null;
-  const user = db.users?.[tokenRecord.userId];
+  const user = db.users?.[tokenRecord.username];
   if (!user) return null;
-  ensureUserShape(user, tokenRecord.userId);
-  const connectorKey = await createIbkrConnectorKey(user);
+  ensureUserShape(user, tokenRecord.username);
+  const connectorKey = await createIbkrConnectorKey(db, tokenRecord.username);
   if (!connectorKey) return null;
-  tokenRecord.revokedAt = new Date().toISOString();
+  tokenRecord.usedAt = new Date().toISOString();
   return { connectorKey, tokenRecord, user };
 }
 
@@ -1803,19 +1813,35 @@ function extractIbkrSummaryValue(summary, tags = []) {
   return null;
 }
 
-function extractIbkrPortfolioValue(summary) {
-  const direct = extractIbkrSummaryValue(summary, [
-    'NetLiquidation',
-    'NetLiquidationByCurrency',
-    'NetLiquidationValue',
-    'NetLiquidationTotal'
-  ]);
-  if (Number.isFinite(direct)) return direct;
-  if (summary?.NetLiquidationByCurrency && typeof summary.NetLiquidationByCurrency === 'object') {
-    const values = Object.values(summary.NetLiquidationByCurrency).map(parseTradingNumber);
-    return values.find(value => Number.isFinite(value)) ?? null;
+function extractIbkrSummaryAmount(summary, key) {
+  const entry = summary?.[key];
+  if (!entry) return null;
+  if (typeof entry.amount === 'number') return entry.amount;
+  if (typeof entry.value === 'number') return entry.value;
+  if (typeof entry.value === 'string') {
+    const parsed = Number(entry.value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function extractIbkrSummaryCurrency(summary, key) {
+  const entry = summary?.[key];
+  if (entry && typeof entry.currency === 'string' && entry.currency) {
+    return entry.currency;
+  }
+  return null;
+}
+
+function extractIbkrPortfolioValue(summary) {
+  const value = extractIbkrSummaryAmount(summary, 'netliquidation')
+    ?? extractIbkrSummaryAmount(summary, 'equitywithloanvalue')
+    ?? extractIbkrSummaryAmount(summary, 'totalcashvalue');
+  if (!Number.isFinite(value)) return null;
+  const currency = extractIbkrSummaryCurrency(summary, 'netliquidation')
+    ?? extractIbkrSummaryCurrency(summary, 'equitywithloanvalue')
+    ?? extractIbkrSummaryCurrency(summary, 'totalcashvalue');
+  return { value, currency: currency || 'UNKNOWN' };
 }
 
 function mapIbkrPosition(raw) {
@@ -4118,7 +4144,7 @@ app.get('/api/integrations/ibkr', auth, (req, res) => {
     updateIbkrConnectorStatus(cfg);
   }
   const activeToken = getActiveIbkrConnectorToken(db, req.username);
-  const activeKey = getActiveIbkrConnectorKey(user);
+  const activeKey = getActiveIbkrConnectorKey(db, req.username);
   const connectorOnline = cfg.connectionStatus === 'online';
   res.json({
     enabled: !!cfg.enabled,
@@ -4164,7 +4190,7 @@ app.post('/api/integrations/ibkr', auth, asyncHandler(async (req, res) => {
     await syncIbkrForUser(req.username);
   }
   const activeToken = getActiveIbkrConnectorToken(db, req.username);
-  const activeKey = getActiveIbkrConnectorKey(user);
+  const activeKey = getActiveIbkrConnectorKey(db, req.username);
   const connectorOnline = cfg.connectionStatus === 'online';
   res.json({
     enabled: !!cfg.enabled,
@@ -4207,7 +4233,7 @@ app.post('/api/integrations/ibkr/connector/token', auth, asyncHandler(async (req
 }));
 
 app.post('/api/integrations/ibkr/connector/exchange', asyncHandler(async (req, res) => {
-  const token = parseBearerToken(req.headers.authorization);
+  const token = parseBearerToken(req.headers.authorization) || String(req.body?.token || '').trim();
   if (!token) return res.status(401).json({ error: 'Missing connector token.' });
   if (!checkIbkrRateLimit(`ibkr-connector-exchange:${hashConnectorCredential(token)}`, res)) return;
   const db = loadDB();
@@ -4231,20 +4257,19 @@ app.post('/api/integrations/ibkr/connector/revoke', auth, asyncHandler(async (re
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.ibkr;
-  if (Array.isArray(cfg.connectorKeys)) {
-    const now = new Date().toISOString();
-    cfg.connectorKeys.forEach(entry => {
-      if (entry && !entry.revokedAt) entry.revokedAt = now;
-    });
-  }
-  if (Array.isArray(db.connectorTokens)) {
-    const now = new Date().toISOString();
-    db.connectorTokens.forEach(entry => {
-      if (entry?.provider === 'IBKR' && entry.userId === req.username && !entry.revokedAt) {
-        entry.revokedAt = now;
-      }
-    });
-  }
+  const now = new Date().toISOString();
+  const keys = ensureIbkrConnectorKeys(db);
+  keys.forEach(entry => {
+    if (entry?.username === req.username && !entry.revokedAt) {
+      entry.revokedAt = now;
+    }
+  });
+  const tokens = ensureIbkrConnectorTokens(db);
+  tokens.forEach(entry => {
+    if (entry?.username === req.username && !entry.usedAt) {
+      entry.usedAt = now;
+    }
+  });
   cfg.connectionStatus = 'disconnected';
   cfg.lastConnectorStatus = {
     status: 'disconnected',
@@ -6029,7 +6054,7 @@ module.exports = {
   updateIbkrLivePositions,
   applyIbkrHeartbeat,
   createIbkrConnectorKey,
-  verifyIbkrConnectorKey,
+  findIbkrConnectorKeyOwner,
   exchangeIbkrConnectorToken
 };
 

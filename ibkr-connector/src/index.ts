@@ -47,6 +47,17 @@ const storeConnectorKey = (connectorKey: string) => {
   fs.writeFileSync(keyFileArg, JSON.stringify(payload, null, 2), 'utf8');
 };
 
+const clearStoredConnectorKey = () => {
+  if (!keyFileArg) return;
+  try {
+    if (fs.existsSync(keyFileArg)) {
+      fs.unlinkSync(keyFileArg);
+    }
+  } catch (error) {
+    console.warn('Unable to remove stored connector key.', error);
+  }
+};
+
 let connectorKey = connectorKeyArg || loadStoredConnectorKey();
 
 if (!server || (!token && !connectorKey)) {
@@ -156,6 +167,13 @@ const normalizeOrder = (raw: any) => {
 };
 
 const determineRootCurrency = (summary: any, ledger: any, accounts: any[]) => {
+  const summaryCurrency =
+    summary?.netliquidation?.currency
+    || summary?.equitywithloanvalue?.currency
+    || summary?.totalcashvalue?.currency;
+  if (summaryCurrency) {
+    return { currency: String(summaryCurrency).trim().toUpperCase(), confidence: 'high', reason: 'summary.netliquidation.currency' };
+  }
   if (summary?.baseCurrency) {
     return { currency: String(summary.baseCurrency).trim().toUpperCase(), confidence: 'high', reason: 'summary.baseCurrency' };
   }
@@ -193,6 +211,39 @@ const extractAuthFlags = (payload: any) => ({
   connected: payload?.connected === true || payload?.brokerageSession === true
 });
 
+const extractAmount = (summary: any, key: string) => {
+  const entry = summary?.[key];
+  if (!entry) return null;
+  if (typeof entry.amount === 'number') return entry.amount;
+  if (typeof entry.value === 'number') return entry.value;
+  if (typeof entry.value === 'string') {
+    const parsed = Number(entry.value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const extractCurrency = (summary: any, key: string) => {
+  const entry = summary?.[key];
+  if (entry && typeof entry.currency === 'string' && entry.currency) {
+    return entry.currency;
+  }
+  return null;
+};
+
+const extractPortfolioValue = (summary: any) => {
+  const value =
+    extractAmount(summary, 'netliquidation')
+    ?? extractAmount(summary, 'equitywithloanvalue')
+    ?? extractAmount(summary, 'totalcashvalue');
+  if (!Number.isFinite(value)) return null;
+  const currency =
+    extractCurrency(summary, 'netliquidation')
+    ?? extractCurrency(summary, 'equitywithloanvalue')
+    ?? extractCurrency(summary, 'totalcashvalue');
+  return { value, currency: currency || 'UNKNOWN' };
+};
+
 const fetchSnapshot = async () => {
   const accountsRes = await ibkrClient.get('/portfolio/accounts');
   const accounts = Array.isArray(accountsRes.data) ? accountsRes.data : accountsRes.data?.accounts || [];
@@ -202,12 +253,10 @@ const fetchSnapshot = async () => {
   }
   const summaryRes = await ibkrClient.get(`/portfolio/${accountId}/summary`);
   const summary = summaryRes.data;
-  const netLiqEntry = Array.isArray(summary)
-    ? summary.find((item: any) => String(item?.tag || '').toUpperCase() === 'NETLIQUIDATION')
-    : null;
-  const portfolioValue = Number(netLiqEntry?.value ?? summary?.NetLiquidation ?? summary?.netLiquidation);
-  if (!Number.isFinite(portfolioValue)) {
-    throw new Error('Net liquidation value missing from summary.');
+  const portfolioMeta = extractPortfolioValue(summary);
+  if (!portfolioMeta) {
+    console.warn('Net liquidation value missing from summary. Skipping snapshot.');
+    return null;
   }
   let ledger = null;
   try {
@@ -228,7 +277,7 @@ const fetchSnapshot = async () => {
   const orders = ordersRaw.map(normalizeOrder).filter(Boolean);
   return {
     accountId: String(accountId),
-    portfolioValue,
+    portfolioValue: portfolioMeta.value,
     rootCurrency: rootCurrencyMeta.currency,
     rootCurrencySource: rootCurrencyMeta.reason,
     rootCurrencyConfidence: rootCurrencyMeta.confidence,
@@ -243,18 +292,27 @@ const exchangeConnectorKey = async () => {
   if (!token) {
     throw new Error('Connector key missing and no exchange token provided.');
   }
-  const response = await connectorClient.post(
-    '/api/integrations/ibkr/connector/exchange',
-    null,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  const exchangedKey = response.data?.connectorKey;
-  if (!exchangedKey) {
-    throw new Error('Connector key was not returned by server.');
+  try {
+    const response = await connectorClient.post(
+      '/api/integrations/ibkr/connector/exchange',
+      null,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const exchangedKey = response.data?.connectorKey;
+    if (!exchangedKey) {
+      throw new Error('Connector key was not returned by server.');
+    }
+    connectorKey = exchangedKey;
+    storeConnectorKey(connectorKey);
+    return connectorKey;
+  } catch (error: any) {
+    if (error?.response?.status === 401) {
+      console.error('Connector token rejected; please generate a fresh token.');
+      clearStoredConnectorKey();
+      process.exit(1);
+    }
+    throw error;
   }
-  connectorKey = exchangedKey;
-  storeConnectorKey(connectorKey);
-  return connectorKey;
 };
 
 const isRetryable = (error: any) => {
@@ -279,6 +337,11 @@ const postWithRetry = async (path: string, payload: any) => {
       );
       return true;
     } catch (error: any) {
+      if (error?.response?.status === 401) {
+        console.error('connectorKey rejected; delete local config and re-run with a fresh token.');
+        clearStoredConnectorKey();
+        process.exit(1);
+      }
       attempt += 1;
       if (attempt >= maxAttempts || !isRetryable(error)) {
         throw error;
@@ -341,6 +404,10 @@ const run = async () => {
       await sendHeartbeat(heartbeatPayload);
       veracityBackoffMs = 0;
       const snapshot = await fetchSnapshot();
+      if (!snapshot) {
+        await sleep((pollSeconds * 1000) + veracityBackoffMs);
+        continue;
+      }
       const {
         rootCurrencySource,
         rootCurrencyConfidence,
