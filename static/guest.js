@@ -389,6 +389,26 @@ window.handleGuestRequest = (path, opts = {}) => {
   if (path.startsWith('/api/integrations/ibkr')) {
     data.integrations ||= { ibkr: {} };
     const ibkr = data.integrations.ibkr || {};
+    if (path.startsWith('/api/integrations/ibkr/raw')) {
+      return {
+        accounts: {
+          accountId: ibkr.accountId || 'DU12345',
+          raw: null
+        },
+        summary: {
+          portfolioValue: ibkr.lastPortfolioValue ?? 25000,
+          rootCurrency: ibkr.lastPortfolioCurrency || 'USD',
+          raw: null
+        },
+        ledger: { message: 'Ledger payload not available yet.' },
+        positions: ibkr.livePositions || [],
+        orders: ibkr.liveOrders || [],
+        ibkr: {
+          lastSnapshotTs: ibkr.lastSnapshotAt || null,
+          lastHeartbeatAt: ibkr.lastHeartbeatAt || null
+        }
+      };
+    }
     if (path.startsWith('/api/integrations/ibkr/connector/token')) {
       ibkr.enabled = true;
       ibkr.mode = 'connector';

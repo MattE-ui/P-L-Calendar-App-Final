@@ -191,9 +191,15 @@ async function loadIbkrPayloads() {
     const ledger = data.ledger ?? null;
     const positions = data.positions ?? null;
     const orders = data.orders ?? null;
-    const hasPayloads = [accounts, summary, ledger, positions, orders]
-      .some(value => value !== null && value !== undefined);
-    if (!hasPayloads) {
+    const hasSnapshot = Boolean(
+      data?.ibkr?.lastSnapshotTs
+      || data?.ibkr?.lastHeartbeatAt
+      || (Array.isArray(positions) && positions.length)
+      || (Array.isArray(orders) && orders.length)
+      || summary
+      || accounts
+    );
+    if (!hasSnapshot) {
       const message = 'No IBKR payloads received yet. Run the connector and refresh.';
       ['devtools-ibkr-accounts', 'devtools-ibkr-summary', 'devtools-ibkr-ledger', 'devtools-ibkr-positions', 'devtools-ibkr-orders']
         .forEach(id => {
