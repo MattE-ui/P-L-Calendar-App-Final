@@ -932,7 +932,33 @@ async function revokeIbkrConnectorKey() {
 }
 
 function downloadIbkrInstaller() {
-  window.location.href = '/api/downloads/ibkr-connector/windows/latest';
+  const errorEl = document.getElementById('ibkr-error');
+  if (errorEl) errorEl.textContent = '';
+  fetch('/api/integrations/ibkr/installer', { credentials: 'include' })
+    .then(async (res) => {
+      if (res.status === 302 || res.redirected) {
+        window.location.href = res.url;
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || 'Installer download failed.');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'VeracityInstaller.exe';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    })
+    .catch((err) => {
+      if (errorEl) {
+        errorEl.textContent = `${err.message} Contact support or try again later.`;
+      }
+    });
 }
 
 async function copyIbkrInstallerSha() {

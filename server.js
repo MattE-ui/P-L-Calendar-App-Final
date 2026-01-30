@@ -58,6 +58,7 @@ const IBKR_CONNECTOR_WINDOWS_PUBLISHED_AT = process.env.IBKR_CONNECTOR_WINDOWS_P
 const IBKR_CONNECTOR_WINDOWS_SHA256 = process.env.IBKR_CONNECTOR_WINDOWS_SHA256 || '';
 const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES || '';
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
+const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -150,6 +151,32 @@ function loadIbkrInstallerMeta() {
     sizeBytes,
     filename
   };
+}
+
+function resolveProjectRoot() {
+  let current = path.resolve(__dirname);
+  for (let i = 0; i < 6; i += 1) {
+    const candidate = path.join(current, 'package.json');
+    if (fs.existsSync(candidate)) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return path.resolve(__dirname, '..');
+}
+
+function resolveIbkrInstallerPath() {
+  if (IBKR_CONNECTOR_WINDOWS_FILE) {
+    const absolutePath = path.isAbsolute(IBKR_CONNECTOR_WINDOWS_FILE)
+      ? IBKR_CONNECTOR_WINDOWS_FILE
+      : path.resolve(resolveProjectRoot(), IBKR_CONNECTOR_WINDOWS_FILE);
+    return { source: 'env', path: absolutePath };
+  }
+  const root = resolveProjectRoot();
+  const fallbackPath = path.join(root, 'assets', 'installers', 'VeracityInstaller.exe');
+  return { source: 'assets', path: fallbackPath };
 }
 
 function isNicknameAvailable(db, nickname, username) {
@@ -4662,15 +4689,50 @@ app.get('/api/downloads/ibkr-connector/windows/meta', auth, (req, res) => {
 
 app.get('/api/downloads/ibkr-connector/windows/latest', auth, (req, res) => {
   const meta = loadIbkrInstallerMeta();
-  if (IBKR_CONNECTOR_WINDOWS_URL) {
-    return res.redirect(IBKR_CONNECTOR_WINDOWS_URL);
+  if (IBKR_CONNECTOR_WINDOWS_URL || IBKR_INSTALLER_URL) {
+    return res.redirect(IBKR_CONNECTOR_WINDOWS_URL || IBKR_INSTALLER_URL);
   }
-  if (!IBKR_CONNECTOR_WINDOWS_FILE || !fs.existsSync(IBKR_CONNECTOR_WINDOWS_FILE)) {
-    return res.status(404).json({ error: 'Installer not available.' });
+  const resolved = resolveIbkrInstallerPath();
+  if (!resolved.path || !fs.existsSync(resolved.path)) {
+    return res.status(404).json({
+      error: 'Installer not available.',
+      details: {
+        installerUrlSet: Boolean(IBKR_CONNECTOR_WINDOWS_URL || IBKR_INSTALLER_URL),
+        attemptedPath: resolved.path,
+        source: resolved.source
+      }
+    });
   }
   res.setHeader('Content-Type', 'application/octet-stream');
   res.setHeader('Content-Disposition', `attachment; filename="${meta.filename}"`);
-  return res.sendFile(path.resolve(IBKR_CONNECTOR_WINDOWS_FILE));
+  return res.sendFile(path.resolve(resolved.path));
+});
+
+app.get('/api/integrations/ibkr/installer', auth, (req, res) => {
+  if (IBKR_INSTALLER_URL) {
+    return res.redirect(IBKR_INSTALLER_URL);
+  }
+  const resolved = resolveIbkrInstallerPath();
+  if (!resolved.path || !fs.existsSync(resolved.path)) {
+    return res.status(404).json({
+      error: 'Installer not available.',
+      details: {
+        installerUrlSet: Boolean(IBKR_INSTALLER_URL),
+        attemptedPath: resolved.path,
+        source: resolved.source
+      }
+    });
+  }
+  return res.download(resolved.path, 'VeracityInstaller.exe');
+});
+
+app.get('/api/integrations/ibkr/installer/status', auth, (req, res) => {
+  const resolved = resolveIbkrInstallerPath();
+  res.json({
+    installerUrlSet: Boolean(IBKR_INSTALLER_URL),
+    attemptedPath: resolved.path,
+    localExists: resolved.path ? fs.existsSync(resolved.path) : false
+  });
 });
 
 app.get('/api/integrations/ibkr/raw', auth, (req, res) => {
