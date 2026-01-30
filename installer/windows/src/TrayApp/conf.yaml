@@ -1,0 +1,15 @@
+# Veracity IBKR Gateway configuration template
+# This file is used when launching the Client Portal Gateway.
+# Update as needed for your environment.
+
+listenPort: 5000
+listenPortSecure: 5000
+ipAddress: 127.0.0.1
+
+# Logging
+log:
+  level: INFO
+
+# Session
+session:
+  maxDuration: 86400
