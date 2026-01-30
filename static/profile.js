@@ -529,6 +529,28 @@ const ibkrState = {
   lastDisconnectReason: null
 };
 
+const ibkrDownloadState = {
+  version: '',
+  publishedAt: null,
+  sizeBytes: null,
+  sha256: '',
+  releaseNotesUrl: '',
+  notes: ''
+};
+
+function formatBytes(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let idx = 0;
+  let num = size;
+  while (num >= 1024 && idx < units.length - 1) {
+    num /= 1024;
+    idx += 1;
+  }
+  return `${num.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
 function setIntegrationFieldsDisabled(disabled) {
   const container = document.getElementById('t212-fields');
   const apiInput = document.getElementById('t212-api-key');
@@ -619,17 +641,17 @@ function renderIbkrStatus(data) {
     : 'No snapshot yet.';
   const connectorStatus = data.lastConnectorStatus || {};
   const statusLabel = connection === 'online'
-    ? 'Connector online'
+    ? 'Connected'
     : connection === 'disconnected'
-      ? 'Connector disconnected'
+      ? 'Disconnected'
       : connection === 'error'
-        ? 'Connector error'
-        : 'Connector offline';
+        ? 'Error'
+        : 'Offline';
   const authStatus = connectorStatus.authStatus;
   if (connection !== 'online' && authStatus && authStatus.authenticated === false) {
     statusEl.classList.add('is-error');
     statusEl.textContent = 'IBKR session expired. Please login in the Client Portal Gateway.';
-    if (bannerEl) bannerEl.textContent = 'Connector offline — run the IBKR connector on your machine to sync.';
+    if (bannerEl) bannerEl.textContent = 'Waiting for IBKR login — open the gateway UI to re-authenticate.';
     return;
   }
   if (connectorStatus.reason) {
@@ -639,13 +661,13 @@ function renderIbkrStatus(data) {
     statusEl.textContent = `${statusLabel} • ${connectorStatus.reason} ${heartbeatText}`;
     if (bannerEl) bannerEl.textContent = data.connectorOnline
       ? ''
-      : 'Connector offline — run the IBKR connector on your machine to sync.';
+      : 'Connector offline — download and run the tray app to keep IBKR in sync.';
     return;
   }
   statusEl.textContent = `${statusLabel} • ${heartbeatText} ${snapshotText}`;
   if (bannerEl) bannerEl.textContent = data.connectorOnline
     ? ''
-    : 'Connector offline — run the IBKR connector on your machine to sync.';
+    : 'Connector offline — download and run the tray app to keep IBKR in sync.';
 }
 
 function renderIbkrSummary(data) {
@@ -666,6 +688,40 @@ function renderIbkrSummary(data) {
     } else {
       portfolioEl.textContent = '—';
     }
+  }
+}
+
+function renderIbkrDownloadMeta() {
+  const versionEl = document.getElementById('ibkr-installer-version');
+  const publishedEl = document.getElementById('ibkr-installer-published');
+  const sizeEl = document.getElementById('ibkr-installer-size');
+  const shaEl = document.getElementById('ibkr-installer-sha');
+  const notesLink = document.getElementById('ibkr-installer-notes-link');
+  if (versionEl) versionEl.textContent = ibkrDownloadState.version || '—';
+  if (publishedEl) {
+    const date = ibkrDownloadState.publishedAt ? new Date(ibkrDownloadState.publishedAt) : null;
+    publishedEl.textContent = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('en-GB') : '—';
+  }
+  if (sizeEl) sizeEl.textContent = formatBytes(ibkrDownloadState.sizeBytes);
+  if (shaEl) shaEl.textContent = ibkrDownloadState.sha256 || '—';
+  if (notesLink) {
+    notesLink.href = ibkrDownloadState.releaseNotesUrl || '#';
+    notesLink.classList.toggle('is-hidden', !ibkrDownloadState.releaseNotesUrl);
+  }
+}
+
+async function loadIbkrDownloadMeta() {
+  try {
+    const data = await api('/api/downloads/ibkr-connector/windows/meta');
+    ibkrDownloadState.version = data.version || '';
+    ibkrDownloadState.publishedAt = data.publishedAt || null;
+    ibkrDownloadState.sizeBytes = data.sizeBytes || null;
+    ibkrDownloadState.sha256 = data.sha256 || '';
+    ibkrDownloadState.releaseNotesUrl = data.releaseNotesUrl || '';
+    ibkrDownloadState.notes = data.notes || '';
+    renderIbkrDownloadMeta();
+  } catch (e) {
+    console.warn('Unable to load IBKR installer meta', e);
   }
 }
 
@@ -875,6 +931,21 @@ async function revokeIbkrConnectorKey() {
   }
 }
 
+function downloadIbkrInstaller() {
+  window.location.href = '/api/downloads/ibkr-connector/windows/latest';
+}
+
+async function copyIbkrInstallerSha() {
+  const shaEl = document.getElementById('ibkr-installer-sha');
+  if (!shaEl || !shaEl.textContent || shaEl.textContent === '—') return;
+  try {
+    await navigator.clipboard.writeText(shaEl.textContent.trim());
+    shaEl.textContent = `${shaEl.textContent.trim()} (copied)`;
+  } catch (e) {
+    console.warn('Unable to copy SHA256', e);
+  }
+}
+
 async function saveIntegration({ runNow = false } = {}) {
   const errorEl = document.getElementById('t212-error');
   if (errorEl) errorEl.textContent = '';
@@ -1064,6 +1135,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadProfile();
   loadIntegration();
   loadIbkrIntegration();
+  loadIbkrDownloadMeta();
   const rawModal = document.getElementById('t212-raw-modal');
   const rawContent = document.getElementById('t212-raw-content');
   document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
@@ -1119,6 +1191,8 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('ibkr-sync')?.addEventListener('click', refreshIbkrStatus);
   document.getElementById('ibkr-copy-token')?.addEventListener('click', copyIbkrConnectorToken);
   document.getElementById('ibkr-revoke')?.addEventListener('click', revokeIbkrConnectorKey);
+  document.getElementById('ibkr-download-installer')?.addEventListener('click', downloadIbkrInstaller);
+  document.getElementById('ibkr-copy-sha')?.addEventListener('click', copyIbkrInstallerSha);
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
   document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
