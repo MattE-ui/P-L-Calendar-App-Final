@@ -208,14 +208,56 @@
           <div id="ibkr-portfolio-value" class="read-only-field">—</div>
         </div>
       </div>
-      <section class="integration-instructions">
-        <h3>Connect IBKR (Local Connector)</h3>
-        <ol>
-          <li>Install and run the local IBKR connector on your machine (it talks to your Client Portal Gateway).</li>
-          <li>Click <strong>Generate connector token</strong> and run the connector once to exchange it for a connector key stored locally.</li>
-          <li>Complete IBKR login + 2FA in the official gateway UI on your machine.</li>
-          <li>Keep the connector running to stream portfolio value, positions, and stop orders.</li>
-        </ol>
+      <section class="integration-download">
+        <h3>Download Veracity IBKR Connector (Windows)</h3>
+        <p class="helper">Single-download installer for the tray app + connector. Runs locally on your machine.</p>
+        <div class="download-row">
+          <button id="ibkr-download-installer" class="primary" type="button">Download Veracity IBKR Connector (Windows)</button>
+          <div class="download-meta">
+            <p><span class="label">Version</span> <span id="ibkr-installer-version">—</span></p>
+            <p><span class="label">Published</span> <span id="ibkr-installer-published">—</span></p>
+            <p><span class="label">Size</span> <span id="ibkr-installer-size">—</span></p>
+            <a id="ibkr-installer-notes-link" class="helper" href="#" target="_blank" rel="noopener">Release notes</a>
+          </div>
+        </div>
+        <div class="download-hash">
+          <span class="label">SHA256</span>
+          <code id="ibkr-installer-sha">—</code>
+          <button id="ibkr-copy-sha" class="ghost" type="button">Copy</button>
+          <span class="helper" title="Verify the installer before running it to ensure integrity.">Why?</span>
+        </div>
+      </section>
+      <section class="integration-accordion">
+        <details open>
+          <summary>What this does</summary>
+          <p>The connector runs on your machine, connects to the IBKR Client Portal Gateway, and syncs portfolio value, positions, and active stop orders to Veracity.</p>
+        </details>
+        <details>
+          <summary>Setup steps</summary>
+          <ol>
+            <li>Download and install the Veracity IBKR Connector (Windows).</li>
+            <li>Open the tray app and download the official IBKR Gateway when prompted.</li>
+            <li>Launch the gateway and complete IBKR login + 2FA.</li>
+            <li>Generate a one-time connector token below and paste it into the tray app.</li>
+            <li>Keep the tray app running to maintain sync.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>Security &amp; privacy</summary>
+          <ul>
+            <li>The token is one-time and exchanged for a connector key stored locally.</li>
+            <li>Connector keys are stored with Windows encryption (never plaintext).</li>
+            <li>Veracity never stores IBKR credentials.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>Troubleshooting</summary>
+          <ul>
+            <li>401 / Invalid key: generate a new token and paste it into the tray app.</li>
+            <li>Gateway not authenticated: open https://localhost:5000 and login + 2FA.</li>
+            <li>Port 5000 in use: update the gateway config and tray settings.</li>
+          </ul>
+        </details>
       </section>
       <div class="profile-field">
         <label for="ibkr-connector-token">Connector token</label>

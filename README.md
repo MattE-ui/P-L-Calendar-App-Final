@@ -77,6 +77,12 @@ Environment variables:
 - `IBKR_CONNECTOR_TOKEN_TTL_MS`: Optional TTL for connector tokens in milliseconds (default `900000`).
 - `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.
 - `IBKR_TOKEN_SECRET`: Required in production to keep connector tokens/keys valid across deploys.
+- `IBKR_INSTALLER_URL`: In production, set this to a hosted installer asset (recommended: GitHub Releases) so `/api/integrations/ibkr/installer` redirects there.
+
+### Hosting the IBKR installer (Render)
+1. Upload the installer to GitHub Releases (or another trusted host).
+2. Set `IBKR_INSTALLER_URL` in the Render service environment to the release asset URL.
+3. (Optional) Place a dev fallback file at `assets/installers/VeracityInstaller.exe` for local downloads.
 
 Optional Docker compose snippet for the Client Portal Gateway:
 
