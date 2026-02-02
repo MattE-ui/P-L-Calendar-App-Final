@@ -934,7 +934,7 @@ async function revokeIbkrConnectorKey() {
 function downloadIbkrInstaller() {
   const errorEl = document.getElementById('ibkr-error');
   if (errorEl) errorEl.textContent = '';
-  fetch('/api/integrations/ibkr/installer', { credentials: 'include' })
+  fetch('/api/integrations/ibkr/installer/download', { credentials: 'include' })
     .then(async (res) => {
       if (res.status === 302 || res.redirected) {
         window.location.href = res.url;

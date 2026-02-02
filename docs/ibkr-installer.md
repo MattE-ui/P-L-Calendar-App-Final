@@ -7,6 +7,7 @@ This document explains how to build the Windows installer for the Veracity IBKR 
 - Node.js 22
 - npm
 - Windows machine for producing the `.exe` installer
+- Inno Setup (ISCC on PATH)
 
 ## Build steps
 
@@ -14,14 +15,16 @@ This document explains how to build the Windows installer for the Veracity IBKR 
 # From repo root
 npm install
 npm --prefix ibkr-connector install
-npm --prefix installer install
+npm --prefix tray-app install
 
-# Build the Windows installer
+# Build the tray app + connector + installer
+npm run tray:build
+npm run connector:package
 npm run installer:build
 ```
 
 Output:
-- `installer/dist/Veracity IBKR Connector Setup.exe` (NSIS installer)
+- `installer/dist/VeracitySetup.exe` (Inno Setup installer)
 
 ## Publish release
 

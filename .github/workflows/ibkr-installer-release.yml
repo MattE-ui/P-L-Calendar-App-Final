@@ -1,0 +1,42 @@
+name: Build IBKR Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix ibkr-connector install
+          npm --prefix tray-app install
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes
+
+      - name: Build tray app
+        run: npm run tray:build
+
+      - name: Package connector
+        run: npm run connector:package
+
+      - name: Build installer
+        run: npm run installer:build
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/dist/VeracitySetup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

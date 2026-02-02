@@ -4711,21 +4711,36 @@ app.get('/api/downloads/ibkr-connector/windows/latest', auth, (req, res) => {
 
 app.get('/api/integrations/ibkr/installer', auth, (req, res) => {
   if (IBKR_INSTALLER_URL) {
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.redirect(IBKR_INSTALLER_URL);
   }
   const resolved = resolveIbkrInstallerPath();
   if (!resolved.path || !fs.existsSync(resolved.path)) {
-    return res.status(404).json({
-      error: 'Installer not available.',
+    return res.status(500).json({
+      error: 'Installer not configured.',
       details: {
         installerUrlSet: Boolean(IBKR_INSTALLER_URL),
         attemptedPath: resolved.path,
         source: resolved.source,
-        instructions: 'Set IBKR_INSTALLER_URL to a hosted installer asset or place assets/installers/VeracityInstaller.exe in the repo.'
+        instructions: 'Set IBKR_INSTALLER_URL to a GitHub Release asset download URL.'
       }
     });
   }
-  return res.download(resolved.path, 'VeracityInstaller.exe');
+  return res.download(resolved.path, 'VeracitySetup.exe');
+});
+
+app.get('/api/integrations/ibkr/installer/download', auth, (req, res) => {
+  if (!IBKR_INSTALLER_URL) {
+    return res.status(500).json({
+      error: 'Installer not configured.',
+      details: {
+        installerUrlSet: false,
+        instructions: 'Set IBKR_INSTALLER_URL to a GitHub Release asset download URL.'
+      }
+    });
+  }
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  return res.redirect(IBKR_INSTALLER_URL);
 });
 
 app.get('/api/integrations/ibkr/installer/status', auth, (req, res) => {

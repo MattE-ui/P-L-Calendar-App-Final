@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Veracity IBKR Connector</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Veracity IBKR Connector</h1>
+      <p class="subhead">This app runs locally to sync your IBKR portfolio to Veracity.</p>
+      <div class="notice">
+        <strong>Important:</strong> We do <strong>not</strong> bundle the IBKR Client Portal Gateway. Download and install it directly from IBKR, then point this app to the gateway folder.
+        <a href="https://www.interactivebrokers.com/en/trading/ib-api.php" target="_blank" rel="noreferrer">IBKR download page</a>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <h2>Step 1: Install IBKR Gateway</h2>
+        <p>Download the official Client Portal Gateway from IBKR and install it on this machine.</p>
+      </section>
+
+      <section>
+        <h2>Step 2: Gateway folder</h2>
+        <div class="field">
+          <label>IBKR Gateway folder</label>
+          <div class="row">
+            <input id="gateway-path" type="text" placeholder="C:\IBKR\ClientPortal" />
+            <button id="browse-gateway">Browse</button>
+            <button id="start-gateway">Start Gateway</button>
+          </div>
+        </div>
+        <p class="helper">We look for <code>bin\\run.bat</code> inside this folder.</p>
+      </section>
+
+      <section>
+        <h2>Step 3: Login &amp; 2FA</h2>
+        <p>Open the IBKR Gateway login page and complete authentication.</p>
+        <button id="open-gateway">Open Gateway Login</button>
+      </section>
+
+      <section>
+        <h2>Step 4: Connection settings</h2>
+        <div class="field">
+          <label>Server URL</label>
+          <input id="server-url" type="text" />
+        </div>
+        <div class="field">
+          <label>Gateway URL</label>
+          <input id="gateway-url" type="text" />
+        </div>
+        <div class="field">
+          <label>Poll seconds</label>
+          <input id="poll-seconds" type="number" min="5" step="1" />
+        </div>
+        <label class="checkbox">
+          <input id="insecure" type="checkbox" />
+          Allow self-signed gateway certificates
+        </label>
+      </section>
+
+      <section>
+        <h2>Step 5: Token &amp; sync</h2>
+        <div class="field">
+          <label>One-time token (from Profile → IBKR Integration)</label>
+          <input id="token" type="text" />
+        </div>
+        <div class="row">
+          <button id="start">Start Sync</button>
+          <button id="stop">Stop Sync</button>
+          <button id="test-gateway">Test Gateway</button>
+          <button id="test-veracity">Test Veracity</button>
+        </div>
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
