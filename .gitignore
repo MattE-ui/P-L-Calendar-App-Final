@@ -3,4 +3,7 @@ node_modules/
 storage/
 *.sqlite
 .env
-
+assets/installers/*.exe
+connector/*.exe
+tray-app/dist/
+installer/dist/

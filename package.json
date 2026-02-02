@@ -5,7 +5,11 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "tray:build": "npm --prefix tray-app run build:win",
+    "tray:dev": "npm --prefix tray-app run dev",
+    "connector:package": "npx pkg ibkr-connector/dist/index.js --targets node18-win-x64 --output connector/veracity-ibkr-connector.exe",
+    "installer:build": "node installer/build-installer.js"
   },
   "engines": {
     "node": "22.x"

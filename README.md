@@ -71,12 +71,18 @@ The IBKR integration uses the official Client Portal Gateway and IBKR Client Por
 3. Run the local connector with the token and gateway URL (default `https://localhost:5000`) and pass `--insecure` if your gateway uses a self-signed cert.
 4. Keep the connector running to stream portfolio value, positions, and stop orders into Veracity.
 
-The gateway and connector run on your machine; the hosted server never reaches into your network. See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector installation and CLI usage.
+The gateway and connector run on your machine; the hosted server never reaches into your network. See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector setup and [`docs/ibkr-installer.md`](docs/ibkr-installer.md) for installer build steps.
 
 Environment variables:
 - `IBKR_CONNECTOR_TOKEN_TTL_MS`: Optional TTL for connector tokens in milliseconds (default `900000`).
 - `IBKR_RATE_LIMIT_MAX` / `IBKR_RATE_LIMIT_WINDOW_MS`: Optional rate-limit controls for IBKR endpoints.
 - `IBKR_TOKEN_SECRET`: Required in production to keep connector tokens/keys valid across deploys.
+- `IBKR_INSTALLER_URL`: In production, set this to a hosted installer asset (recommended: GitHub Releases) so `/api/integrations/ibkr/installer/download` redirects there.
+
+### Hosting the IBKR installer (Render)
+1. Upload the installer to GitHub Releases (or another trusted host).
+2. Set `IBKR_INSTALLER_URL` in the Render service environment to the release asset URL.
+3. (Optional) Place a dev fallback file at `assets/installers/VeracityInstaller.exe` for local downloads.
 
 Optional Docker compose snippet for the Client Portal Gateway:
 
