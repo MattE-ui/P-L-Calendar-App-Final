@@ -5,7 +5,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "installer:build": "npm --prefix installer run build:win",
+    "installer:dev": "npm --prefix installer run dev"
   },
   "engines": {
     "node": "22.x"

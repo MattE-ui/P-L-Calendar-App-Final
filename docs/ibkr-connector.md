@@ -1,56 +1,65 @@
-# IBKR Local Connector
+# IBKR Connector (Windows)
 
-The IBKR Client Portal Gateway runs locally on your machine and cannot be reached from the hosted Veracity server. The local connector bridges that gap by polling your gateway and forwarding normalized snapshots to Veracity.
+The **Veracity IBKR Connector** runs locally on your Windows machine to sync IBKR portfolio value, open positions, and stop orders to Veracity. It connects to the official IBKR Client Portal Gateway running on your machine.
 
-## Requirements
-- IBKR Client Portal Gateway running locally (default `https://localhost:5000`).
-- A connector token generated from your Veracity profile (used once to exchange for a connector key stored locally).
+> **Important:** Veracity does **not** ship IBKR Gateway binaries. Download the Client Portal Gateway directly from IBKR.
 
-## Install
-```bash
-cd ibkr-connector
-npm install
-npm run build
-```
+## User setup guide
 
-## Run
-```bash
-node dist/index.js \
-  --server https://veracitysuite.com \
-  --token <CONNECTOR_TOKEN> \
-  --gateway https://localhost:5000 \
-  --insecure \
-  --pollSeconds 15
-```
+1. **Download and install** the **Veracity IBKR Connector (Windows)** from Profile → IBKR Integration.
+2. **Install the IBKR Client Portal Gateway** directly from IBKR.
+3. **Launch the tray app** (it appears in the system tray) and set the gateway folder path.
+4. **Launch the Gateway** and complete IBKR login + 2FA in your browser (`https://localhost:5000`).
+5. **Generate a one-time token** in Profile → IBKR Integration.
+6. **Paste the token** into the tray app to start syncing.
+7. **Keep the tray app running** to maintain portfolio sync.
 
-After the first run, the connector exchanges your token for a connector key and stores it locally. Subsequent runs can omit `--token`.
+### What the connector does
 
-### CLI flags
-- `--server`: Veracity server base URL.
-- `--token`: One-time connector token from the profile page (used to exchange for a connector key; expires in ~15 minutes).
-- `--connector-key`: Optional connector key override if you prefer not to use the stored key file.
-- `--key-file`: Optional path for storing the connector key (default: `~/.veracity/ibkr-connector.json`).
-- `--gateway`: Local Client Portal Gateway base URL.
-- `--insecure`: Allow self-signed TLS for the local gateway.
-- `--pollSeconds`: Poll interval in seconds (default 15).
-- `--account`: Optional IBKR account ID override if you have multiple accounts.
+- Polls the Client Portal Gateway.
+- Sends heartbeats and snapshots (portfolio value, positions, stop orders) to Veracity.
+- Handles disconnects and prompts for a new token if the connector key is revoked.
 
-Environment alternative:
-- `IBKR_INSECURE_TLS=1` to allow self-signed TLS without `--insecure`.
+### Security & privacy
 
-## Windows (PowerShell)
-```powershell
-curl.exe -k https://localhost:5000/v1/api/portfolio/accounts
-
-node dist/index.js `
-  --server https://veracitysuite.com `
-  --token <CONNECTOR_TOKEN> `
-  --gateway https://localhost:5000 `
-  --insecure `
-  --pollSeconds 15
-```
+- The one-time token is exchanged for a **connector key** stored locally on your machine.
+- Veracity never stores IBKR credentials.
+- Traffic is limited to your local gateway and Veracity endpoints.
 
 ## Troubleshooting
-- `IBKR Gateway not running at https://localhost:5000`: Start the Client Portal Gateway.
-- `Not authenticated`: Open the gateway UI in your browser and complete IBKR login + 2FA.
-- `No IBKR account found`: Make sure the gateway session is authenticated and returns accounts.
+
+- **401 / Invalid key**: generate a new token in Profile → IBKR Integration and paste it into the tray app.
+- **Gateway not authenticated**: open `https://localhost:5000` and complete IBKR login + 2FA.
+- **Port 5000 in use**: update the gateway config + tray app settings to match a free port.
+- **Firewall warnings**: allow local access to the gateway on `localhost`.
+
+## Maintainer build instructions
+
+See `installer/windows/README.md` for build steps and packaging.
+
+### Publishing a new installer release
+
+1. Build the tray app + connector exe.
+2. Package a single installer using Velopack (or WiX/Squirrel).
+3. Upload the installer to your releases bucket.
+4. Update the metadata JSON or env vars used by the download endpoint:
+
+```
+IBKR_CONNECTOR_WINDOWS_URL=<signed URL>
+IBKR_CONNECTOR_WINDOWS_VERSION=1.0.0
+IBKR_CONNECTOR_WINDOWS_PUBLISHED_AT=2024-01-01T12:00:00Z
+IBKR_CONNECTOR_WINDOWS_SHA256=<sha256>
+IBKR_CONNECTOR_WINDOWS_NOTES=Initial release
+IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL=https://veracitysuite.com/releases/ibkr-connector
+```
+
+### Environment variables
+
+- `IBKR_CONNECTOR_WINDOWS_URL`: signed download URL (recommended)
+- `IBKR_CONNECTOR_WINDOWS_FILE`: local file path for the installer (fallback)
+- `IBKR_CONNECTOR_WINDOWS_META_PATH`: path to JSON meta file (optional)
+- `IBKR_CONNECTOR_WINDOWS_VERSION`: current version (fallback)
+- `IBKR_CONNECTOR_WINDOWS_PUBLISHED_AT`: ISO timestamp
+- `IBKR_CONNECTOR_WINDOWS_SHA256`: installer hash
+- `IBKR_CONNECTOR_WINDOWS_NOTES`: short notes
+- `IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL`: release notes link
