@@ -236,17 +236,19 @@
           <summary>Setup steps</summary>
           <ol>
             <li>Download and install the Veracity IBKR Connector (Windows).</li>
-            <li>Open the tray app and download the official IBKR Gateway when prompted.</li>
+            <li>Download and install the IBKR Client Portal Gateway directly from IBKR.</li>
+            <li>Open the tray app and set the gateway folder path.</li>
             <li>Launch the gateway and complete IBKR login + 2FA.</li>
             <li>Generate a one-time connector token below and paste it into the tray app.</li>
             <li>Keep the tray app running to maintain sync.</li>
           </ol>
+          <p class="helper">IBKR Gateway download: <a href="https://www.interactivebrokers.com/en/trading/ib-api.php" target="_blank" rel="noopener">Interactive Brokers API page</a></p>
         </details>
         <details>
           <summary>Security &amp; privacy</summary>
           <ul>
             <li>The token is one-time and exchanged for a connector key stored locally.</li>
-            <li>Connector keys are stored with Windows encryption (never plaintext).</li>
+            <li>Connector keys are stored locally on your machine and never sent back to the UI.</li>
             <li>Veracity never stores IBKR credentials.</li>
           </ul>
         </details>

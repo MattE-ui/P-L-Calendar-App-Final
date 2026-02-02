@@ -71,7 +71,7 @@ The IBKR integration uses the official Client Portal Gateway and IBKR Client Por
 3. Run the local connector with the token and gateway URL (default `https://localhost:5000`) and pass `--insecure` if your gateway uses a self-signed cert.
 4. Keep the connector running to stream portfolio value, positions, and stop orders into Veracity.
 
-The gateway and connector run on your machine; the hosted server never reaches into your network. See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector installation and CLI usage.
+The gateway and connector run on your machine; the hosted server never reaches into your network. See [`docs/ibkr-connector.md`](docs/ibkr-connector.md) for connector setup and [`docs/ibkr-installer.md`](docs/ibkr-installer.md) for installer build steps.
 
 Environment variables:
 - `IBKR_CONNECTOR_TOKEN_TTL_MS`: Optional TTL for connector tokens in milliseconds (default `900000`).

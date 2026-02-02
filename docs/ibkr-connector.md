@@ -2,13 +2,13 @@
 
 The **Veracity IBKR Connector** runs locally on your Windows machine to sync IBKR portfolio value, open positions, and stop orders to Veracity. It connects to the official IBKR Client Portal Gateway running on your machine.
 
-> **Important:** Veracity does **not** ship IBKR Gateway binaries. The tray app downloads the official gateway zip from IBKR during setup.
+> **Important:** Veracity does **not** ship IBKR Gateway binaries. Download the Client Portal Gateway directly from IBKR.
 
 ## User setup guide
 
 1. **Download and install** the **Veracity IBKR Connector (Windows)** from Profile → IBKR Integration.
-2. **Launch the tray app** (it appears in the system tray).
-3. **Download the IBKR Gateway** when prompted. The app pulls the gateway zip from the official IBKR URL.
+2. **Install the IBKR Client Portal Gateway** directly from IBKR.
+3. **Launch the tray app** (it appears in the system tray) and set the gateway folder path.
 4. **Launch the Gateway** and complete IBKR login + 2FA in your browser (`https://localhost:5000`).
 5. **Generate a one-time token** in Profile → IBKR Integration.
 6. **Paste the token** into the tray app to start syncing.
@@ -22,7 +22,7 @@ The **Veracity IBKR Connector** runs locally on your Windows machine to sync IBK
 
 ### Security & privacy
 
-- The one-time token is exchanged for a **connector key** stored locally with Windows DPAPI (never plaintext).
+- The one-time token is exchanged for a **connector key** stored locally on your machine.
 - Veracity never stores IBKR credentials.
 - Traffic is limited to your local gateway and Veracity endpoints.
 

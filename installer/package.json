@@ -1,0 +1,41 @@
+{
+  "name": "veracity-ibkr-installer",
+  "version": "1.0.0",
+  "description": "Veracity IBKR connector tray app",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "electron .",
+    "build:connector": "npm --prefix ../ibkr-connector run build && node scripts/copy-connector.js",
+    "build:win": "npm run build:connector && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "electron": "^30.0.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.veracitysuite.ibkr.connector",
+    "productName": "Veracity IBKR Connector",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "app/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

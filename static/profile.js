@@ -942,7 +942,8 @@ function downloadIbkrInstaller() {
       }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || 'Installer download failed.');
+        const details = data?.details?.instructions ? ` ${data.details.instructions}` : '';
+        throw new Error(`${data?.error || 'Installer download failed.'}${details}`);
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);

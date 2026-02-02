@@ -4699,7 +4699,8 @@ app.get('/api/downloads/ibkr-connector/windows/latest', auth, (req, res) => {
       details: {
         installerUrlSet: Boolean(IBKR_CONNECTOR_WINDOWS_URL || IBKR_INSTALLER_URL),
         attemptedPath: resolved.path,
-        source: resolved.source
+        source: resolved.source,
+        instructions: 'Set IBKR_INSTALLER_URL to a hosted installer asset or place assets/installers/VeracityInstaller.exe in the repo.'
       }
     });
   }
@@ -4719,7 +4720,8 @@ app.get('/api/integrations/ibkr/installer', auth, (req, res) => {
       details: {
         installerUrlSet: Boolean(IBKR_INSTALLER_URL),
         attemptedPath: resolved.path,
-        source: resolved.source
+        source: resolved.source,
+        instructions: 'Set IBKR_INSTALLER_URL to a hosted installer asset or place assets/installers/VeracityInstaller.exe in the repo.'
       }
     });
   }
