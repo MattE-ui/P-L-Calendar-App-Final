@@ -3627,7 +3627,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           raw?.quantityAvailableForTrading ??
           raw?.availableQuantity
         );
-        const entry = parseTradingNumber(
+        const entryPrice = parseTradingNumber(
           raw?.averagePricePaid ??
           raw?.averagePrice ??
           raw?.avgPrice ??
@@ -3655,7 +3655,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           walletImpact?.profitLoss ??
           walletImpact?.pnl
         );
-        if (!Number.isFinite(quantity) || !Number.isFinite(entry)) continue;
+        if (!Number.isFinite(quantity) || !Number.isFinite(entryPrice)) continue;
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
@@ -3699,7 +3699,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           if (!existingTrade.symbol) {
             existingTrade.symbol = resolvedSymbol;
           }
-          existingTrade.entry = entry;
+          existingTrade.entry = entryPrice;
           existingTrade.sizeUnits = sizeUnits;
           existingTrade.currency = tradeCurrency;
           existingTrade.direction = direction;
@@ -3721,7 +3721,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             existingTrade.currentStop = nextStop;
             if (!Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
               existingTrade.stop = nextStop;
-              existingTrade.perUnitRisk = Math.abs(entry - nextStop);
+              existingTrade.perUnitRisk = Math.abs(entryPrice - nextStop);
             }
           }
           positionsMutated = true;
@@ -3731,16 +3731,16 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           id: crypto.randomBytes(8).toString('hex'),
           symbol: resolvedSymbol,
           currency: tradeCurrency,
-          entry,
+          entry: entryPrice,
           stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
           sizeUnits,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           riskPct: 0,
-          perUnitRisk: Number.isFinite(stop) ? Math.abs(entry - stop) : 0,
+          perUnitRisk: Number.isFinite(stop) ? Math.abs(entryPrice - stop) : 0,
           riskAmountCurrency: 0,
-          positionCurrency: entry * sizeUnits,
+          positionCurrency: entryPrice * sizeUnits,
           riskAmountGBP: 0,
-          positionGBP: convertToGBP(entry * sizeUnits, tradeCurrency, rates),
+          positionGBP: convertToGBP(entryPrice * sizeUnits, tradeCurrency, rates),
           portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
           portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
           createdAt: createdAtDate.toISOString(),
