@@ -145,14 +145,10 @@
       </div>
       <div id="t212-fields" class="integration-fields">
         <div class="profile-field">
-          <label for="t212-api-key">Trading 212 API key</label>
-          <input id="t212-api-key" type="password" placeholder="Paste your API key" autocomplete="off">
-          <p class="helper">Your key stays on this server and is only used to request the scheduled snapshot.</p>
-        </div>
-        <div class="profile-field">
-          <label for="t212-api-secret">Trading 212 API secret</label>
-          <input id="t212-api-secret" type="password" placeholder="Paste your API secret" autocomplete="off">
-          <p class="helper">Provide the secret that pairs with your key so we can authenticate with Trading 212.</p>
+          <label>Trading 212 API keys</label>
+          <div id="t212-accounts" class="t212-accounts"></div>
+          <button id="t212-add-account" class="ghost small" type="button">Add another account</button>
+          <p class="helper">Add one API key + secret per Trading 212 account (Invest, CFD, ISA). We’ll merge the data together.</p>
         </div>
         <div class="profile-field">
           <label for="t212-mode">Account</label>
@@ -168,7 +164,7 @@
         <ol>
           <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
           <li>Enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key.</li>
-          <li>Paste the API key and secret above, select <strong>Live</strong> or <strong>Practice</strong>, then save.</li>
+          <li>Paste each API key + secret above (one per account), select <strong>Live</strong> or <strong>Practice</strong>, then save.</li>
           <li>Use <strong>Run sync now</strong> to confirm the connection.</li>
         </ol>
       </section>
@@ -326,7 +322,7 @@
       <ol class="helper-list">
         <li>Log in to Trading 212 on web and open <strong>Settings → API</strong>.</li>
         <li>Create a new API key and enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong>.</li>
-        <li>Copy the API key (and secret, if shown). Paste them into the fields above.</li>
+        <li>Copy the API key (and secret, if shown). Paste them into the fields above (add multiple keys if you have more than one account).</li>
         <li>Select <strong>Live</strong> or <strong>Practice</strong> to match your Trading 212 account.</li>
         <li>Keep the base URL blank unless Trading 212 instructs otherwise. Use the default endpoint unless they provide a different path.</li>
         <li>Pick a snapshot time (Europe/London). The app will sync daily at that time.</li>

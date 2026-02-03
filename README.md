@@ -54,7 +54,7 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 
 ## Trading 212 automation
 1. Visit the profile page (link in the header) and scroll to the **Trading 212 automation** card.
-2. Enable the toggle, paste your Trading 212 API key **and API secret**, pick whether you’re syncing a live or practice account (the server will still probe both sets of Trading 212 hosts if the selection is wrong), and choose the time of day (Europe/London) to record the snapshot.
+2. Enable the toggle, paste your Trading 212 API key **and API secret** (add multiple key/secret pairs if you have separate Invest/ISA/CFD accounts), pick whether you’re syncing a live or practice account (the server will still probe both sets of Trading 212 hosts if the selection is wrong), and choose the time of day (Europe/London) to record the snapshot.
 3. When creating the API key inside Trading 212, enable the toggles for **Portfolio value**, **Balance & cash**, and **Transactions** so the integration can fetch balances and cash movements. The Trading 212 UI will show both a key (username) and secret (password)—copy both.
 4. Optional: provide a custom API base URL or endpoint path if Trading 212 instructs you to use a different hostname/path (the defaults cover the documented live and practice hosts). The integration remembers the last successful combination and surfaces it on the profile page.
 5. Save your settings. The server will call Trading 212 at the scheduled time each day, record the closing portfolio value, and apply any deposits or withdrawals as cash adjustments on your calendar. Use **Run sync now** to trigger an immediate test pull.

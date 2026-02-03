@@ -166,16 +166,29 @@ async function loadHeroMetrics() {
 async function loadTrading212Payloads() {
   try {
     const data = await api('/api/integrations/trading212/raw');
-    document.getElementById('devtools-portfolio').textContent = JSON.stringify(data.portfolio ?? null, null, 2);
-    document.getElementById('devtools-positions').textContent = JSON.stringify(data.positions ?? null, null, 2);
-    document.getElementById('devtools-transactions').textContent = JSON.stringify(data.transactions ?? null, null, 2);
+    const accounts = Array.isArray(data.accounts) ? data.accounts : null;
+    const portfolioPayload = accounts
+      ? accounts.map(account => ({ accountId: account.accountId, portfolio: account.portfolio }))
+      : (data.portfolio ?? null);
+    const positionsPayload = accounts
+      ? accounts.map(account => ({ accountId: account.accountId, positions: account.positions }))
+      : (data.positions ?? null);
+    const transactionsPayload = accounts
+      ? accounts.map(account => ({ accountId: account.accountId, transactions: account.transactions }))
+      : (data.transactions ?? null);
+    document.getElementById('devtools-portfolio').textContent = JSON.stringify(portfolioPayload, null, 2);
+    document.getElementById('devtools-positions').textContent = JSON.stringify(positionsPayload, null, 2);
+    document.getElementById('devtools-transactions').textContent = JSON.stringify(transactionsPayload, null, 2);
     const ordersEl = document.getElementById('devtools-orders');
     if (ordersEl) {
-      if (data.ordersError) {
-        ordersEl.textContent = data.ordersError;
-      } else {
-        ordersEl.textContent = JSON.stringify(data.orders ?? null, null, 2);
-      }
+      const ordersPayload = accounts
+        ? accounts.map(account => ({
+          accountId: account.accountId,
+          orders: account.orders,
+          ordersError: account.ordersError || null
+        }))
+        : (data.orders ?? null);
+      ordersEl.textContent = data.ordersError ? data.ordersError : JSON.stringify(ordersPayload, null, 2);
     }
   } catch (e) {
     const message = e?.data?.error || e.message || 'Unable to load payloads.';

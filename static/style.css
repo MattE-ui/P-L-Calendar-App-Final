@@ -1600,6 +1600,10 @@ td .mapping-badge {
 }
 .integration-fields { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .integration-fields.is-hidden { display: none; }
+.t212-accounts { display: flex; flex-direction: column; gap: 12px; }
+.t212-account-row { border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; display: grid; gap: 10px; background: rgba(255,255,255,0.02); }
+.t212-account-fields { display: grid; gap: 8px; }
+.t212-account-actions { display: flex; gap: 8px; justify-content: flex-end; }
 #transactions-split-list { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
 .transactions-split-row {
   display: flex;

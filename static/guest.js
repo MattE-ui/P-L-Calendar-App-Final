@@ -22,6 +22,7 @@ const DEFAULT_GUEST_DATA = {
     trading212: {
       hasApiKey: false,
       hasApiSecret: false,
+      accounts: [],
       enabled: false,
       snapshotTime: '21:00',
       mode: 'live',
@@ -370,6 +371,16 @@ window.handleGuestRequest = (path, opts = {}) => {
       baseUrl: payload.baseUrl || t212.baseUrl || '',
       endpoint: payload.endpoint || t212.endpoint || '/api/v0/equity/account/summary'
     };
+    if (Array.isArray(payload.accounts)) {
+      next.accounts = payload.accounts.map((account, index) => ({
+        id: account.id || `account-${index + 1}`,
+        label: account.label || '',
+        hasApiKey: !!account.apiKey,
+        hasApiSecret: !!account.apiSecret
+      }));
+      next.hasApiKey = next.accounts.some(account => account.hasApiKey);
+      next.hasApiSecret = next.accounts.some(account => account.hasApiSecret);
+    }
     if (Object.prototype.hasOwnProperty.call(payload, 'apiKey')) {
       next.hasApiKey = !!payload.apiKey;
     }

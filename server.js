@@ -517,6 +517,10 @@ function ensureTrading212Config(user) {
     mutated = true;
   }
   const cfg = user.trading212;
+  if (!Array.isArray(cfg.accounts)) {
+    cfg.accounts = [];
+    mutated = true;
+  }
   if (typeof cfg.enabled !== 'boolean') {
     cfg.enabled = false;
     mutated = true;
@@ -579,7 +583,55 @@ function ensureTrading212Config(user) {
     cfg.symbolOverrides = {};
     mutated = true;
   }
+  const accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
+  const normalizedAccounts = accounts
+    .filter(account => account && typeof account === 'object')
+    .map(account => ({
+      id: typeof account.id === 'string' && account.id.trim() ? account.id.trim() : crypto.randomBytes(6).toString('hex'),
+      label: typeof account.label === 'string' ? account.label.trim() : '',
+      apiKey: typeof account.apiKey === 'string' ? account.apiKey.trim() : '',
+      apiSecret: typeof account.apiSecret === 'string' ? account.apiSecret.trim() : '',
+      mode: typeof account.mode === 'string' && ['live', 'practice'].includes(account.mode) ? account.mode : undefined,
+      baseUrl: typeof account.baseUrl === 'string' ? account.baseUrl.trim() : ''
+    }))
+    .filter(account => account.apiKey || account.apiSecret || account.label);
+  if (normalizedAccounts.length !== accounts.length) {
+    cfg.accounts = normalizedAccounts;
+    mutated = true;
+  } else {
+    cfg.accounts = normalizedAccounts;
+  }
+  if (!cfg.accounts.length && (cfg.apiKey || cfg.apiSecret)) {
+    cfg.accounts = [{
+      id: 'primary',
+      label: '',
+      apiKey: cfg.apiKey.trim(),
+      apiSecret: cfg.apiSecret.trim()
+    }];
+    mutated = true;
+  }
+  if (cfg.accounts.length) {
+    cfg.apiKey = cfg.accounts[0].apiKey || '';
+    cfg.apiSecret = cfg.accounts[0].apiSecret || '';
+  }
   return { mutated, config: cfg };
+}
+
+function getTrading212Accounts(cfg) {
+  if (!cfg) return [];
+  const accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
+  return accounts.filter(account => account?.apiKey && account?.apiSecret);
+}
+
+function resolveTrading212AccountForTrade(cfg, trade) {
+  const accounts = getTrading212Accounts(cfg);
+  if (!accounts.length) return null;
+  const accountId = trade?.trading212AccountId;
+  if (accountId) {
+    const matched = accounts.find(account => account?.id === accountId);
+    return matched || accounts[0];
+  }
+  return accounts[0];
 }
 
 function ensureIbkrConfig(user) {
@@ -2478,7 +2530,7 @@ function getCurrentPortfolioValue(user) {
     : 'GBP';
   const fallbackUpdatedAt = typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null;
   const tradingCfg = user?.trading212;
-  if (tradingCfg?.enabled && tradingCfg?.apiKey && tradingCfg?.apiSecret) {
+  if (tradingCfg?.enabled && getTrading212Accounts(tradingCfg).length) {
     if (isFreshTimestamp(tradingCfg.lastSyncAt, PORTFOLIO_SOURCE_T212_STALE_MS)) {
       return {
         value: portfolioValue,
@@ -2731,13 +2783,13 @@ function matchStopOrderForTrade(trade, orders) {
   return pickBestStopOrder(filtered, trade);
 }
 
-async function fetchTrading212Orders(config, username, { bypassCache = false } = {}) {
+async function fetchTrading212Orders(config, username, { bypassCache = false, accountId = '' } = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
   const baseUrl = resolveTrading212BaseUrl(config);
   const endpoint = '/api/v0/equity/orders';
-  const cacheKey = `${String(username || '')}|${baseUrl}|${endpoint}`;
+  const cacheKey = `${String(username || '')}|${String(accountId || '')}|${baseUrl}|${endpoint}`;
   const cached = trading212OrdersCache.get(cacheKey);
   if (!bypassCache && cached && Date.now() - cached.fetchedAt < TRADING212_ORDERS_CACHE_MS) {
     console.info(`[T212] cache hit orders key=${cacheKey}`);
@@ -3127,7 +3179,7 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
-function upsertTrading212StopOrders(user, ordersPayload) {
+function upsertTrading212StopOrders(user, ordersPayload, accountId = '') {
   const orders = ordersPayload?.orders || [];
   const journal = ensureTradeJournal(user);
   let updated = 0;
@@ -3135,6 +3187,7 @@ function upsertTrading212StopOrders(user, ordersPayload) {
     for (const trade of items || []) {
       if (!trade || trade.status === 'closed') continue;
       if (trade.source !== 'trading212' && !trade.trading212Id) continue;
+      if (accountId && trade.trading212AccountId && trade.trading212AccountId !== accountId) continue;
       const matched = matchStopOrderForTrade(trade, orders);
       const shouldAutoSync = trade.currentStopSource !== 'manual';
       if (!matched || !Number.isFinite(matched.stopPrice)) {
@@ -3291,7 +3344,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
   if (!user) return;
   ensureUserShape(user, username);
   const cfg = user.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  const accounts = getTrading212Accounts(cfg);
+  if (!cfg || !cfg.enabled || !accounts.length) return;
   const rates = await fetchRates();
   const now = Date.now();
   if (cfg.cooldownUntil) {
@@ -3310,11 +3364,36 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     delete cfg.cooldownUntil;
   }
   try {
-    const snapshot = await fetchTrading212Snapshot(cfg);
-    const ordersPayload = await fetchTrading212Orders(cfg, username);
-    const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload);
-    if (stopUpdates > 0) {
-      console.info(`[T212] synced current stops for ${stopUpdates} trade(s)`);
+    const accountResults = await Promise.allSettled(accounts.map(async (account, index) => {
+      const accountId = account.id || `account-${index + 1}`;
+      const accountConfig = {
+        ...cfg,
+        apiKey: account.apiKey,
+        apiSecret: account.apiSecret,
+        mode: account.mode || cfg.mode,
+        baseUrl: account.baseUrl || cfg.baseUrl
+      };
+      const snapshot = await fetchTrading212Snapshot(accountConfig);
+      const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+      return {
+        accountId,
+        accountConfig,
+        snapshot,
+        ordersPayload
+      };
+    }));
+    const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
+    const rejected = accountResults.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (!fulfilled.length) {
+      throw rejected[0] || new Trading212Error('Trading 212 sync failed.');
+    }
+    let totalStopUpdates = 0;
+    for (const result of fulfilled) {
+      const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId);
+      totalStopUpdates += stopUpdates;
+    }
+    if (totalStopUpdates > 0) {
+      console.info(`[T212] synced current stops for ${totalStopUpdates} trade(s)`);
     }
     const rates = await fetchRates();
     const history = ensurePortfolioHistory(user);
@@ -3327,33 +3406,42 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const existing = history[ym][dateKey] || {};
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
-    const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
-      ? snapshot.raw.transactions.items
-      : Array.isArray(snapshot.raw?.transactions?.records)
-        ? snapshot.raw.transactions.records
-        : Array.isArray(snapshot.raw?.transactions)
-          ? snapshot.raw.transactions
-          : null;
-    const effectiveTransactions = Array.isArray(snapshot.transactions)
-      ? snapshot.transactions
-      : Array.isArray(snapshot.transactionsRaw?.items)
-        ? snapshot.transactionsRaw.items
-        : Array.isArray(snapshot.transactionsRaw)
-          ? snapshot.transactionsRaw
-          : inlineTransactions;
-    if (Array.isArray(effectiveTransactions)) {
+    const combinedTransactions = fulfilled.flatMap(result => {
+      const snapshot = result.snapshot || {};
+      const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
+        ? snapshot.raw.transactions.items
+        : Array.isArray(snapshot.raw?.transactions?.records)
+          ? snapshot.raw.transactions.records
+          : Array.isArray(snapshot.raw?.transactions)
+            ? snapshot.raw.transactions
+            : null;
+      const effectiveTransactions = Array.isArray(snapshot.transactions)
+        ? snapshot.transactions
+        : Array.isArray(snapshot.transactionsRaw?.items)
+          ? snapshot.transactionsRaw.items
+          : Array.isArray(snapshot.transactionsRaw)
+            ? snapshot.transactionsRaw
+            : inlineTransactions;
+      if (!Array.isArray(effectiveTransactions)) return [];
+      return effectiveTransactions.map(tx => ({ tx, accountId: result.accountId }));
+    });
+    if (combinedTransactions.length) {
       const enabledAtTs = cfg.integrationEnabledAt ? Date.parse(cfg.integrationEnabledAt) : null;
       const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
-      const portfolioValue = Number.isFinite(snapshot.portfolioValue)
-        ? snapshot.portfolioValue
+      const portfolioValue = fulfilled.reduce((sum, result) => {
+        const value = Number(result.snapshot?.portfolioValue);
+        return Number.isFinite(value) ? sum + value : sum;
+      }, 0);
+      const effectivePortfolioValue = Number.isFinite(portfolioValue) && portfolioValue > 0
+        ? portfolioValue
         : (Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0);
-      const minDeposit = Number.isFinite(portfolioValue) && portfolioValue > 0
-        ? portfolioValue * 0.00015
+      const minDeposit = Number.isFinite(effectivePortfolioValue) && effectivePortfolioValue > 0
+        ? effectivePortfolioValue * 0.00015
         : 0;
-      const txs = effectiveTransactions
-        .map(tx => {
-          const ts = Date.parse(tx?.timestamp || tx?.time || tx?.date || tx?.dateTime || tx?.processedAt || '');
-          return { tx, ts };
+      const txs = combinedTransactions
+        .map(item => {
+          const ts = Date.parse(item.tx?.timestamp || item.tx?.time || item.tx?.date || item.tx?.dateTime || item.tx?.processedAt || '');
+          return { ...item, ts };
         })
         .filter(item => Number.isFinite(item.ts))
         .sort((a, b) => a.ts - b.ts);
@@ -3363,7 +3451,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         if (enabledAtTs && item.ts < enabledAtTs) continue;
         const tx = item.tx || {};
         const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-        if (reference && cfg.processedReferences.includes(reference)) {
+        const referenceKey = reference && item.accountId ? `${item.accountId}:${reference}` : reference;
+        if (referenceKey && cfg.processedReferences.includes(referenceKey)) {
           continue;
         }
         const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
@@ -3404,8 +3493,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           }
         }
         history[monthKey][date] = entry;
-        if (reference) {
-          cfg.processedReferences.push(reference);
+        if (referenceKey) {
+          cfg.processedReferences.push(referenceKey);
           if (cfg.processedReferences.length > 500) {
             cfg.processedReferences = cfg.processedReferences.slice(-500);
           }
@@ -3417,8 +3506,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
+    const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
+      const value = Number(result.snapshot?.portfolioValue);
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
     const payload = {
-      end: snapshot.portfolioValue,
+      end: Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : user.portfolio,
       cashIn,
       cashOut
     };
@@ -3429,12 +3522,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       payload.note = existingNote;
     }
     history[ym][dateKey] = payload;
-    user.portfolio = snapshot.portfolioValue;
+    if (Number.isFinite(combinedPortfolioValue)) {
+      user.portfolio = combinedPortfolioValue;
+    }
     user.portfolioCurrency = 'GBP';
     user.portfolioSource = 'trading212';
     user.lastPortfolioSyncAt = new Date().toISOString();
-    if (user.initialPortfolio === undefined) {
-      user.initialPortfolio = snapshot.portfolioValue;
+    if (user.initialPortfolio === undefined && Number.isFinite(combinedPortfolioValue)) {
+      user.initialPortfolio = combinedPortfolioValue;
     }
     user.profileComplete = true;
     const { total: updatedTotal } = computeNetDepositsTotals(user, history);
@@ -3443,44 +3538,54 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       : updatedTotal;
     refreshAnchors(user, history);
     cfg.lastSyncAt = new Date().toISOString();
-    cfg.lastStatus = { ok: true, status: 200 };
-    if (snapshot.baseUrl) {
-      cfg.lastBaseUrl = snapshot.baseUrl;
+    const rawAccounts = fulfilled.map(result => ({
+      accountId: result.accountId,
+      portfolio: result.snapshot?.raw || null,
+      positions: result.snapshot?.positionsRaw || null,
+      transactions: result.snapshot?.transactionsRaw || null,
+      orders: result.ordersPayload?.raw || null
+    }));
+    const lastSnapshot = fulfilled[fulfilled.length - 1]?.snapshot;
+    if (lastSnapshot?.baseUrl) {
+      cfg.lastBaseUrl = lastSnapshot.baseUrl;
       if (!cfg.baseUrl) {
-        cfg.baseUrl = snapshot.baseUrl;
+        cfg.baseUrl = lastSnapshot.baseUrl;
       }
-      const lowerBase = snapshot.baseUrl.toLowerCase();
+      const lowerBase = lastSnapshot.baseUrl.toLowerCase();
       if (lowerBase.includes('demo.trading212.com') || lowerBase.includes('api-demo.trading212.com')) {
         cfg.mode = 'practice';
       } else if (lowerBase.includes('api.trading212.com') || lowerBase.includes('live.trading212.com')) {
         cfg.mode = 'live';
       }
     }
-    if (snapshot.endpoint) {
-      cfg.lastEndpoint = snapshot.endpoint;
+    if (lastSnapshot?.endpoint) {
+      cfg.lastEndpoint = lastSnapshot.endpoint;
       if (!cfg.endpoint) {
-        cfg.endpoint = snapshot.endpoint;
+        cfg.endpoint = lastSnapshot.endpoint;
       }
     }
     cfg.lastRaw = {
-      portfolio: snapshot.raw || null,
-      positions: snapshot.positionsRaw || null,
-      transactions: snapshot.transactionsRaw || null
+      accounts: rawAccounts
     };
-    const inlinePositions = Array.isArray(snapshot.raw?.positions)
-      ? snapshot.raw.positions
-      : Array.isArray(snapshot.raw?.positions?.items)
-        ? snapshot.raw.positions.items
-        : Array.isArray(snapshot.raw?.portfolio?.positions)
-          ? snapshot.raw.portfolio.positions
-          : null;
-    const effectivePositions = Array.isArray(snapshot.positions)
-      ? snapshot.positions
-      : Array.isArray(snapshot.positionsRaw?.items)
-        ? snapshot.positionsRaw.items
-        : Array.isArray(snapshot.positionsRaw)
-          ? snapshot.positionsRaw
-          : inlinePositions;
+    const positionEntries = fulfilled.flatMap(result => {
+      const snapshot = result.snapshot || {};
+      const inlinePositions = Array.isArray(snapshot.raw?.positions)
+        ? snapshot.raw.positions
+        : Array.isArray(snapshot.raw?.positions?.items)
+          ? snapshot.raw.positions.items
+          : Array.isArray(snapshot.raw?.portfolio?.positions)
+            ? snapshot.raw.portfolio.positions
+            : null;
+      const effectivePositions = Array.isArray(snapshot.positions)
+        ? snapshot.positions
+        : Array.isArray(snapshot.positionsRaw?.items)
+          ? snapshot.positionsRaw.items
+          : Array.isArray(snapshot.positionsRaw)
+            ? snapshot.positionsRaw
+            : inlinePositions;
+      if (!Array.isArray(effectivePositions)) return [];
+      return effectivePositions.map(position => ({ position, accountId: result.accountId }));
+    });
     let positionsMutated = false;
     const journal = ensureTradeJournal(user);
     const openTrades = [];
@@ -3490,13 +3595,15 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         openTrades.push({ tradeDate, trade });
       }
     }
-    if (Array.isArray(effectivePositions) && effectivePositions.length) {
-      const sortedPositions = effectivePositions.slice().sort((a, b) => {
-        const aSymbol = String(a?.instrument?.ticker ?? a?.ticker ?? a?.symbol ?? '').toUpperCase();
-        const bSymbol = String(b?.instrument?.ticker ?? b?.ticker ?? b?.symbol ?? '').toUpperCase();
+    if (positionEntries.length) {
+      const sortedPositions = positionEntries.slice().sort((a, b) => {
+        const aSymbol = String(a?.position?.instrument?.ticker ?? a?.position?.ticker ?? a?.position?.symbol ?? '').toUpperCase();
+        const bSymbol = String(b?.position?.instrument?.ticker ?? b?.position?.ticker ?? b?.position?.symbol ?? '').toUpperCase();
         return aSymbol.localeCompare(bSymbol);
       });
-      for (const raw of sortedPositions) {
+      for (const entry of sortedPositions) {
+        const raw = entry.position;
+        const accountId = entry.accountId || '';
         const instrument = raw?.instrument || {};
         const walletImpact = raw?.walletImpact || {};
         const rawName = instrument?.name ?? raw?.name ?? '';
@@ -3557,15 +3664,22 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const trading212Key = rawIsin
           ? `isin:${rawIsin.toUpperCase()}`
           : (normalizedName ? `name:${normalizedName}` : symbol);
-        const trading212Id = rawPositionId ? String(rawPositionId) : trading212Key;
-        const existingTradeEntry = openTrades.find(entry => (
-          entry.trade?.trading212Id === trading212Id ||
-          (trading212Key && typeof entry.trade?.trading212Id === 'string' && entry.trade.trading212Id.startsWith(`${trading212Key}:`)) ||
-          entry.trade?.symbol === symbol ||
-          (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
-          (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
-          (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
-        ));
+        const trading212IdBase = rawPositionId ? String(rawPositionId) : trading212Key;
+        const trading212Id = accountId ? `${accountId}:${trading212IdBase}` : trading212IdBase;
+        const existingTradeEntry = openTrades.find(entry => {
+          if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
+            return false;
+          }
+          return (
+            entry.trade?.trading212Id === trading212Id ||
+            entry.trade?.trading212Id === trading212IdBase ||
+            (trading212Key && typeof entry.trade?.trading212Id === 'string' && entry.trade.trading212Id.endsWith(`${trading212Key}`)) ||
+            entry.trade?.symbol === symbol ||
+            (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
+            (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
+            (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
+          );
+        });
         const existingTrade = existingTradeEntry?.trade;
         const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
@@ -3592,6 +3706,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           existingTrade.status = 'open';
           existingTrade.source = 'trading212';
           existingTrade.trading212Id = trading212Id;
+          existingTrade.trading212AccountId = accountId || existingTrade.trading212AccountId || '';
           if (rawName) existingTrade.trading212Name = rawName;
           if (rawIsin) existingTrade.trading212Isin = rawIsin;
           if (rawTickerValue) existingTrade.trading212Ticker = rawTickerValue;
@@ -3635,6 +3750,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           assetClass: 'stocks',
           source: 'trading212',
           trading212Id,
+          trading212AccountId: accountId || undefined,
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
           trading212Ticker: rawTickerValue || undefined,
@@ -3644,7 +3760,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         journal[normalizedDate].push(trade);
         positionsMutated = true;
       }
-    } else if (Array.isArray(effectivePositions)) {
+    } else if (fulfilled.length) {
       const closeDate = new Date(runDate).toISOString();
       for (const entry of openTrades) {
         const trade = entry.trade;
@@ -3664,6 +3780,19 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       scheduleTrading212Job(username, user);
     }
     delete cfg.cooldownUntil;
+    if (rejected.length) {
+      const rateLimit = rejected.find(err => err instanceof Trading212RateLimitError);
+      if (rateLimit && rateLimit.retryAfter) {
+        cfg.cooldownUntil = new Date(now + rateLimit.retryAfter * 1000).toISOString();
+      }
+      cfg.lastStatus = {
+        ok: false,
+        status: 207,
+        message: `Trading 212 sync completed with ${rejected.length} account(s) failing.`
+      };
+    } else {
+      cfg.lastStatus = { ok: true, status: 200 };
+    }
     saveDB(db);
   } catch (e) {
     cfg.lastSyncAt = new Date().toISOString();
@@ -3706,7 +3835,7 @@ function stopTrading212Job(username) {
 function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
-  if (!cfg || !cfg.enabled || !cfg.apiKey || !cfg.apiSecret) return;
+  if (!cfg || !cfg.enabled || !getTrading212Accounts(cfg).length) return;
   const parsed = parseSnapshotTime(cfg.snapshotTime);
   const timezone = cfg.timezone || 'Europe/London';
   if (cfg.lastSyncAt) {
@@ -4630,13 +4759,25 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
   ensureUserShape(user, req.username);
   const cfg = user.trading212 || {};
   const parsed = parseSnapshotTime(cfg.snapshotTime);
+  const accountSummaries = Array.isArray(cfg.accounts)
+    ? cfg.accounts.map((account, index) => ({
+      id: account?.id || `account-${index + 1}`,
+      label: account?.label || '',
+      hasApiKey: !!account?.apiKey,
+      hasApiSecret: !!account?.apiSecret,
+      mode: account?.mode || cfg.mode || 'live'
+    }))
+    : [];
+  const hasApiKey = accountSummaries.some(account => account.hasApiKey);
+  const hasApiSecret = accountSummaries.some(account => account.hasApiSecret);
   res.json({
     enabled: !!cfg.enabled,
     snapshotTime: parsed ? `${parsed.hour}:${parsed.minute}` : '21:00',
     mode: cfg.mode || 'live',
     timezone: cfg.timezone || 'Europe/London',
-    hasApiKey: !!cfg.apiKey,
-    hasApiSecret: !!cfg.apiSecret,
+    hasApiKey,
+    hasApiSecret,
+    accounts: accountSummaries,
     baseUrl: cfg.baseUrl || '',
     endpoint: cfg.endpoint || '/api/v0/equity/portfolio/summary',
     lastBaseUrl: cfg.lastBaseUrl || null,
@@ -4648,7 +4789,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
   });
 });
 
-app.get('/api/integrations/trading212/raw', auth, (req, res) => {
+app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
   if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
     return res.status(403).json({ error: 'Forbidden' });
   }
@@ -4657,29 +4798,58 @@ app.get('/api/integrations/trading212/raw', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const cfg = user.trading212 || {};
-  let ordersPayload = null;
-  let ordersError = null;
-  if (cfg.apiKey && cfg.apiSecret) {
-    fetchTrading212Orders(cfg, req.username, { bypassCache: true })
-      .then(payload => {
-        ordersPayload = payload.raw ?? null;
-        cfg.lastRaw = {
-          ...(cfg.lastRaw || {}),
-          orders: ordersPayload
-        };
-        saveDB(db);
-      })
-      .catch(err => {
-        ordersError = err?.message || 'Unable to fetch orders.';
-      })
-      .finally(() => {
-        const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
-        res.json({ ...raw, orders: ordersPayload ?? raw.orders ?? null, ordersError });
-      });
-    return;
+  const accounts = getTrading212Accounts(cfg);
+  if (accounts.length) {
+    const results = await Promise.allSettled(accounts.map(async (account, index) => {
+      const accountId = account.id || `account-${index + 1}`;
+      const accountConfig = {
+        ...cfg,
+        apiKey: account.apiKey,
+        apiSecret: account.apiSecret,
+        mode: account.mode || cfg.mode,
+        baseUrl: account.baseUrl || cfg.baseUrl
+      };
+      try {
+        const payload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
+        return { accountId, payload };
+      } catch (error) {
+        const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch orders.');
+        wrapped.accountId = accountId;
+        throw wrapped;
+      }
+    }));
+    const lastRaw = cfg.lastRaw && typeof cfg.lastRaw === 'object' ? cfg.lastRaw : {};
+    const rawAccounts = Array.isArray(lastRaw.accounts) ? lastRaw.accounts : [];
+    const mergedAccounts = accounts.map((account, index) => {
+      const accountId = account.id || `account-${index + 1}`;
+      const existing = rawAccounts.find(entry => entry?.accountId === accountId) || {};
+      const result = results.find(item => item.status === 'fulfilled' && item.value.accountId === accountId);
+      const error = results.find(item => item.status === 'rejected' && item.reason?.accountId === accountId)?.reason;
+      const ordersPayload = result?.value?.payload?.raw ?? null;
+      return {
+        accountId,
+        label: account.label || '',
+        portfolio: existing.portfolio ?? null,
+        positions: existing.positions ?? null,
+        transactions: existing.transactions ?? null,
+        orders: ordersPayload ?? existing.orders ?? null,
+        ordersError: error ? (error.message || 'Unable to fetch orders.') : null
+      };
+    });
+    cfg.lastRaw = { accounts: mergedAccounts };
+    saveDB(db);
+    const primary = mergedAccounts[0] || {};
+    return res.json({
+      portfolio: primary.portfolio ?? null,
+      positions: primary.positions ?? null,
+      transactions: primary.transactions ?? null,
+      orders: primary.orders ?? null,
+      ordersError: primary.ordersError ?? null,
+      accounts: mergedAccounts
+    });
   }
   const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
-  res.json({ ...raw, ordersError: ordersError || null });
+  return res.json({ ...raw, ordersError: null });
 });
 
 app.get('/api/downloads/ibkr-connector/windows/meta', auth, (req, res) => {
@@ -5206,7 +5376,7 @@ app.post('/api/integrations/ibkr/sync', auth, asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/integrations/trading212', auth, async (req, res) => {
-  const { enabled, apiKey, apiSecret, snapshotTime, mode, timezone, baseUrl, endpoint, runNow } = req.body || {};
+  const { enabled, apiKey, apiSecret, accounts, snapshotTime, mode, timezone, baseUrl, endpoint, runNow } = req.body || {};
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -5227,21 +5397,77 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     ? 'https://demo.trading212.com'
     : 'https://live.trading212.com';
   cfg.endpoint = '/api/v0/equity/account/summary';
+  if (Array.isArray(accounts)) {
+    const existingAccounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
+    const existingMap = new Map(existingAccounts.map(account => [account.id, account]));
+    const normalized = accounts
+      .filter(account => account && typeof account === 'object')
+      .map((account, index) => {
+        const id = typeof account.id === 'string' && account.id.trim()
+          ? account.id.trim()
+          : (existingAccounts[index]?.id || crypto.randomBytes(6).toString('hex'));
+        const previous = existingMap.get(id);
+        const next = {
+          id,
+          label: typeof account.label === 'string' ? account.label.trim() : (previous?.label || ''),
+          apiKey: previous?.apiKey || '',
+          apiSecret: previous?.apiSecret || ''
+        };
+        if (account.apiKey !== undefined) {
+          next.apiKey = typeof account.apiKey === 'string' ? account.apiKey.trim() : '';
+        }
+        if (account.apiSecret !== undefined) {
+          next.apiSecret = typeof account.apiSecret === 'string' ? account.apiSecret.trim() : '';
+        }
+        if (typeof account.mode === 'string' && ['live', 'practice'].includes(account.mode)) {
+          next.mode = account.mode;
+        }
+        if (typeof account.baseUrl === 'string') {
+          next.baseUrl = account.baseUrl.trim();
+        }
+        return next;
+      })
+      .filter(account => account.apiKey || account.apiSecret || account.label);
+    cfg.accounts = normalized;
+  }
   if (apiKey !== undefined) {
     if (typeof apiKey === 'string' && apiKey.trim()) {
-      cfg.apiKey = apiKey.trim();
+      if (!Array.isArray(cfg.accounts) || !cfg.accounts.length) {
+        cfg.accounts = [{
+          id: 'primary',
+          label: '',
+          apiKey: apiKey.trim(),
+          apiSecret: cfg.apiSecret || ''
+        }];
+      } else {
+        cfg.accounts[0].apiKey = apiKey.trim();
+      }
     } else if (apiKey === '') {
-      cfg.apiKey = '';
+      if (Array.isArray(cfg.accounts) && cfg.accounts[0]) {
+        cfg.accounts[0].apiKey = '';
+      }
     }
   }
   if (apiSecret !== undefined) {
     if (typeof apiSecret === 'string' && apiSecret.trim()) {
-      cfg.apiSecret = apiSecret.trim();
+      if (!Array.isArray(cfg.accounts) || !cfg.accounts.length) {
+        cfg.accounts = [{
+          id: 'primary',
+          label: '',
+          apiKey: cfg.apiKey || '',
+          apiSecret: apiSecret.trim()
+        }];
+      } else {
+        cfg.accounts[0].apiSecret = apiSecret.trim();
+      }
     } else if (apiSecret === '') {
-      cfg.apiSecret = '';
+      if (Array.isArray(cfg.accounts) && cfg.accounts[0]) {
+        cfg.accounts[0].apiSecret = '';
+      }
     }
   }
-  if (cfg.enabled && (!cfg.apiKey || !cfg.apiSecret)) {
+  const savedAccounts = getTrading212Accounts(cfg);
+  if (cfg.enabled && !savedAccounts.length) {
     return res.status(400).json({ error: 'Provide your Trading 212 API key and secret to enable automation.' });
   }
   if (cfg.enabled) {
@@ -5256,10 +5482,14 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   if (!cfg.enabled) {
     delete cfg.cooldownUntil;
   }
+  if (Array.isArray(cfg.accounts) && cfg.accounts.length) {
+    cfg.apiKey = cfg.accounts[0].apiKey || '';
+    cfg.apiSecret = cfg.accounts[0].apiSecret || '';
+  }
   saveDB(db);
   scheduleTrading212Job(req.username, user);
   let responseCfg = cfg;
-  if (runNow && cfg.enabled && cfg.apiKey && cfg.apiSecret) {
+  if (runNow && cfg.enabled && getTrading212Accounts(cfg).length) {
     await syncTrading212ForUser(req.username);
     const latestDb = loadDB();
     responseCfg = latestDb.users[req.username]?.trading212 || responseCfg;
@@ -5269,8 +5499,17 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     snapshotTime: responseCfg.snapshotTime,
     mode: responseCfg.mode,
     timezone: responseCfg.timezone,
-    hasApiKey: !!responseCfg.apiKey,
-    hasApiSecret: !!responseCfg.apiSecret,
+    hasApiKey: getTrading212Accounts(responseCfg).some(account => account.apiKey),
+    hasApiSecret: getTrading212Accounts(responseCfg).some(account => account.apiSecret),
+    accounts: Array.isArray(responseCfg.accounts)
+      ? responseCfg.accounts.map(account => ({
+        id: account.id,
+        label: account.label || '',
+        hasApiKey: !!account.apiKey,
+        hasApiSecret: !!account.apiSecret,
+        mode: account.mode || responseCfg.mode || 'live'
+      }))
+      : [],
     baseUrl: responseCfg.baseUrl || '',
     endpoint: responseCfg.endpoint || '/api/v0/equity/account/summary',
     lastBaseUrl: responseCfg.lastBaseUrl || null,
@@ -6525,13 +6764,26 @@ app.get('/api/trades/active', auth, async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   const tradingCfg = user.trading212;
-  if (tradingCfg?.enabled && tradingCfg?.apiKey && tradingCfg?.apiSecret) {
+  const tradingAccounts = getTrading212Accounts(tradingCfg);
+  if (tradingCfg?.enabled && tradingAccounts.length) {
     try {
-      const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
-      const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload);
-      if (stopUpdates > 0) {
+      let totalUpdates = 0;
+      for (const account of tradingAccounts) {
+        const accountId = account.id || '';
+        const accountConfig = {
+          ...tradingCfg,
+          apiKey: account.apiKey,
+          apiSecret: account.apiSecret,
+          mode: account.mode || tradingCfg.mode,
+          baseUrl: account.baseUrl || tradingCfg.baseUrl
+        };
+        const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
+        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId);
+        totalUpdates += stopUpdates;
+      }
+      if (totalUpdates > 0) {
         saveDB(db);
-        console.info(`[T212] refreshed ${stopUpdates} trade stop(s) during active trades poll`);
+        console.info(`[T212] refreshed ${totalUpdates} trade stop(s) during active trades poll`);
       }
     } catch (e) {
       console.warn('Trading 212 stop refresh failed during active trades poll', e);
@@ -6640,13 +6892,21 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     }
   }
   const { config: tradingCfg } = ensureTrading212Config(user);
-  if (!tradingCfg?.apiKey || !tradingCfg?.apiSecret) {
+  const account = resolveTrading212AccountForTrade(tradingCfg, trade);
+  if (!account?.apiKey || !account?.apiSecret) {
     return res.status(401).json({
       error: 'Trading 212 API key is invalid or lacks Orders Read permission.'
     });
   }
   try {
-    const ordersPayload = await fetchTrading212Orders(tradingCfg, req.username);
+    const accountConfig = {
+      ...tradingCfg,
+      apiKey: account.apiKey,
+      apiSecret: account.apiSecret,
+      mode: account.mode || tradingCfg.mode,
+      baseUrl: account.baseUrl || tradingCfg.baseUrl
+    };
+    const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId: account.id || '' });
     console.info(`[T212] stop sync trade=${trade.id} display=${trade.displaySymbol || trade.symbol || ''} t212Ticker=${trade.trading212Ticker || ''} isin=${trade.trading212Isin || ''}`);
     console.info(`[T212] orders rawCount=${ordersPayload.rawCount} filteredCount=${ordersPayload.filteredCount}`);
     const matched = matchStopOrderForTrade(trade, ordersPayload.orders);
