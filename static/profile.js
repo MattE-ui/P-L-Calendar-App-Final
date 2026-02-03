@@ -350,9 +350,8 @@ function applyGuestRestrictions() {
     'account-nickname-submit',
     'profile-reset',
     't212-enabled',
-    't212-api-key',
-    't212-api-secret',
     't212-mode',
+    't212-add-account',
     't212-save',
     't212-run-now'
   ];
@@ -371,6 +370,9 @@ function applyGuestRestrictions() {
   sections.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('guest-disabled', disable);
+  });
+  document.querySelectorAll('#t212-accounts input, #t212-accounts button').forEach(input => {
+    input.disabled = disable;
   });
 }
 
@@ -504,6 +506,7 @@ const integrationState = {
   timezone: 'Europe/London',
   baseUrl: '',
   endpoint: '/api/v0/equity/portfolio/summary',
+  accounts: [],
   lastBaseUrl: null,
   lastEndpoint: null,
   cooldownUntil: null,
@@ -553,15 +556,100 @@ function formatBytes(value) {
 
 function setIntegrationFieldsDisabled(disabled) {
   const container = document.getElementById('t212-fields');
-  const apiInput = document.getElementById('t212-api-key');
-  const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const runBtn = document.getElementById('t212-run-now');
+  const addBtn = document.getElementById('t212-add-account');
   if (container) container.classList.toggle('is-hidden', disabled);
-  if (apiInput) apiInput.disabled = disabled;
-  if (secretInput) secretInput.disabled = disabled;
   if (modeSelect) modeSelect.disabled = disabled;
   if (runBtn) runBtn.disabled = disabled;
+  if (addBtn) addBtn.disabled = disabled;
+  document.querySelectorAll('#t212-accounts input, #t212-accounts button').forEach(input => {
+    input.disabled = disabled;
+  });
+}
+
+function buildTrading212AccountRow(account, index) {
+  const row = document.createElement('div');
+  row.className = 't212-account-row';
+  row.dataset.accountId = account.id || `account-${index + 1}`;
+  row.dataset.hasApiKey = account.hasApiKey ? 'true' : 'false';
+  row.dataset.hasApiSecret = account.hasApiSecret ? 'true' : 'false';
+
+  const fields = document.createElement('div');
+  fields.className = 't212-account-fields';
+
+  const labelInput = document.createElement('input');
+  labelInput.type = 'text';
+  labelInput.placeholder = 'Account label (optional)';
+  labelInput.value = account.label || '';
+  labelInput.className = 't212-account-label';
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.placeholder = account.hasApiKey
+    ? 'Key saved — paste a new key to replace'
+    : 'Paste your API key';
+  keyInput.autocomplete = 'off';
+  keyInput.className = 't212-api-key';
+
+  const secretInput = document.createElement('input');
+  secretInput.type = 'password';
+  secretInput.placeholder = account.hasApiSecret
+    ? 'Secret saved — paste a new secret to replace'
+    : 'Paste your API secret';
+  secretInput.autocomplete = 'off';
+  secretInput.className = 't212-api-secret';
+
+  fields.append(labelInput, keyInput, secretInput);
+
+  const actions = document.createElement('div');
+  actions.className = 't212-account-actions';
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'ghost small';
+  removeBtn.textContent = 'Remove';
+  removeBtn.addEventListener('click', () => {
+    row.remove();
+  });
+  actions.append(removeBtn);
+
+  row.append(fields, actions);
+  return row;
+}
+
+function renderTrading212Accounts() {
+  const container = document.getElementById('t212-accounts');
+  if (!container) return;
+  container.innerHTML = '';
+  const accounts = Array.isArray(integrationState.accounts) && integrationState.accounts.length
+    ? integrationState.accounts
+    : [{ id: 'primary', label: '', hasApiKey: false, hasApiSecret: false }];
+  accounts.forEach((account, index) => {
+    container.appendChild(buildTrading212AccountRow(account, index));
+  });
+}
+
+function collectTrading212Accounts() {
+  const rows = Array.from(document.querySelectorAll('#t212-accounts .t212-account-row'));
+  return rows.map((row, index) => {
+    const labelInput = row.querySelector('.t212-account-label');
+    const keyInput = row.querySelector('.t212-api-key');
+    const secretInput = row.querySelector('.t212-api-secret');
+    const labelValue = labelInput?.value.trim() || '';
+    const apiKeyValue = keyInput?.value.trim() || '';
+    const apiSecretValue = secretInput?.value.trim() || '';
+    const payload = {
+      id: row.dataset.accountId || `account-${index + 1}`,
+      label: labelValue
+    };
+    if (apiKeyValue) {
+      payload.apiKey = apiKeyValue;
+    }
+    if (apiSecretValue) {
+      payload.apiSecret = apiSecretValue;
+    }
+    return payload;
+  });
 }
 
 function renderIntegrationStatus(data) {
@@ -742,28 +830,16 @@ async function loadIntegration() {
   integrationState.timezone = data.timezone || 'Europe/London';
   integrationState.baseUrl = data.baseUrl || '';
   integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
+    integrationState.accounts = Array.isArray(data.accounts) ? data.accounts : [];
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
     integrationState.lastRaw = data.lastRaw || null;
     const toggle = document.getElementById('t212-enabled');
-    const apiInput = document.getElementById('t212-api-key');
-    const secretInput = document.getElementById('t212-api-secret');
     const modeSelect = document.getElementById('t212-mode');
     if (toggle) toggle.checked = integrationState.enabled;
-    if (apiInput) {
-      apiInput.value = '';
-      apiInput.placeholder = integrationState.hasApiKey
-        ? 'Key saved — paste a new key to replace'
-        : 'Paste your API key';
-    }
-    if (secretInput) {
-      secretInput.value = '';
-      secretInput.placeholder = integrationState.hasApiSecret
-        ? 'Secret saved — paste a new secret to replace'
-        : 'Paste your API secret';
-    }
     if (modeSelect) modeSelect.value = integrationState.mode;
+    renderTrading212Accounts();
     setIntegrationFieldsDisabled(!integrationState.enabled || profileState.isGuest);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
@@ -977,26 +1053,13 @@ async function saveIntegration({ runNow = false } = {}) {
   const errorEl = document.getElementById('t212-error');
   if (errorEl) errorEl.textContent = '';
   const toggle = document.getElementById('t212-enabled');
-  const apiInput = document.getElementById('t212-api-key');
-  const secretInput = document.getElementById('t212-api-secret');
   const modeSelect = document.getElementById('t212-mode');
   const enabled = !!toggle?.checked;
   const payload = {
     enabled,
-    mode: modeSelect?.value || integrationState.mode
+    mode: modeSelect?.value || integrationState.mode,
+    accounts: collectTrading212Accounts()
   };
-  const apiKeyValue = apiInput?.value.trim();
-  if (apiKeyValue) {
-    payload.apiKey = apiKeyValue;
-  } else if (!enabled && integrationState.hasApiKey) {
-    payload.apiKey = '';
-  }
-  const apiSecretValue = secretInput?.value.trim();
-  if (apiSecretValue) {
-    payload.apiSecret = apiSecretValue;
-  } else if (!enabled && integrationState.hasApiSecret) {
-    payload.apiSecret = '';
-  }
   if (runNow) payload.runNow = true;
   try {
     const data = await api('/api/integrations/trading212', {
@@ -1012,23 +1075,13 @@ async function saveIntegration({ runNow = false } = {}) {
     integrationState.timezone = data.timezone || integrationState.timezone;
     integrationState.baseUrl = data.baseUrl || '';
     integrationState.endpoint = data.endpoint || '/api/v0/equity/account/summary';
+    integrationState.accounts = Array.isArray(data.accounts) ? data.accounts : integrationState.accounts;
     integrationState.lastBaseUrl = data.lastBaseUrl || null;
     integrationState.lastEndpoint = data.lastEndpoint || null;
     integrationState.cooldownUntil = data.cooldownUntil || null;
     integrationState.lastRaw = data.lastRaw || null;
-    if (apiInput) {
-      apiInput.value = '';
-      apiInput.placeholder = integrationState.hasApiKey
-        ? 'Key saved — paste a new key to replace'
-        : 'Paste your API key';
-    }
-    if (secretInput) {
-      secretInput.value = '';
-      secretInput.placeholder = integrationState.hasApiSecret
-        ? 'Secret saved — paste a new secret to replace'
-        : 'Paste your API secret';
-    }
     if (toggle) toggle.checked = integrationState.enabled;
+    renderTrading212Accounts();
     setIntegrationFieldsDisabled(!integrationState.enabled);
     renderIntegrationStatus({
       enabled: integrationState.enabled,
@@ -1180,6 +1233,18 @@ window.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('t212-help-close')?.addEventListener('click', () => {
     helpModal?.classList.add('hidden');
+  });
+  document.getElementById('t212-add-account')?.addEventListener('click', () => {
+    const container = document.getElementById('t212-accounts');
+    if (!container) return;
+    const index = container.querySelectorAll('.t212-account-row').length;
+    const row = buildTrading212AccountRow({
+      id: `account-${Date.now()}`,
+      label: '',
+      hasApiKey: false,
+      hasApiSecret: false
+    }, index);
+    container.appendChild(row);
   });
   document.getElementById('profile-save')?.addEventListener('click', saveProfile);
   document.getElementById('profile-logout')?.addEventListener('click', logout);
