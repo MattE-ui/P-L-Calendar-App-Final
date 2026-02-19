@@ -1086,7 +1086,7 @@ function renderActiveTrades() {
       label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%`,
       className: ''
     }, {
-      label: `R ${formatRiskMultiple(riskMultiple)}`,
+      label: formatRiskMultiple(riskMultiple),
       className: ''
     }];
     badgeItems.forEach(item => {
