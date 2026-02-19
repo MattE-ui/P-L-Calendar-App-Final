@@ -119,3 +119,45 @@ test('updates and closes a trade then filters winners', async () => {
   assert.equal(byType.res.status, 200);
   assert.ok(byType.data.trades.length >= 1);
 });
+
+test('records partial trims when reducing units and includes trim pnl in final realized pnl', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 20,
+      stop: 18,
+      riskPct: 1,
+      date: '2024-03-01',
+      symbol: 'NVDA'
+    })
+  });
+  const id = create.data.trade.id;
+
+  const trimRes = await authedFetch(`/api/trades/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sizeUnits: 40,
+      trimPrice: 21,
+      trimDate: '2024-03-02'
+    })
+  });
+  assert.equal(trimRes.res.status, 200);
+  assert.equal(trimRes.data.trade.sizeUnits, 40);
+  assert.equal(trimRes.data.trade.partialCloses.length, 1);
+  assert.equal(trimRes.data.trade.partialCloses[0].units, 10);
+
+  const closeRes = await authedFetch('/api/trades/close', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, price: 22, date: '2024-03-03' })
+  });
+  assert.equal(closeRes.res.status, 200);
+
+  const list = await authedFetch('/api/trades');
+  const closed = list.data.trades.find(t => t.id === id);
+  assert.ok(closed);
+  assert.equal(closed.status, 'closed');
+  assert.equal(closed.realizedPnlGBP, 90);
+});
