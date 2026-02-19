@@ -1072,6 +1072,7 @@ function normalizeTradeJournal(user) {
       const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
       const closePrice = Number(trade.closePrice);
       const closeDate = typeof trade.closeDate === 'string' ? trade.closeDate : undefined;
+      const partialCloses = normalizePartialCloses(trade.partialCloses, cleanDate);
       const normalizedTrade = {
         id,
         entry,
@@ -1106,6 +1107,9 @@ function normalizeTradeJournal(user) {
         createdAt,
         originalStopPrice
       };
+      if (partialCloses.length) {
+        normalizedTrade.partialCloses = partialCloses;
+      }
       if (Number.isFinite(currentStopRaw) && currentStopRaw > 0) {
         normalizedTrade.currentStop = currentStopRaw;
       }
@@ -1189,24 +1193,33 @@ function normalizeTradeJournal(user) {
 }
 
 function computeRealizedPnl(trade, rates = {}) {
-  if (!trade || trade.status !== 'closed') return null;
-  const closePrice = Number(trade.closePrice);
+  if (!trade) return null;
   const entry = Number(trade.entry);
-  const sizeUnits = Number(trade.sizeUnits);
-  if (!Number.isFinite(closePrice) || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
+  if (!Number.isFinite(entry)) {
     return null;
   }
-  const direction = trade.direction === 'short' ? 'short' : 'long';
-  const slippage = Number(trade.slippage) || 0;
-  const effectiveClose = direction === 'long'
-    ? closePrice - slippage
-    : closePrice + slippage;
-  const pnlCurrency = direction === 'long'
-    ? (effectiveClose - entry) * sizeUnits
-    : (entry - effectiveClose) * sizeUnits;
-  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const partialCloses = Array.isArray(trade.partialCloses) ? trade.partialCloses : [];
+  const partialPnlCurrency = partialCloses.reduce((sum, close) => {
+    const units = Number(close?.units);
+    const price = Number(close?.price);
+    if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(price) || price <= 0) {
+      return sum;
+    }
+    return sum + computePartialClosePnlCurrency(trade, units, price);
+  }, 0);
+  let finalPnlCurrency = 0;
+  if (trade.status === 'closed') {
+    const closePrice = Number(trade.closePrice);
+    const sizeUnits = Number(trade.sizeUnits);
+    if (!Number.isFinite(closePrice) || !Number.isFinite(sizeUnits)) {
+      return null;
+    }
+    finalPnlCurrency = computePartialClosePnlCurrency(trade, sizeUnits, closePrice);
+  }
+  const grossPnlCurrency = partialPnlCurrency + finalPnlCurrency;
+  const pnlGBP = convertToGBP(grossPnlCurrency, trade.currency || 'GBP', rates);
   const feesCurrency = Number(trade.fees) || 0;
-  const netPnlCurrency = pnlCurrency - feesCurrency;
+  const netPnlCurrency = grossPnlCurrency - feesCurrency;
   const realizedPnlGBP = Number.isFinite(Number(trade.realizedPnlGBP))
     ? Number(trade.realizedPnlGBP)
     : (Number.isFinite(pnlGBP) ? pnlGBP - convertToGBP(feesCurrency, trade.currency || 'GBP', rates) : netPnlCurrency);
@@ -1355,20 +1368,72 @@ function revertHistoryForClose(user, history, closeDateKey, pnlGBP) {
   refreshAnchors(user, history);
 }
 
+function normalizePartialCloses(partialCloses, cleanDate) {
+  if (!Array.isArray(partialCloses)) return [];
+  const normalized = [];
+  for (const close of partialCloses) {
+    if (!close || typeof close !== 'object') continue;
+    const units = Number(close.units);
+    const price = Number(close.price);
+    if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(price) || price <= 0) continue;
+    const payload = { units, price };
+    if (typeof close.id === 'string' && close.id) {
+      payload.id = close.id;
+    }
+    if (typeof close.date === 'string' && cleanDate.test(close.date)) {
+      payload.date = close.date;
+    }
+    if (typeof close.createdAt === 'string' && close.createdAt) {
+      payload.createdAt = close.createdAt;
+    }
+    normalized.push(payload);
+  }
+  return normalized;
+}
+
+function computePartialClosePnlCurrency(trade, units, price) {
+  const direction = trade.direction === 'short' ? 'short' : 'long';
+  const slippage = Number(trade.slippage) || 0;
+  const effectiveClose = direction === 'long'
+    ? price - slippage
+    : price + slippage;
+  return direction === 'long'
+    ? (effectiveClose - Number(trade.entry)) * units
+    : (Number(trade.entry) - effectiveClose) * units;
+}
+
+function addTradeTrim(user, trade, units, price, closeDate, rates, defaultDate) {
+  const history = ensurePortfolioHistory(user);
+  const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
+    ? closeDate
+    : (defaultDate || currentDateKey());
+  const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
+  const pnlCurrency = computePartialClosePnlCurrency(trade, units, price);
+  const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
+  const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
+  trade.partialCloses ||= [];
+  trade.partialCloses.push({
+    id: crypto.randomBytes(8).toString('hex'),
+    units,
+    price,
+    date: targetDate,
+    createdAt: new Date().toISOString()
+  });
+  trade.sizeUnits = Number(trade.sizeUnits) - units;
+  if (!isProviderTrade) {
+    updateHistoryForClose(user, history, targetDate, pnlSafe);
+    refreshAnchors(user, history);
+  }
+  return { pnlGBP: pnlSafe, closeDateKey: targetDate };
+}
+
 function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate) {
   const history = ensurePortfolioHistory(user);
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
     : (defaultDate || currentDateKey());
   const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
-  const direction = trade.direction === 'short' ? 'short' : 'long';
-  const slippage = Number(trade.slippage) || 0;
-  const effectiveClose = direction === 'long'
-    ? closePrice - slippage
-    : closePrice + slippage;
-  const pnlCurrency = direction === 'long'
-    ? (effectiveClose - Number(trade.entry)) * Number(trade.sizeUnits)
-    : (Number(trade.entry) - effectiveClose) * Number(trade.sizeUnits);
+  const pnlCurrency = computePartialClosePnlCurrency(trade, Number(trade.sizeUnits), closePrice);
   const feesCurrency = Number(trade.fees) || 0;
   const netPnlCurrency = pnlCurrency - feesCurrency;
   const pnlGBP = convertToGBP(netPnlCurrency, trade.currency || 'GBP', rates);
@@ -6562,6 +6627,31 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {
     return res.status(400).json({ error: `Missing FX rate for ${tradeCurrency}` });
   }
+  const requestedUnitsNum = updates.sizeUnits !== undefined ? Number(updates.sizeUnits) : null;
+  const isTrimRequest = (
+    trade.status !== 'closed'
+    && Number.isFinite(requestedUnitsNum)
+    && requestedUnitsNum > 0
+    && requestedUnitsNum < Number(trade.sizeUnits)
+  );
+  if (isTrimRequest) {
+    const trimUnits = Number(trade.sizeUnits) - requestedUnitsNum;
+    const trimPrice = Number(updates.trimPrice);
+    if (!Number.isFinite(trimPrice) || trimPrice <= 0) {
+      return res.status(400).json({ error: 'Enter a valid trim fill price' });
+    }
+    const trimDate = typeof updates.trimDate === 'string' ? updates.trimDate : undefined;
+    const trimResult = addTradeTrim(user, trade, trimUnits, trimPrice, trimDate, rates, found.dateKey);
+    if (requestedUnitsNum <= 0) {
+      const closeNum = Number(updates.closePrice);
+      if (!Number.isFinite(closeNum) || closeNum <= 0) {
+        return res.status(400).json({ error: 'Enter a valid closing price' });
+      }
+      applyTradeClose(user, trade, closeNum, updates.closeDate, rates, found.dateKey);
+    }
+    saveDB(db);
+    return res.json({ ok: true, trade, trim: trimResult });
+  }
   const wantsRiskUpdate = (
     updates.entry !== undefined ||
     updates.stop !== undefined ||
@@ -6707,6 +6797,33 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   }
   saveDB(db);
   res.json({ ok: true, trade });
+});
+
+app.post('/api/trades/:id/trim', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ error: 'Trade not found' });
+  const trade = found.trade;
+  if (trade.status === 'closed') {
+    return res.status(400).json({ error: 'Trade already closed' });
+  }
+  const units = Number(req.body?.units);
+  const price = Number(req.body?.price);
+  const date = typeof req.body?.date === 'string' ? req.body.date : undefined;
+  if (!Number.isFinite(units) || units <= 0 || units >= Number(trade.sizeUnits)) {
+    return res.status(400).json({ error: 'Enter units less than the current position size' });
+  }
+  if (!Number.isFinite(price) || price <= 0) {
+    return res.status(400).json({ error: 'Enter a valid trim fill price' });
+  }
+  const rates = await fetchRates();
+  const result = addTradeTrim(user, trade, units, price, date, rates, found.dateKey);
+  saveDB(db);
+  res.json({ ok: true, trade, trim: result });
 });
 
 app.delete('/api/trades/:id', auth, (req, res) => {

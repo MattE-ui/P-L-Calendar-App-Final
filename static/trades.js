@@ -499,6 +499,23 @@ async function saveTrade(event) {
   const payload = collectFormData();
   const status = document.querySelector('#form-status');
   try {
+    if (state.editingId && state.editingTrade?.status !== 'closed') {
+      const existingUnits = Number(state.editingTrade.sizeUnits);
+      const updatedUnits = Number(payload.sizeUnits);
+      if (Number.isFinite(existingUnits) && Number.isFinite(updatedUnits) && updatedUnits > 0 && updatedUnits < existingUnits) {
+        const trimUnits = existingUnits - updatedUnits;
+        const trimPriceRaw = window.prompt(`You reduced this position by ${trimUnits}. Enter trim fill price:`, payload.closePrice || state.editingTrade.entry || '');
+        if (trimPriceRaw === null) return;
+        const trimPrice = Number(trimPriceRaw);
+        if (!Number.isFinite(trimPrice) || trimPrice <= 0) {
+          throw new Error('Enter a valid trim fill price');
+        }
+        const trimDateRaw = window.prompt('Enter trim date (YYYY-MM-DD) or leave blank', '');
+        if (trimDateRaw === null) return;
+        payload.trimPrice = trimPrice;
+        if (trimDateRaw) payload.trimDate = trimDateRaw;
+      }
+    }
     const isTrading212 = state.editingTrade?.source === 'trading212' || state.editingTrade?.trading212Id;
     if (state.editingId && isTrading212 && typeof window.computeSourceKey === 'function') {
       const instrument = {
