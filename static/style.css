@@ -636,13 +636,20 @@ select {
   font-weight: 700;
 }
 .trade-pill .trade-badges {
-  gap: 14px;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .trade-meta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+}
+.trade-pill .trade-badges .trade-badge {
+  font-size: 11px;
+  padding: 5px 8px;
+  white-space: nowrap;
 }
 .trade-note-toggle {
   width: 36px;
