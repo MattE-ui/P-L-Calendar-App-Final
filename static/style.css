@@ -425,6 +425,14 @@ select {
   color: #cde8ff;
   border: 1px solid rgba(42,163,255,.4);
 }
+#risk-currency-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+#risk-currency-toggle button {
+  width: 100%;
+  min-width: 0;
+}
 .tool-actions {
   display: flex;
   flex-direction: column;
