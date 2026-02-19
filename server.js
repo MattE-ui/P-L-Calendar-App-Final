@@ -3684,7 +3684,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
-        const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
+        const stop = parseTradingNumber(
+          raw?.stopLoss ??
+          raw?.stopPrice ??
+          raw?.stop ??
+          raw?.stopLossPrice ??
+          raw?.trailingStopLoss ??
+          raw?.trailingStopPrice
+        );
         const sizeUnits = Math.abs(quantity);
         const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
@@ -3727,12 +3734,18 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           positionsMutated = true;
           continue;
         }
+        const initialStop = Number.isFinite(stop) && stop > 0
+          ? stop
+          : (Number.isFinite(lowStop) ? lowStop : undefined);
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
           symbol: resolvedSymbol,
           currency: tradeCurrency,
           entry: entryPrice,
-          stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
+          stop: initialStop,
+          currentStop: initialStop,
+          currentStopSource: Number.isFinite(stop) && stop > 0 ? 't212' : undefined,
+          currentStopStale: Number.isFinite(stop) && stop > 0 ? false : undefined,
           sizeUnits,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           riskPct: 0,
