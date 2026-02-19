@@ -432,6 +432,10 @@ select {
 #risk-currency-toggle button {
   width: 100%;
   min-width: 0;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .tool-actions {
   display: flex;
