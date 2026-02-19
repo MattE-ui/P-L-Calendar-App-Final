@@ -11,6 +11,7 @@ const state = {
   defaultRiskCurrency: 'GBP',
   rates: { GBP: 1 },
   liveOpenPnlGBP: 0,
+  openLossPotentialGBP: 0,
   livePortfolioGBP: 0,
   activeTrades: [],
   activeTradeSort: 'newest',
@@ -806,15 +807,24 @@ function renderActiveTrades() {
   const showAll = $('#active-trade-show-all');
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
+  const openLossEl = $('#open-loss-potential-display');
+  const openLossCard = $('#open-loss-potential-card');
   if (!list) return;
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+  const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
   if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
+  if (openLossEl) openLossEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(openLossPotential);
   if (pnlCard && !state.safeScreenshot) {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
   } else if (pnlCard) {
     pnlCard.classList.remove('positive', 'negative');
+  }
+  if (openLossCard && !state.safeScreenshot) {
+    openLossCard.classList.toggle('negative', openLossPotential < 0);
+  } else if (openLossCard) {
+    openLossCard.classList.remove('negative');
   }
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
@@ -2359,11 +2369,15 @@ async function loadData() {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
+    state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
+      ? activeRes.openLossPotential
+      : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
+    state.openLossPotentialGBP = 0;
   }
 }
 
@@ -2375,6 +2389,9 @@ async function refreshActiveTrades() {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
+    state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
+      ? activeRes.openLossPotential
+      : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
     renderActiveTrades();
@@ -2382,6 +2399,7 @@ async function refreshActiveTrades() {
     renderMetrics();
   } catch (e) {
     console.warn('Failed to refresh active trades', e);
+    state.openLossPotentialGBP = 0;
   }
 }
 

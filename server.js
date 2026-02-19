@@ -4253,7 +4253,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const totals = computeNetDepositsTotals(user, history);
   const anchors = refreshAnchors(user, history);
   const rates = await fetchRates();
-  const { trades, liveOpenPnlGBP } = await buildActiveTrades(user, rates);
+  const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
   const livePortfolio = portfolioSnapshot.value;
   if (mutated || normalized || anchors.mutated) saveDB(db);
@@ -4266,6 +4266,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     netDepositsTotal: totals.total,
     profileComplete: !!user.profileComplete,
     liveOpenPnl: liveOpenPnlGBP,
+    openLossPotential: openLossPotentialGBP,
     livePortfolio,
     activeTrades: trades.length,
     isGuest: !!user.guest
@@ -6047,6 +6048,7 @@ async function buildActiveTrades(user, rates = {}) {
   const journal = ensureTradeJournal(user);
   const trades = [];
   let liveOpenPnlGBP = 0;
+  let openLossPotentialGBP = 0;
   let providerTrades = 0;
   let manualTrades = 0;
   let providerCurrency = null;
@@ -6137,6 +6139,7 @@ async function buildActiveTrades(user, rates = {}) {
       const ibkrPnlGBP = isIbkr ? convertToGBP(syncPpl, tradeCurrency, rates) : null;
       const providerPnlGBP = Number.isFinite(ibkrPnlGBP) ? ibkrPnlGBP : syncPpl;
       const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
+      if (guaranteedPnlGBP !== null && guaranteedPnlGBP < 0) openLossPotentialGBP += guaranteedPnlGBP;
       liveOpenPnlGBP += providerPnlGBP;
       providerTrades += 1;
       const providerCurrencyValue = isIbkr && Number.isFinite(ibkrPnlGBP) ? 'GBP' : tradeCurrency;
@@ -6230,6 +6233,7 @@ async function buildActiveTrades(user, rates = {}) {
       liveOpenPnlGBP += unrealizedGBP;
     }
     const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
+    if (guaranteedPnlGBP !== null && guaranteedPnlGBP < 0) openLossPotentialGBP += guaranteedPnlGBP;
     manualTrades += 1;
     const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
       ? Number(trade.perUnitRisk)
@@ -6284,6 +6288,7 @@ async function buildActiveTrades(user, rates = {}) {
   return {
     trades: enriched,
     liveOpenPnlGBP,
+    openLossPotentialGBP,
     liveOpenPnlMode: providerTrades > 0 && manualTrades === 0 ? 'provider' : 'computed',
     liveOpenPnlCurrency: providerTrades > 0 && manualTrades === 0 ? (providerCurrency || 'GBP') : undefined
   };
@@ -6802,11 +6807,12 @@ app.get('/api/trades/active', auth, async (req, res) => {
     }
   }
   const rates = await fetchRates();
-  const { trades, liveOpenPnlGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
+  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
   const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
   res.json({
     trades: mappedTrades,
     liveOpenPnl: liveOpenPnlGBP,
+    openLossPotential: openLossPotentialGBP,
     liveOpenPnlMode,
     liveOpenPnlCurrency
   });
