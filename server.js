@@ -1038,6 +1038,7 @@ function normalizeTradeJournal(user) {
       const currentStopLastSyncedAtRaw = typeof trade.currentStopLastSyncedAt === 'string' ? trade.currentStopLastSyncedAt : '';
       const t212StopOrderIdRaw = typeof trade.t212StopOrderId === 'string' ? trade.t212StopOrderId : '';
       const currentStopStale = trade.currentStopStale === true;
+      const stopManualOverride = trade.stopManualOverride === true;
       const originalStopRaw = Number(trade.originalStopPrice);
       const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : '';
       const feesRaw = Number(trade.fees);
@@ -1128,6 +1129,9 @@ function normalizeTradeJournal(user) {
       }
       if (currentStopStale) {
         normalizedTrade.currentStopStale = true;
+      }
+      if (stopManualOverride) {
+        normalizedTrade.stopManualOverride = true;
       }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
@@ -3315,7 +3319,7 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
       trade.currentStopLastSyncedAt = new Date().toISOString();
       trade.currentStopStale = false;
       trade.t212StopOrderId = matched.id || '';
-      if (previousSource !== 't212' && previousSource !== 'ibkr') {
+      if (trade.stopManualOverride !== true) {
         trade.stop = stopPrice;
       }
       recalculateTradeRiskFromImportedStop(trade, user, rates);
@@ -3833,7 +3837,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             existingTrade.currentStop = nextStop;
             existingTrade.currentStopSource = Number.isFinite(stop) && stop > 0 ? 't212' : (existingTrade.currentStopSource || undefined);
             existingTrade.currentStopStale = Number.isFinite(stop) && stop > 0 ? false : (existingTrade.currentStopStale === true);
-            if (!hadProviderStop || !Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
+            if (existingTrade.stopManualOverride !== true) {
               existingTrade.stop = nextStop;
             }
             recalculateTradeRiskFromImportedStop(existingTrade, user, rates);
@@ -6748,6 +6752,9 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     trade.currentStopSource = 'manual';
     trade.currentStopStale = false;
   }
+  if ((trade.source === 'trading212' || trade.trading212Id) && (updates.stop !== undefined || updates.currentStop !== undefined || incomingStopSource === 'manual')) {
+    trade.stopManualOverride = true;
+  }
   if (wantsRiskUpdate && trade.status !== 'closed') {
     const entryNum = Number(updates.entry ?? trade.entry);
     const stopNum = Number(updates.stop ?? trade.stop);
@@ -6962,7 +6969,7 @@ app.get('/api/trades/active', auth, async (req, res) => {
           baseUrl: account.baseUrl || tradingCfg.baseUrl
         };
         const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
-        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId);
+        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
         totalUpdates += stopUpdates;
       }
       if (totalUpdates > 0) {
@@ -7296,6 +7303,7 @@ module.exports = {
   parseTrading212Orders,
   matchStopOrderForTrade,
   pickBestStopOrder,
+  upsertTrading212StopOrders,
   extractIbkrPortfolioValue,
   mapIbkrPosition,
   parseIbkrOrders,
