@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { computeRiskPlan, summarizeWeek } = require('../static/script.js');
+const { computeRiskPlan, summarizeWeek, computeAverageChangePercent } = require('../static/script.js');
 
 test('computeRiskPlan supports long vs short and fees', () => {
   const long = computeRiskPlan({
@@ -51,4 +51,14 @@ test('summarizeWeek totals cash and trades', () => {
   assert.equal(result.totalChange, 5);
   assert.equal(result.totalCashFlow, 5);
   assert.equal(result.totalTrades, 3);
+});
+
+test('computeAverageChangePercent uses latest portfolio value as denominator', () => {
+  const pct = computeAverageChangePercent(154, 18989.11);
+  assert.ok(Math.abs(pct - 0.8109937) < 0.0001);
+});
+
+test('computeAverageChangePercent handles invalid denominators', () => {
+  assert.equal(computeAverageChangePercent(10, 0), null);
+  assert.equal(computeAverageChangePercent(10, null), null);
 });

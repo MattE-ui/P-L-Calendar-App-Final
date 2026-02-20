@@ -237,6 +237,15 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
+function computeAverageChangePercent(avgChangeGBP, portfolioValueGBP) {
+  const avgChange = Number(avgChangeGBP);
+  const portfolioValue = Number(portfolioValueGBP);
+  if (!Number.isFinite(avgChange) || !Number.isFinite(portfolioValue) || portfolioValue === 0) {
+    return null;
+  }
+  return (avgChange / Math.abs(portfolioValue)) * 100;
+}
+
 function formatRiskMultiple(value) {
   if (!Number.isFinite(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
@@ -1907,17 +1916,11 @@ function renderSummary() {
   const values = getValuesForSummary();
   let changeSum = 0;
   let changeCount = 0;
-  let pctSum = 0;
-  let pctCount = 0;
   let cashSum = 0;
   values.forEach(item => {
     if (item?.change !== null && item?.change !== undefined) {
       changeSum += item.change;
       changeCount++;
-    }
-    if (item?.pct !== null && item?.pct !== undefined) {
-      pctSum += item.pct;
-      pctCount++;
     }
     cashSum += item?.cashFlow ?? 0;
   });
@@ -1935,7 +1938,7 @@ function renderSummary() {
     return;
   }
   const avgGBP = changeSum / changeCount;
-  const avgPct = pctCount ? (pctSum / pctCount) : null;
+  const avgPct = computeAverageChangePercent(avgGBP, getLatestPortfolioGBP());
   const label = viewAvgLabels[state.view] || 'Average';
   const pctText = avgPct === null ? '' : ` (${formatPercent(avgPct)})`;
   const cashRow = cashFlowHtml ? `<div class="summary-line">${cashFlowHtml}</div>` : '';
@@ -3294,7 +3297,7 @@ async function updateDevtoolsNav() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
+  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 async function loadProfile() {
@@ -3319,7 +3322,7 @@ async function updateDevtoolsNav() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
+  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 async function updateDevtoolsNav() {
@@ -3333,7 +3336,7 @@ async function updateDevtoolsNav() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
+  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 async function updateDevtoolsNav() {
@@ -3347,7 +3350,7 @@ async function updateDevtoolsNav() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek };
+  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 async function init() {
