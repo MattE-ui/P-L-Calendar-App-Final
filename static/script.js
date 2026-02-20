@@ -246,6 +246,10 @@ function computeAverageChangePercent(avgChangeGBP, portfolioValueGBP) {
   return (avgChange / Math.abs(portfolioValue)) * 100;
 }
 
+function computeChangePercentFromLatestPortfolio(changeGBP) {
+  return computeAverageChangePercent(changeGBP, getLatestPortfolioGBP());
+}
+
 function formatRiskMultiple(value) {
   if (!Number.isFinite(value)) return '—';
   const sign = value > 0 ? '+' : value < 0 ? '-' : '';
@@ -479,11 +483,9 @@ function getWeeksInMonth(date) {
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
     const totalCashFlow = days.reduce((sum, entry) => sum + (entry?.cashFlow ?? 0), 0);
     const totalTrades = days.reduce((sum, entry) => sum + (entry?.tradesCount ?? 0), 0);
-    const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing ?? null) : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0
-      ? null
-      : (totalChange / baseline) * 100;
+    const pct = changeEntries.length
+      ? computeChangePercentFromLatestPortfolio(totalChange)
+      : null;
     const trades = days.flatMap(d => d.trades || []);
     weeks.push({
       totalChange,
@@ -513,11 +515,9 @@ function getYearMonths(date) {
     const changeEntries = days.filter(entry => entry.change !== null);
     const totalChange = changeEntries.reduce((sum, entry) => sum + entry.change, 0);
     const totalCashFlow = days.reduce((sum, entry) => sum + (entry.cashFlow ?? 0), 0);
-    const firstEntry = changeEntries[0] || days[0];
-    const baseline = firstEntry ? (firstEntry.opening ?? firstEntry.closing) : null;
-    const pct = !changeEntries.length || baseline === null || baseline === 0
-      ? null
-      : (totalChange / baseline) * 100;
+    const pct = changeEntries.length
+      ? computeChangePercentFromLatestPortfolio(totalChange)
+      : null;
     months.push({
       monthDate,
       totalChange,
@@ -2202,12 +2202,10 @@ function renderYear() {
     const months = getYearMonths(yearDate);
     const totalChange = months.reduce((sum, item) => sum + (item.hasChange ? item.totalChange : 0), 0);
     const totalCashFlow = months.reduce((sum, item) => sum + (item.totalCashFlow ?? 0), 0);
-    const yearEntries = entries.filter(entry => entry.date.getFullYear() === year);
-    const baselineVal = yearEntries.length
-      ? (yearEntries[0].opening ?? yearEntries[0].closing ?? null)
-      : null;
-    const pct = baselineVal ? (totalChange / baselineVal) * 100 : null;
     const hasChange = months.some(item => item.hasChange);
+    const pct = hasChange
+      ? computeChangePercentFromLatestPortfolio(totalChange)
+      : null;
     const row = document.createElement('div');
     row.className = 'list-row year-row';
     if (totalChange > 0) row.classList.add('profit');
