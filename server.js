@@ -1022,6 +1022,7 @@ function normalizeTradeJournal(user) {
       const trading212Name = typeof trade.trading212Name === 'string' ? trade.trading212Name : '';
       const trading212Isin = typeof trade.trading212Isin === 'string' ? trade.trading212Isin : '';
       const trading212Ticker = typeof trade.trading212Ticker === 'string' ? trade.trading212Ticker : '';
+      const trading212PositionKey = typeof trade.trading212PositionKey === 'string' ? trade.trading212PositionKey : '';
       const typeRaw = typeof trade.tradeType === 'string' ? trade.tradeType.trim().toLowerCase() : '';
       const assetRaw = typeof trade.assetClass === 'string' ? trade.assetClass.trim().toLowerCase() : '';
       const conditionRaw = typeof trade.marketCondition === 'string' ? trade.marketCondition.trim().toLowerCase() : '';
@@ -1135,6 +1136,9 @@ function normalizeTradeJournal(user) {
       }
       if (typeof trade.trading212Id === 'string' && trade.trading212Id) {
         normalizedTrade.trading212Id = trade.trading212Id;
+      }
+      if (trading212PositionKey) {
+        normalizedTrade.trading212PositionKey = trading212PositionKey;
       }
       if (trading212Name) {
         normalizedTrade.trading212Name = trading212Name;
@@ -2585,6 +2589,116 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
   return { mutated: positionsMutated, dateKey };
 }
 
+function inferTrading212AddedEntryPrice(previousEntry, previousUnits, nextEntry, nextUnits) {
+  const prevEntry = Number(previousEntry);
+  const prevUnits = Number(previousUnits);
+  const incomingEntry = Number(nextEntry);
+  const incomingUnits = Number(nextUnits);
+  if (!Number.isFinite(prevEntry) || prevEntry <= 0) return null;
+  if (!Number.isFinite(prevUnits) || prevUnits <= 0) return null;
+  if (!Number.isFinite(incomingEntry) || incomingEntry <= 0) return null;
+  if (!Number.isFinite(incomingUnits) || incomingUnits <= prevUnits) return null;
+  const addedUnits = incomingUnits - prevUnits;
+  if (!Number.isFinite(addedUnits) || addedUnits <= 0) return null;
+  const inferredEntry = ((incomingEntry * incomingUnits) - (prevEntry * prevUnits)) / addedUnits;
+  if (!Number.isFinite(inferredEntry) || inferredEntry <= 0) return null;
+  return inferredEntry;
+}
+
+function isTrading212AddToPosition(existingTrade, incomingSizeUnits) {
+  const existingUnits = Number(existingTrade?.sizeUnits);
+  const nextUnits = Number(incomingSizeUnits);
+  if (!Number.isFinite(existingUnits) || existingUnits <= 0) return false;
+  if (!Number.isFinite(nextUnits)) return false;
+  const EPSILON = 1e-8;
+  return nextUnits > (existingUnits + EPSILON);
+}
+
+function findTrading212OpenTradeMatch(openTrades, {
+  accountId,
+  trading212Id,
+  trading212IdBase,
+  trading212Key,
+  trading212PositionKey,
+  symbol,
+  rawIsin,
+  normalizedName,
+  rawTickerValue
+}) {
+  const exactTradeEntry = openTrades.find(entry => {
+    if (entry.trade?.status === 'closed') return false;
+    if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
+      return false;
+    }
+    return (
+      entry.trade?.trading212Id === trading212Id ||
+      entry.trade?.trading212Id === trading212IdBase ||
+      (trading212Key && typeof entry.trade?.trading212Id === 'string' && entry.trade.trading212Id.endsWith(`${trading212Key}`))
+    );
+  });
+  const aggregateTradeEntry = !exactTradeEntry ? openTrades.find(entry => {
+    if (entry.trade?.status === 'closed') return false;
+    if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
+      return false;
+    }
+    return (
+      entry.trade?.trading212PositionKey === trading212PositionKey ||
+      entry.trade?.symbol === symbol ||
+      (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
+      (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
+      (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
+    );
+  }) : null;
+  return { exactTradeEntry, aggregateTradeEntry };
+}
+
+function updateTrading212LayerMetadata(trade, {
+  symbol,
+  trading212Id,
+  trading212PositionKey,
+  accountId,
+  rawName,
+  rawIsin,
+  rawTickerValue,
+  tradeCurrency,
+  direction,
+  currentPrice,
+  stop,
+  lowStop,
+  user,
+  rates
+}) {
+  if (!trade) return;
+  if (!trade.symbol) {
+    trade.symbol = symbol;
+  }
+  trade.currency = tradeCurrency;
+  trade.direction = direction;
+  trade.status = 'open';
+  trade.source = 'trading212';
+  trade.trading212Id = trading212Id;
+  trade.trading212PositionKey = trading212PositionKey;
+  trade.trading212AccountId = accountId || trade.trading212AccountId || '';
+  if (rawName) trade.trading212Name = rawName;
+  if (rawIsin) trade.trading212Isin = rawIsin;
+  if (rawTickerValue) trade.trading212Ticker = rawTickerValue;
+  if (Number.isFinite(currentPrice) && currentPrice > 0) {
+    trade.lastSyncPrice = currentPrice;
+  }
+  const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
+  if (Number.isFinite(nextStop) && nextStop > 0) {
+    trade.currentStop = nextStop;
+    if (Number.isFinite(stop) && stop > 0) {
+      trade.currentStopSource = 't212';
+      trade.currentStopStale = false;
+    }
+    if (trade.stopManualOverride !== true) {
+      trade.stop = nextStop;
+    }
+  }
+  recalculateTradeRiskFromImportedStop(trade, user, rates);
+}
+
 function isFreshTimestamp(value, windowMs) {
   if (!value) return false;
   const ts = Date.parse(value);
@@ -3774,20 +3888,19 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           : (normalizedName ? `name:${normalizedName}` : symbol);
         const trading212IdBase = rawPositionId ? String(rawPositionId) : trading212Key;
         const trading212Id = accountId ? `${accountId}:${trading212IdBase}` : trading212IdBase;
-        const existingTradeEntry = openTrades.find(entry => {
-          if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
-            return false;
-          }
-          return (
-            entry.trade?.trading212Id === trading212Id ||
-            entry.trade?.trading212Id === trading212IdBase ||
-            (trading212Key && typeof entry.trade?.trading212Id === 'string' && entry.trade.trading212Id.endsWith(`${trading212Key}`)) ||
-            entry.trade?.symbol === symbol ||
-            (rawIsin && entry.trade?.trading212Isin === rawIsin) ||
-            (normalizedName && normalizeTrading212Name(entry.trade?.trading212Name) === normalizedName) ||
-            (rawTickerValue && normalizeTrading212TickerValue(entry.trade?.trading212Ticker) === rawTickerValue)
-          );
+        const trading212PositionKey = accountId ? `${accountId}:${symbol}` : symbol;
+        const { exactTradeEntry, aggregateTradeEntry } = findTrading212OpenTradeMatch(openTrades, {
+          accountId,
+          trading212Id,
+          trading212IdBase,
+          trading212Key,
+          trading212PositionKey,
+          symbol,
+          rawIsin,
+          normalizedName,
+          rawTickerValue
         });
+        const existingTradeEntry = exactTradeEntry || aggregateTradeEntry;
         const existingTrade = existingTradeEntry?.trade;
         const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
@@ -3810,37 +3923,93 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         } catch (e) {
           lowStop = null;
         }
-        if (existingTrade) {
-          if (!existingTrade.symbol) {
-            existingTrade.symbol = resolvedSymbol;
+        const relatedOpenTrades = openTrades.filter(entry => {
+          const trade = entry?.trade;
+          if (!trade || trade.status === 'closed') return false;
+          if (trade.trading212AccountId && accountId && trade.trading212AccountId !== accountId) return false;
+          return (
+            trade.trading212PositionKey === trading212PositionKey
+            || trade.trading212Id === trading212Id
+            || trade.symbol === symbol
+            || (rawIsin && trade.trading212Isin === rawIsin)
+            || (rawTickerValue && normalizeTrading212TickerValue(trade.trading212Ticker) === rawTickerValue)
+          );
+        });
+        if (relatedOpenTrades.length) {
+          const totalTrackedUnits = relatedOpenTrades.reduce((sum, entry) => {
+            const units = Number(entry?.trade?.sizeUnits);
+            return Number.isFinite(units) && units > 0 ? sum + units : sum;
+          }, 0);
+          for (const related of relatedOpenTrades) {
+            updateTrading212LayerMetadata(related.trade, {
+              symbol: related.trade?.displaySymbol || related.trade?.symbol || resolvedSymbol,
+              trading212Id: related.trade?.trading212Id || trading212Id,
+              trading212PositionKey,
+              accountId,
+              rawName,
+              rawIsin,
+              rawTickerValue,
+              tradeCurrency,
+              direction,
+              currentPrice,
+              stop,
+              lowStop,
+              user,
+              rates
+            });
           }
-          existingTrade.entry = entryPrice;
-          existingTrade.sizeUnits = sizeUnits;
-          existingTrade.currency = tradeCurrency;
-          existingTrade.direction = direction;
-          existingTrade.status = 'open';
-          existingTrade.source = 'trading212';
-          existingTrade.trading212Id = trading212Id;
-          existingTrade.trading212AccountId = accountId || existingTrade.trading212AccountId || '';
-          if (rawName) existingTrade.trading212Name = rawName;
-          if (rawIsin) existingTrade.trading212Isin = rawIsin;
-          if (rawTickerValue) existingTrade.trading212Ticker = rawTickerValue;
-          if (Number.isFinite(currentPrice) && currentPrice > 0) {
-            existingTrade.lastSyncPrice = currentPrice;
-          }
-          if (Number.isFinite(ppl)) {
-            existingTrade.ppl = ppl;
-          }
-          const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
-          if (Number.isFinite(nextStop) && nextStop > 0) {
-            const hadProviderStop = existingTrade.currentStopSource === 't212' || existingTrade.currentStopSource === 'ibkr';
-            existingTrade.currentStop = nextStop;
-            existingTrade.currentStopSource = Number.isFinite(stop) && stop > 0 ? 't212' : (existingTrade.currentStopSource || undefined);
-            existingTrade.currentStopStale = Number.isFinite(stop) && stop > 0 ? false : (existingTrade.currentStopStale === true);
-            if (existingTrade.stopManualOverride !== true) {
-              existingTrade.stop = nextStop;
+          const addToPosition = isTrading212AddToPosition({ sizeUnits: totalTrackedUnits }, sizeUnits);
+          if (addToPosition) {
+            const weightedNotional = relatedOpenTrades.reduce((sum, entry) => {
+              const units = Number(entry?.trade?.sizeUnits);
+              const tradeEntry = Number(entry?.trade?.entry);
+              if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(tradeEntry) || tradeEntry <= 0) return sum;
+              return sum + (units * tradeEntry);
+            }, 0);
+            const previousUnits = totalTrackedUnits;
+            const previousEntry = previousUnits > 0 ? weightedNotional / previousUnits : Number(existingTrade?.entry);
+            const addedUnits = sizeUnits - previousUnits;
+            const inferredAddedEntry = inferTrading212AddedEntryPrice(previousEntry, previousUnits, entryPrice, sizeUnits);
+            const layerEntryPrice = Number.isFinite(inferredAddedEntry) ? inferredAddedEntry : entryPrice;
+            const seedTrade = existingTrade || relatedOpenTrades[relatedOpenTrades.length - 1]?.trade;
+            const layeredTrade = normalizeTradeMeta({
+              ...seedTrade,
+              id: crypto.randomBytes(8).toString('hex'),
+              createdAt: createdAtDate.toISOString(),
+              entry: layerEntryPrice,
+              sizeUnits: addedUnits,
+              symbol: resolvedSymbol,
+              status: 'open',
+              closeDate: undefined,
+              closePrice: undefined,
+              closedAt: undefined,
+              partialCloses: undefined,
+              trading212Id: `${trading212Id}#layer:${Date.now()}`
+            });
+            delete layeredTrade.realizedPnlGBP;
+            delete layeredTrade.realizedPnlCurrency;
+            delete layeredTrade.rMultiple;
+            updateTrading212LayerMetadata(layeredTrade, {
+              symbol: resolvedSymbol,
+              trading212Id: layeredTrade.trading212Id,
+              trading212PositionKey,
+              accountId,
+              rawName,
+              rawIsin,
+              rawTickerValue,
+              tradeCurrency,
+              direction,
+              currentPrice,
+              stop,
+              lowStop,
+              user,
+              rates
+            });
+            if (Number.isFinite(ppl)) {
+              layeredTrade.ppl = ppl;
             }
-            recalculateTradeRiskFromImportedStop(existingTrade, user, rates);
+            journal[normalizedDate].push(layeredTrade);
+            openTrades.push({ tradeDate: normalizedDate, trade: layeredTrade });
           }
           positionsMutated = true;
           continue;
@@ -3874,6 +4043,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           assetClass: 'stocks',
           source: 'trading212',
           trading212Id,
+          trading212PositionKey,
           trading212AccountId: accountId || undefined,
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
@@ -7303,6 +7473,9 @@ module.exports = {
   parseTrading212Orders,
   matchStopOrderForTrade,
   pickBestStopOrder,
+  inferTrading212AddedEntryPrice,
+  isTrading212AddToPosition,
+  findTrading212OpenTradeMatch,
   upsertTrading212StopOrders,
   extractIbkrPortfolioValue,
   mapIbkrPosition,
