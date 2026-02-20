@@ -237,6 +237,43 @@ function formatPercent(value) {
   return `${signPrefix(value)}${Math.abs(value).toFixed(2)}%`;
 }
 
+function formatRiskMultiple(value) {
+  if (!Number.isFinite(value)) return '—';
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  const formatted = abs % 1 === 0 ? abs.toFixed(0) : abs.toFixed(1);
+  return `${sign}${formatted}R`;
+}
+
+function getTradeRiskAmountGBP(trade) {
+  if (Number.isFinite(trade?.riskAmountGBP)) return trade.riskAmountGBP;
+  if (Number.isFinite(trade?.riskAmountCurrency)) {
+    return toGBP(trade.riskAmountCurrency, trade.currency || 'GBP');
+  }
+  if (Number.isFinite(trade?.perUnitRisk) && Number.isFinite(trade?.sizeUnits)) {
+    return toGBP(trade.perUnitRisk * trade.sizeUnits, trade.currency || 'GBP');
+  }
+  const entry = Number(trade?.entry);
+  const stop = Number(trade?.stop);
+  const units = Number(trade?.sizeUnits);
+  if (Number.isFinite(entry) && Number.isFinite(stop) && Number.isFinite(units)) {
+    return toGBP(Math.abs(entry - stop) * units, trade.currency || 'GBP');
+  }
+  return null;
+}
+
+function getTradeRiskMultiple(trade, pnlGBP) {
+  if (Number.isFinite(trade?.rMultiple)) return trade.rMultiple;
+  const pnl = Number.isFinite(pnlGBP)
+    ? pnlGBP
+    : (Number.isFinite(trade?.realizedPnlGBP)
+      ? trade.realizedPnlGBP
+      : (Number.isFinite(trade?.unrealizedGBP) ? trade.unrealizedGBP : null));
+  const riskGBP = getTradeRiskAmountGBP(trade);
+  if (!Number.isFinite(pnl) || !Number.isFinite(riskGBP) || riskGBP === 0) return null;
+  return pnl / riskGBP;
+}
+
 function summarizeWeek(entries = []) {
   const totalChange = entries.reduce((sum, e) => sum + (e.change ?? 0), 0);
   const totalCashFlow = entries.reduce((sum, e) => sum + (e.cashFlow ?? 0), 0);
@@ -908,6 +945,7 @@ function renderActiveTrades() {
     const directionLabel = trade.direction === 'short' ? 'Short' : 'Long';
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
+    const riskMultiple = getTradeRiskMultiple(trade, pnl);
     const headerRow = document.createElement('div');
     headerRow.className = 'trade-header-row';
     const title = document.createElement('div');
@@ -1046,6 +1084,9 @@ function renderActiveTrades() {
       className: ''
     }, {
       label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%`,
+      className: ''
+    }, {
+      label: formatRiskMultiple(riskMultiple),
       className: ''
     }];
     badgeItems.forEach(item => {
@@ -1396,15 +1437,10 @@ function buildTradeSummary(trade) {
   const pnl = Number.isFinite(trade.realizedPnlGBP)
     ? trade.realizedPnlGBP
     : (Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : null);
-  const riskGBP = Number.isFinite(trade.riskAmountGBP)
-    ? trade.riskAmountGBP
-    : (Number.isFinite(trade.riskAmountCurrency)
-      ? toGBP(trade.riskAmountCurrency, trade.currency || 'GBP')
-      : (Number.isFinite(trade.perUnitRisk) && Number.isFinite(trade.sizeUnits)
-        ? toGBP(trade.perUnitRisk * trade.sizeUnits, trade.currency || 'GBP')
-        : (Number.isFinite(derivedRiskCurrency)
-          ? toGBP(derivedRiskCurrency, trade.currency || 'GBP')
-          : null)));
+  const riskGBP = getTradeRiskAmountGBP(trade)
+    ?? (Number.isFinite(derivedRiskCurrency)
+      ? toGBP(derivedRiskCurrency, trade.currency || 'GBP')
+      : null);
   const positionBase = Number.isFinite(trade.positionGBP)
     ? trade.positionGBP
     : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
@@ -1413,11 +1449,7 @@ function buildTradeSummary(trade) {
   const roiPct = pnl !== null && Number.isFinite(positionBase) && positionBase !== 0
     ? (pnl / positionBase) * 100
     : undefined;
-  const rMultiple = Number.isFinite(trade.rMultiple)
-    ? trade.rMultiple
-    : (pnl !== null && Number.isFinite(riskGBP) && riskGBP !== 0
-      ? pnl / riskGBP
-      : undefined);
+  const rMultiple = getTradeRiskMultiple(trade, pnl);
   return {
     ticker: getTradeDisplaySymbol(trade) || '—',
     direction: trade.direction === 'short' ? 'SHORT' : 'LONG',

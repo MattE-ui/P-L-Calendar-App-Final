@@ -425,6 +425,18 @@ select {
   color: #cde8ff;
   border: 1px solid rgba(42,163,255,.4);
 }
+#risk-currency-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+#risk-currency-toggle button {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .tool-actions {
   display: flex;
   flex-direction: column;
@@ -636,13 +648,20 @@ select {
   font-weight: 700;
 }
 .trade-pill .trade-badges {
-  gap: 14px;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .trade-meta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+}
+.trade-pill .trade-badges .trade-badge {
+  font-size: 11px;
+  padding: 5px 8px;
+  white-space: nowrap;
 }
 .trade-note-toggle {
   width: 36px;
