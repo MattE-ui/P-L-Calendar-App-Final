@@ -343,6 +343,11 @@ select {
   font-size: 11px;
   margin: 4px 0 0;
 }
+.tool-portfolio-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
 .tool-portfolio {
   background: rgba(42,163,255,.12);
   border: 1px solid rgba(42,163,255,.4);
@@ -350,6 +355,7 @@ select {
   padding: 8px 12px;
   text-align: right;
   min-width: 160px;
+  flex: 1;
 }
 .tool-portfolio span { display: block; color: var(--muted); font-size: 13px; }
 .tool-portfolio strong { display: block; font-size: 18px; margin-top: 4px; }
@@ -363,6 +369,11 @@ select {
 }
 .tool-portfolio.positive strong { color: var(--positive); }
 .tool-portfolio.negative strong { color: var(--negative); }
+#open-loss-potential-card.negative strong { color: var(--negative); }
+#open-loss-potential-card.negative {
+  border-color: rgba(255,59,92,.6);
+  background: rgba(255,59,92,.12);
+}
 .tool-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
