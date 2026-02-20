@@ -66,7 +66,7 @@ test('inferTrading212AddedEntryPrice derives buy price from avg change and unit 
 });
 
 test('isTrading212AddToPosition only returns true when units increase', () => {
-  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 12, 101), true);
-  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 10, 101), false);
-  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 9, 101), false);
+  assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 12), true);
+  assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 10), false);
+  assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 9), false);
 });

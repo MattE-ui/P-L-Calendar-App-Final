@@ -2605,14 +2605,11 @@ function inferTrading212AddedEntryPrice(previousEntry, previousUnits, nextEntry,
   return inferredEntry;
 }
 
-function isTrading212AddToPosition(existingTrade, incomingSizeUnits, incomingEntry) {
+function isTrading212AddToPosition(existingTrade, incomingSizeUnits) {
   const existingUnits = Number(existingTrade?.sizeUnits);
-  const existingEntry = Number(existingTrade?.entry);
   const nextUnits = Number(incomingSizeUnits);
-  const nextEntry = Number(incomingEntry);
   if (!Number.isFinite(existingUnits) || existingUnits <= 0) return false;
-  if (!Number.isFinite(existingEntry) || existingEntry <= 0) return false;
-  if (!Number.isFinite(nextUnits) || !Number.isFinite(nextEntry)) return false;
+  if (!Number.isFinite(nextUnits)) return false;
   const EPSILON = 1e-8;
   return nextUnits > (existingUnits + EPSILON);
 }
@@ -3926,27 +3923,57 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         } catch (e) {
           lowStop = null;
         }
-        if (existingTrade) {
-          const addToPosition = isTrading212AddToPosition(existingTrade, sizeUnits, entryPrice);
+        const relatedOpenTrades = openTrades.filter(entry => {
+          const trade = entry?.trade;
+          if (!trade || trade.status === 'closed') return false;
+          if (trade.trading212AccountId && accountId && trade.trading212AccountId !== accountId) return false;
+          return (
+            trade.trading212PositionKey === trading212PositionKey
+            || trade.trading212Id === trading212Id
+            || trade.symbol === symbol
+            || (rawIsin && trade.trading212Isin === rawIsin)
+            || (rawTickerValue && normalizeTrading212TickerValue(trade.trading212Ticker) === rawTickerValue)
+          );
+        });
+        if (relatedOpenTrades.length) {
+          const totalTrackedUnits = relatedOpenTrades.reduce((sum, entry) => {
+            const units = Number(entry?.trade?.sizeUnits);
+            return Number.isFinite(units) && units > 0 ? sum + units : sum;
+          }, 0);
+          for (const related of relatedOpenTrades) {
+            updateTrading212LayerMetadata(related.trade, {
+              symbol: related.trade?.displaySymbol || related.trade?.symbol || resolvedSymbol,
+              trading212Id: related.trade?.trading212Id || trading212Id,
+              trading212PositionKey,
+              accountId,
+              rawName,
+              rawIsin,
+              rawTickerValue,
+              tradeCurrency,
+              direction,
+              currentPrice,
+              stop,
+              lowStop,
+              user,
+              rates
+            });
+          }
+          const addToPosition = isTrading212AddToPosition({ sizeUnits: totalTrackedUnits }, sizeUnits);
           if (addToPosition) {
-            const previousUnits = Number(existingTrade.sizeUnits);
-            const previousEntry = Number(existingTrade.entry);
+            const weightedNotional = relatedOpenTrades.reduce((sum, entry) => {
+              const units = Number(entry?.trade?.sizeUnits);
+              const tradeEntry = Number(entry?.trade?.entry);
+              if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(tradeEntry) || tradeEntry <= 0) return sum;
+              return sum + (units * tradeEntry);
+            }, 0);
+            const previousUnits = totalTrackedUnits;
+            const previousEntry = previousUnits > 0 ? weightedNotional / previousUnits : Number(existingTrade?.entry);
             const addedUnits = sizeUnits - previousUnits;
             const inferredAddedEntry = inferTrading212AddedEntryPrice(previousEntry, previousUnits, entryPrice, sizeUnits);
             const layerEntryPrice = Number.isFinite(inferredAddedEntry) ? inferredAddedEntry : entryPrice;
-            existingTrade.trading212Id = `${existingTrade.trading212Id || trading212Id}#layer:${existingTrade.id}`;
-            existingTrade.trading212PositionKey = trading212PositionKey;
-            existingTrade.source = 'trading212';
-            existingTrade.status = 'open';
-            existingTrade.trading212AccountId = accountId || existingTrade.trading212AccountId || '';
-            if (rawName) existingTrade.trading212Name = rawName;
-            if (rawIsin) existingTrade.trading212Isin = rawIsin;
-            if (rawTickerValue) existingTrade.trading212Ticker = rawTickerValue;
-            if (Number.isFinite(currentPrice) && currentPrice > 0) {
-              existingTrade.lastSyncPrice = currentPrice;
-            }
+            const seedTrade = existingTrade || relatedOpenTrades[relatedOpenTrades.length - 1]?.trade;
             const layeredTrade = normalizeTradeMeta({
-              ...existingTrade,
+              ...seedTrade,
               id: crypto.randomBytes(8).toString('hex'),
               createdAt: createdAtDate.toISOString(),
               entry: layerEntryPrice,
@@ -3957,14 +3984,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               closePrice: undefined,
               closedAt: undefined,
               partialCloses: undefined,
-              trading212Id
+              trading212Id: `${trading212Id}#layer:${Date.now()}`
             });
             delete layeredTrade.realizedPnlGBP;
             delete layeredTrade.realizedPnlCurrency;
             delete layeredTrade.rMultiple;
             updateTrading212LayerMetadata(layeredTrade, {
               symbol: resolvedSymbol,
-              trading212Id,
+              trading212Id: layeredTrade.trading212Id,
               trading212PositionKey,
               accountId,
               rawName,
@@ -3983,29 +4010,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             }
             journal[normalizedDate].push(layeredTrade);
             openTrades.push({ tradeDate: normalizedDate, trade: layeredTrade });
-            positionsMutated = true;
-            continue;
-          }
-          existingTrade.entry = entryPrice;
-          existingTrade.sizeUnits = sizeUnits;
-          updateTrading212LayerMetadata(existingTrade, {
-            symbol: resolvedSymbol,
-            trading212Id,
-            trading212PositionKey,
-            accountId,
-            rawName,
-            rawIsin,
-            rawTickerValue,
-            tradeCurrency,
-            direction,
-            currentPrice,
-            stop,
-            lowStop,
-            user,
-            rates
-          });
-          if (Number.isFinite(ppl)) {
-            existingTrade.ppl = ppl;
           }
           positionsMutated = true;
           continue;
