@@ -3179,7 +3179,42 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
   throw lastError || new Trading212Error('Trading 212 request failed.');
 }
 
-function upsertTrading212StopOrders(user, ordersPayload, accountId = '') {
+function recalculateTradeRiskFromImportedStop(trade, user, rates) {
+  if (!trade || typeof trade !== 'object') return false;
+  const entry = Number(trade.entry);
+  const stop = Number(trade.stop);
+  const sizeUnits = Number(trade.sizeUnits);
+  if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop) || stop <= 0 || !Number.isFinite(sizeUnits) || sizeUnits <= 0) {
+    return false;
+  }
+  const direction = String(trade.direction || 'long').toLowerCase() === 'short' ? 'short' : 'long';
+  let perUnitRisk = direction === 'short' ? (stop - entry) : (entry - stop);
+  if (!Number.isFinite(perUnitRisk) || perUnitRisk <= 0) {
+    perUnitRisk = Math.abs(entry - stop);
+  }
+  if (!Number.isFinite(perUnitRisk) || perUnitRisk <= 0) return false;
+  const tradeCurrency = trade.currency || 'GBP';
+  const riskAmountCurrency = perUnitRisk * sizeUnits;
+  const positionCurrency = entry * sizeUnits;
+  const portfolioGBP = Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : 0;
+  const portfolioCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
+  trade.perUnitRisk = perUnitRisk;
+  trade.riskAmountCurrency = riskAmountCurrency;
+  trade.positionCurrency = positionCurrency;
+  trade.riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
+  trade.positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
+  trade.portfolioGBPAtCalc = portfolioGBP;
+  trade.portfolioCurrencyAtCalc = Number.isFinite(portfolioCurrency) ? portfolioCurrency : 0;
+  trade.riskPct = Number.isFinite(portfolioCurrency) && portfolioCurrency > 0
+    ? (riskAmountCurrency / portfolioCurrency) * 100
+    : 0;
+  if (!Number.isFinite(Number(trade.originalStopPrice)) || Number(trade.originalStopPrice) <= 0) {
+    trade.originalStopPrice = stop;
+  }
+  return true;
+}
+
+function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates = null) {
   const orders = ordersPayload?.orders || [];
   const journal = ensureTradeJournal(user);
   let updated = 0;
@@ -3209,11 +3244,16 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '') {
           || trade.currentStopStale === true
           || trade.t212StopOrderId !== (matched.id || ''));
       if (!shouldUpdate) continue;
+      const previousSource = String(trade.currentStopSource || '').toLowerCase();
       trade.currentStop = stopPrice;
       trade.currentStopSource = 't212';
       trade.currentStopLastSyncedAt = new Date().toISOString();
       trade.currentStopStale = false;
       trade.t212StopOrderId = matched.id || '';
+      if (previousSource !== 't212' && previousSource !== 'ibkr') {
+        trade.stop = stopPrice;
+      }
+      recalculateTradeRiskFromImportedStop(trade, user, rates);
       updated += 1;
     }
   }
@@ -3389,13 +3429,12 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     }
     let totalStopUpdates = 0;
     for (const result of fulfilled) {
-      const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId);
+      const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId, rates);
       totalStopUpdates += stopUpdates;
     }
     if (totalStopUpdates > 0) {
       console.info(`[T212] synced current stops for ${totalStopUpdates} trade(s)`);
     }
-    const rates = await fetchRates();
     const history = ensurePortfolioHistory(user);
     normalizePortfolioHistory(user);
     const { total: currentTotal } = computeNetDepositsTotals(user, history);
@@ -3684,7 +3723,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
-        const stop = Number(raw?.stopLoss ?? raw?.stopPrice ?? raw?.stop);
+        const stop = parseTradingNumber(
+          raw?.stopLoss ??
+          raw?.stopPrice ??
+          raw?.stop ??
+          raw?.stopLossPrice ??
+          raw?.trailingStopLoss ??
+          raw?.trailingStopPrice
+        );
         const sizeUnits = Math.abs(quantity);
         const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
@@ -3718,25 +3764,34 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           }
           const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
           if (Number.isFinite(nextStop) && nextStop > 0) {
+            const hadProviderStop = existingTrade.currentStopSource === 't212' || existingTrade.currentStopSource === 'ibkr';
             existingTrade.currentStop = nextStop;
-            if (!Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
+            existingTrade.currentStopSource = Number.isFinite(stop) && stop > 0 ? 't212' : (existingTrade.currentStopSource || undefined);
+            existingTrade.currentStopStale = Number.isFinite(stop) && stop > 0 ? false : (existingTrade.currentStopStale === true);
+            if (!hadProviderStop || !Number.isFinite(existingTrade.stop) || existingTrade.stop <= 0) {
               existingTrade.stop = nextStop;
-              existingTrade.perUnitRisk = Math.abs(entryPrice - nextStop);
             }
+            recalculateTradeRiskFromImportedStop(existingTrade, user, rates);
           }
           positionsMutated = true;
           continue;
         }
+        const initialStop = Number.isFinite(stop) && stop > 0
+          ? stop
+          : (Number.isFinite(lowStop) ? lowStop : undefined);
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
           symbol: resolvedSymbol,
           currency: tradeCurrency,
           entry: entryPrice,
-          stop: Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : undefined),
+          stop: initialStop,
+          currentStop: initialStop,
+          currentStopSource: Number.isFinite(stop) && stop > 0 ? 't212' : undefined,
+          currentStopStale: Number.isFinite(stop) && stop > 0 ? false : undefined,
           sizeUnits,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           riskPct: 0,
-          perUnitRisk: Number.isFinite(stop) ? Math.abs(entryPrice - stop) : 0,
+          perUnitRisk: Number.isFinite(initialStop) ? Math.abs(entryPrice - initialStop) : 0,
           riskAmountCurrency: 0,
           positionCurrency: entryPrice * sizeUnits,
           riskAmountGBP: 0,
@@ -3757,6 +3812,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
+        recalculateTradeRiskFromImportedStop(trade, user, rates);
         journal[normalizedDate].push(trade);
         positionsMutated = true;
       }
