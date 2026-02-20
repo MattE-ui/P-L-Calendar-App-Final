@@ -2949,7 +2949,19 @@ function pickBestStopOrder(orders, trade) {
   return scored[0]?.order || null;
 }
 
-function matchStopOrderForTrade(trade, orders) {
+function normalizeOrderQuantity(value) {
+  const qty = Number(value);
+  return Number.isFinite(qty) ? Math.abs(qty) : null;
+}
+
+function quantitiesMatch(a, b) {
+  const left = Number(a);
+  const right = Number(b);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  return Math.abs(left - right) <= 1e-8;
+}
+
+function matchStopOrderForTrade(trade, orders, context = {}) {
   if (!trade || !orders.length) return null;
   if (trade.t212StopOrderId) {
     const found = orders.find(order => order.id && order.id === trade.t212StopOrderId);
@@ -2963,7 +2975,28 @@ function matchStopOrderForTrade(trade, orders) {
     if (tradeIsin && String(order.instrumentIsin || '').trim().toUpperCase() === tradeIsin) return true;
     return false;
   });
-  return pickBestStopOrder(filtered, trade);
+  if (!filtered.length) return null;
+  const tradeQty = normalizeOrderQuantity(trade.sizeUnits);
+  const exactQtyOrders = Number.isFinite(tradeQty)
+    ? filtered.filter(order => quantitiesMatch(normalizeOrderQuantity(order.quantity), tradeQty))
+    : [];
+  if (exactQtyOrders.length) {
+    return pickBestStopOrder(exactQtyOrders, trade);
+  }
+  const relatedTrades = Array.isArray(context.relatedTrades) ? context.relatedTrades : [];
+  if (relatedTrades.length > 1) {
+    const combinedQty = relatedTrades.reduce((sum, item) => {
+      const units = Number(item?.sizeUnits);
+      return Number.isFinite(units) && units > 0 ? sum + units : sum;
+    }, 0);
+    const combinedQtyOrders = combinedQty > 0
+      ? filtered.filter(order => quantitiesMatch(normalizeOrderQuantity(order.quantity), combinedQty))
+      : [];
+    if (combinedQtyOrders.length) {
+      return pickBestStopOrder(combinedQtyOrders, { ...trade, sizeUnits: combinedQty });
+    }
+  }
+  return null;
 }
 
 async function fetchTrading212Orders(config, username, { bypassCache = false, accountId = '' } = {}) {
@@ -3400,45 +3433,58 @@ function recalculateTradeRiskFromImportedStop(trade, user, rates) {
 function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates = null) {
   const orders = ordersPayload?.orders || [];
   const journal = ensureTradeJournal(user);
-  let updated = 0;
+  const openTrades = [];
   for (const [dateKey, items] of Object.entries(journal)) {
     for (const trade of items || []) {
       if (!trade || trade.status === 'closed') continue;
       if (trade.source !== 'trading212' && !trade.trading212Id) continue;
       if (accountId && trade.trading212AccountId && trade.trading212AccountId !== accountId) continue;
-      const matched = matchStopOrderForTrade(trade, orders);
-      const shouldAutoSync = trade.currentStopSource !== 'manual';
-      if (!matched || !Number.isFinite(matched.stopPrice)) {
-        if (!shouldAutoSync) continue;
-        const hadStop = Number.isFinite(Number(trade.currentStop));
-        if (!hadStop && trade.currentStopStale === true) continue;
-        delete trade.currentStop;
-        trade.currentStopSource = 't212';
-        trade.currentStopLastSyncedAt = new Date().toISOString();
-        trade.currentStopStale = true;
-        trade.t212StopOrderId = '';
-        updated += 1;
-        continue;
-      }
-      const stopPrice = Number(matched.stopPrice);
-      const shouldUpdate = shouldAutoSync
-        && (!Number.isFinite(Number(trade.currentStop))
-          || Number(trade.currentStop) !== stopPrice
-          || trade.currentStopStale === true
-          || trade.t212StopOrderId !== (matched.id || ''));
-      if (!shouldUpdate) continue;
-      const previousSource = String(trade.currentStopSource || '').toLowerCase();
-      trade.currentStop = stopPrice;
+      openTrades.push(trade);
+    }
+  }
+  let updated = 0;
+  for (const trade of openTrades) {
+    const relatedTrades = openTrades.filter(candidate => {
+      if (!candidate || candidate.id === trade.id) return false;
+      if (accountId && candidate.trading212AccountId && candidate.trading212AccountId !== accountId) return false;
+      const samePositionKey = trade.trading212PositionKey && candidate.trading212PositionKey && trade.trading212PositionKey === candidate.trading212PositionKey;
+      const sameTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '')
+        && normalizeTrading212TickerValue(trade.trading212Ticker || '') === normalizeTrading212TickerValue(candidate.trading212Ticker || '');
+      const sameIsin = trade.trading212Isin && candidate.trading212Isin && String(trade.trading212Isin).toUpperCase() === String(candidate.trading212Isin).toUpperCase();
+      const sameSymbol = trade.symbol && candidate.symbol && String(trade.symbol).toUpperCase() === String(candidate.symbol).toUpperCase();
+      return samePositionKey || sameTicker || sameIsin || sameSymbol;
+    });
+    const matched = matchStopOrderForTrade(trade, orders, { relatedTrades: [trade, ...relatedTrades] });
+    const shouldAutoSync = trade.currentStopSource !== 'manual';
+    if (!matched || !Number.isFinite(matched.stopPrice)) {
+      if (!shouldAutoSync) continue;
+      const hadStop = Number.isFinite(Number(trade.currentStop));
+      if (!hadStop && trade.currentStopStale === true) continue;
+      delete trade.currentStop;
       trade.currentStopSource = 't212';
       trade.currentStopLastSyncedAt = new Date().toISOString();
-      trade.currentStopStale = false;
-      trade.t212StopOrderId = matched.id || '';
-      if (trade.stopManualOverride !== true) {
-        trade.stop = stopPrice;
-      }
-      recalculateTradeRiskFromImportedStop(trade, user, rates);
+      trade.currentStopStale = true;
+      trade.t212StopOrderId = '';
       updated += 1;
+      continue;
     }
+    const stopPrice = Number(matched.stopPrice);
+    const shouldUpdate = shouldAutoSync
+      && (!Number.isFinite(Number(trade.currentStop))
+        || Number(trade.currentStop) !== stopPrice
+        || trade.currentStopStale === true
+        || trade.t212StopOrderId !== (matched.id || ''));
+    if (!shouldUpdate) continue;
+    trade.currentStop = stopPrice;
+    trade.currentStopSource = 't212';
+    trade.currentStopLastSyncedAt = new Date().toISOString();
+    trade.currentStopStale = false;
+    trade.t212StopOrderId = matched.id || '';
+    if (trade.stopManualOverride !== true) {
+      trade.stop = stopPrice;
+    }
+    recalculateTradeRiskFromImportedStop(trade, user, rates);
+    updated += 1;
   }
   return { updated };
 }
@@ -6430,7 +6476,7 @@ async function buildActiveTrades(user, rates = {}) {
     const fxFeeRate = Number(trade.fxFeeRate);
     const fxFeeEligible = trade.fxFeeEligible === true;
     const syncPpl = parseTradingNumber(trade.ppl);
-    if (isProvider && Number.isFinite(syncPpl)) {
+    if (isIbkr && Number.isFinite(syncPpl)) {
       const ibkrPnlGBP = isIbkr ? convertToGBP(syncPpl, tradeCurrency, rates) : null;
       const providerPnlGBP = Number.isFinite(ibkrPnlGBP) ? ibkrPnlGBP : syncPpl;
       const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
@@ -6504,11 +6550,11 @@ async function buildActiveTrades(user, rates = {}) {
         ? (entry - effectiveLive) * sizeUnits
         : (effectiveLive - entry) * sizeUnits)
       : null;
-    if (isProvider && Number.isFinite(syncPpl)) {
+    if (isIbkr && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
     }
     let pnlGBP = null;
-    if (isProvider && Number.isFinite(syncPpl)) {
+    if (isIbkr && Number.isFinite(syncPpl)) {
       pnlGBP = syncPpl;
     } else if (pnlCurrency !== null) {
       pnlGBP = convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates);
@@ -6525,7 +6571,7 @@ async function buildActiveTrades(user, rates = {}) {
       fxFeeGBP = entryFeeGBP + exitFeeGBP;
     }
     const unrealizedGBP = (pnlGBP !== null)
-      ? (isProvider && Number.isFinite(syncPpl) ? syncPpl : pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0))
+      ? (isIbkr && Number.isFinite(syncPpl) ? syncPpl : pnlGBP - (feesGBP ?? 0) - (fxFeeGBP ?? 0))
       : null;
     if (unrealizedGBP !== null) {
       liveOpenPnlGBP += unrealizedGBP;

@@ -108,3 +108,61 @@ test('matchStopOrderForTrade honors stored Trading 212 stop order id', () => {
   const matched = matchStopOrderForTrade(trade, orders);
   assert.equal(matched.id, 'order-42');
 });
+
+test('matchStopOrderForTrade prefers exact quantity match for layered trade', () => {
+  const trade = {
+    id: 'trade-layer',
+    sizeUnits: 0.02,
+    trading212Ticker: 'ICHR_US_EQ'
+  };
+  const orders = [
+    {
+      id: 'combined',
+      instrumentTicker: 'ICHR_US_EQ',
+      stopPrice: 22.1,
+      type: 'STOP',
+      status: 'OPEN',
+      side: 'SELL',
+      quantity: -0.07,
+      createdAt: '2025-01-01T00:00:00Z'
+    },
+    {
+      id: 'exact-layer',
+      instrumentTicker: 'ICHR_US_EQ',
+      stopPrice: 21.5,
+      type: 'STOP',
+      status: 'OPEN',
+      side: 'SELL',
+      quantity: -0.02,
+      createdAt: '2025-01-02T00:00:00Z'
+    }
+  ];
+  const matched = matchStopOrderForTrade(trade, orders, {
+    relatedTrades: [trade, { id: 'orig', sizeUnits: 0.05, trading212Ticker: 'ICHR_US_EQ' }]
+  });
+  assert.equal(matched?.id, 'exact-layer');
+});
+
+test('matchStopOrderForTrade falls back to combined quantity stop across related layers', () => {
+  const trade = {
+    id: 'trade-layer',
+    sizeUnits: 0.02,
+    trading212Ticker: 'ICHR_US_EQ'
+  };
+  const orders = [
+    {
+      id: 'combined',
+      instrumentTicker: 'ICHR_US_EQ',
+      stopPrice: 22.1,
+      type: 'STOP',
+      status: 'OPEN',
+      side: 'SELL',
+      quantity: -0.07,
+      createdAt: '2025-01-01T00:00:00Z'
+    }
+  ];
+  const matched = matchStopOrderForTrade(trade, orders, {
+    relatedTrades: [trade, { id: 'orig', sizeUnits: 0.05, trading212Ticker: 'ICHR_US_EQ' }]
+  });
+  assert.equal(matched?.id, 'combined');
+});
