@@ -6217,7 +6217,10 @@ async function buildActiveTrades(user, rates = {}) {
       const ibkrPnlGBP = isIbkr ? convertToGBP(syncPpl, tradeCurrency, rates) : null;
       const providerPnlGBP = Number.isFinite(ibkrPnlGBP) ? ibkrPnlGBP : syncPpl;
       const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
-      if (guaranteedPnlGBP !== null && guaranteedPnlGBP < 0) openLossPotentialGBP += guaranteedPnlGBP;
+      if (guaranteedPnlGBP !== null) {
+        const potentialDropGBP = providerPnlGBP - guaranteedPnlGBP;
+        if (potentialDropGBP > 0) openLossPotentialGBP -= potentialDropGBP;
+      }
       liveOpenPnlGBP += providerPnlGBP;
       providerTrades += 1;
       const providerCurrencyValue = isIbkr && Number.isFinite(ibkrPnlGBP) ? 'GBP' : tradeCurrency;
@@ -6311,7 +6314,10 @@ async function buildActiveTrades(user, rates = {}) {
       liveOpenPnlGBP += unrealizedGBP;
     }
     const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
-    if (guaranteedPnlGBP !== null && guaranteedPnlGBP < 0) openLossPotentialGBP += guaranteedPnlGBP;
+    if (guaranteedPnlGBP !== null && unrealizedGBP !== null) {
+      const potentialDropGBP = unrealizedGBP - guaranteedPnlGBP;
+      if (potentialDropGBP > 0) openLossPotentialGBP -= potentialDropGBP;
+    }
     manualTrades += 1;
     const perUnitRisk = Number.isFinite(Number(trade.perUnitRisk)) && Number(trade.perUnitRisk) > 0
       ? Number(trade.perUnitRisk)
