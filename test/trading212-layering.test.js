@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { findTrading212OpenTradeMatch } = require('../server');
+const {
+  findTrading212OpenTradeMatch,
+  inferTrading212AddedEntryPrice,
+  isTrading212AddToPosition
+} = require('../server');
 
 test('findTrading212OpenTradeMatch prefers exact id match over aggregate symbol match', () => {
   const openTrades = [
@@ -53,4 +57,16 @@ test('findTrading212OpenTradeMatch falls back to aggregate key when id changed o
 
   assert.equal(result.exactTradeEntry, undefined);
   assert.equal(result.aggregateTradeEntry?.trade?.id, 'existing-layer');
+});
+
+
+test('inferTrading212AddedEntryPrice derives buy price from avg change and unit increase', () => {
+  const inferred = inferTrading212AddedEntryPrice(100, 10, 110, 20);
+  assert.equal(inferred, 120);
+});
+
+test('isTrading212AddToPosition only returns true when units increase', () => {
+  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 12, 101), true);
+  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 10, 101), false);
+  assert.equal(isTrading212AddToPosition({ entry: 100, sizeUnits: 10 }, 9, 101), false);
 });
