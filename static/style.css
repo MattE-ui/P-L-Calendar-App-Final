@@ -117,20 +117,22 @@ h1, h2, h3, h4 {
 .hero {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 10px 14px;
   background: linear-gradient(155deg, rgba(255,255,255,.03), rgba(255,255,255,.01) 45%, transparent), var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 14px;
-  margin: 12px auto 18px;
+  margin: 12px auto 12px;
+  width: calc(100% - 32px);
+  max-width: 1600px;
   box-shadow: var(--shadow), var(--glow-emerald);
   animation: fade-up .45s ease both;
 }
 .hero-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .hero-left {
   justify-self: start;
@@ -172,7 +174,7 @@ h1, h2, h3, h4 {
   padding: 8px 10px;
   border-radius: 12px;
   min-width: 40px;
-  min-height: 40px;
+  min-height: 36px;
   align-items: center;
   justify-content: center;
 }
@@ -224,29 +226,60 @@ h1, h2, h3, h4 {
 }
 .hero-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  max-width: 720px;
-  margin: 0 auto;
-  justify-self: center;
-  grid-column: 2;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  margin: 0;
+  background: var(--surface-1, #0F151C);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18);
 }
 .hero-metrics .metric-card {
-  padding: 10px 12px;
+  padding: 0 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
+.hero-metrics .metric-card {
+  gap: 4px;
+}
+.hero-metrics .metric-card + .metric-card {
+  border-left: 1px solid rgba(255,255,255,0.05);
+}
+.hero-metrics .metric-card:hover {
+  transform: none;
+  border-color: transparent;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .page-title {
   display: flex;
   justify-content: center;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  margin: 6px auto 18px;
+  margin: 4px auto 14px;
   text-align: center;
 }
 
 .page-title h2 {
   margin: 0;
-  font-size: 26px;
+  font-size: 24px;
   letter-spacing: 0.2px;
   color: var(--text);
 }
@@ -354,6 +387,44 @@ select {
 .metric-card.positive .metric-value { color: var(--positive); }
 .metric-card.negative .metric-value { color: var(--negative); }
 .metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
+
+.hero-metrics #hero-portfolio {
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+}
+
+.hero-metrics #hero-portfolio .metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.hero-metrics .metric-card h3 {
+  font-size: 11px;
+  opacity: 0.68;
+  letter-spacing: .06em;
+}
+
+.hero-metrics .metric-card .metric-value {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.hero-metrics .metric-sub {
+  font-size: 11px;
+  opacity: 0.52;
+}
+
+.hero-metrics #hero-net-deposits,
+.hero-metrics #hero-net-performance {
+  border-color: transparent;
+}
+
+.hero-metrics #hero-net-deposits .metric-sub,
+.hero-metrics #hero-net-performance .metric-sub {
+  color: rgba(255,255,255,0.60);
+}
 
 .tool-card {
   background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)), linear-gradient(160deg, var(--accent-soft), transparent 65%), var(--surface-1);
@@ -2135,6 +2206,18 @@ textarea {
 :root[data-ui-theme-v1="true"] .metric-card .metric-sub { font-size: 12px; color: var(--text-3); }
 :root[data-ui-theme-v1="true"] .metric-card.positive { border-left-color: var(--emerald); }
 :root[data-ui-theme-v1="true"] .metric-card.negative { border-left-color: var(--red); }
+
+
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card {
+  border-left-width: 0;
+  box-shadow: none;
+}
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card + .metric-card {
+  border-left: 1px solid rgba(255,255,255,0.05);
+}
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card.negative {
+  border-left-color: rgba(255,255,255,0.05);
+}
 
 :root[data-ui-theme-v1="true"] .tool-overline,
 :root[data-ui-theme-v1="true"] .tool-note,
