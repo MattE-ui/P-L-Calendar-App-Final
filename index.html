@@ -8,7 +8,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="static/style.css">
 </head>
-<body>
+<body class="dashboard-home">
   <header class="hero panel interactive">
     <div class="hero-top">
       <div class="hero-left">
@@ -16,21 +16,11 @@
           <img class="brand-logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
         </h1>
       </div>
-      <div class="hero-metrics key-metrics border-gold-fade">
-        <article class="metric-card hero-card interactive" id="hero-portfolio">
+      <div class="hero-metrics">
+        <article class="metric-card" id="hero-portfolio">
           <h3>Portfolio value</h3>
           <div class="metric-value" id="header-portfolio-value">£0.00</div>
           <div class="metric-sub" id="header-portfolio-sub"></div>
-        </article>
-        <article class="metric-card hero-card interactive" id="hero-net-deposits">
-          <h3>Net deposits</h3>
-          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
-          <div class="metric-sub" id="hero-net-deposits-sub"></div>
-        </article>
-        <article class="metric-card hero-card interactive" id="hero-net-performance">
-          <h3>Net performance</h3>
-          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
-          <div class="metric-sub" id="hero-net-performance-sub"></div>
         </article>
       </div>
       <div class="hero-right">
@@ -67,6 +57,19 @@
   <main class="container">
     <section class="page-title">
       <h2>Dashboard</h2>
+      <div class="dashboard-context-row">
+        <div class="context-metric" id="hero-net-deposits">
+          <span class="context-label">Net deposits</span>
+          <span class="context-value" id="hero-net-deposits-value">£0.00</span>
+          <span class="context-sub" id="hero-net-deposits-sub"></span>
+        </div>
+        <span class="context-separator" aria-hidden="true">•</span>
+        <div class="context-metric" id="hero-net-performance">
+          <span class="context-label">Net performance</span>
+          <span class="context-value" id="hero-net-performance-value">£0.00</span>
+          <span class="context-sub" id="hero-net-performance-sub"></span>
+        </div>
+      </div>
     </section>
     <div id="safe-screenshot-alert" class="safe-screenshot-banner hidden" role="status">
       <div class="safe-screenshot-card">

@@ -255,6 +255,89 @@ h1, h2, h3, h4 {
   transform: none;
   border-color: transparent;
 }
+
+.dashboard-home .hero-top {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.dashboard-home .hero-metrics {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+.dashboard-home .hero-metrics .metric-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  gap: 2px;
+}
+
+.dashboard-home .hero-metrics #hero-portfolio .metric-value {
+  font-size: 24px;
+  line-height: 1.05;
+}
+
+.dashboard-home .hero-metrics .metric-sub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.dashboard-home .page-title {
+  align-items: flex-start;
+  text-align: left;
+  gap: 4px;
+  margin: 4px auto 12px;
+}
+
+.dashboard-context-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.68);
+}
+
+.dashboard-context-row .context-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dashboard-context-row .context-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.56);
+}
+
+.dashboard-context-row .context-value {
+  font-weight: 600;
+  color: rgba(255,255,255,0.84);
+}
+
+.dashboard-context-row .context-sub {
+  color: rgba(255,255,255,0.52);
+  font-size: 10px;
+}
+
+.dashboard-context-row .context-separator {
+  color: rgba(255,255,255,0.34);
+}
+
+.dashboard-context-row .context-metric.positive .context-value {
+  color: var(--positive);
+}
+
+.dashboard-context-row .context-metric.negative .context-value {
+  color: var(--negative);
+}
 .page-title {
   display: flex;
   justify-content: center;
