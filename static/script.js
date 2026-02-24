@@ -1368,7 +1368,7 @@ function renderPortfolioTrend() {
   dot.setAttribute('cx', lastPoint.x);
   dot.setAttribute('cy', lastPoint.y);
   dot.setAttribute('r', '2.5');
-  dot.setAttribute('class', 'line-dot');
+  dot.setAttribute('class', 'line-dot line-dot-latest');
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
   title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
   svg.append(title, area, line, dot);
