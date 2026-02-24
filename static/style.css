@@ -3,10 +3,11 @@
 :root {
   --bg: #0C0F14;
   --surface-1: #151A22;
-  --surface-2: #1B2230;
+  --surface-2: #18202B;
   --surface-3: #10151C;
   --border: #273042;
   --border-soft: rgba(255,255,255,0.06);
+  --border-mid: rgba(255,255,255,0.10);
   --text: #F5F7FA;
   --text-muted: #A9B4C4;
   --text-dim: #7F8A9A;
@@ -26,6 +27,11 @@
   --info: #4F8CFF;
   --shadow: 0 10px 30px rgba(0,0,0,0.45);
   --shadow-soft: 0 6px 18px rgba(0,0,0,0.35);
+  --surface-grad-1: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+  --surface-grad-2: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
+  --elev-1: 0 6px 18px rgba(0,0,0,0.35);
+  --elev-2: 0 12px 30px rgba(0,0,0,0.45);
+  --elev-3: 0 18px 40px rgba(0,0,0,0.55);
   --glow-emerald: 0 0 0 1px rgba(11,191,122,0.25), 0 0 24px rgba(11,191,122,0.12);
   --glow-danger: 0 0 0 1px rgba(255,92,92,0.25), 0 0 24px rgba(255,92,92,0.10);
 
@@ -46,9 +52,10 @@ body {
   margin: 0;
   font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji';
   background:
-    radial-gradient(circle at 10% 0%, rgba(11,191,122,0.12), transparent 34%),
-    radial-gradient(circle at 88% 10%, rgba(79,140,255,0.09), transparent 42%),
-    linear-gradient(170deg, var(--bg) 0%, #0a0d13 52%, #080b10 100%);
+    radial-gradient(1200px 800px at 15% 10%, rgba(11,191,122,0.10), transparent 60%),
+    radial-gradient(900px 600px at 85% 20%, rgba(79,140,255,0.08), transparent 55%),
+    radial-gradient(900px 700px at 60% 95%, rgba(0,0,0,0.35), transparent 60%),
+    linear-gradient(180deg, #0C0F14, #0A0D12);
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
@@ -62,6 +69,55 @@ h1, h2, h3, h4 {
 
 .hidden { display: none !important; }
 .is-hidden { display: none !important; }
+
+
+.panel,
+.center-panel,
+.tool-card,
+.metric-card,
+.stats-card,
+.kpi-card,
+.chart-card,
+.list-card,
+.trade-pill,
+.cell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--elev-1);
+}
+
+.panel::before,
+.center-panel::before,
+.tool-card::before,
+.metric-card::before,
+.stats-card::before,
+.kpi-card::before,
+.chart-card::before,
+.list-card::before,
+.trade-pill::before,
+.cell::before {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+  opacity: .55;
+  pointer-events: none;
+}
+
+.panel-raised,
+.center-panel,
+.tool-card,
+#active-trades-card,
+#calendar-card {
+  background-image: var(--surface-grad-2);
+  border-color: var(--border-mid);
+  box-shadow: var(--elev-2);
+}
+
 
 .topbar {
   display: flex; align-items: center;
@@ -105,25 +161,25 @@ h1, h2, h3, h4 {
 .center-column { display: flex; flex-direction: column; gap: 14px; }
 .side-column { display: flex; flex-direction: column; gap: 14px; }
 .center-panel {
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)), var(--card);
-  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border: 1px solid var(--border-mid);
   border-radius: 14px;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  box-shadow: var(--shadow), var(--glow-emerald);
+  box-shadow: var(--elev-2);
 }
 .hero {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px 12px;
-  background: linear-gradient(155deg, rgba(255,255,255,.03), rgba(255,255,255,.01) 45%, transparent), var(--surface-1);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 14px;
   margin: 12px auto 18px;
-  box-shadow: var(--shadow), var(--glow-emerald);
+  box-shadow: var(--elev-2);
   animation: fade-up .45s ease both;
 }
 .hero-top {
@@ -266,9 +322,10 @@ h1, h2, h3, h4 {
 #view-controls button[aria-pressed="true"] { background: rgba(42,163,255,.16); }
 
 select {
-  background: var(--card);
+  background: var(--surface-3);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
   border-radius: 10px;
   padding: 8px 12px;
 }
@@ -345,7 +402,7 @@ select {
 .avg.negative .summary-line strong { color: var(--negative); }
 
 .key-metrics { display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 24px 0 12px; }
-.metric-card { background: linear-gradient(160deg, rgba(255,255,255,.03), transparent 65%), var(--surface-1); border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow: var(--shadow-soft); display:flex; flex-direction: column; gap: 8px; transition: border-color .2s ease, transform .2s ease; }
+.metric-card { background: var(--surface-grad-1), var(--surface-1); border:1px solid var(--border-soft); border-radius:16px; padding:18px; box-shadow: var(--elev-1); display:flex; flex-direction: column; gap: 8px; transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease; }
 .metric-card h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing:.2px; text-transform: uppercase; }
 .metric-card .metric-value { font-size: 22px; font-weight: 700; }
 .metric-card .metric-sub { font-size: 13px; color: var(--muted); }
@@ -353,14 +410,29 @@ select {
 .metric-card.negative { border-color: color-mix(in srgb, var(--danger) 62%, var(--border) 38%); }
 .metric-card.positive .metric-value { color: var(--positive); }
 .metric-card.negative .metric-value { color: var(--negative); }
-.metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
+.metric-card:hover { transform: translateY(-1px); border-color: rgba(255,255,255,0.12); box-shadow: var(--elev-2); }
+.panel:hover,
+.center-panel:hover,
+.tool-card:hover,
+.trade-pill:hover,
+.cell:hover {
+  box-shadow: var(--elev-2);
+  transform: translateY(-1px);
+  border-color: rgba(255,255,255,0.12);
+  transition: box-shadow 180ms ease, transform 180ms ease, border-color 180ms ease;
+}
+.panel:hover::before,
+.center-panel:hover::before,
+.tool-card:hover::before,
+.trade-pill:hover::before,
+.cell:hover::before { opacity: .75; }
 
 .tool-card {
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)), linear-gradient(160deg, var(--accent-soft), transparent 65%), var(--surface-1);
-  border: 1px solid var(--border);
+  background: var(--surface-grad-2), linear-gradient(160deg, var(--accent-soft), transparent 65%), var(--surface-1);
+  border: 1px solid var(--border-mid);
   border-radius: 16px;
   padding: 18px;
-  box-shadow: var(--shadow-soft), var(--glow-emerald);
+  box-shadow: var(--elev-1);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -538,18 +610,18 @@ select {
 }
 .trade-pill {
   background: linear-gradient(145deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border) 62%);
+  border: 1px solid var(--border-soft);
   border-radius: 18px;
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   position: relative;
-  box-shadow: var(--shadow-soft), var(--glow-emerald);
+  box-shadow: var(--elev-1);
   transition: transform .24s ease, border-color .24s ease, box-shadow .24s ease;
 }
 .trade-pill:hover {
-  transform: translateY(-3px);
+  transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
 }
 .trade-pill.trade-pill-alert {
@@ -976,19 +1048,22 @@ select {
   font-size: 11px;
 }
 .cell.profit {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent-2) 58%, var(--surface-1) 42%));
-  border-color: color-mix(in srgb, var(--success) 62%, var(--border) 38%);
+  background: rgba(11,191,122,0.12);
+  border-color: rgba(11,191,122,0.18);
   color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 .cell.loss {
-  background: linear-gradient(155deg, rgba(255,59,92,.38), rgba(92,16,30,.88));
-  border-color: color-mix(in srgb, var(--danger) 60%, var(--border) 40%);
+  background: rgba(255,92,92,0.12);
+  border-color: rgba(255,92,92,0.18);
   color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 .cell.first-entry {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--highlight) 36%, transparent), color-mix(in srgb, var(--highlight) 40%, var(--surface-1) 60%));
-  border-color: color-mix(in srgb, var(--highlight) 62%, var(--border) 38%);
-  color: color-mix(in srgb, var(--highlight) 22%, var(--bg) 78%);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  border-color: color-mix(in srgb, var(--info) 22%, var(--border) 78%);
+  color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 .cell.profit .date,
 .cell.profit .meta,
@@ -998,14 +1073,14 @@ select {
 }
 .cell.first-entry .date,
 .cell.first-entry .meta {
-  color: rgba(32,22,0,.72);
+  color: rgba(245,247,250,.82);
 }
 .cell.profit .pct,
 .cell.loss .pct {
   color: var(--text);
 }
 .cell.first-entry .pct {
-  color: rgba(32,22,0,.9);
+  color: var(--text);
 }
 .cell .cashflow {
   margin-top: 6px;
@@ -1017,7 +1092,7 @@ select {
   color: rgba(255,255,255,.82);
 }
 .cell.first-entry .cashflow {
-  color: rgba(32,22,0,.8);
+  color: rgba(245,247,250,.82);
 }
 .cell .note {
   margin-top: 6px;
@@ -1036,7 +1111,7 @@ select {
   color: rgba(255,255,255,.85);
 }
 .cell.first-entry .note {
-  color: rgba(32,22,0,.82);
+  color: rgba(245,247,250,.85);
 }
 
 .list-row {
@@ -1400,9 +1475,10 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 72%, transparent);
+  border-color: rgba(11,191,122,0.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 0 3px rgba(11,191,122,0.14);
 }
 button:disabled {
   cursor: not-allowed;
@@ -1513,8 +1589,8 @@ td .mapping-badge {
   gap: 12px;
 }
 .kpi-card, .chart-card, .list-card {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
+  background: var(--surface-grad-1), var(--surface-1);
+  border: 1px solid var(--border-soft);
   border-radius: 14px;
   padding: 16px;
   display: flex;
@@ -1826,10 +1902,18 @@ textarea {
   width:100%;
   padding:10px;
   border-radius: 10px;
-  border:1px solid var(--border);
+  border:1px solid var(--border-soft);
   background:var(--surface-3);
   color:var(--text);
   margin-top:6px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+input.input,
+textarea.input,
+select.input {
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(1);
@@ -1892,6 +1976,7 @@ textarea {
 }
 
 
+.text-gold,
 .text-gold-grad {
   background: var(--gold-grad);
   -webkit-background-clip: text;
@@ -1901,7 +1986,7 @@ textarea {
 }
 
 .ring-gold-soft {
-  box-shadow: var(--gold-glow);
+  box-shadow: 0 0 0 1px rgba(228,184,76,0.12);
 }
 
 .border-gold-fade {
@@ -1928,7 +2013,7 @@ textarea {
   background: rgba(228,184,76,0.10);
   border: 1px solid rgba(228,184,76,0.22);
   color: var(--gold-1);
-  box-shadow: var(--gold-glow);
+  box-shadow: 0 0 0 1px rgba(228,184,76,0.12);
 }
 
 .mini-line .line-dot.line-dot-latest {
