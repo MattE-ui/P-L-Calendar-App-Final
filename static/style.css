@@ -304,6 +304,7 @@ h1, h2, h3, h4 {
   margin: 0;
   font-size: 26px;
   letter-spacing: 0.2px;
+  color: var(--highlight);
 }
 
 
@@ -452,7 +453,7 @@ select {
   text-transform: uppercase;
   font-weight: 700;
 }
-.tool-header h3 { margin: 4px 0 2px; }
+.tool-header h3 { margin: 4px 0 2px; color: var(--highlight); }
 .tool-sub {
   margin: 0;
   color: var(--muted);
@@ -979,7 +980,7 @@ select {
 .grid.view-week { display: flex; flex-direction: column; }
 .grid.view-year-list { display: flex; flex-direction: column; gap: 16px; }
 .grid.view-year-list .year-group { display: flex; flex-direction: column; gap: 12px; }
-.grid.view-year-list .year-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.grid.view-year-list .year-title { font-size: 16px; font-weight: 700; color: var(--highlight); }
 .grid.view-year-list .year-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .grid.view-year-list .year-grid .cell { min-height: 96px; }
 
@@ -1238,6 +1239,7 @@ select {
 .stats-heading h2 {
   margin: 0;
   font-size: 26px;
+  color: var(--highlight);
 }
 
 .stats-heading p {
@@ -1265,6 +1267,7 @@ select {
 }
 .stats-section-title h3 {
   margin: 0;
+  color: var(--highlight);
 }
 
 .stats-grid {
@@ -1637,7 +1640,7 @@ td .mapping-badge {
   align-items: center;
   gap: 12px;
 }
-.section-header h2 { margin: 0; }
+.section-header h2 { margin: 0; color: var(--highlight); }
 .pill {
   display: inline-flex;
   align-items: center;
