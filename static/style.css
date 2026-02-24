@@ -915,8 +915,9 @@ select {
 .grid.view-month .dow { text-align:center; font-weight:700; color: var(--muted); padding: 2px 0; font-size: 12px; }
 
 .cell {
-  background: linear-gradient(155deg, rgba(255,255,255,.02), transparent 60%), var(--card);
-  border: 1px solid var(--border);
+  background: #0F151C;
+  background: var(--surface-1);
+  border: 1px solid rgba(255,255,255,0.05);
   border-radius: 16px;
   padding: 12px 12px;
   min-height: 108px;
@@ -925,10 +926,11 @@ select {
   gap: 8px;
   position: relative;
   box-shadow: var(--shadow-soft), 0 0 0 1px var(--border-soft);
-  transition: background .2s ease, border-color .2s ease, color .2s ease, transform .2s ease;
+  transition: transform 160ms ease, border-color 160ms ease;
 }
 .cell:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+  border-color: rgba(255,255,255,0.10);
 }
 .grid.view-month .cell {
   min-height: 96px;
@@ -976,13 +978,13 @@ select {
   font-size: 11px;
 }
 .cell.profit {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent-2) 58%, var(--surface-1) 42%));
-  border-color: color-mix(in srgb, var(--success) 62%, var(--border) 38%);
+  background: linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
+  border-left: 3px solid var(--emerald);
   color: var(--text);
 }
 .cell.loss {
-  background: linear-gradient(155deg, rgba(255,59,92,.38), rgba(92,16,30,.88));
-  border-color: color-mix(in srgb, var(--danger) 60%, var(--border) 40%);
+  background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
+  border-left: 3px solid var(--red);
   color: var(--text);
 }
 .cell.first-entry {
@@ -2165,10 +2167,11 @@ textarea {
 :root[data-ui-theme-v1="true"] .grid.view-month { gap: 10px; }
 :root[data-ui-theme-v1="true"] .cell {
   background: var(--surface-1);
-  border: 1px solid var(--stroke-1);
+  border: 1px solid rgba(255,255,255,0.05);
   border-left: 3px solid transparent;
   box-shadow: var(--shadow-1), var(--inset-1);
 }
+:root[data-ui-theme-v1="true"] .cell:hover { border-color: rgba(255,255,255,0.10); }
 :root[data-ui-theme-v1="true"] .cell .date,
 :root[data-ui-theme-v1="true"] .cell .meta,
 :root[data-ui-theme-v1="true"] .cell .cashflow,
@@ -2176,14 +2179,12 @@ textarea {
 :root[data-ui-theme-v1="true"] .cell .trade-count { color: var(--text-3); }
 :root[data-ui-theme-v1="true"] .cell .val { color: var(--text-1); }
 :root[data-ui-theme-v1="true"] .cell.profit {
-  background: linear-gradient(160deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
-  border-left-color: var(--emerald);
-  border-color: var(--stroke-1);
+  background: linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
+  border-left: 3px solid var(--emerald);
 }
 :root[data-ui-theme-v1="true"] .cell.loss {
-  background: linear-gradient(160deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
-  border-left-color: var(--red);
-  border-color: var(--stroke-1);
+  background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
+  border-left: 3px solid var(--red);
 }
 :root[data-ui-theme-v1="true"] .cell.profit .pct { color: rgba(52, 211, 153, 0.85); }
 :root[data-ui-theme-v1="true"] .cell.loss .pct { color: rgba(239, 68, 68, 0.85); }
