@@ -1368,7 +1368,7 @@ function renderPortfolioTrend() {
   dot.setAttribute('cx', lastPoint.x);
   dot.setAttribute('cy', lastPoint.y);
   dot.setAttribute('r', '2.5');
-  dot.setAttribute('class', 'line-dot');
+  dot.setAttribute('class', 'line-dot line-dot-latest');
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
   title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
   svg.append(title, area, line, dot);
@@ -1686,14 +1686,7 @@ function openEditTradeModal(trade) {
 
 function setMetricTrend(el, value) {
   if (!el) return;
-  const isPositive = Number.isFinite(value) && value > 0;
-  const isNegative = Number.isFinite(value) && value < 0;
-  el.classList.toggle('positive', isPositive);
-  el.classList.toggle('negative', isNegative);
-  if (!isPositive && !isNegative) {
-    el.classList.remove('positive');
-    el.classList.remove('negative');
-  }
+  window.ThemeUtils?.applyPnlColorClass(el, value);
 }
 
 function renderMetrics() {
