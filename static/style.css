@@ -1,22 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
 :root {
-  --bg: #0d0f14;
-  --card: #181c24;
-  --text: #e9eef5;
-  --muted: #a6b2c0;
-  --primary: #2aa3ff;
+  --bg: #03050b;
+  --bg-elevated: #070b14;
+  --card: #0b1220;
+  --card-soft: #101a2d;
+  --text: #edf3ff;
+  --muted: #9fadc6;
+  --primary: #5fb3ff;
+  --accent: #8c7bff;
   --positive: #1db954;
   --negative: #ff3b5c;
-  --border: #2a3040;
+  --border: rgba(109, 183, 255, 0.62);
+  --glow: 0 22px 52px rgba(4, 8, 18, 0.62);
+  --neon-outline: 0 0 0 1px rgba(109, 183, 255, 0.55), 0 0 20px rgba(83, 145, 255, 0.28);
 }
 
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji';
-  background: radial-gradient(circle at top, rgba(42,163,255,.16), transparent 55%), var(--bg);
+  font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji';
+  background:
+    radial-gradient(circle at 12% 0%, rgba(95, 179, 255, 0.2), transparent 38%),
+    radial-gradient(circle at 88% 12%, rgba(140, 123, 255, 0.16), transparent 42%),
+    linear-gradient(170deg, var(--bg) 0%, #040915 52%, #010207 100%);
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
+  letter-spacing: 0.01em;
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  letter-spacing: 0.01em;
 }
 
 .hidden { display: none !important; }
@@ -25,7 +41,9 @@ body {
 .topbar {
   display: flex; align-items: center;
   gap: 12px; padding: 14px 18px;
-  background: #0a0d12; border-bottom: 1px solid var(--border);
+  background: rgba(3, 7, 14, 0.84);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
   position: sticky; top: 0; z-index: 5;
 }
 .add-trade-btn {
@@ -69,16 +87,19 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
 }
 .hero {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--card);
+  background: linear-gradient(155deg, rgba(255,255,255,.03), rgba(255,255,255,.01) 45%, transparent), var(--card);
   border: 1px solid var(--border);
   border-radius: 14px;
   margin: 12px auto 18px;
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
+  animation: fade-up .45s ease both;
 }
 .hero-top {
   display: grid;
@@ -305,14 +326,14 @@ select {
 .metric-card.negative { border-color: rgba(255,59,92,.6); }
 .metric-card.positive .metric-value { color: var(--positive); }
 .metric-card.negative .metric-value { color: var(--negative); }
-.metric-card:hover { transform: translateY(-2px); }
+.metric-card:hover { transform: translateY(-4px); border-color: rgba(95,179,255,.45); }
 
 .tool-card {
-  background: linear-gradient(160deg, rgba(42,163,255,.08), transparent 65%), var(--card);
+  background: linear-gradient(160deg, rgba(42,163,255,.11), transparent 65%), var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 12px 28px rgba(8,12,18,.36);
+  box-shadow: 0 12px 28px rgba(8,12,18,.36), var(--neon-outline);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -490,14 +511,19 @@ select {
 }
 .trade-pill {
   background: linear-gradient(145deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
-  border: 1px solid rgba(255,255,255,.08);
+  border: 1px solid rgba(109, 183, 255, 0.58);
   border-radius: 18px;
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   position: relative;
-  box-shadow: 0 18px 40px rgba(0,0,0,.35);
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
+  transition: transform .24s ease, border-color .24s ease, box-shadow .24s ease;
+}
+.trade-pill:hover {
+  transform: translateY(-3px);
+  border-color: rgba(95,179,255,.35);
 }
 .trade-pill.trade-pill-alert {
   background: linear-gradient(145deg, rgba(255, 84, 84, 0.12), rgba(255,255,255,.015));
@@ -871,8 +897,11 @@ select {
   flex-direction: column;
   gap: 8px;
   position: relative;
-  box-shadow: 0 6px 14px rgba(9,12,18,.35);
-  transition: background .2s ease, border-color .2s ease, color .2s ease;
+  box-shadow: 0 14px 30px rgba(2, 8, 18, .6), 0 0 0 1px rgba(109, 183, 255, 0.44);
+  transition: background .2s ease, border-color .2s ease, color .2s ease, transform .2s ease;
+}
+.cell:hover {
+  transform: translateY(-2px);
 }
 .grid.view-month .cell {
   min-height: 96px;
@@ -1211,7 +1240,7 @@ select {
 
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
-.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); max-height: 90vh; overflow-y: auto; }
+.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4), var(--neon-outline); max-height: 90vh; overflow-y: auto; }
 .modal-header { display:flex; justify-content: space-between; align-items: center; gap: 8px; }
 .share-card-modal {
   width: min(760px, 96vw);
@@ -1320,6 +1349,27 @@ button.danger.outline {
 button.danger:hover {
   background: rgba(208, 52, 44, 0.28);
 }
+button,
+a.primary,
+.ghost,
+select,
+input,
+textarea {
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+}
+button:hover:not(:disabled),
+a.primary:hover,
+.ghost:hover {
+  transform: translateY(-1px);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 60%, var(--accent) 40%);
+  outline-offset: 2px;
+}
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -1353,7 +1403,7 @@ button:disabled {
   justify-content: center;
   margin: 0 0 16px;
 }
-.card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; }
+.card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; box-shadow: var(--neon-outline); }
 .card-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
 .auth-switch { margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
 .auth-switch p { margin: 0; color: var(--muted); font-size: 14px; }
@@ -1436,6 +1486,7 @@ td .mapping-badge {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  box-shadow: var(--neon-outline);
 }
 .chart-card canvas { max-height: 320px; }
 .list-card table {
@@ -1784,6 +1835,26 @@ textarea {
 .guest-disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media (max-width: 540px) {
