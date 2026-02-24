@@ -242,6 +242,7 @@ h1, h2, h3, h4 {
   margin: 0;
   font-size: 26px;
   letter-spacing: 0.2px;
+  color: var(--highlight);
 }
 
 #view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 10px; }
@@ -373,7 +374,7 @@ select {
   text-transform: uppercase;
   font-weight: 700;
 }
-.tool-header h3 { margin: 4px 0 2px; }
+.tool-header h3 { margin: 4px 0 2px; color: var(--highlight); }
 .tool-sub {
   margin: 0;
   color: var(--muted);
@@ -900,7 +901,7 @@ select {
 .grid.view-week { display: flex; flex-direction: column; }
 .grid.view-year-list { display: flex; flex-direction: column; gap: 16px; }
 .grid.view-year-list .year-group { display: flex; flex-direction: column; gap: 12px; }
-.grid.view-year-list .year-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.grid.view-year-list .year-title { font-size: 16px; font-weight: 700; color: var(--highlight); }
 .grid.view-year-list .year-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .grid.view-year-list .year-grid .cell { min-height: 96px; }
 
@@ -948,6 +949,7 @@ select {
 .cell .val {
   font-size: 15px;
   font-weight: 700;
+  color: var(--highlight);
 }
 .cell .pct {
   margin-top: auto;
@@ -1120,17 +1122,17 @@ select {
   display: block;
 }
 .mini-line .line-area {
-  fill: color-mix(in srgb, var(--accent) 28%, transparent);
+  fill: color-mix(in srgb, var(--highlight) 28%, transparent);
 }
  .mini-line .line-path {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--highlight);
   stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 .mini-line .line-dot {
-  fill: var(--accent);
+  fill: var(--highlight);
 }
 #analytics-page {
   min-height: 0;
@@ -1154,6 +1156,7 @@ select {
 .stats-heading h2 {
   margin: 0;
   font-size: 26px;
+  color: var(--highlight);
 }
 .stats-heading p {
   margin: 4px 0 0;
@@ -1180,6 +1183,7 @@ select {
 }
 .stats-section-title h3 {
   margin: 0;
+  color: var(--highlight);
 }
 .stats-grid {
   display: grid;
@@ -1390,27 +1394,6 @@ select:focus-visible {
   outline-offset: 2px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 72%, transparent);
 }
-button,
-a.primary,
-.ghost,
-select,
-input,
-textarea {
-  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
-}
-button:hover:not(:disabled),
-a.primary:hover,
-.ghost:hover {
-  transform: translateY(-1px);
-}
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--primary) 60%, var(--accent) 40%);
-  outline-offset: 2px;
-}
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -1571,7 +1554,7 @@ td .mapping-badge {
   align-items: center;
   gap: 12px;
 }
-.section-header h2 { margin: 0; }
+.section-header h2 { margin: 0; color: var(--highlight); }
 .pill {
   display: inline-flex;
   align-items: center;
