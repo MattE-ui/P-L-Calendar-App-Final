@@ -355,6 +355,29 @@ select {
 .metric-card.negative .metric-value { color: var(--negative); }
 .metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
 
+.hero-metrics #hero-portfolio {
+  background: var(--surface-2, #111A22);
+  border-color: rgba(255,255,255,0.10);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+
+.hero-metrics #hero-net-deposits,
+.hero-metrics #hero-net-performance {
+  background: var(--surface-1);
+  border-color: rgba(255,255,255,0.06);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.28);
+}
+
+.hero-metrics #hero-portfolio .metric-value {
+  font-size: 25px;
+  font-weight: 700;
+}
+
+.hero-metrics #hero-net-deposits .metric-sub,
+.hero-metrics #hero-net-performance .metric-sub {
+  color: rgba(255,255,255,0.60);
+}
+
 .tool-card {
   background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02)), linear-gradient(160deg, var(--accent-soft), transparent 65%), var(--surface-1);
   border: 1px solid var(--border);
