@@ -123,6 +123,8 @@ h1, h2, h3, h4 {
   border: 1px solid var(--border);
   border-radius: 14px;
   margin: 12px auto 18px;
+  width: calc(100% - 32px);
+  max-width: 1600px;
   box-shadow: var(--shadow), var(--glow-emerald);
   animation: fade-up .45s ease both;
 }
@@ -227,13 +229,15 @@ h1, h2, h3, h4 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   width: 100%;
-  margin: 0;
+  margin: 18px 0 0;
   justify-self: stretch;
-  grid-column: 2;
+  grid-column: 1 / -1;
+  grid-row: 2;
   background: var(--surface-1, #0F151C);
   border: 1px solid rgba(255,255,255,0.06);
   border-radius: 16px;
-  padding: 18px;
+  padding: 20px 18px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 .hero-metrics .metric-card {
   padding: 0 14px;
@@ -371,7 +375,7 @@ select {
 .metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
 
 .hero-metrics #hero-portfolio .metric-value {
-  font-size: 25px;
+  font-size: 26px;
   font-weight: 700;
 }
 
