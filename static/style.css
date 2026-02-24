@@ -983,7 +983,7 @@ select {
   color: var(--text);
 }
 .cell.loss {
-  background: linear-gradient(180deg, rgba(239,68,68,0.22), rgba(239,68,68,0.10)), rgba(15, 21, 28, 0.92);
+  background: linear-gradient(180deg, rgba(239,68,68,0.19), rgba(239,68,68,0.08)), rgba(15, 21, 28, 0.92);
   border-left: 2px solid #EF4444;
   color: var(--text);
 }
@@ -1002,7 +1002,9 @@ select {
 .cell.first-entry .meta {
   color: rgba(32,22,0,.72);
 }
-.cell.profit .pct,
+.cell.profit .pct {
+  color: rgba(52, 211, 153, 0.95);
+}
 .cell.loss .pct {
   color: var(--text);
 }
@@ -1039,6 +1041,23 @@ select {
 }
 .cell.first-entry .note {
   color: rgba(32,22,0,.82);
+}
+
+.cell.profit .date,
+.cell.profit .meta,
+.cell.profit .val,
+.cell.profit .pct,
+.cell.profit .cashflow,
+.cell.profit .note,
+.cell.profit .trade-count,
+.cell.loss .date,
+.cell.loss .meta,
+.cell.loss .val,
+.cell.loss .pct,
+.cell.loss .cashflow,
+.cell.loss .note,
+.cell.loss .trade-count {
+  text-shadow: 0 1px 0 rgba(0,0,0,0.35);
 }
 
 .list-row {
@@ -2188,10 +2207,10 @@ textarea {
   border-left: 2px solid #10B981;
 }
 :root[data-ui-theme-v1="true"] .cell.loss {
-  background: linear-gradient(180deg, rgba(239,68,68,0.22), rgba(239,68,68,0.10)), rgba(15, 21, 28, 0.92);
+  background: linear-gradient(180deg, rgba(239,68,68,0.19), rgba(239,68,68,0.08)), rgba(15, 21, 28, 0.92);
   border-left: 2px solid #EF4444;
 }
-:root[data-ui-theme-v1="true"] .cell.profit .pct { color: rgba(52, 211, 153, 0.85); }
+:root[data-ui-theme-v1="true"] .cell.profit .pct { color: rgba(52, 211, 153, 0.95); }
 :root[data-ui-theme-v1="true"] .cell.loss .pct { color: rgba(239, 68, 68, 0.85); }
 
 :root[data-ui-theme-v1="true"] .trade-pill {
