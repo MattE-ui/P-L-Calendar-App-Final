@@ -128,7 +128,7 @@ h1, h2, h3, h4 {
 }
 .hero-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -225,14 +225,29 @@ h1, h2, h3, h4 {
 .hero-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  max-width: 720px;
-  margin: 0 auto;
-  justify-self: center;
+  gap: 0;
+  width: 100%;
+  margin: 0;
+  justify-self: stretch;
   grid-column: 2;
+  background: var(--surface-1, #0F151C);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 18px;
 }
 .hero-metrics .metric-card {
-  padding: 10px 12px;
+  padding: 0 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.hero-metrics .metric-card + .metric-card {
+  border-left: 1px solid rgba(255,255,255,0.05);
+}
+.hero-metrics .metric-card:hover {
+  transform: none;
+  border-color: transparent;
 }
 .page-title {
   display: flex;
@@ -355,22 +370,14 @@ select {
 .metric-card.negative .metric-value { color: var(--negative); }
 .metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
 
-.hero-metrics #hero-portfolio {
-  background: var(--surface-2, #111A22);
-  border-color: rgba(255,255,255,0.10);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+.hero-metrics #hero-portfolio .metric-value {
+  font-size: 25px;
+  font-weight: 700;
 }
 
 .hero-metrics #hero-net-deposits,
 .hero-metrics #hero-net-performance {
-  background: var(--surface-1);
-  border-color: rgba(255,255,255,0.06);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.28);
-}
-
-.hero-metrics #hero-portfolio .metric-value {
-  font-size: 25px;
-  font-weight: 700;
+  border-color: transparent;
 }
 
 .hero-metrics #hero-net-deposits .metric-sub,
@@ -2158,6 +2165,18 @@ textarea {
 :root[data-ui-theme-v1="true"] .metric-card .metric-sub { font-size: 12px; color: var(--text-3); }
 :root[data-ui-theme-v1="true"] .metric-card.positive { border-left-color: var(--emerald); }
 :root[data-ui-theme-v1="true"] .metric-card.negative { border-left-color: var(--red); }
+
+
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card {
+  border-left-width: 0;
+  box-shadow: none;
+}
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card + .metric-card {
+  border-left: 1px solid rgba(255,255,255,0.05);
+}
+:root[data-ui-theme-v1="true"] .hero-metrics .metric-card.negative {
+  border-left-color: rgba(255,255,255,0.05);
+}
 
 :root[data-ui-theme-v1="true"] .tool-overline,
 :root[data-ui-theme-v1="true"] .tool-note,
