@@ -117,12 +117,12 @@ h1, h2, h3, h4 {
 .hero {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: 10px;
+  padding: 10px 14px;
   background: linear-gradient(155deg, rgba(255,255,255,.03), rgba(255,255,255,.01) 45%, transparent), var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 14px;
-  margin: 12px auto 18px;
+  margin: 12px auto 12px;
   width: calc(100% - 32px);
   max-width: 1600px;
   box-shadow: var(--shadow), var(--glow-emerald);
@@ -226,27 +226,25 @@ h1, h2, h3, h4 {
 }
 .hero-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 0;
-  width: min(100%, 980px);
+  width: 100%;
   margin: 0;
-  justify-self: stretch;
-  grid-column: 2;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.04);
-  border-radius: 12px;
-  padding: 7px 10px;
-  box-shadow: none;
+  background: var(--surface-1, #0F151C);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18);
 }
 .hero-metrics .metric-card {
-  padding: 0 8px;
+  padding: 0 12px;
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
 .hero-metrics .metric-card {
-  gap: 3px;
+  gap: 4px;
 }
 .hero-metrics .metric-card + .metric-card {
   border-left: 1px solid rgba(255,255,255,0.05);
@@ -256,95 +254,26 @@ h1, h2, h3, h4 {
   border-color: transparent;
 }
 
-.dashboard-home .hero-top {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
 
-.dashboard-home .hero-metrics {
-  display: flex;
-  justify-content: center;
-  width: 100%;
-  margin: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  box-shadow: none;
-}
 
-.dashboard-home .hero-metrics .metric-card {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  padding: 0;
-  gap: 2px;
-}
 
-.dashboard-home .hero-metrics #hero-portfolio .metric-value {
-  font-size: 24px;
-  line-height: 1.05;
-}
 
-.dashboard-home .hero-metrics .metric-sub {
-  font-size: 11px;
-  opacity: 0.7;
-}
 
-.dashboard-home .page-title {
-  align-items: flex-start;
-  text-align: left;
-  gap: 4px;
-  margin: 4px auto 12px;
-}
 
-.dashboard-context-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: rgba(255,255,255,0.68);
-}
 
-.dashboard-context-row .context-metric {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-}
 
-.dashboard-context-row .context-label {
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: rgba(255,255,255,0.56);
-}
 
-.dashboard-context-row .context-value {
-  font-weight: 600;
-  color: rgba(255,255,255,0.84);
-}
 
-.dashboard-context-row .context-sub {
-  color: rgba(255,255,255,0.52);
-  font-size: 10px;
-}
 
-.dashboard-context-row .context-separator {
-  color: rgba(255,255,255,0.34);
-}
 
-.dashboard-context-row .context-metric.positive .context-value {
-  color: var(--positive);
-}
 
-.dashboard-context-row .context-metric.negative .context-value {
-  color: var(--negative);
-}
 .page-title {
   display: flex;
   justify-content: center;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  margin: 6px auto 18px;
+  margin: 4px auto 14px;
   text-align: center;
 }
 
@@ -461,17 +390,30 @@ select {
 
 .hero-metrics #hero-portfolio {
   gap: 4px;
+  align-items: center;
+  text-align: center;
 }
 
 .hero-metrics #hero-portfolio .metric-value {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
   line-height: 1.1;
 }
 
+.hero-metrics .metric-card h3 {
+  font-size: 11px;
+  opacity: 0.68;
+  letter-spacing: .06em;
+}
+
+.hero-metrics .metric-card .metric-value {
+  font-size: 22px;
+  font-weight: 600;
+}
+
 .hero-metrics .metric-sub {
   font-size: 11px;
-  opacity: 0.7;
+  opacity: 0.52;
 }
 
 .hero-metrics #hero-net-deposits,
