@@ -17,6 +17,21 @@ const state = {
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
+function getThemeColor(token, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || fallback;
+}
+
+const CHART_THEME = {
+  accent: () => getThemeColor('--accent', '#0BBF7A'),
+  info: () => getThemeColor('--info', '#4F8CFF'),
+  danger: () => getThemeColor('--danger', '#FF5C5C'),
+  warning: () => getThemeColor('--highlight', '#E4B84C'),
+  grid: () => getThemeColor('--border-soft', 'rgba(255,255,255,0.06)'),
+  ticks: () => getThemeColor('--text-dim', '#7F8A9A'),
+  accentSoft: () => getThemeColor('--accent-soft', 'rgba(11,191,122,0.14)')
+};
+
 const isGuestSession = () => (sessionStorage.getItem('guestMode') === 'true'
   || localStorage.getItem('guestMode') === 'true')
   && typeof window.handleGuestRequest === 'function';
@@ -102,14 +117,7 @@ function formatNumber(value) {
 
 function setMetricTrend(el, value) {
   if (!el) return;
-  const isPositive = Number.isFinite(value) && value > 0;
-  const isNegative = Number.isFinite(value) && value < 0;
-  el.classList.toggle('positive', isPositive);
-  el.classList.toggle('negative', isNegative);
-  if (!isPositive && !isNegative) {
-    el.classList.remove('positive');
-    el.classList.remove('negative');
-  }
+  window.ThemeUtils?.applyPnlColorClass(el, value);
 }
 
 async function loadRates() {
@@ -155,6 +163,14 @@ function showEmptyState(id, message) {
 
 function renderChart(id, config) {
   destroyChart(id);
+  if (config?.options?.scales) {
+    Object.values(config.options.scales).forEach(scale => {
+      if (!scale) return;
+      scale.grid = { ...(scale.grid || {}), color: CHART_THEME.grid() };
+      scale.ticks = { ...(scale.ticks || {}), color: CHART_THEME.ticks() };
+      scale.border = { ...(scale.border || {}), color: CHART_THEME.grid() };
+    });
+  }
   const ctx = document.getElementById(id);
   if (!ctx) return;
   const parent = ctx.parentElement;
@@ -299,7 +315,7 @@ function renderEquityCurve(curve = []) {
         label: 'Equity (GBP)',
         data: values,
         tension: 0.2,
-        borderColor: '#4fb7ff',
+        borderColor: CHART_THEME.accent(),
         fill: false
       }]
     },
@@ -325,8 +341,8 @@ function renderDrawdown(drawdown = {}) {
       datasets: [{
         label: 'Drawdown (GBP)',
         data: values,
-        borderColor: '#ff5a8f',
-        backgroundColor: 'rgba(255,90,143,0.25)',
+        borderColor: CHART_THEME.danger(),
+        backgroundColor: 'rgba(255,92,92,0.18)',
         fill: true
       }]
     },
@@ -352,7 +368,7 @@ function renderDistribution(dist = {}) {
       datasets: [{
         label: 'Trades',
         data: values,
-        backgroundColor: '#4fb7ff'
+        backgroundColor: CHART_THEME.info()
       }]
     },
     options: {
@@ -374,7 +390,7 @@ function renderBreakdown(canvasId, dataObj = {}, label) {
       datasets: [{
         label: label || '',
         data: values,
-        backgroundColor: '#ffba4f'
+        backgroundColor: CHART_THEME.warning()
       }]
     },
     options: {

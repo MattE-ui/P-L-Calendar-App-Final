@@ -109,14 +109,7 @@ function createMappingBadge() {
 
 function setMetricTrend(el, value) {
   if (!el) return;
-  const isPositive = Number.isFinite(value) && value > 0;
-  const isNegative = Number.isFinite(value) && value < 0;
-  el.classList.toggle('positive', isPositive);
-  el.classList.toggle('negative', isNegative);
-  if (!isPositive && !isNegative) {
-    el.classList.remove('positive');
-    el.classList.remove('negative');
-  }
+  window.ThemeUtils?.applyPnlColorClass(el, value);
 }
 
 async function loadRates() {
