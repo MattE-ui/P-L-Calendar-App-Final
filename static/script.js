@@ -1357,12 +1357,40 @@ function renderPortfolioTrend() {
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.setAttribute('width', '100%');
   svg.setAttribute('height', String(height));
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  const lineGradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+  lineGradient.setAttribute('id', 'trendGrad');
+  lineGradient.setAttribute('x1', '0%');
+  lineGradient.setAttribute('y1', '0%');
+  lineGradient.setAttribute('x2', '100%');
+  lineGradient.setAttribute('y2', '0%');
+
+  const startStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+  startStop.setAttribute('offset', '0%');
+  startStop.setAttribute('stop-color', '#0BBF7A');
+
+  const holdStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+  holdStop.setAttribute('offset', '74%');
+  holdStop.setAttribute('stop-color', '#0BBF7A');
+
+  const transitionStartStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+  transitionStartStop.setAttribute('offset', '75%');
+  transitionStartStop.setAttribute('stop-color', '#0BBF7A');
+
+  const endStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+  endStop.setAttribute('offset', '100%');
+  endStop.setAttribute('stop-color', '#E4B84C');
+
+  lineGradient.append(startStop, holdStop, transitionStartStop, endStop);
+  defs.appendChild(lineGradient);
+
   const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   area.setAttribute('d', areaPath);
   area.setAttribute('class', 'line-area');
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   line.setAttribute('d', linePath);
   line.setAttribute('class', 'line-path');
+  line.setAttribute('stroke', 'url(#trendGrad)');
   const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
   const lastPoint = points[points.length - 1];
   dot.setAttribute('cx', lastPoint.x);
@@ -1371,7 +1399,7 @@ function renderPortfolioTrend() {
   dot.setAttribute('class', 'line-dot line-dot-latest');
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
   title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
-  svg.append(title, area, line, dot);
+  svg.append(title, defs, area, line, dot);
   el.appendChild(svg);
 }
 
