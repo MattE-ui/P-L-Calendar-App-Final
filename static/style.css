@@ -916,8 +916,8 @@ select {
 
 .cell {
   background: #0F151C;
-  background: var(--surface-1);
-  border: 1px solid rgba(255,255,255,0.05);
+  background: rgba(15, 21, 28, 0.92);
+  border: 1px solid rgba(255,255,255,0.08);
   border-radius: 16px;
   padding: 12px 12px;
   min-height: 108px;
@@ -925,12 +925,12 @@ select {
   flex-direction: column;
   gap: 8px;
   position: relative;
-  box-shadow: var(--shadow-soft), 0 0 0 1px var(--border-soft);
-  transition: transform 160ms ease, border-color 160ms ease;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), var(--shadow-soft), 0 0 0 1px var(--border-soft);
+  transition: background 160ms ease, border-color 160ms ease;
 }
 .cell:hover {
-  transform: translateY(-1px);
-  border-color: rgba(255,255,255,0.10);
+  background: rgba(17, 26, 34, 0.95);
+  border-color: rgba(255,255,255,0.14);
 }
 .grid.view-month .cell {
   min-height: 96px;
@@ -978,13 +978,13 @@ select {
   font-size: 11px;
 }
 .cell.profit {
-  background: linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
-  border-left: 3px solid var(--emerald);
+  background: linear-gradient(180deg, rgba(16,185,129,0.22), rgba(16,185,129,0.10)), rgba(15, 21, 28, 0.92);
+  border-left: 2px solid #10B981;
   color: var(--text);
 }
 .cell.loss {
-  background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
-  border-left: 3px solid var(--red);
+  background: linear-gradient(180deg, rgba(239,68,68,0.22), rgba(239,68,68,0.10)), rgba(15, 21, 28, 0.92);
+  border-left: 2px solid #EF4444;
   color: var(--text);
 }
 .cell.first-entry {
@@ -2166,10 +2166,15 @@ textarea {
 
 :root[data-ui-theme-v1="true"] .grid.view-month { gap: 10px; }
 :root[data-ui-theme-v1="true"] .cell {
-  background: var(--surface-1);
-  border: 1px solid rgba(255,255,255,0.05);
-  border-left: 3px solid transparent;
-  box-shadow: var(--shadow-1), var(--inset-1);
+  background: rgba(15, 21, 28, 0.92);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-left: 2px solid transparent;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), var(--shadow-1), var(--inset-1);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+:root[data-ui-theme-v1="true"] .cell:hover {
+  background: rgba(17, 26, 34, 0.95);
+  border-color: rgba(255,255,255,0.14);
 }
 :root[data-ui-theme-v1="true"] .cell:hover { border-color: rgba(255,255,255,0.10); }
 :root[data-ui-theme-v1="true"] .cell .date,
@@ -2179,12 +2184,12 @@ textarea {
 :root[data-ui-theme-v1="true"] .cell .trade-count { color: var(--text-3); }
 :root[data-ui-theme-v1="true"] .cell .val { color: var(--text-1); }
 :root[data-ui-theme-v1="true"] .cell.profit {
-  background: linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
-  border-left: 3px solid var(--emerald);
+  background: linear-gradient(180deg, rgba(16,185,129,0.22), rgba(16,185,129,0.10)), rgba(15, 21, 28, 0.92);
+  border-left: 2px solid #10B981;
 }
 :root[data-ui-theme-v1="true"] .cell.loss {
-  background: linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
-  border-left: 3px solid var(--red);
+  background: linear-gradient(180deg, rgba(239,68,68,0.22), rgba(239,68,68,0.10)), rgba(15, 21, 28, 0.92);
+  border-left: 2px solid #EF4444;
 }
 :root[data-ui-theme-v1="true"] .cell.profit .pct { color: rgba(52, 211, 153, 0.85); }
 :root[data-ui-theme-v1="true"] .cell.loss .pct { color: rgba(239, 68, 68, 0.85); }
