@@ -426,11 +426,6 @@ select {
 .hero-metrics #hero-net-deposits { text-align: right; }
 .hero-metrics #hero-net-performance { text-align: left; }
 
-.hero-metrics #hero-net-deposits,
-.hero-metrics #hero-net-performance {
-  border-color: transparent;
-}
-
 .hero-metrics #hero-net-deposits .metric-sub,
 .hero-metrics #hero-net-performance .metric-sub {
   color: rgba(255,255,255,0.60);
