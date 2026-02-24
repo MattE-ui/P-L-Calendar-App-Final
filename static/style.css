@@ -1,18 +1,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
 
 :root {
-  --bg: #090d16;
-  --bg-elevated: #101826;
-  --card: #121a2b;
-  --card-soft: #1a2438;
+  --bg: #03050b;
+  --bg-elevated: #070b14;
+  --card: #0b1220;
+  --card-soft: #101a2d;
   --text: #edf3ff;
   --muted: #9fadc6;
   --primary: #5fb3ff;
   --accent: #8c7bff;
   --positive: #1db954;
   --negative: #ff3b5c;
-  --border: rgba(145, 167, 202, 0.24);
-  --glow: 0 20px 48px rgba(10, 16, 30, 0.45);
+  --border: rgba(109, 183, 255, 0.62);
+  --glow: 0 22px 52px rgba(4, 8, 18, 0.62);
+  --neon-outline: 0 0 0 1px rgba(109, 183, 255, 0.55), 0 0 20px rgba(83, 145, 255, 0.28);
 }
 
 * { box-sizing: border-box; }
@@ -22,7 +23,7 @@ body {
   background:
     radial-gradient(circle at 12% 0%, rgba(95, 179, 255, 0.2), transparent 38%),
     radial-gradient(circle at 88% 12%, rgba(140, 123, 255, 0.16), transparent 42%),
-    linear-gradient(170deg, var(--bg) 0%, #0a1220 52%, #080b14 100%);
+    linear-gradient(170deg, var(--bg) 0%, #040915 52%, #010207 100%);
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
@@ -40,7 +41,7 @@ h1, h2, h3, h4 {
 .topbar {
   display: flex; align-items: center;
   gap: 12px; padding: 14px 18px;
-  background: rgba(6, 11, 20, 0.82);
+  background: rgba(3, 7, 14, 0.84);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(10px);
   position: sticky; top: 0; z-index: 5;
@@ -86,7 +87,7 @@ h1, h2, h3, h4 {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  box-shadow: var(--glow);
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
 }
 .hero {
   display: flex;
@@ -97,7 +98,7 @@ h1, h2, h3, h4 {
   border: 1px solid var(--border);
   border-radius: 14px;
   margin: 12px auto 18px;
-  box-shadow: var(--glow);
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
   animation: fade-up .45s ease both;
 }
 .hero-top {
@@ -328,11 +329,11 @@ select {
 .metric-card:hover { transform: translateY(-4px); border-color: rgba(95,179,255,.45); }
 
 .tool-card {
-  background: linear-gradient(160deg, rgba(42,163,255,.08), transparent 65%), var(--card);
+  background: linear-gradient(160deg, rgba(42,163,255,.11), transparent 65%), var(--card);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 12px 28px rgba(8,12,18,.36);
+  box-shadow: 0 12px 28px rgba(8,12,18,.36), var(--neon-outline);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -510,14 +511,14 @@ select {
 }
 .trade-pill {
   background: linear-gradient(145deg, rgba(255,255,255,.04), rgba(255,255,255,.015));
-  border: 1px solid rgba(255,255,255,.08);
+  border: 1px solid rgba(109, 183, 255, 0.58);
   border-radius: 18px;
   padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   position: relative;
-  box-shadow: var(--glow);
+  box-shadow: var(--glow), var(--neon-outline), inset 0 0 0 1px rgba(140, 198, 255, 0.25);
   transition: transform .24s ease, border-color .24s ease, box-shadow .24s ease;
 }
 .trade-pill:hover {
@@ -896,7 +897,7 @@ select {
   flex-direction: column;
   gap: 8px;
   position: relative;
-  box-shadow: 0 10px 24px rgba(6, 11, 24, .35);
+  box-shadow: 0 14px 30px rgba(2, 8, 18, .6), 0 0 0 1px rgba(109, 183, 255, 0.44);
   transition: background .2s ease, border-color .2s ease, color .2s ease, transform .2s ease;
 }
 .cell:hover {
@@ -1239,7 +1240,7 @@ select {
 
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
-.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4); max-height: 90vh; overflow-y: auto; }
+.modal-card { background: var(--card); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(420px, 92vw); box-shadow: 0 20px 40px rgba(0,0,0,.4), var(--neon-outline); max-height: 90vh; overflow-y: auto; }
 .modal-header { display:flex; justify-content: space-between; align-items: center; gap: 8px; }
 .share-card-modal {
   width: min(760px, 96vw);
@@ -1402,7 +1403,7 @@ button:disabled {
   justify-content: center;
   margin: 0 0 16px;
 }
-.card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; }
+.card { background: var(--card); border:1px solid var(--border); border-radius: 14px; padding:16px; margin: 16px 0; box-shadow: var(--neon-outline); }
 .card-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
 .auth-switch { margin: 16px 0 0; display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
 .auth-switch p { margin: 0; color: var(--muted); font-size: 14px; }
@@ -1485,6 +1486,7 @@ td .mapping-badge {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  box-shadow: var(--neon-outline);
 }
 .chart-card canvas { max-height: 320px; }
 .list-card table {
