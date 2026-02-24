@@ -229,22 +229,25 @@ h1, h2, h3, h4 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   width: 100%;
-  margin: 18px 0 0;
+  margin: 8px 0 0;
   justify-self: stretch;
   grid-column: 1 / -1;
   grid-row: 2;
   background: var(--surface-1, #0F151C);
   border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 16px;
-  padding: 20px 18px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  border-radius: 14px;
+  padding: 11px 14px;
+  box-shadow: none;
 }
 .hero-metrics .metric-card {
-  padding: 0 14px;
+  padding: 0 10px;
   background: transparent;
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+.hero-metrics .metric-card {
+  gap: 5px;
 }
 .hero-metrics .metric-card + .metric-card {
   border-left: 1px solid rgba(255,255,255,0.05);
@@ -374,9 +377,18 @@ select {
 .metric-card.negative .metric-value { color: var(--negative); }
 .metric-card:hover { transform: translateY(-4px); border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%); }
 
+.hero-metrics #hero-portfolio {
+  gap: 4px;
+}
+
 .hero-metrics #hero-portfolio .metric-value {
   font-size: 26px;
   font-weight: 700;
+  line-height: 1.1;
+}
+
+.hero-metrics .metric-sub {
+  font-size: 12px;
 }
 
 .hero-metrics #hero-net-deposits,
