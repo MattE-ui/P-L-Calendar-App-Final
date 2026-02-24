@@ -248,7 +248,7 @@ h1, h2, h3, h4 {
   margin: 0;
   font-size: 26px;
   letter-spacing: 0.2px;
-  color: var(--highlight);
+  color: var(--text);
 }
 
 
@@ -956,7 +956,7 @@ select {
 .cell .val {
   font-size: 15px;
   font-weight: 700;
-  color: var(--highlight);
+  color: var(--text);
 }
 
 .cell .pct {
@@ -1898,6 +1898,12 @@ textarea {
   background-clip: text;
   color: transparent;
   text-shadow: 0 0 18px rgba(228,184,76,0.10);
+}
+
+.text-gold-glow {
+  text-shadow:
+    0 0 10px rgba(228, 184, 76, 0.22),
+    0 0 22px rgba(228, 184, 76, 0.10);
 }
 
 .ring-gold-soft {
