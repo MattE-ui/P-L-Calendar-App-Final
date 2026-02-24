@@ -4369,7 +4369,17 @@ app.get('/health', (req, res) => {
 });
 
 // pages
-app.get('/', (req,res)=>{ res.sendFile(path.join(__dirname,'index.html')); });
+app.get('/', (req, res) => {
+  const indexPath = path.join(__dirname, 'index.html');
+  const themeEnabled = String(process.env.NEXT_PUBLIC_UI_THEME_V1 ?? 'true').toLowerCase() !== 'false';
+  fs.readFile(indexPath, 'utf8', (err, html) => {
+    if (err) {
+      res.sendFile(indexPath);
+      return;
+    }
+    res.type('html').send(html.replace('__UI_THEME_V1__', themeEnabled ? 'true' : 'false'));
+  });
+});
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });

@@ -1368,19 +1368,19 @@ function renderPortfolioTrend() {
 
   const startStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   startStop.setAttribute('offset', '0%');
-  startStop.setAttribute('stop-color', '#0BBF7A');
+  startStop.setAttribute('stop-color', 'var(--emerald)');
 
   const holdStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   holdStop.setAttribute('offset', '74%');
-  holdStop.setAttribute('stop-color', '#0BBF7A');
+  holdStop.setAttribute('stop-color', 'var(--emerald)');
 
   const transitionStartStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   transitionStartStop.setAttribute('offset', '75%');
-  transitionStartStop.setAttribute('stop-color', '#0BBF7A');
+  transitionStartStop.setAttribute('stop-color', 'var(--emerald)');
 
   const endStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   endStop.setAttribute('offset', '100%');
-  endStop.setAttribute('stop-color', '#E4B84C');
+  endStop.setAttribute('stop-color', 'var(--amber)');
 
   lineGradient.append(startStop, holdStop, transitionStartStop, endStop);
   defs.appendChild(lineGradient);

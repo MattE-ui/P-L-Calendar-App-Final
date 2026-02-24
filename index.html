@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>window.__UI_THEME_V1__ = __UI_THEME_V1__; if (window.__UI_THEME_V1__) document.documentElement.setAttribute("data-ui-theme-v1", "true");</script>
   <title>P&L Calendar</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-  <header class="hero">
+  <header class="hero panel interactive">
     <div class="hero-top">
       <div class="hero-left">
         <h1 class="brand-heading">
@@ -16,17 +17,17 @@
         </h1>
       </div>
       <div class="hero-metrics key-metrics border-gold-fade">
-        <article class="metric-card hero-card" id="hero-portfolio">
+        <article class="metric-card hero-card interactive" id="hero-portfolio">
           <h3>Portfolio value</h3>
           <div class="metric-value" id="header-portfolio-value">£0.00</div>
           <div class="metric-sub" id="header-portfolio-sub"></div>
         </article>
-        <article class="metric-card hero-card" id="hero-net-deposits">
+        <article class="metric-card hero-card interactive" id="hero-net-deposits">
           <h3>Net deposits</h3>
           <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
           <div class="metric-sub" id="hero-net-deposits-sub"></div>
         </article>
-        <article class="metric-card hero-card" id="hero-net-performance">
+        <article class="metric-card hero-card interactive" id="hero-net-performance">
           <h3>Net performance</h3>
           <div class="metric-value" id="hero-net-performance-value">£0.00</div>
           <div class="metric-sub" id="hero-net-performance-sub"></div>
@@ -73,10 +74,10 @@
         <button id="safe-screenshot-open-qs" class="link-button" type="button">Turn them back on (Quick settings)</button>
       </div>
     </div>
-    <div class="dashboard-grid">
+    <div class="dashboard-grid dashboard-theme-shell">
       <div class="side-column">
         <div class="column-panel">
-          <section id="risk-card" class="tool-card">
+          <section id="risk-card" class="tool-card panel interactive">
           <div class="tool-header">
             <div>
               <p class="tool-overline">Risk calculator</p>
@@ -132,15 +133,15 @@
               <div id="risk-error" class="error" aria-live="polite"></div>
             </div>
           </div>
-          <div class="tool-results" id="risk-results">
+          <div class="tool-results panelRaised" id="risk-results">
             <div class="tool-result">
               <p>Risk amount</p>
-              <strong id="risk-amount-display">£0.00</strong>
+              <strong id="risk-amount-display" class="valueGold">£0.00</strong>
               <span id="risk-amount-note" class="tool-note"></span>
             </div>
             <div class="tool-result">
               <p>Position size</p>
-              <strong id="risk-position-display">£0.00</strong>
+              <strong id="risk-position-display" class="valueGold">£0.00</strong>
               <span id="risk-position-note" class="tool-note"></span>
             </div>
             <div class="tool-result">
@@ -150,7 +151,7 @@
             </div>
             <div class="tool-result">
               <p>Risk per share</p>
-              <strong id="risk-per-share-display">£0.00</strong>
+              <strong id="risk-per-share-display" class="valueGold">£0.00</strong>
               <span id="risk-per-share-note" class="tool-note"></span>
             </div>
           </div>
@@ -171,7 +172,7 @@
       </div>
 
       <div class="center-column">
-        <div class="column-panel center-panel">
+        <div class="column-panel center-panel panelRaised interactive">
           <div id="view-controls">
             <div class="control-group">
               <button data-view="day">Day</button>
@@ -200,7 +201,7 @@
 
       <div class="side-column">
         <div class="column-panel">
-          <section id="active-trades-card" class="tool-card">
+          <section id="active-trades-card" class="tool-card panel interactive">
             <div class="tool-header">
               <div>
                 <p class="tool-overline">Active trades</p>
