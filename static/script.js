@@ -1359,7 +1359,8 @@ function renderPortfolioTrend() {
   svg.setAttribute('height', String(height));
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   const lineGradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
-  lineGradient.setAttribute('id', 'trendGrad');
+  const gradientId = `trendGrad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  lineGradient.setAttribute('id', gradientId);
   lineGradient.setAttribute('x1', '0%');
   lineGradient.setAttribute('y1', '0%');
   lineGradient.setAttribute('x2', '100%');
@@ -1390,7 +1391,7 @@ function renderPortfolioTrend() {
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   line.setAttribute('d', linePath);
   line.setAttribute('class', 'line-path');
-  line.setAttribute('stroke', 'url(#trendGrad)');
+  line.style.stroke = `url(#${gradientId})`;
   const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
   const lastPoint = points[points.length - 1];
   dot.setAttribute('cx', lastPoint.x);
