@@ -1719,6 +1719,16 @@ function openEditTradeModal(trade) {
   }
 }
 
+
+function pruneLegacyMetricRenders() {
+  const heroMetricsRows = Array.from(document.querySelectorAll('.hero .hero-metrics'));
+  if (heroMetricsRows.length > 1) {
+    heroMetricsRows.slice(1).forEach(row => row.remove());
+  }
+
+  document.querySelectorAll('.dashboard-context-row').forEach(row => row.remove());
+}
+
 function setMetricTrend(el, value) {
   if (!el) return;
   window.ThemeUtils?.applyPnlColorClass(el, value);
@@ -3400,6 +3410,7 @@ async function init() {
   }
   await loadUiPrefs();
   await loadProfile();
+  pruneLegacyMetricRenders();
   bindControls();
   updatePeriodSelect();
   setActiveView();
