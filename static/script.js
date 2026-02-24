@@ -1366,21 +1366,24 @@ function renderPortfolioTrend() {
   lineGradient.setAttribute('x2', '100%');
   lineGradient.setAttribute('y2', '0%');
 
+  const emerald = '#10B981';
+  const amber = '#D4AF37';
+
   const startStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   startStop.setAttribute('offset', '0%');
-  startStop.setAttribute('stop-color', 'var(--emerald)');
+  startStop.setAttribute('stop-color', emerald);
 
   const holdStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-  holdStop.setAttribute('offset', '74%');
-  holdStop.setAttribute('stop-color', 'var(--emerald)');
+  holdStop.setAttribute('offset', '75%');
+  holdStop.setAttribute('stop-color', emerald);
 
   const transitionStartStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   transitionStartStop.setAttribute('offset', '75%');
-  transitionStartStop.setAttribute('stop-color', 'var(--emerald)');
+  transitionStartStop.setAttribute('stop-color', emerald);
 
   const endStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
   endStop.setAttribute('offset', '100%');
-  endStop.setAttribute('stop-color', 'var(--amber)');
+  endStop.setAttribute('stop-color', amber);
 
   lineGradient.append(startStop, holdStop, transitionStartStop, endStop);
   defs.appendChild(lineGradient);
@@ -1391,6 +1394,7 @@ function renderPortfolioTrend() {
   const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   line.setAttribute('d', linePath);
   line.setAttribute('class', 'line-path');
+  line.setAttribute('stroke-width', '2.04');
   line.style.stroke = `url(#${gradientId})`;
   const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
   const lastPoint = points[points.length - 1];
@@ -1398,6 +1402,8 @@ function renderPortfolioTrend() {
   dot.setAttribute('cy', lastPoint.y);
   dot.setAttribute('r', '2.5');
   dot.setAttribute('class', 'line-dot line-dot-latest');
+  dot.style.fill = amber;
+  dot.style.filter = 'drop-shadow(0 0 6px rgba(212,175,55,0.55))';
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
   title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
   svg.append(title, defs, area, line, dot);
