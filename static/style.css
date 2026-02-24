@@ -1390,6 +1390,27 @@ select:focus-visible {
   outline-offset: 2px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 72%, transparent);
 }
+button,
+a.primary,
+.ghost,
+select,
+input,
+textarea {
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+}
+button:hover:not(:disabled),
+a.primary:hover,
+.ghost:hover {
+  transform: translateY(-1px);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 60%, var(--accent) 40%);
+  outline-offset: 2px;
+}
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
