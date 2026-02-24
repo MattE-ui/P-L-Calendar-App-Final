@@ -1900,6 +1900,12 @@ textarea {
   text-shadow: 0 0 18px rgba(228,184,76,0.10);
 }
 
+.text-gold-glow {
+  text-shadow:
+    0 0 10px rgba(228, 184, 76, 0.22),
+    0 0 22px rgba(228, 184, 76, 0.10);
+}
+
 .ring-gold-soft {
   box-shadow: var(--gold-glow);
 }
