@@ -2001,3 +2001,222 @@ textarea {
   .key-metrics { grid-template-columns: 1fr; }
   .grid.view-month { grid-template-columns: repeat(7, minmax(100px, 1fr)); }
 }
+
+:root[data-ui-theme-v1="true"] {
+  --bg: #0B0F14;
+  --surface-1: #0F151C;
+  --surface-2: #111A22;
+  --surface-3: #0C1218;
+  --text-1: rgba(255,255,255,0.92);
+  --text-2: rgba(255,255,255,0.72);
+  --text-3: rgba(255,255,255,0.55);
+  --text-4: rgba(255,255,255,0.40);
+  --stroke-1: rgba(255,255,255,0.06);
+  --stroke-2: rgba(255,255,255,0.10);
+  --emerald: #10B981;
+  --emerald-2: #34D399;
+  --red: #EF4444;
+  --amber: #D4AF37;
+  --ring: rgba(16,185,129,0.35);
+  --r-sm: 6px;
+  --r-md: 10px;
+  --shadow-1: 0 2px 6px rgba(0,0,0,0.40);
+  --shadow-2: 0 10px 30px rgba(0,0,0,0.45);
+  --inset-1: inset 0 1px 0 rgba(255,255,255,0.03);
+
+  --text: var(--text-1);
+  --muted: var(--text-2);
+  --border: var(--stroke-1);
+  --border-soft: rgba(255,255,255,0.05);
+  --accent: var(--emerald);
+  --accent-2: var(--emerald-2);
+  --danger: var(--red);
+  --highlight: var(--amber);
+}
+
+:root[data-ui-theme-v1="true"] body {
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+:root[data-ui-theme-v1="true"] .dashboard-theme-shell {
+  position: relative;
+  isolation: isolate;
+}
+:root[data-ui-theme-v1="true"] .dashboard-theme-shell::before {
+  content: "";
+  position: absolute;
+  top: 3%;
+  bottom: 3%;
+  left: 34%;
+  right: 34%;
+  border-radius: 24px;
+  background: radial-gradient(circle at center, rgba(16,185,129,0.10), transparent 60%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+:root[data-ui-theme-v1="true"] .panel {
+  background: var(--surface-1);
+  border: 1px solid var(--stroke-1);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1), var(--inset-1);
+}
+:root[data-ui-theme-v1="true"] .panelRaised {
+  background: var(--surface-2);
+  border: 1px solid var(--stroke-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2), var(--inset-1);
+}
+:root[data-ui-theme-v1="true"] .panelRecessed {
+  background: var(--surface-3);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.35);
+}
+:root[data-ui-theme-v1="true"] .interactive {
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+:root[data-ui-theme-v1="true"] .interactive:hover { transform: translateY(-1px); border-color: var(--stroke-2); }
+:root[data-ui-theme-v1="true"] .interactive:active { transform: translateY(0); }
+
+:root[data-ui-theme-v1="true"] .dashboard-grid { gap: 26px; }
+:root[data-ui-theme-v1="true"] .column-panel,
+:root[data-ui-theme-v1="true"] .center-column,
+:root[data-ui-theme-v1="true"] .side-column { gap: 22px; }
+
+:root[data-ui-theme-v1="true"] .hero,
+:root[data-ui-theme-v1="true"] .tool-card,
+:root[data-ui-theme-v1="true"] .center-panel,
+:root[data-ui-theme-v1="true"] .metric-card {
+  background-image: none;
+  border-color: var(--stroke-1);
+}
+:root[data-ui-theme-v1="true"] .hero,
+:root[data-ui-theme-v1="true"] .tool-card,
+:root[data-ui-theme-v1="true"] .center-panel { padding: 22px; }
+
+:root[data-ui-theme-v1="true"] .metric-card {
+  padding: 16px 18px;
+  border-left: 3px solid transparent;
+  box-shadow: var(--shadow-1), var(--inset-1);
+}
+:root[data-ui-theme-v1="true"] .metric-card h3 { font-size: 11px; letter-spacing: 0.08em; color: var(--text-3); }
+:root[data-ui-theme-v1="true"] .metric-card .metric-value { font-size: 30px; font-weight: 700; color: var(--text-1); }
+:root[data-ui-theme-v1="true"] .metric-card .metric-sub { font-size: 12px; color: var(--text-3); }
+:root[data-ui-theme-v1="true"] .metric-card.positive { border-left-color: var(--emerald); }
+:root[data-ui-theme-v1="true"] .metric-card.negative { border-left-color: var(--red); }
+
+:root[data-ui-theme-v1="true"] .tool-overline,
+:root[data-ui-theme-v1="true"] .tool-note,
+:root[data-ui-theme-v1="true"] .trade-sort label,
+:root[data-ui-theme-v1="true"] .mini-chart-note,
+:root[data-ui-theme-v1="true"] .grid.view-month .dow { color: var(--text-3); }
+
+:root[data-ui-theme-v1="true"] .tool-header h3,
+:root[data-ui-theme-v1="true"] .text-gold-grad { color: var(--text-1); text-shadow: none; background: none; }
+:root[data-ui-theme-v1="true"] .text-gold-glow,
+:root[data-ui-theme-v1="true"] .border-gold-fade::before { text-shadow: none; background: transparent; }
+
+:root[data-ui-theme-v1="true"] .grouped-toggle,
+:root[data-ui-theme-v1="true"] .chip-toggle,
+:root[data-ui-theme-v1="true"] .tool-result,
+:root[data-ui-theme-v1="true"] .trade-pnl-guaranteed-card,
+:root[data-ui-theme-v1="true"] .mini-chart,
+:root[data-ui-theme-v1="true"] .trade-note-panel,
+:root[data-ui-theme-v1="true"] .tool-portfolio {
+  background: var(--surface-3);
+  border: 1px solid rgba(255,255,255,0.05);
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.35);
+  border-radius: var(--r-sm);
+}
+
+:root[data-ui-theme-v1="true"] #risk-card input,
+:root[data-ui-theme-v1="true"] #risk-card select,
+:root[data-ui-theme-v1="true"] #risk-card textarea {
+  background: var(--surface-3);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+:root[data-ui-theme-v1="true"] #risk-card input:focus-visible,
+:root[data-ui-theme-v1="true"] #risk-card select:focus-visible,
+:root[data-ui-theme-v1="true"] #risk-card textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--emerald);
+}
+:root[data-ui-theme-v1="true"] #risk-results {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: 12px;
+}
+:root[data-ui-theme-v1="true"] .valueGold {
+  color: var(--amber);
+  text-shadow: 0 0 12px rgba(212,175,55,0.28);
+}
+
+:root[data-ui-theme-v1="true"] .grid.view-month { gap: 10px; }
+:root[data-ui-theme-v1="true"] .cell {
+  background: var(--surface-1);
+  border: 1px solid var(--stroke-1);
+  border-left: 3px solid transparent;
+  box-shadow: var(--shadow-1), var(--inset-1);
+}
+:root[data-ui-theme-v1="true"] .cell .date,
+:root[data-ui-theme-v1="true"] .cell .meta,
+:root[data-ui-theme-v1="true"] .cell .cashflow,
+:root[data-ui-theme-v1="true"] .cell .note,
+:root[data-ui-theme-v1="true"] .cell .trade-count { color: var(--text-3); }
+:root[data-ui-theme-v1="true"] .cell .val { color: var(--text-1); }
+:root[data-ui-theme-v1="true"] .cell.profit {
+  background: linear-gradient(160deg, rgba(16,185,129,0.16), rgba(16,185,129,0.06)), var(--surface-1);
+  border-left-color: var(--emerald);
+  border-color: var(--stroke-1);
+}
+:root[data-ui-theme-v1="true"] .cell.loss {
+  background: linear-gradient(160deg, rgba(239,68,68,0.16), rgba(239,68,68,0.06)), var(--surface-1);
+  border-left-color: var(--red);
+  border-color: var(--stroke-1);
+}
+:root[data-ui-theme-v1="true"] .cell.profit .pct { color: rgba(52, 211, 153, 0.85); }
+:root[data-ui-theme-v1="true"] .cell.loss .pct { color: rgba(239, 68, 68, 0.85); }
+
+:root[data-ui-theme-v1="true"] .trade-pill {
+  background: var(--surface-1);
+  border: 1px solid var(--stroke-1);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1), var(--inset-1);
+}
+:root[data-ui-theme-v1="true"] .trade-pill .trade-title { color: var(--text-1); font-size: 18px; }
+:root[data-ui-theme-v1="true"] .trade-pill .trade-percent {
+  border: 1px solid color-mix(in srgb, var(--emerald) 70%, var(--stroke-1) 30%);
+  color: rgba(52, 211, 153, 0.9);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+:root[data-ui-theme-v1="true"] .trade-pill .trade-pnl-card {
+  background: linear-gradient(160deg, rgba(16,185,129,0.14), rgba(16,185,129,0.06)), var(--surface-1);
+  border: 1px solid rgba(16,185,129,0.25);
+}
+:root[data-ui-theme-v1="true"] .trade-pill .trade-pnl-card.negative {
+  background: linear-gradient(160deg, rgba(239,68,68,0.14), rgba(239,68,68,0.06)), var(--surface-1);
+  border-color: rgba(239,68,68,0.25);
+}
+:root[data-ui-theme-v1="true"] .trade-pill .trade-pnl-value { font-size: 22px; }
+:root[data-ui-theme-v1="true"] .trade-pill .trade-pnl-guaranteed-card .trade-pnl-value { font-size: 16px; color: var(--text-3); }
+
+:root[data-ui-theme-v1="true"] .mini-line .line-area { fill: color-mix(in srgb, var(--emerald) 16%, transparent); }
+:root[data-ui-theme-v1="true"] .mini-line .line-dot.line-dot-latest {
+  filter: drop-shadow(0 0 6px rgba(212,175,55,0.55));
+}
+
+:root[data-ui-theme-v1="true"] button.primary {
+  background: transparent;
+  color: var(--text-1);
+  border: 1px solid color-mix(in srgb, var(--emerald) 68%, var(--stroke-1) 32%);
+  box-shadow: none;
+}
+:root[data-ui-theme-v1="true"] button.danger {
+  background: transparent;
+  color: color-mix(in srgb, var(--red) 75%, var(--text-1) 25%);
+}
