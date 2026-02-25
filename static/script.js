@@ -902,10 +902,11 @@ function renderActiveTrades() {
   if (!trades.length) {
     state.expandedActiveTradeId = null;
     if (empty) empty.classList.remove('is-hidden');
-    if (showAll) showAll.classList.add('is-hidden');
+    if (showAll) showAll.disabled = true;
     return;
   }
   if (empty) empty.classList.add('is-hidden');
+  if (showAll) showAll.disabled = false;
 
   const parseTradeDate = trade => Date.parse(trade.createdAt || trade.date || trade.openDate || '') || 0;
   const sortedTrades = [...trades].sort((a, b) => {
@@ -1439,12 +1440,8 @@ function updateActiveTradesOverflow() {
   const empty = $('#active-trade-empty');
   if (!list || !showAll) return;
   const hasTrades = list.children.length > 0;
-  if (!hasTrades || (empty && !empty.classList.contains('is-hidden'))) {
-    showAll.classList.add('is-hidden');
-    return;
-  }
-  const overflowing = list.scrollHeight > list.clientHeight + 1;
-  showAll.classList.toggle('is-hidden', !overflowing);
+  const hasVisibleTrades = hasTrades && (!empty || empty.classList.contains('is-hidden'));
+  showAll.disabled = !hasVisibleTrades;
 }
 
 function openCloseTradeModal(trade) {
