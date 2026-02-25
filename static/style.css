@@ -1443,6 +1443,14 @@ select {
   text-align: left;
   cursor: pointer;
 }
+#active-trades-card .trade-tile-warning {
+  border: 1px solid rgba(209, 175, 87, 0.45);
+  background: linear-gradient(
+    180deg,
+    rgba(209, 175, 87, 0.14),
+    rgba(0, 0, 0, 0)
+  );
+}
 #active-trades-card .trade-pill:not(.is-expanded) .trade-compact-row {
   border-bottom-color: transparent;
 }
@@ -1453,6 +1461,13 @@ select {
   width: 88px;
   min-width: 0;
 }
+#active-trades-card .trade-ticker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
+  min-width: 0;
+}
 #active-trades-card .trade-compact-title {
   display: block;
   max-width: 88px;
@@ -1461,6 +1476,13 @@ select {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+#active-trades-card .trade-warn-icon {
+  font-size: 12px;
+  transform: translateY(-1px);
+  opacity: 0.95;
+  filter: drop-shadow(0 0 6px rgba(209, 175, 87, 0.35));
+  flex: 0 0 auto;
 }
 #active-trades-card .trade-compact-direction {
   font-size: 12px;

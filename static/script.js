@@ -909,8 +909,13 @@ function renderActiveTrades() {
   if (empty) empty.classList.add('is-hidden');
   if (showAll) showAll.disabled = false;
 
-  const sortedTrades = sortActiveTrades(trades, state.activeTradeSort);
-  const groupedTrades = buildActiveTradeGroups(sortedTrades, state.activeTradeSort);
+  const tradesWithStopState = trades.map(trade => ({
+    ...trade,
+    stopMissing: isTradeMissingActiveStop(trade)
+  }));
+  const sortedTrades = sortActiveTrades(tradesWithStopState, state.activeTradeSort);
+  const displayTrades = sortTradesFlaggedFirst(sortedTrades);
+  const groupedTrades = buildActiveTradeGroups(displayTrades, state.activeTradeSort);
 
   const validExpandedId = sortedTrades.some(trade => getActiveTradeUiId(trade) === state.expandedActiveTradeId);
   if (!validExpandedId) state.expandedActiveTradeId = null;
@@ -1029,6 +1034,17 @@ function getGroupSortMetric(group, mode) {
   }
 }
 
+function sortTradesFlaggedFirst(trades) {
+  return trades
+    .map((trade, index) => ({ trade, index }))
+    .sort((a, b) => {
+      const aFlag = a.trade.stopMissing ? 1 : 0;
+      const bFlag = b.trade.stopMissing ? 1 : 0;
+      return (bFlag - aFlag) || (a.index - b.index);
+    })
+    .map(item => item.trade);
+}
+
 function buildActiveTradeGroups(sortedTrades, sortMode) {
   const groups = new Map();
   sortedTrades.forEach(trade => {
@@ -1050,16 +1066,32 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       trades: [...group.trades].sort((a, b) => parseTradeDate(a) - parseTradeDate(b)),
       directionLabel,
       directionClass,
+      stopMissing: group.trades.some(trade => trade.stopMissing),
       metric: getGroupSortMetric(group, sortMode)
     };
   });
 
-  return grouped.sort((a, b) => {
+  const modeSortedGroups = grouped.sort((a, b) => {
     if (sortMode === 'oldest' || sortMode === 'worst-percent' || sortMode === 'worst-amount') {
       return a.metric - b.metric;
     }
     return b.metric - a.metric;
   });
+
+  return modeSortedGroups
+    .map((group, index) => ({ group, index }))
+    .sort((a, b) => {
+      const aFlag = a.group.stopMissing ? 1 : 0;
+      const bFlag = b.group.stopMissing ? 1 : 0;
+      return (bFlag - aFlag) || (a.index - b.index);
+    })
+    .map(item => item.group);
+}
+
+function isTradeMissingActiveStop(trade) {
+  const hasStop = Boolean(trade?.currentStop || trade?.stopPrice || trade?.stop_order_id || trade?.stopOrderActive);
+  const staleStop = (trade?.source === 'trading212' || trade?.source === 'ibkr') && trade?.currentStopStale === true;
+  return staleStop || !hasStop;
 }
 
 function renderSingleTradePill(trade, tradeId, isExpanded, noteDrafts) {
@@ -1082,16 +1114,14 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const compactRow = document.createElement('button');
-  compactRow.className = 'trade-compact-row';
+  compactRow.className = `trade-compact-row ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   compactRow.type = 'button';
   compactRow.setAttribute('aria-expanded', String(isExpanded));
   compactRow.dataset.tradeId = tradeId;
 
   const compactLeft = document.createElement('div');
   compactLeft.className = 'trade-compact-left';
-  const compactTitle = document.createElement('span');
-  compactTitle.className = 'trade-compact-title';
-  compactTitle.textContent = sym;
+  const compactTitle = createCompactTitleRow(sym, trade.stopMissing);
   const compactDirection = document.createElement('span');
   compactDirection.className = `trade-compact-direction ${trade.direction === 'short' ? 'short' : 'long'}`;
   compactDirection.textContent = directionLabel;
@@ -1117,7 +1147,7 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
-  row.className = `trade-group-row ${isExpanded ? 'is-expanded' : ''} ${isLast ? 'is-last' : ''}`.trim();
+  row.className = `trade-group-row ${isExpanded ? 'is-expanded' : ''} ${isLast ? 'is-last' : ''} ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   row.type = 'button';
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
@@ -1151,16 +1181,14 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
-  row.className = `trade-group-header trade-group-header-row ${isExpanded ? 'is-expanded' : ''}`.trim();
+  row.className = `trade-group-header trade-group-header-row ${isExpanded ? 'is-expanded' : ''} ${group.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   row.type = 'button';
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
 
   const compactLeft = document.createElement('div');
   compactLeft.className = 'trade-compact-left';
-  const compactTitle = document.createElement('span');
-  compactTitle.className = 'trade-compact-title';
-  compactTitle.textContent = group.ticker || '—';
+  const compactTitle = createCompactTitleRow(group.ticker || '—', group.stopMissing);
   const compactDirection = document.createElement('span');
   compactDirection.className = `trade-compact-direction ${group.directionClass}`;
   compactDirection.textContent = group.directionLabel;
@@ -1177,6 +1205,23 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
     renderActiveTrades();
   });
   return row;
+}
+
+function createCompactTitleRow(symbol, stopMissing) {
+  const tickerRow = document.createElement('div');
+  tickerRow.className = 'trade-ticker-row';
+  if (stopMissing) {
+    const warnIcon = document.createElement('span');
+    warnIcon.className = 'trade-warn-icon';
+    warnIcon.title = 'No active stop order';
+    warnIcon.textContent = '⚠️';
+    tickerRow.appendChild(warnIcon);
+  }
+  const compactTitle = document.createElement('span');
+  compactTitle.className = 'trade-compact-title';
+  compactTitle.textContent = symbol;
+  tickerRow.appendChild(compactTitle);
+  return tickerRow;
 }
 
 function createCompactMiddleStack(pnl, pctChange) {
@@ -1242,7 +1287,7 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const riskMultiple = getTradeRiskMultiple(trade, pnl);
     const riskMultipleLabel = formatRiskMultiple(riskMultiple);
-    const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
+    const isMissingStop = isTradeMissingActiveStop(trade);
     const expandedWrap = document.createElement('div');
     expandedWrap.className = `trade-expanded-content ${isExpanded ? '' : 'is-collapsed'}`.trim();
     if (tradeId) expandedWrap.dataset.tradeId = tradeId;
