@@ -929,23 +929,17 @@ function renderActiveTrades() {
     const groupCard = document.createElement('div');
     groupCard.className = 'trade-pill trade-group-card';
 
-    const groupHeader = document.createElement('div');
-    groupHeader.className = 'trade-group-header';
-
-    const groupTitle = document.createElement('span');
-    groupTitle.className = 'trade-compact-title';
-    groupTitle.textContent = group.ticker || '—';
-
-    const groupDirection = document.createElement('span');
-    groupDirection.className = `trade-compact-direction ${group.directionClass}`;
-    groupDirection.textContent = group.directionLabel;
-    groupHeader.append(groupTitle, groupDirection);
+    const oldestTrade = group.trades[0] || null;
+    if (!oldestTrade) return;
+    const oldestTradeId = getActiveTradeUiId(oldestTrade);
+    const oldestIsExpanded = Boolean(oldestTradeId) && oldestTradeId === state.expandedActiveTradeId;
+    const groupHeader = renderGroupedTradeHeaderRow(group, oldestTrade, oldestTradeId, oldestIsExpanded);
     groupCard.appendChild(groupHeader);
 
-    group.trades.forEach((trade, index) => {
+    group.trades.slice(1).forEach((trade, index) => {
       const tradeId = getActiveTradeUiId(trade);
       const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
-      const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 1);
+      const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 2);
       groupCard.appendChild(row);
     });
 
@@ -1053,7 +1047,7 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       : 'mixed';
     return {
       ...group,
-      trades: sortActiveTrades(group.trades, sortMode),
+      trades: [...group.trades].sort((a, b) => parseTradeDate(a) - parseTradeDate(b)),
       directionLabel,
       directionClass,
       metric: getGroupSortMetric(group, sortMode)
@@ -1199,6 +1193,69 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
     renderActiveTrades();
   });
 
+  return row;
+}
+
+function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
+  const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+  const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+  const pctChange = getTradePercentChange(trade, pnl);
+
+  const row = document.createElement('button');
+  row.className = `trade-group-header trade-group-header-row ${isExpanded ? 'is-expanded' : ''}`.trim();
+  row.type = 'button';
+  row.setAttribute('aria-expanded', String(isExpanded));
+  row.dataset.tradeId = tradeId;
+
+  const compactLeft = document.createElement('div');
+  compactLeft.className = 'trade-compact-left';
+  const compactTitle = document.createElement('span');
+  compactTitle.className = 'trade-compact-title';
+  compactTitle.textContent = group.ticker || '—';
+  const compactDirection = document.createElement('span');
+  compactDirection.className = `trade-compact-direction ${group.directionClass}`;
+  compactDirection.textContent = group.directionLabel;
+  compactLeft.append(compactTitle, compactDirection);
+
+  const compactMiddle = document.createElement('div');
+  compactMiddle.className = 'trade-compact-middle';
+  const compactPnlLine = document.createElement('div');
+  compactPnlLine.className = 'trade-compact-pnl-line';
+  const compactPnl = document.createElement('strong');
+  compactPnl.className = `trade-compact-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+  compactPnl.dataset.role = 'trade-compact-pnl';
+  compactPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+  const pctSpan = document.createElement('span');
+  pctSpan.className = 'trade-compact-percent';
+  pctSpan.dataset.role = 'trade-compact-percent';
+  if (pctChange !== null) {
+    pctSpan.textContent = `(${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%)`;
+    if (pctChange > 0) pctSpan.classList.add('positive');
+    if (pctChange < 0) pctSpan.classList.add('negative');
+  } else {
+    pctSpan.textContent = '(—)';
+  }
+  compactPnlLine.append(compactPnl, pctSpan);
+  compactMiddle.append(compactPnlLine);
+
+  const compactRight = document.createElement('div');
+  compactRight.className = 'trade-compact-right';
+  const compactR = document.createElement('span');
+  compactR.className = 'trade-compact-r';
+  compactR.dataset.role = 'trade-compact-r';
+  compactR.textContent = riskMultipleLabel;
+  const compactChevron = document.createElement('span');
+  compactChevron.className = 'trade-compact-chevron';
+  compactChevron.setAttribute('aria-hidden', 'true');
+  compactChevron.textContent = '▾';
+  compactRight.append(compactR, compactChevron);
+
+  row.append(compactLeft, compactMiddle, compactRight);
+  row.addEventListener('click', () => {
+    if (!tradeId) return;
+    state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    renderActiveTrades();
+  });
   return row;
 }
 
