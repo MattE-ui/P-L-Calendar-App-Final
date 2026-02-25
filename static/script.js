@@ -1078,6 +1078,7 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   const directionLabel = trade.direction === 'short' ? 'Short' : 'Long';
   const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
   const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+  const riskPctValue = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
   const pctChange = getTradePercentChange(trade, pnl);
 
   const compactRow = document.createElement('button');
@@ -1123,11 +1124,20 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   compactR.className = 'trade-compact-r';
   compactR.dataset.role = 'trade-compact-r';
   compactR.textContent = riskMultipleLabel;
+  const compactRightStack = document.createElement('div');
+  compactRightStack.className = 'trade-right-stack';
+  compactRightStack.appendChild(compactR);
+  if (Number.isFinite(riskPctValue)) {
+    const compactRisk = document.createElement('span');
+    compactRisk.className = 'trade-badge trade-compact-risk';
+    compactRisk.textContent = `Risk ${riskPctValue.toFixed(2)}%`;
+    compactRightStack.appendChild(compactRisk);
+  }
   const compactChevron = document.createElement('span');
   compactChevron.className = 'trade-compact-chevron';
   compactChevron.setAttribute('aria-hidden', 'true');
   compactChevron.textContent = '▾';
-  compactRight.append(compactR, compactChevron);
+  compactRight.append(compactRightStack, compactChevron);
 
   compactRow.append(compactLeft, compactMiddle, compactRight);
   compactRow.addEventListener('click', () => {
@@ -1141,6 +1151,7 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
 function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
   const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+  const riskPctValue = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
@@ -1180,11 +1191,20 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   compactR.className = 'trade-compact-r';
   compactR.dataset.role = 'trade-compact-r';
   compactR.textContent = riskMultipleLabel;
+  const compactRightStack = document.createElement('div');
+  compactRightStack.className = 'trade-right-stack';
+  compactRightStack.appendChild(compactR);
+  if (Number.isFinite(riskPctValue)) {
+    const compactRisk = document.createElement('span');
+    compactRisk.className = 'trade-badge trade-compact-risk';
+    compactRisk.textContent = `Risk ${riskPctValue.toFixed(2)}%`;
+    compactRightStack.appendChild(compactRisk);
+  }
   const compactChevron = document.createElement('span');
   compactChevron.className = 'trade-compact-chevron';
   compactChevron.setAttribute('aria-hidden', 'true');
   compactChevron.textContent = '▾';
-  compactRight.append(compactR, compactChevron);
+  compactRight.append(compactRightStack, compactChevron);
 
   row.append(connector, compactMiddle, compactRight);
   row.addEventListener('click', () => {
@@ -1199,6 +1219,7 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
 function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
   const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+  const riskPctValue = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
@@ -1244,11 +1265,20 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   compactR.className = 'trade-compact-r';
   compactR.dataset.role = 'trade-compact-r';
   compactR.textContent = riskMultipleLabel;
+  const compactRightStack = document.createElement('div');
+  compactRightStack.className = 'trade-right-stack';
+  compactRightStack.appendChild(compactR);
+  if (Number.isFinite(riskPctValue)) {
+    const compactRisk = document.createElement('span');
+    compactRisk.className = 'trade-badge trade-compact-risk';
+    compactRisk.textContent = `Risk ${riskPctValue.toFixed(2)}%`;
+    compactRightStack.appendChild(compactRisk);
+  }
   const compactChevron = document.createElement('span');
   compactChevron.className = 'trade-compact-chevron';
   compactChevron.setAttribute('aria-hidden', 'true');
   compactChevron.textContent = '▾';
-  compactRight.append(compactR, compactChevron);
+  compactRight.append(compactRightStack, compactChevron);
 
   row.append(compactLeft, compactMiddle, compactRight);
   row.addEventListener('click', () => {
