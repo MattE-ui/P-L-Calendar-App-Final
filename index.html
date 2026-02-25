@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script>window.__UI_THEME_V1__ = __UI_THEME_V1__; if (window.__UI_THEME_V1__) document.documentElement.setAttribute("data-ui-theme-v1", "true");</script>
+  <script>
+    window.__UI_THEME_V1__ = typeof __UI_THEME_V1__ !== 'undefined' ? __UI_THEME_V1__ : false;
+    if (window.__UI_THEME_V1__) document.documentElement.setAttribute('data-ui-theme-v1', 'true');
+  </script>
   <title>P&L Calendar</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="static/style.css">
@@ -479,7 +482,7 @@
   <script src="static/guest.js"></script>
   <script src="static/instrument-mappings.js"></script>
   <script src="static/trade-card.js"></script>
-  <script src="static/script.js"></script>
+  <script src="/static/script.js"></script>
   <script> if ('serviceWorker' in navigator) navigator.serviceWorker.register('/serviceWorker.js'); </script>
 </body>
 </html>
