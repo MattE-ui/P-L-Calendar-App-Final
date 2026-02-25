@@ -132,6 +132,27 @@ test('master investor endpoints return 403 when investor portal is disabled for 
   assert.equal(res.status, 403);
   assert.equal(data.error, 'Investor accounts are not enabled for this account.');
 });
+
+
+test('master can record and list investor valuations via /valuations routes', async () => {
+  const postRes = await fetch(`${baseUrl}/api/master/investors/inv-1/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: '2026-02-25', nav: 1300 })
+  });
+  const postData = await postRes.json();
+  assert.equal(postRes.status, 200);
+  assert.equal(postData.valuation.valuation_date, '2026-02-25');
+  assert.equal(postData.valuation.nav, 1300);
+
+  const listRes = await fetch(`${baseUrl}/api/master/investors/inv-1/valuations?limit=5`, {
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  const listData = await listRes.json();
+  assert.equal(listRes.status, 200);
+  assert.ok(Array.isArray(listData.valuations));
+  assert.ok(listData.valuations.some(v => v.valuation_date === '2026-02-25'));
+});
 test('expired preview token is rejected by investor endpoints', async () => {
   const expired = signToken({ role: 'investor_preview', investorProfileId: 'inv-1', masterUserId: 'master', exp: Date.now() - 1000 });
   const res = await fetch(`${baseUrl}/api/investor/me`, { headers: { authorization: `Bearer ${expired}` } });

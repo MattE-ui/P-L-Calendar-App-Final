@@ -4987,22 +4987,25 @@ app.get('/api/master/investors/:id/preview-token', requireMasterAuth, requireMas
   res.json({ token, expiresInSeconds: 300 });
 });
 
-app.post('/api/master/investors/:id/valuation', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+function upsertMasterInvestorValuation(req, res) {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
   const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
   if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  const valuationDate = typeof req.body?.date === 'string' ? req.body.date : '';
+  const valuationDate = typeof req.body?.valuation_date === 'string'
+    ? req.body.valuation_date
+    : (typeof req.body?.date === 'string' ? req.body.date : '');
   const nav = Number(req.body?.nav);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate) || !Number.isFinite(nav)) {
-    return res.status(400).json({ error: 'Valid date and nav are required.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate) || !Number.isFinite(nav) || nav <= 0) {
+    return res.status(400).json({ error: 'Valid valuation_date and nav > 0 are required.' });
   }
-  const existing = db.investorValuations.find(v => v.investorProfileId === profile.id && v.valuationDate === valuationDate);
-  if (existing) {
-    existing.nav = nav;
+  const nowIso = new Date().toISOString();
+  let valuation = db.investorValuations.find(v => v.investorProfileId === profile.id && v.valuationDate === valuationDate);
+  if (valuation) {
+    valuation.nav = nav;
   } else {
-    db.investorValuations.push({
+    valuation = {
       id: crypto.randomUUID(),
       investorProfileId: profile.id,
       valuationDate,
@@ -5010,11 +5013,45 @@ app.post('/api/master/investors/:id/valuation', requireMasterAuth, requireMaster
       pnlDay: null,
       pnlMtd: null,
       pnlYtd: null,
-      createdAt: new Date().toISOString()
-    });
+      createdAt: nowIso
+    };
+    db.investorValuations.push(valuation);
   }
   saveDB(db);
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    valuation: {
+      id: valuation.id,
+      investor_profile_id: valuation.investorProfileId,
+      valuation_date: valuation.valuationDate,
+      nav: valuation.nav,
+      created_at: valuation.createdAt
+    }
+  });
+}
+
+app.post('/api/master/investors/:id/valuation', requireMasterAuth, requireMasterInvestorAccess, upsertMasterInvestorValuation);
+app.post('/api/master/investors/:id/valuations', requireMasterAuth, requireMasterInvestorAccess, upsertMasterInvestorValuation);
+
+app.get('/api/master/investors/:id/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const limitRaw = Number(req.query?.limit);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(100, Math.floor(limitRaw)) : 20;
+  const valuations = db.investorValuations
+    .filter(v => v.investorProfileId === profile.id)
+    .sort((a, b) => String(b.valuationDate).localeCompare(String(a.valuationDate)))
+    .slice(0, limit)
+    .map(v => ({
+      id: v.id,
+      investor_profile_id: v.investorProfileId,
+      valuation_date: v.valuationDate,
+      nav: v.nav,
+      created_at: v.createdAt
+    }));
+  res.json({ valuations });
 });
 
 
