@@ -1585,11 +1585,6 @@ select {
 #active-trades-card .show-all-btn {
   width: 100%;
   justify-content: center;
-  min-height: 44px;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-weight: 700;
-  letter-spacing: normal;
 }
 
 .grid.view-week .list-row { cursor: default; }
