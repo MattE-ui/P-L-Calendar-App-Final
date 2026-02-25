@@ -980,28 +980,40 @@ function renderActiveTrades() {
     compactRow.type = 'button';
     compactRow.setAttribute('aria-expanded', String(isExpanded));
 
+    const compactLeft = document.createElement('div');
+    compactLeft.className = 'trade-compact-left';
+
     const compactTitle = document.createElement('span');
     compactTitle.className = 'trade-compact-title';
-    compactTitle.textContent = `${sym} (${directionLabel})`;
+    compactTitle.textContent = sym;
+
+    const compactDirection = document.createElement('span');
+    compactDirection.className = `trade-compact-direction ${trade.direction === 'short' ? 'short' : 'long'}`;
+    compactDirection.textContent = directionLabel;
+
+    compactLeft.append(compactTitle, compactDirection);
 
     const compactStats = document.createElement('div');
     compactStats.className = 'trade-compact-stats';
 
-    const pctSpan = document.createElement('span');
-    pctSpan.className = 'trade-compact-percent';
-    pctSpan.dataset.role = 'trade-compact-percent';
-    if (pctChange !== null) {
-      pctSpan.textContent = `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`;
-      if (pctChange > 0) pctSpan.classList.add('positive');
-      if (pctChange < 0) pctSpan.classList.add('negative');
-    } else {
-      pctSpan.textContent = '—';
-    }
+    const compactPnlLine = document.createElement('div');
+    compactPnlLine.className = 'trade-compact-pnl-line';
 
     const compactPnl = document.createElement('strong');
     compactPnl.className = `trade-compact-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
     compactPnl.dataset.role = 'trade-compact-pnl';
     compactPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+
+    const pctSpan = document.createElement('span');
+    pctSpan.className = 'trade-compact-percent';
+    pctSpan.dataset.role = 'trade-compact-percent';
+    if (pctChange !== null) {
+      pctSpan.textContent = `(${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%)`;
+      if (pctChange > 0) pctSpan.classList.add('positive');
+      if (pctChange < 0) pctSpan.classList.add('negative');
+    } else {
+      pctSpan.textContent = '(—)';
+    }
 
     const compactR = document.createElement('span');
     compactR.className = 'trade-compact-r';
@@ -1013,8 +1025,9 @@ function renderActiveTrades() {
     compactChevron.setAttribute('aria-hidden', 'true');
     compactChevron.textContent = '▾';
 
-    compactStats.append(pctSpan, compactPnl, compactR);
-    compactRow.append(compactTitle, compactStats, compactChevron);
+    compactPnlLine.append(compactPnl, pctSpan);
+    compactStats.append(compactPnlLine, compactR);
+    compactRow.append(compactLeft, compactStats, compactChevron);
     compactRow.addEventListener('click', () => {
       if (!tradeId) return;
       state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -1233,11 +1246,11 @@ function updateActiveTradeDisplay(trades) {
     if (compactPct) {
       compactPct.classList.remove('positive', 'negative');
       if (pctChange !== null) {
-        compactPct.textContent = `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`;
+        compactPct.textContent = `(${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%)`;
         if (pctChange > 0) compactPct.classList.add('positive');
         if (pctChange < 0) compactPct.classList.add('negative');
       } else {
-        compactPct.textContent = '—';
+        compactPct.textContent = '(—)';
       }
     }
 
