@@ -1202,6 +1202,7 @@ function renderActiveTrades() {
     metaRow.append(badges, noteToggle);
     expandedWrap.appendChild(metaRow);
 
+    const draft = tradeId ? noteDrafts.get(tradeId) : null;
     const notePanel = document.createElement('div');
     notePanel.className = 'trade-note-panel is-collapsed';
     const noteInput = document.createElement('textarea');
