@@ -1442,7 +1442,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 6px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -1645,7 +1645,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 6px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -1662,7 +1662,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 12px;
+  column-gap: 6px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
