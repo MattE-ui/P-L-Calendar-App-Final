@@ -1435,11 +1435,11 @@ select {
   border-bottom: 1px solid rgba(255,255,255,0.05);
   background: transparent;
   color: inherit;
-  padding: 10px 12px;
+  padding: 8px 12px;
   display: grid;
-  grid-template-columns: 88px 120px 72px 24px;
+  grid-template-columns: 88px 104px 84px 24px;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 8px;
   text-align: left;
   cursor: pointer;
 }
@@ -1484,7 +1484,7 @@ select {
   min-width: 0;
 }
 #active-trades-card .trade-middle-cell {
-  width: 120px;
+  width: 104px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1508,7 +1508,7 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  width: 72px;
+  width: 84px;
   min-width: 0;
 }
 #active-trades-card .trade-right-stack {
@@ -1516,7 +1516,7 @@ select {
   flex-direction: column;
   align-items: flex-end;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 #active-trades-card .trade-compact-pnl {
@@ -1552,6 +1552,7 @@ select {
   padding: 4px 10px;
   line-height: 1;
   min-height: unset;
+  white-space: nowrap;
   background: rgba(255,255,255,.05);
 }
 #active-trades-card .trade-compact-chevron {
@@ -1577,11 +1578,11 @@ select {
   border-bottom: 1px solid rgba(255,255,255,0.05);
   background: transparent;
   color: inherit;
-  padding: 10px 12px;
+  padding: 8px 12px;
   display: grid;
-  grid-template-columns: 88px 120px 72px 24px;
+  grid-template-columns: 88px 104px 84px 24px;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 8px;
   text-align: left;
   cursor: pointer;
 }
@@ -1595,11 +1596,11 @@ select {
   border-top: 1px solid rgba(255,255,255,0.05);
   background: transparent;
   color: inherit;
-  padding: 10px 12px;
+  padding: 8px 12px;
   display: grid;
-  grid-template-columns: 88px 120px 72px 24px;
+  grid-template-columns: 88px 104px 84px 24px;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 8px;
   text-align: left;
   cursor: pointer;
 }
