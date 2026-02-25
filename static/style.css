@@ -1437,7 +1437,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1480,11 +1480,19 @@ select {
   justify-content: center;
   min-width: 0;
 }
+#active-trades-card .trade-middle-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
 #active-trades-card .trade-compact-right {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
 }
 #active-trades-card .trade-right-stack {
   display: flex;
@@ -1492,13 +1500,6 @@ select {
   align-items: flex-end;
   justify-content: center;
   gap: 6px;
-}
-#active-trades-card .trade-compact-pnl-line {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  justify-content: center;
-  white-space: nowrap;
 }
 #active-trades-card .trade-compact-pnl {
   font-size: 18px;
@@ -1509,7 +1510,7 @@ select {
 #active-trades-card .trade-compact-pnl.positive { color: var(--positive); }
 #active-trades-card .trade-compact-pnl.negative { color: var(--negative); }
 #active-trades-card .trade-compact-percent {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.84;
   color: var(--muted);
@@ -1555,7 +1556,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1573,7 +1574,7 @@ select {
   color: inherit;
   padding: 10px 12px 10px 14px;
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   text-align: left;
