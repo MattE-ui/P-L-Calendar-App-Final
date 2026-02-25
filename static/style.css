@@ -83,7 +83,7 @@ h1, h2, h3, h4 {
   max-height: 85vh;
   overflow-y: auto;
 }
-.topbar h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+.topbar h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: .3px; }
 .topbar .spacer { flex: 1; }
 
 .container {
@@ -923,7 +923,7 @@ select {
     min-height: 84px;
   }
   .trade-pill .trade-pnl-value {
-    font-size: 20px;
+    font-size: 24px;
   }
   .trade-pill .trade-actions button {
     min-width: 110px;
@@ -1405,7 +1405,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1439,18 +1439,24 @@ select {
 #active-trades-card .trade-compact-direction.short {
   color: color-mix(in srgb, var(--negative) 58%, var(--text) 42%);
 }
-#active-trades-card .trade-compact-stats {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+#active-trades-card .trade-compact-middle {
+  display: flex;
+  align-items: center;
   justify-content: center;
   min-width: 0;
+}
+#active-trades-card .trade-compact-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 #active-trades-card .trade-compact-pnl-line {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
+  justify-content: center;
+  white-space: nowrap;
 }
 #active-trades-card .trade-compact-pnl {
   font-size: 18px;
@@ -1478,7 +1484,7 @@ select {
   color: var(--text);
 }
 #active-trades-card .trade-compact-chevron {
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1;
   color: var(--muted);
   transition: transform 0.18s ease;
@@ -1898,7 +1904,7 @@ td .mapping-badge {
 .profile-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .profile-actions button { flex: 1; min-width: 160px; }
 .automation-card { gap: 16px; }
-.profile-automation-header h2 { margin: 0; font-size: 20px; }
+.profile-automation-header h2 { margin: 0; font-size: 24px; }
 .profile-automation-title {
   display: flex;
   align-items: center;
@@ -1980,7 +1986,7 @@ td .mapping-badge {
 }
 
 .safe-screenshot .grid.view-month .cell .val {
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1.2;
   font-weight: 700;
 }

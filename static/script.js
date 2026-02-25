@@ -993,8 +993,8 @@ function renderActiveTrades() {
 
     compactLeft.append(compactTitle, compactDirection);
 
-    const compactStats = document.createElement('div');
-    compactStats.className = 'trade-compact-stats';
+    const compactMiddle = document.createElement('div');
+    compactMiddle.className = 'trade-compact-middle';
 
     const compactPnlLine = document.createElement('div');
     compactPnlLine.className = 'trade-compact-pnl-line';
@@ -1015,6 +1015,9 @@ function renderActiveTrades() {
       pctSpan.textContent = '(—)';
     }
 
+    const compactRight = document.createElement('div');
+    compactRight.className = 'trade-compact-right';
+
     const compactR = document.createElement('span');
     compactR.className = 'trade-compact-r';
     compactR.dataset.role = 'trade-compact-r';
@@ -1026,8 +1029,9 @@ function renderActiveTrades() {
     compactChevron.textContent = '▾';
 
     compactPnlLine.append(compactPnl, pctSpan);
-    compactStats.append(compactPnlLine, compactR);
-    compactRow.append(compactLeft, compactStats, compactChevron);
+    compactMiddle.append(compactPnlLine);
+    compactRight.append(compactR, compactChevron);
+    compactRow.append(compactLeft, compactMiddle, compactRight);
     compactRow.addEventListener('click', () => {
       if (!tradeId) return;
       state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
