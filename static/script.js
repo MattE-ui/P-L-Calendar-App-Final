@@ -16,6 +16,7 @@ const state = {
   activeTrades: [],
   expandedActiveTradeId: null,
   activeTradeSort: 'newest',
+  openPriceInfoByTradeId: {},
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
   isGuest: false,
@@ -953,6 +954,7 @@ function renderActiveTrades() {
   sortedTrades.forEach(trade => {
     const tradeId = trade.id || '';
     const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
+    const showPriceInfo = Boolean(tradeId && state.openPriceInfoByTradeId?.[tradeId]);
     const pill = document.createElement('div');
     pill.className = `trade-pill trade-pill-compact ${isExpanded ? 'is-expanded' : ''}`.trim();
     if (tradeId) pill.dataset.tradeId = tradeId;
@@ -1084,8 +1086,20 @@ function renderActiveTrades() {
       pnlStack.appendChild(guaranteedCard);
     }
 
+    const priceInfoToggle = document.createElement('button');
+    priceInfoToggle.className = 'ghost trade-price-toggle';
+    priceInfoToggle.type = 'button';
+    priceInfoToggle.setAttribute('aria-expanded', String(showPriceInfo));
+    const priceInfoLabel = document.createElement('span');
+    priceInfoLabel.textContent = 'Price info';
+    const priceInfoChevron = document.createElement('span');
+    priceInfoChevron.className = `trade-price-chevron ${showPriceInfo ? 'is-open' : ''}`.trim();
+    priceInfoChevron.setAttribute('aria-hidden', 'true');
+    priceInfoChevron.textContent = '▾';
+    priceInfoToggle.append(priceInfoLabel, priceInfoChevron);
+
     const details = document.createElement('dl');
-    details.className = 'trade-details';
+    details.className = `trade-details trade-details-collapsible ${showPriceInfo ? '' : 'is-collapsed'}`.trim();
     const detailItems = [
       ['Buy Price', formatPrice(trade.entry, trade.currency, 2)],
       ['Original Stop', formatPrice(trade.stop, trade.currency, 2)],
@@ -1102,9 +1116,16 @@ function renderActiveTrades() {
       details.append(dt, dd);
     });
 
-    bodyRow.append(pnlStack, details);
+    priceInfoToggle.addEventListener('click', () => {
+      if (!tradeId) return;
+      state.openPriceInfoByTradeId[tradeId] = !state.openPriceInfoByTradeId[tradeId];
+      renderActiveTrades();
+    });
+
+    bodyRow.append(pnlStack, priceInfoToggle, details);
     if (state.safeScreenshot) {
       pnlStack.classList.add('is-hidden');
+      priceInfoToggle.classList.add('is-hidden');
       details.classList.add('is-hidden');
     }
     expandedWrap.appendChild(bodyRow);
