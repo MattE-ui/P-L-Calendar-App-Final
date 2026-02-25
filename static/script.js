@@ -884,6 +884,7 @@ function renderActiveTrades() {
     if (!tradeId) return;
     const noteInput = pill.querySelector('.trade-note-input');
     const notePanel = pill.querySelector('.trade-note-panel');
+    const priceInfoWrap = pill.querySelector('.trade-price-info-collapsible');
     const isFocused = document.activeElement === noteInput;
     const selection = noteInput && typeof noteInput.selectionStart === 'number'
       ? { start: noteInput.selectionStart, end: noteInput.selectionEnd }
@@ -891,6 +892,7 @@ function renderActiveTrades() {
     noteDrafts.set(tradeId, {
       note: noteInput ? noteInput.value : '',
       isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false,
+      priceInfoOpen: priceInfoWrap ? !priceInfoWrap.classList.contains('is-collapsed') : false,
       height: noteInput ? noteInput.style.height : '',
       selection,
       isFocused,
@@ -1102,6 +1104,20 @@ function renderActiveTrades() {
       pnlStack.appendChild(guaranteedCard);
     }
 
+    const priceInfoToggle = document.createElement('button');
+    priceInfoToggle.className = 'ghost trade-price-info-toggle';
+    priceInfoToggle.type = 'button';
+
+    const priceInfoChevron = document.createElement('span');
+    priceInfoChevron.className = 'trade-price-info-chevron';
+    priceInfoChevron.setAttribute('aria-hidden', 'true');
+    priceInfoChevron.textContent = '▾';
+    const priceInfoLabel = document.createElement('span');
+    priceInfoLabel.textContent = 'Show price info';
+    priceInfoToggle.append(priceInfoLabel, priceInfoChevron);
+
+    const detailsWrap = document.createElement('div');
+    detailsWrap.className = 'trade-price-info-collapsible is-collapsed';
     const details = document.createElement('dl');
     details.className = 'trade-details';
     const detailItems = [
@@ -1119,11 +1135,29 @@ function renderActiveTrades() {
       if (label === 'Current Stop') dd.dataset.role = 'detail-current-stop';
       details.append(dt, dd);
     });
+    detailsWrap.appendChild(details);
 
-    bodyRow.append(pnlStack, details);
+    const draft = tradeId ? noteDrafts.get(tradeId) : null;
+    if (draft?.priceInfoOpen) {
+      detailsWrap.classList.remove('is-collapsed');
+      priceInfoToggle.classList.add('is-open');
+      priceInfoToggle.setAttribute('aria-expanded', 'true');
+      priceInfoLabel.textContent = 'Hide price info';
+    } else {
+      priceInfoToggle.setAttribute('aria-expanded', 'false');
+    }
+    priceInfoToggle.addEventListener('click', () => {
+      const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
+      priceInfoToggle.classList.toggle('is-open', !isCollapsed);
+      priceInfoToggle.setAttribute('aria-expanded', String(!isCollapsed));
+      priceInfoLabel.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
+    });
+
+    bodyRow.append(pnlStack, priceInfoToggle, detailsWrap);
     if (state.safeScreenshot) {
       pnlStack.classList.add('is-hidden');
-      details.classList.add('is-hidden');
+      priceInfoToggle.classList.add('is-hidden');
+      detailsWrap.classList.add('is-hidden');
     }
     expandedWrap.appendChild(bodyRow);
 
@@ -1325,7 +1359,11 @@ function updateActiveTradeDisplay(trades) {
 
     const pnlStack = pill.querySelector('.trade-pnl-stack');
     const details = pill.querySelector('.trade-details');
+    const priceInfoToggle = pill.querySelector('.trade-price-info-toggle');
+    const detailsWrap = pill.querySelector('.trade-price-info-collapsible');
     if (pnlStack) pnlStack.classList.toggle('is-hidden', state.safeScreenshot);
+    if (priceInfoToggle) priceInfoToggle.classList.toggle('is-hidden', state.safeScreenshot);
+    if (detailsWrap) detailsWrap.classList.toggle('is-hidden', state.safeScreenshot);
     if (details) details.classList.toggle('is-hidden', state.safeScreenshot);
 
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;

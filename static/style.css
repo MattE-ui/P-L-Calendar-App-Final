@@ -776,6 +776,29 @@ select {
   margin: 0;
   font-weight: 700;
 }
+
+.trade-pill .trade-price-info-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.trade-pill .trade-price-info-chevron {
+  font-size: 13px;
+  line-height: 1;
+  transition: transform 0.18s ease;
+}
+.trade-pill .trade-price-info-toggle.is-open .trade-price-info-chevron {
+  transform: rotate(180deg);
+}
+.trade-pill .trade-price-info-collapsible {
+  display: block;
+}
+.trade-pill .trade-price-info-collapsible.is-collapsed {
+  display: none;
+}
 .trade-pill .trade-badges {
   gap: 8px;
   flex-wrap: nowrap;
@@ -1498,7 +1521,9 @@ select {
   flex-direction: column;
   gap: 12px;
   opacity: 1;
-  max-height: 1200px;
+  height: auto;
+  max-height: 2400px;
+  overflow: visible;
   transition: opacity 0.2s ease, max-height 0.25s ease;
 }
 #active-trades-card .trade-expanded-header {
@@ -1541,6 +1566,7 @@ select {
 }
 #active-trades-card .trade-expanded-content .trade-body {
   gap: 12px;
+  align-items: start;
 }
 #active-trades-card .trade-expanded-content .trade-details {
   font-size: 13px;
