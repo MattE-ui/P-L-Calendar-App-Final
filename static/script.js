@@ -14,6 +14,7 @@ const state = {
   openLossPotentialGBP: 0,
   livePortfolioGBP: 0,
   activeTrades: [],
+  expandedActiveTradeId: null,
   activeTradeSort: 'newest',
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
@@ -876,13 +877,13 @@ function renderActiveTrades() {
     updateActiveTradeDisplay(trades);
     return;
   }
+
   const noteDrafts = new Map();
   list.querySelectorAll('.trade-pill[data-trade-id]').forEach(pill => {
     const tradeId = pill.dataset.tradeId;
     if (!tradeId) return;
     const noteInput = pill.querySelector('.trade-note-input');
     const notePanel = pill.querySelector('.trade-note-panel');
-    const detailsWrap = pill.querySelector('.trade-details-collapsible');
     const isFocused = document.activeElement === noteInput;
     const selection = noteInput && typeof noteInput.selectionStart === 'number'
       ? { start: noteInput.selectionStart, end: noteInput.selectionEnd }
@@ -890,20 +891,22 @@ function renderActiveTrades() {
     noteDrafts.set(tradeId, {
       note: noteInput ? noteInput.value : '',
       isOpen: notePanel ? !notePanel.classList.contains('is-collapsed') : false,
-      detailsOpen: detailsWrap ? !detailsWrap.classList.contains('is-collapsed') : false,
       height: noteInput ? noteInput.style.height : '',
       selection,
       isFocused,
       scrollTop: noteInput ? noteInput.scrollTop : 0
     });
   });
+
   list.innerHTML = '';
   if (!trades.length) {
+    state.expandedActiveTradeId = null;
     if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.classList.add('is-hidden');
     return;
   }
   if (empty) empty.classList.add('is-hidden');
+
   const parseTradeDate = trade => Date.parse(trade.createdAt || trade.date || trade.openDate || '') || 0;
   const sortedTrades = [...trades].sort((a, b) => {
     const aDate = parseTradeDate(a);
@@ -943,10 +946,16 @@ function renderActiveTrades() {
     }
   });
 
+  const validExpandedId = sortedTrades.some(trade => trade.id && trade.id === state.expandedActiveTradeId);
+  if (!validExpandedId) state.expandedActiveTradeId = null;
+
   sortedTrades.forEach(trade => {
+    const tradeId = trade.id || '';
+    const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
     const pill = document.createElement('div');
-    pill.className = 'trade-pill';
-    if (trade.id) pill.dataset.tradeId = trade.id;
+    pill.className = `trade-pill trade-pill-compact ${isExpanded ? 'is-expanded' : ''}`.trim();
+    if (tradeId) pill.dataset.tradeId = tradeId;
+
     const sym = getTradeDisplaySymbol(trade);
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
@@ -955,16 +964,8 @@ function renderActiveTrades() {
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const riskMultiple = getTradeRiskMultiple(trade, pnl);
-    const headerRow = document.createElement('div');
-    headerRow.className = 'trade-header-row';
-    const title = document.createElement('div');
-    title.className = 'trade-title';
-    const titleText = document.createElement('span');
-    titleText.textContent = `${sym} (${directionLabel})`;
-    title.appendChild(titleText);
-    if (shouldShowMappingBadge(trade)) {
-      title.appendChild(createMappingBadge());
-    }
+    const riskMultipleLabel = formatRiskMultiple(riskMultiple);
+    const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
     const pctBase = Number.isFinite(trade.positionGBP)
       ? trade.positionGBP
       : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
@@ -973,36 +974,95 @@ function renderActiveTrades() {
     const pctChange = Number.isFinite(pnl) && Number.isFinite(pctBase) && pctBase !== 0
       ? (pnl / pctBase) * 100
       : null;
+
+    const compactRow = document.createElement('button');
+    compactRow.className = 'trade-compact-row';
+    compactRow.type = 'button';
+    compactRow.setAttribute('aria-expanded', String(isExpanded));
+
+    const compactLeft = document.createElement('div');
+    compactLeft.className = 'trade-compact-left';
+
+    const compactTitle = document.createElement('span');
+    compactTitle.className = 'trade-compact-title';
+    compactTitle.textContent = sym;
+
+    const compactDirection = document.createElement('span');
+    compactDirection.className = `trade-compact-direction ${trade.direction === 'short' ? 'short' : 'long'}`;
+    compactDirection.textContent = directionLabel;
+
+    compactLeft.append(compactTitle, compactDirection);
+
+    const compactStats = document.createElement('div');
+    compactStats.className = 'trade-compact-stats';
+
+    const compactPnlLine = document.createElement('div');
+    compactPnlLine.className = 'trade-compact-pnl-line';
+
+    const compactPnl = document.createElement('strong');
+    compactPnl.className = `trade-compact-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+    compactPnl.dataset.role = 'trade-compact-pnl';
+    compactPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+
     const pctSpan = document.createElement('span');
-    pctSpan.className = 'trade-percent';
+    pctSpan.className = 'trade-compact-percent';
+    pctSpan.dataset.role = 'trade-compact-percent';
     if (pctChange !== null) {
-      pctSpan.textContent = `${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%`;
+      pctSpan.textContent = `(${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%)`;
       if (pctChange > 0) pctSpan.classList.add('positive');
       if (pctChange < 0) pctSpan.classList.add('negative');
     } else {
-      pctSpan.textContent = '—';
+      pctSpan.textContent = '(—)';
     }
-    title.appendChild(pctSpan);
-    headerRow.appendChild(title);
-    if (trade.source === 'trading212' || trade.source === 'ibkr') {
-      const sourceLogo = document.createElement('div');
-      sourceLogo.className = 'trade-source-logo';
-      if (trade.source === 'trading212') {
-        sourceLogo.innerHTML = '<img src="static/trading212-logo.svg" alt="Trading 212" />';
-      } else {
-        sourceLogo.textContent = 'IBKR';
-      }
-      headerRow.appendChild(sourceLogo);
-    }
-    const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
-    if (isMissingStop) {
-      pill.classList.add('trade-pill-alert');
+
+    const compactR = document.createElement('span');
+    compactR.className = 'trade-compact-r';
+    compactR.dataset.role = 'trade-compact-r';
+    compactR.textContent = riskMultipleLabel;
+
+    const compactChevron = document.createElement('span');
+    compactChevron.className = 'trade-compact-chevron';
+    compactChevron.setAttribute('aria-hidden', 'true');
+    compactChevron.textContent = '▾';
+
+    compactPnlLine.append(compactPnl, pctSpan);
+    compactStats.append(compactPnlLine, compactR);
+    compactRow.append(compactLeft, compactStats, compactChevron);
+    compactRow.addEventListener('click', () => {
+      if (!tradeId) return;
+      state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+      renderActiveTrades();
+    });
+    pill.appendChild(compactRow);
+
+    const expandedWrap = document.createElement('div');
+    expandedWrap.className = `trade-expanded-content ${isExpanded ? '' : 'is-collapsed'}`.trim();
+
+    const expandedHeader = document.createElement('div');
+    expandedHeader.className = 'trade-expanded-header';
+    const expandedTitle = document.createElement('span');
+    expandedTitle.className = 'trade-expanded-title';
+    expandedTitle.textContent = `${sym} (${directionLabel})`;
+    const expandedStats = document.createElement('div');
+    expandedStats.className = 'trade-expanded-stats';
+    const expandedPnl = document.createElement('strong');
+    expandedPnl.className = `trade-expanded-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+    expandedPnl.dataset.role = 'trade-expanded-pnl';
+    expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+    const expandedR = document.createElement('span');
+    expandedR.className = 'trade-expanded-r';
+    expandedR.dataset.role = 'trade-expanded-r';
+    expandedR.textContent = riskMultipleLabel;
+    expandedStats.append(expandedPnl, expandedR);
+    expandedHeader.append(expandedTitle, expandedStats);
+    expandedWrap.appendChild(expandedHeader);
+
+    if (isExpanded && isMissingStop) {
       const alertBanner = document.createElement('div');
       alertBanner.className = 'trade-alert-banner';
       alertBanner.textContent = 'No active stop order found!';
-      pill.appendChild(alertBanner);
+      expandedWrap.appendChild(alertBanner);
     }
-    pill.appendChild(headerRow);
 
     const bodyRow = document.createElement('div');
     bodyRow.className = 'trade-body';
@@ -1037,13 +1097,6 @@ function renderActiveTrades() {
       guaranteedCard.append(guaranteedLabel, guaranteedValue);
       pnlStack.appendChild(guaranteedCard);
     }
-    const detailsToggle = document.createElement('button');
-    detailsToggle.className = 'ghost trade-details-toggle';
-    detailsToggle.type = 'button';
-    detailsToggle.textContent = 'Show price info';
-
-    const detailsWrap = document.createElement('div');
-    detailsWrap.className = 'trade-details-collapsible is-collapsed';
 
     const details = document.createElement('dl');
     details.className = 'trade-details';
@@ -1060,47 +1113,28 @@ function renderActiveTrades() {
       dd.textContent = value;
       if (label === 'Live Price') dd.dataset.role = 'detail-live-price';
       if (label === 'Current Stop') dd.dataset.role = 'detail-current-stop';
-      if (label === 'Buy Price') dd.dataset.role = 'detail-entry';
-      if (label === 'Original Stop') dd.dataset.role = 'detail-stop';
       details.append(dt, dd);
     });
-    detailsWrap.appendChild(details);
-    const draft = trade.id ? noteDrafts.get(trade.id) : null;
-    if (draft?.detailsOpen) {
-      detailsWrap.classList.remove('is-collapsed');
-      detailsToggle.textContent = 'Hide price info';
-    }
-    detailsToggle.addEventListener('click', () => {
-      const isCollapsed = detailsWrap.classList.toggle('is-collapsed');
-      detailsToggle.textContent = isCollapsed ? 'Show price info' : 'Hide price info';
-    });
-    bodyRow.appendChild(pnlStack);
+
+    bodyRow.append(pnlStack, details);
     if (state.safeScreenshot) {
       pnlStack.classList.add('is-hidden');
-      detailsToggle.classList.add('is-hidden');
-      detailsWrap.classList.add('is-hidden');
+      details.classList.add('is-hidden');
     }
-    bodyRow.appendChild(detailsToggle);
-    bodyRow.appendChild(detailsWrap);
-    pill.appendChild(bodyRow);
+    expandedWrap.appendChild(bodyRow);
 
     const metaRow = document.createElement('div');
     metaRow.className = 'trade-meta-row';
     const badges = document.createElement('div');
     badges.className = 'trade-meta trade-badges';
-    const badgeItems = [{
-      label: `Units ${formatShares(trade.sizeUnits)}`,
-      className: ''
-    }, {
-      label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%`,
-      className: ''
-    }, {
-      label: formatRiskMultiple(riskMultiple),
-      className: ''
-    }];
+    const badgeItems = [
+      { label: `Units ${formatShares(trade.sizeUnits)}` },
+      { label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%` },
+      { label: riskMultipleLabel }
+    ];
     badgeItems.forEach(item => {
       const badge = document.createElement('span');
-      badge.className = `trade-badge ${item.className}`.trim();
+      badge.className = 'trade-badge';
       badge.textContent = item.label;
       badges.appendChild(badge);
     });
@@ -1111,8 +1145,9 @@ function renderActiveTrades() {
     noteToggle.setAttribute('aria-expanded', 'false');
     noteToggle.textContent = '📝';
     metaRow.append(badges, noteToggle);
-    pill.appendChild(metaRow);
+    expandedWrap.appendChild(metaRow);
 
+    const draft = tradeId ? noteDrafts.get(tradeId) : null;
     const notePanel = document.createElement('div');
     notePanel.className = 'trade-note-panel is-collapsed';
     const noteInput = document.createElement('textarea');
@@ -1125,9 +1160,7 @@ function renderActiveTrades() {
       noteToggle.classList.add('has-note');
       noteToggle.setAttribute('aria-label', 'Trade notes available');
     }
-    if (draft?.height) {
-      noteInput.style.height = draft.height;
-    }
+    if (draft?.height) noteInput.style.height = draft.height;
     const noteStatus = document.createElement('div');
     noteStatus.className = 'trade-note-status';
     noteStatus.setAttribute('aria-live', 'polite');
@@ -1138,17 +1171,13 @@ function renderActiveTrades() {
     }
     if (draft?.isFocused) {
       noteInput.focus();
-      if (draft.selection) {
-        noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
-      }
+      if (draft.selection) noteInput.setSelectionRange(draft.selection.start, draft.selection.end);
       noteInput.scrollTop = draft.scrollTop || 0;
     }
     noteToggle.addEventListener('click', () => {
       const isCollapsed = notePanel.classList.toggle('is-collapsed');
       noteToggle.setAttribute('aria-expanded', String(!isCollapsed));
-      if (!isCollapsed) {
-        noteInput.focus();
-      }
+      if (!isCollapsed) noteInput.focus();
     });
     const refreshNoteIndicator = () => {
       if (noteInput.value.trim()) {
@@ -1187,30 +1216,27 @@ function renderActiveTrades() {
       noteSaveTimer = window.setTimeout(saveNote, 600);
     });
     noteInput.addEventListener('blur', saveNote);
-    pill.appendChild(notePanel);
+    expandedWrap.appendChild(notePanel);
 
     const editToggle = document.createElement('button');
     editToggle.className = 'primary outline';
     editToggle.textContent = 'Edit trade';
-    editToggle.addEventListener('click', () => {
-      openEditTradeModal(trade);
-    });
+    editToggle.addEventListener('click', () => openEditTradeModal(trade));
+
     const actionRow = document.createElement('div');
     actionRow.className = 'close-row trade-action-row trade-actions';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
-    closeBtn.addEventListener('click', () => {
-      openCloseTradeModal(trade);
-    });
+    closeBtn.addEventListener('click', () => openCloseTradeModal(trade));
     const shareBtn = document.createElement('button');
     shareBtn.className = 'ghost trade-share-btn';
     shareBtn.textContent = 'Share card';
-    shareBtn.addEventListener('click', () => {
-      openShareCardModal(trade);
-    });
+    shareBtn.addEventListener('click', () => openShareCardModal(trade));
     actionRow.append(editToggle, closeBtn, shareBtn);
-    pill.appendChild(actionRow);
+    expandedWrap.appendChild(actionRow);
+
+    pill.appendChild(expandedWrap);
     list.appendChild(pill);
   });
   updateActiveTradesOverflow();
@@ -1226,6 +1252,50 @@ function updateActiveTradeDisplay(trades) {
     const trade = tradeMap.get(tradeId);
     if (!trade) return;
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
+
+    const pctBase = Number.isFinite(trade.positionGBP)
+      ? trade.positionGBP
+      : (Number.isFinite(trade.entry) && Number.isFinite(trade.sizeUnits) && (trade.currency || 'GBP') === 'GBP'
+        ? trade.entry * trade.sizeUnits
+        : null);
+    const pctChange = Number.isFinite(pnl) && Number.isFinite(pctBase) && pctBase !== 0
+      ? (pnl / pctBase) * 100
+      : null;
+
+    const compactPct = pill.querySelector('[data-role="trade-compact-percent"]');
+    if (compactPct) {
+      compactPct.classList.remove('positive', 'negative');
+      if (pctChange !== null) {
+        compactPct.textContent = `(${pctChange > 0 ? '+' : ''}${pctChange.toFixed(2)}%)`;
+        if (pctChange > 0) compactPct.classList.add('positive');
+        if (pctChange < 0) compactPct.classList.add('negative');
+      } else {
+        compactPct.textContent = '(—)';
+      }
+    }
+
+    const compactPnl = pill.querySelector('[data-role="trade-compact-pnl"]');
+    if (compactPnl) {
+      compactPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+      compactPnl.classList.remove('positive', 'negative');
+      if (pnl > 0) compactPnl.classList.add('positive');
+      if (pnl < 0) compactPnl.classList.add('negative');
+    }
+
+    const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+    const compactR = pill.querySelector('[data-role="trade-compact-r"]');
+    if (compactR) compactR.textContent = riskMultipleLabel;
+
+    const expandedPnl = pill.querySelector('[data-role="trade-expanded-pnl"]');
+    if (expandedPnl) {
+      expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+      expandedPnl.classList.remove('positive', 'negative');
+      if (pnl > 0) expandedPnl.classList.add('positive');
+      if (pnl < 0) expandedPnl.classList.add('negative');
+    }
+    const expandedR = pill.querySelector('[data-role="trade-expanded-r"]');
+    if (expandedR) expandedR.textContent = riskMultipleLabel;
+
     const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
     const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
     if (pnlValue) pnlValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
@@ -1235,31 +1305,11 @@ function updateActiveTradeDisplay(trades) {
     } else if (pnlCard) {
       pnlCard.classList.remove('positive', 'negative');
     }
+
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const guaranteedCard = pill.querySelector('[data-role="trade-guaranteed-card"]');
     const guaranteedValue = pill.querySelector('[data-role="trade-guaranteed"]');
-    const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    const currentStopValue = Number(trade.currentStop);
-    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
     const isMissingStop = (trade.source === 'trading212' || trade.source === 'ibkr') && trade.currentStopStale === true;
-    const alertBanner = pill.querySelector('.trade-alert-banner');
-    if (isMissingStop) {
-      pill.classList.add('trade-pill-alert');
-      if (!alertBanner) {
-        const headerRow = pill.querySelector('.trade-header');
-        const newBanner = document.createElement('div');
-        newBanner.className = 'trade-alert-banner';
-        newBanner.textContent = 'No active stop order found!';
-        if (headerRow) {
-          pill.insertBefore(newBanner, headerRow);
-        } else {
-          pill.prepend(newBanner);
-        }
-      }
-    } else {
-      pill.classList.remove('trade-pill-alert');
-      if (alertBanner) alertBanner.remove();
-    }
     if (guaranteedValue && guaranteed !== null && !isMissingStop) {
       guaranteedValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(guaranteed);
     }
@@ -1267,60 +1317,21 @@ function updateActiveTradeDisplay(trades) {
       guaranteedCard.classList.toggle('positive', guaranteed !== null && guaranteed > 0 && !isMissingStop);
       guaranteedCard.classList.toggle('negative', guaranteed !== null && guaranteed < 0 && !isMissingStop);
       guaranteedCard.classList.toggle('is-hidden', guaranteed === null || isMissingStop || state.safeScreenshot);
-    } else if (guaranteed !== null && !isMissingStop) {
-      const pnlStack = pill.querySelector('.trade-pnl-stack');
-      const pnlCardEl = pill.querySelector('[data-role="trade-pnl-card"]');
-      if (pnlStack && pnlCardEl) {
-        const newCard = document.createElement('div');
-        newCard.className = `trade-pnl-card trade-pnl-guaranteed-card ${guaranteed > 0 ? 'positive' : guaranteed < 0 ? 'negative' : ''}`;
-        newCard.dataset.role = 'trade-guaranteed-card';
-        const label = document.createElement('span');
-        label.className = 'trade-pnl-label';
-        label.textContent = 'Guaranteed';
-        const value = document.createElement('strong');
-        value.className = 'trade-pnl-value';
-        value.dataset.role = 'trade-guaranteed';
-        value.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(guaranteed);
-        newCard.append(label, value);
-        pnlStack.insertBefore(newCard, pnlCardEl.nextSibling);
-      }
     }
+
     const pnlStack = pill.querySelector('.trade-pnl-stack');
+    const details = pill.querySelector('.trade-details');
     if (pnlStack) pnlStack.classList.toggle('is-hidden', state.safeScreenshot);
-    const detailsToggle = pill.querySelector('.trade-details-toggle');
-    const detailsWrap = pill.querySelector('.trade-details-collapsible');
-    if (detailsToggle) detailsToggle.classList.toggle('is-hidden', state.safeScreenshot);
-    if (detailsWrap) detailsWrap.classList.toggle('is-hidden', state.safeScreenshot);
+    if (details) details.classList.toggle('is-hidden', state.safeScreenshot);
+
+    const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
+    const currentStopValue = Number(trade.currentStop);
+    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
     const livePriceEl = pill.querySelector('[data-role="detail-live-price"]');
     if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
     const currentStopEl = pill.querySelector('[data-role="detail-current-stop"]');
-    if (currentStop !== null) {
-      if (currentStopEl) {
-        currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
-      } else {
-        const detailList = pill.querySelector('.trade-details');
-        const livePriceElNode = pill.querySelector('[data-role="detail-live-price"]');
-        if (detailList && livePriceElNode) {
-          const livePriceDt = livePriceElNode.previousElementSibling;
-          const dt = document.createElement('dt');
-          dt.textContent = 'Current Stop:';
-          const dd = document.createElement('dd');
-          dd.dataset.role = 'detail-current-stop';
-          dd.textContent = formatPrice(currentStop, trade.currency, 2);
-          if (livePriceDt && livePriceDt.parentElement === detailList) {
-            detailList.insertBefore(dt, livePriceDt);
-            detailList.insertBefore(dd, livePriceDt);
-          } else {
-            detailList.append(dt, dd);
-          }
-        }
-      }
-    } else if (currentStopEl) {
-      const currentStopDt = currentStopEl.previousElementSibling;
-      if (currentStopDt && currentStopDt.tagName === 'DT') {
-        currentStopDt.remove();
-      }
-      currentStopEl.remove();
+    if (currentStop !== null && currentStopEl) {
+      currentStopEl.textContent = formatPrice(currentStop, trade.currency, 2);
     }
   });
 }
