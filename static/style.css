@@ -1437,7 +1437,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) 150px auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1480,7 +1480,12 @@ select {
   justify-content: center;
   min-width: 0;
 }
+#active-trades-card .trade-middle-cell {
+  width: 100%;
+  justify-self: center;
+}
 #active-trades-card .trade-middle-stack {
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1556,7 +1561,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) 150px auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1574,7 +1579,7 @@ select {
   color: inherit;
   padding: 10px 12px 10px 14px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: 18px minmax(0, 1fr) 150px auto auto;
   align-items: center;
   gap: 10px;
   text-align: left;

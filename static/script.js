@@ -1177,7 +1177,7 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
 
 function createCompactMiddleStack(pnl, pctChange) {
   const compactMiddle = document.createElement('div');
-  compactMiddle.className = 'trade-compact-middle';
+  compactMiddle.className = 'trade-compact-middle trade-middle-cell';
   const compactMiddleStack = document.createElement('div');
   compactMiddleStack.className = 'trade-middle-stack';
   const compactPnl = document.createElement('strong');
