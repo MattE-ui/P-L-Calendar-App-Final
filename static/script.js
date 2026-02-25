@@ -930,7 +930,6 @@ function renderActiveTrades() {
       return;
     }
 
-    const expandedTrade = group.trades.find(trade => getActiveTradeUiId(trade) === state.expandedActiveTradeId) || null;
     const groupCard = document.createElement('div');
     groupCard.className = 'trade-pill trade-group-card';
 
@@ -940,20 +939,23 @@ function renderActiveTrades() {
     const oldestIsExpanded = Boolean(oldestTradeId) && oldestTradeId === state.expandedActiveTradeId;
     const groupHeader = renderGroupedTradeHeaderRow(group, oldestTrade, oldestTradeId, oldestIsExpanded);
     groupCard.appendChild(groupHeader);
+    if (oldestIsExpanded) {
+      const expandedWrap = renderExpandedTradeContent(oldestTrade, oldestTradeId, true, noteDrafts);
+      expandedWrap.dataset.tradeId = oldestTradeId;
+      groupCard.appendChild(expandedWrap);
+    }
 
     group.trades.slice(1).forEach((trade, index) => {
       const tradeId = getActiveTradeUiId(trade);
       const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
       const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 2);
       groupCard.appendChild(row);
+      if (isExpanded) {
+        const expandedWrap = renderExpandedTradeContent(trade, tradeId, true, noteDrafts);
+        expandedWrap.dataset.tradeId = tradeId;
+        groupCard.appendChild(expandedWrap);
+      }
     });
-
-    if (expandedTrade) {
-      const expandedId = getActiveTradeUiId(expandedTrade);
-      const expandedWrap = renderExpandedTradeContent(expandedTrade, expandedId, true, noteDrafts);
-      expandedWrap.dataset.tradeId = expandedId;
-      groupCard.appendChild(expandedWrap);
-    }
 
     list.appendChild(groupCard);
   });
@@ -966,7 +968,7 @@ function normalizeTicker(ticker) {
 
 function getActiveTradeUiId(trade) {
   if (!trade || typeof trade !== 'object') return '';
-  return String(trade.id || trade.orderId || `${trade.openedAt || trade.createdAt || trade.date || ''}|${trade.ticker || trade.symbol || ''}|${trade.sizeUnits || trade.units || ''}`);
+  return String(trade.id || trade.orderId || `${trade.ticker || trade.symbol || ''}-${getTradeTimestamp(trade)}-${trade.entryPrice || ''}`);
 }
 
 function getTradePercentChange(trade, pnl) {
@@ -980,8 +982,19 @@ function getTradePercentChange(trade, pnl) {
     : null;
 }
 
+function getTradeTimestamp(trade) {
+  return new Date(
+    trade?.openedAt
+      ?? trade?.openDate
+      ?? trade?.createdAt
+      ?? trade?.entryDate
+      ?? trade?.date
+      ?? 0
+  ).getTime() || 0;
+}
+
 function parseTradeDate(trade) {
-  return Date.parse(trade.createdAt || trade.date || trade.openDate || trade.openedAt || '') || 0;
+  return getTradeTimestamp(trade);
 }
 
 function compareTradesByMode(a, b, mode) {
@@ -1063,7 +1076,10 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       : 'mixed';
     return {
       ...group,
-      trades: [...group.trades].sort((a, b) => parseTradeDate(a) - parseTradeDate(b)),
+      trades: [...group.trades]
+        .map((trade, index) => ({ trade, index }))
+        .sort((a, b) => (getTradeTimestamp(a.trade) - getTradeTimestamp(b.trade)) || (a.index - b.index))
+        .map(item => item.trade),
       directionLabel,
       directionClass,
       stopMissing: group.trades.some(trade => trade.stopMissing),
@@ -1152,19 +1168,16 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
 
-  const compactLeftPlaceholder = document.createElement('div');
-  compactLeftPlaceholder.className = 'trade-compact-left trade-left-placeholder';
-  compactLeftPlaceholder.setAttribute('aria-hidden', 'true');
   const connector = document.createElement('span');
   connector.className = 'trade-group-row-connector';
   connector.setAttribute('aria-hidden', 'true');
-  compactLeftPlaceholder.appendChild(connector);
+  connector.textContent = '↳';
 
   const compactMiddle = createCompactMiddleStack(pnl, pctChange);
   const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  row.append(compactLeftPlaceholder, compactMiddle, compactRight, compactChevron);
+  row.append(connector, compactMiddle, compactRight, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
