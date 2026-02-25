@@ -902,10 +902,11 @@ function renderActiveTrades() {
   if (!trades.length) {
     state.expandedActiveTradeId = null;
     if (empty) empty.classList.remove('is-hidden');
-    if (showAll) showAll.classList.add('is-hidden');
+    if (showAll) showAll.disabled = true;
     return;
   }
   if (empty) empty.classList.add('is-hidden');
+  if (showAll) showAll.disabled = false;
 
   const parseTradeDate = trade => Date.parse(trade.createdAt || trade.date || trade.openDate || '') || 0;
   const sortedTrades = [...trades].sort((a, b) => {
@@ -1041,25 +1042,6 @@ function renderActiveTrades() {
 
     const expandedWrap = document.createElement('div');
     expandedWrap.className = `trade-expanded-content ${isExpanded ? '' : 'is-collapsed'}`.trim();
-
-    const expandedHeader = document.createElement('div');
-    expandedHeader.className = 'trade-expanded-header';
-    const expandedTitle = document.createElement('span');
-    expandedTitle.className = 'trade-expanded-title';
-    expandedTitle.textContent = `${sym} (${directionLabel})`;
-    const expandedStats = document.createElement('div');
-    expandedStats.className = 'trade-expanded-stats';
-    const expandedPnl = document.createElement('strong');
-    expandedPnl.className = `trade-expanded-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
-    expandedPnl.dataset.role = 'trade-expanded-pnl';
-    expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
-    const expandedR = document.createElement('span');
-    expandedR.className = 'trade-expanded-r';
-    expandedR.dataset.role = 'trade-expanded-r';
-    expandedR.textContent = riskMultipleLabel;
-    expandedStats.append(expandedPnl, expandedR);
-    expandedHeader.append(expandedTitle, expandedStats);
-    expandedWrap.appendChild(expandedHeader);
 
     if (isExpanded && isMissingStop) {
       const alertBanner = document.createElement('div');
@@ -1290,16 +1272,6 @@ function updateActiveTradeDisplay(trades) {
     const compactR = pill.querySelector('[data-role="trade-compact-r"]');
     if (compactR) compactR.textContent = riskMultipleLabel;
 
-    const expandedPnl = pill.querySelector('[data-role="trade-expanded-pnl"]');
-    if (expandedPnl) {
-      expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
-      expandedPnl.classList.remove('positive', 'negative');
-      if (pnl > 0) expandedPnl.classList.add('positive');
-      if (pnl < 0) expandedPnl.classList.add('negative');
-    }
-    const expandedR = pill.querySelector('[data-role="trade-expanded-r"]');
-    if (expandedR) expandedR.textContent = riskMultipleLabel;
-
     const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
     const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
     if (pnlValue) pnlValue.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
@@ -1439,12 +1411,8 @@ function updateActiveTradesOverflow() {
   const empty = $('#active-trade-empty');
   if (!list || !showAll) return;
   const hasTrades = list.children.length > 0;
-  if (!hasTrades || (empty && !empty.classList.contains('is-hidden'))) {
-    showAll.classList.add('is-hidden');
-    return;
-  }
-  const overflowing = list.scrollHeight > list.clientHeight + 1;
-  showAll.classList.toggle('is-hidden', !overflowing);
+  const hasVisibleTrades = hasTrades && (!empty || empty.classList.contains('is-hidden'));
+  showAll.disabled = !hasVisibleTrades;
 }
 
 function openCloseTradeModal(trade) {
