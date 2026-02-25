@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investor Preview</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <section class="page-title"><h2>Investor Preview</h2></section>
+    <p class="helper">Read-only preview mode (expires after 5 minutes).</p>
+    <section class="hero-metrics key-metrics" id="investor-metrics"></section>
+    <section class="card"><h3>Equity curve</h3><pre id="investor-equity" class="helper">Loading…</pre></section>
+    <section class="card"><h3>Cashflows</h3><div id="investor-cashflows"></div></section>
+  </main>
+  <script src="/static/investor-portal.js"></script>
+</body>
+</html>

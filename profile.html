@@ -129,6 +129,29 @@
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>
     </section>
+
+    <section class="card profile-card is-hidden" id="investor-section">
+      <header class="profile-automation-header">
+        <h2>Investors</h2>
+        <p class="helper">Manage view-only investor accounts and preview their portal.</p>
+      </header>
+      <div class="profile-field">
+        <label for="investor-display-name">New investor display name</label>
+        <input id="investor-display-name" type="text" placeholder="Investor name">
+        <button id="investor-create-btn" class="primary" type="button">Create investor</button>
+      </div>
+      <div class="profile-field">
+        <label for="investor-valuation-id">Record valuation</label>
+        <select id="investor-valuation-id"></select>
+        <input id="investor-valuation-date" type="date">
+        <input id="investor-valuation-nav" type="number" step="0.01" placeholder="NAV">
+        <button id="investor-valuation-btn" class="ghost" type="button">Record valuation</button>
+      </div>
+      <div id="investor-list"></div>
+      <div id="investor-status" class="helper"></div>
+      <div id="investor-error" class="error"></div>
+    </section>
+
     <section class="card profile-card automation-card" id="automation-card">
       <header class="profile-automation-header">
         <div class="profile-automation-title">
@@ -342,6 +365,7 @@
   </div>
   <script src="static/theme-utils.js"></script>
   <script src="static/guest.js"></script>
+  <script>window.__INVESTOR_PORTAL__ = __INVESTOR_PORTAL__;</script>
   <script src="static/profile.js"></script>
 </body>
 </html>
