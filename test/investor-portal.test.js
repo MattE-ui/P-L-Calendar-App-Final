@@ -7,7 +7,6 @@ const bcrypt = require('bcrypt');
 
 process.env.DATA_FILE = path.join(__dirname, 'data-investor-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
-process.env.NEXT_PUBLIC_INVESTOR_PORTAL = 'true';
 process.env.INVESTOR_TOKEN_SECRET = 'investor-test-secret';
 
 const { app, saveDB } = require('../server');
@@ -97,14 +96,41 @@ test('preview token cannot access master endpoints', async () => {
 
 
 test('user can enable investor accounts via account settings endpoint', async () => {
-  const res = await fetch(`${baseUrl}/api/account/investor-accounts`, {
-    method: 'POST',
+  const res = await fetch(`${baseUrl}/api/master/settings`, {
+    method: 'PATCH',
     headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
-    body: JSON.stringify({ enabled: true })
+    body: JSON.stringify({ investor_portal_enabled: true })
   });
   const data = await res.json();
   assert.equal(res.status, 200);
-  assert.equal(data.investorAccountsEnabled, true);
+  assert.equal(data.investor_portal_enabled, true);
+});
+
+
+
+
+test('master settings endpoint returns persisted investor toggle', async () => {
+  await fetch(`${baseUrl}/api/master/settings`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ investor_portal_enabled: true })
+  });
+  const res = await fetch(`${baseUrl}/api/master/settings`, { headers: { cookie: 'auth_token=mastertoken' } });
+  const data = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(data.investor_portal_enabled, true);
+});
+test('master investor endpoints return 403 when investor portal is disabled for user', async () => {
+  const disableRes = await fetch(`${baseUrl}/api/master/settings`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ investor_portal_enabled: false })
+  });
+  assert.equal(disableRes.status, 200);
+  const res = await fetch(`${baseUrl}/api/master/investors`, { headers: { cookie: 'auth_token=mastertoken' } });
+  const data = await res.json();
+  assert.equal(res.status, 403);
+  assert.equal(data.error, 'Investor accounts are not enabled for this account.');
 });
 test('expired preview token is rejected by investor endpoints', async () => {
   const expired = signToken({ role: 'investor_preview', investorProfileId: 'inv-1', masterUserId: 'master', exp: Date.now() - 1000 });

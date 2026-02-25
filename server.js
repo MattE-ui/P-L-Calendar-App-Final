@@ -59,7 +59,7 @@ const IBKR_CONNECTOR_WINDOWS_SHA256 = process.env.IBKR_CONNECTOR_WINDOWS_SHA256 
 const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES || '';
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
-const INVESTOR_PORTAL_ENABLED = String(process.env.NEXT_PUBLIC_INVESTOR_PORTAL || 'false').toLowerCase() === 'true';
+const INVESTOR_PORTAL_DISABLED = String(process.env.INVESTOR_PORTAL_DISABLED || 'false').toLowerCase() === 'true';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
 
 const guestRateLimit = new Map();
@@ -597,10 +597,10 @@ function requireMasterAuth(req, res, next) {
 }
 
 function requireMasterInvestorAccess(req, res, next) {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  if (INVESTOR_PORTAL_DISABLED) return res.status(503).json({ error: 'Investor portal is temporarily unavailable.' });
   if (req.user?.guest) return res.status(403).json({ error: 'Guests cannot perform this action. Please create an account.' });
   if (!req.user?.investorAccountsEnabled) {
-    return res.status(403).json({ error: 'Enable investor accounts in profile settings before using this feature.' });
+    return res.status(403).json({ error: 'Investor accounts are not enabled for this account.' });
   }
   return next();
 }
@@ -963,6 +963,14 @@ function ensureUserShape(user, identifier) {
   }
   if (typeof user.investorAccountsEnabled !== 'boolean') {
     user.investorAccountsEnabled = false;
+    mutated = true;
+  }
+  if (user.investorPortalEnabledAt !== null && user.investorPortalEnabledAt !== undefined && typeof user.investorPortalEnabledAt !== 'string') {
+    user.investorPortalEnabledAt = null;
+    mutated = true;
+  }
+  if (user.investorPortalEnabledAt === undefined) {
+    user.investorPortalEnabledAt = null;
     mutated = true;
   }
   if (!Number.isFinite(user.initialPortfolio)) {
@@ -4529,30 +4537,21 @@ app.get('/', (req, res) => {
 });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
-app.get('/profile.html', (req,res)=>{
-  const profilePath = path.join(__dirname, 'profile.html');
-  fs.readFile(profilePath, 'utf8', (err, html) => {
-    if (err) {
-      res.sendFile(profilePath);
-      return;
-    }
-    res.type('html').send(html.replace('__INVESTOR_PORTAL__', INVESTOR_PORTAL_ENABLED ? 'true' : 'false'));
-  });
-});
+app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
 app.get('/investor/login', (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  if (INVESTOR_PORTAL_DISABLED) return res.status(503).send('Investor portal disabled');
   res.sendFile(path.join(__dirname, 'investor-login.html'));
 });
 app.get('/investor/dashboard', (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  if (INVESTOR_PORTAL_DISABLED) return res.status(503).send('Investor portal disabled');
   res.sendFile(path.join(__dirname, 'investor-dashboard.html'));
 });
 app.get('/investor/activate', (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  if (INVESTOR_PORTAL_DISABLED) return res.status(503).send('Investor portal disabled');
   res.sendFile(path.join(__dirname, 'investor-activate.html'));
 });
 app.get('/investor/preview', (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  if (INVESTOR_PORTAL_DISABLED) return res.status(503).send('Investor portal disabled');
   res.sendFile(path.join(__dirname, 'investor-preview.html'));
 });
 app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
@@ -4768,7 +4767,6 @@ app.post('/api/logout', (req,res)=>{
 
 
 app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
@@ -4811,7 +4809,6 @@ app.post('/api/investor/auth/logout', (req, res) => {
 });
 
 app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const rawToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!rawToken || !password) return res.status(400).json({ error: 'Token and password are required.' });
@@ -4882,7 +4879,6 @@ app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
 });
 
 app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const db = loadDB();
   ensureInvestorTables(db);
   const list = db.investorProfiles
@@ -4897,7 +4893,6 @@ app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess,
 
 app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
-  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
   if (!displayName) return res.status(400).json({ error: 'display_name is required.' });
   const db = loadDB();
@@ -5126,7 +5121,7 @@ app.get('/api/profile', auth, (req,res)=>{
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username),
     investorAccountsEnabled: !!user.investorAccountsEnabled,
-    investorPortalAvailable: INVESTOR_PORTAL_ENABLED
+    investorPortalAvailable: !INVESTOR_PORTAL_DISABLED
   });
 });
 
@@ -5513,6 +5508,35 @@ app.post('/api/account/nickname', auth, (req, res) => {
   res.json({ ok: true, nickname });
 });
 
+app.get('/api/master/settings', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  res.json({
+    investor_portal_enabled: !!user.investorAccountsEnabled,
+    investor_portal_enabled_at: user.investorPortalEnabledAt || null
+  });
+});
+
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/settings', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (typeof req.body?.investor_portal_enabled === 'boolean') {
+    user.investorAccountsEnabled = req.body.investor_portal_enabled;
+    user.investorPortalEnabledAt = user.investorAccountsEnabled ? new Date().toISOString() : null;
+  }
+  saveDB(db);
+  res.json({
+    investor_portal_enabled: !!user.investorAccountsEnabled,
+    investor_portal_enabled_at: user.investorPortalEnabledAt || null
+  });
+});
+
 app.post('/api/account/investor-accounts', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const enabled = !!req.body?.enabled;
@@ -5521,8 +5545,9 @@ app.post('/api/account/investor-accounts', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   user.investorAccountsEnabled = enabled;
+  user.investorPortalEnabledAt = enabled ? new Date().toISOString() : null;
   saveDB(db);
-  res.json({ ok: true, investorAccountsEnabled: !!user.investorAccountsEnabled });
+  res.json({ ok: true, investorAccountsEnabled: !!user.investorAccountsEnabled, investorPortalEnabledAt: user.investorPortalEnabledAt });
 });
 
 

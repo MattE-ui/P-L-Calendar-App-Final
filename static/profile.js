@@ -220,6 +220,15 @@ function bindNav() {
     });
 }
 
+async function loadMasterSettings() {
+  try {
+    const settings = await api('/api/master/settings');
+    profileState.investorAccountsEnabled = !!settings.investor_portal_enabled;
+  } catch (error) {
+    // Guests may receive 403; keep defaults.
+  }
+}
+
 async function loadProfile() {
   try {
     const data = await api('/api/profile');
@@ -234,8 +243,8 @@ async function loadProfile() {
     profileState.username = data.username || '';
     profileState.nickname = data.nickname || '';
     profileState.isGuest = !!data.isGuest;
-    profileState.investorAccountsEnabled = !!data.investorAccountsEnabled;
     profileState.investorPortalAvailable = !!data.investorPortalAvailable;
+    await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
     const deltaField = document.getElementById('profile-net-delta-field');
@@ -393,7 +402,7 @@ function renderSecurityState() {
   }
   const investorSection = document.getElementById('investor-section');
   if (investorSection) {
-    investorSection.classList.toggle('is-hidden', !(investorPortalEnabled && profileState.investorAccountsEnabled));
+    investorSection.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   }
   const currentPasswordInput = document.getElementById('account-password-current');
   if (currentPasswordInput) {
@@ -1222,10 +1231,10 @@ async function logout() {
 
 
 
-const investorPortalEnabled = window.__INVESTOR_PORTAL__ === true;
+const investorPortalEnabled = () => profileState.investorPortalAvailable !== false;
 
 async function loadInvestors() {
-  if (!(investorPortalEnabled && profileState.investorAccountsEnabled)) return;
+  if (!(investorPortalEnabled() && profileState.investorAccountsEnabled)) return;
   const section = document.getElementById('investor-section');
   if (section) section.classList.remove('is-hidden');
   try {
@@ -1298,26 +1307,26 @@ function bindInvestorAccountToggle() {
     if (status) status.textContent = '';
     if (err) err.textContent = '';
     try {
-      const data = await api('/api/account/investor-accounts', {
-        method: 'POST',
+      const data = await api('/api/master/settings', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled })
+        body: JSON.stringify({ investor_portal_enabled: enabled })
       });
-      profileState.investorAccountsEnabled = !!data.investorAccountsEnabled;
+      profileState.investorAccountsEnabled = !!data.investor_portal_enabled;
       const investorSection = document.getElementById('investor-section');
       if (investorSection) {
-        investorSection.classList.toggle('is-hidden', !(investorPortalEnabled && profileState.investorAccountsEnabled));
+        investorSection.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
       }
-      if (profileState.investorAccountsEnabled && investorPortalEnabled) {
+      if (profileState.investorAccountsEnabled && investorPortalEnabled()) {
         await loadInvestors();
       }
       if (status) {
-        status.textContent = investorPortalEnabled
+        status.textContent = investorPortalEnabled()
           ? (profileState.investorAccountsEnabled
               ? 'Investor accounts enabled. Your account now has master investor access.'
               : 'Investor accounts disabled.')
           : (profileState.investorAccountsEnabled
-              ? 'Investor accounts enabled. Set NEXT_PUBLIC_INVESTOR_PORTAL=true to use investor pages.'
+              ? 'Investor accounts enabled.'
               : 'Investor accounts disabled.');
       }
     } catch (error) {
@@ -1327,7 +1336,7 @@ function bindInvestorAccountToggle() {
 }
 
 function bindInvestorActions() {
-  if (!investorPortalEnabled) return;
+  if (!investorPortalEnabled()) return;
   document.getElementById('investor-create-btn')?.addEventListener('click', async () => {
     const err = document.getElementById('investor-error');
     const status = document.getElementById('investor-status');
