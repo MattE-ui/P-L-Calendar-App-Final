@@ -997,6 +997,41 @@ function parseTradeDate(trade) {
   return getTradeTimestamp(trade);
 }
 
+function getTradeDayKey(trade) {
+  const timestamp = getTradeTimestamp(trade);
+  if (!timestamp) return 0;
+  const tradeDate = new Date(timestamp);
+  tradeDate.setHours(0, 0, 0, 0);
+  return tradeDate.getTime();
+}
+
+function getTradeMonetaryValue(trade) {
+  const monetaryValue = trade?.livePnl
+    ?? trade?.currentPnl
+    ?? trade?.pnl
+    ?? trade?.pnL
+    ?? trade?.livePnL
+    ?? trade?.unrealizedGBP
+    ?? 0;
+  return Math.abs(Number(monetaryValue) || 0);
+}
+
+function compareGroupedTradeChildren(a, b) {
+  const dayA = getTradeDayKey(a);
+  const dayB = getTradeDayKey(b);
+  if (dayA !== dayB) return dayA - dayB;
+
+  const moneyA = getTradeMonetaryValue(a);
+  const moneyB = getTradeMonetaryValue(b);
+  if (moneyA !== moneyB) return moneyB - moneyA;
+
+  const tsA = getTradeTimestamp(a);
+  const tsB = getTradeTimestamp(b);
+  if (tsA !== tsB) return tsA - tsB;
+
+  return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+}
+
 function compareTradesByMode(a, b, mode) {
   const aDate = parseTradeDate(a);
   const bDate = parseTradeDate(b);
@@ -1078,7 +1113,7 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       ...group,
       trades: [...group.trades]
         .map((trade, index) => ({ trade, index }))
-        .sort((a, b) => (getTradeTimestamp(a.trade) - getTradeTimestamp(b.trade)) || (a.index - b.index))
+        .sort((a, b) => compareGroupedTradeChildren(a.trade, b.trade) || (a.index - b.index))
         .map(item => item.trade),
       directionLabel,
       directionClass,
@@ -1130,7 +1165,7 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const compactRow = document.createElement('button');
-  compactRow.className = `trade-compact-row ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
+  compactRow.className = `trade-compact-row trade-row-grid ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   compactRow.type = 'button';
   compactRow.setAttribute('aria-expanded', String(isExpanded));
   compactRow.dataset.tradeId = tradeId;
@@ -1163,7 +1198,7 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
-  row.className = `trade-group-row ${isExpanded ? 'is-expanded' : ''} ${isLast ? 'is-last' : ''} ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
+  row.className = `trade-group-row trade-row-grid-child ${isExpanded ? 'is-expanded' : ''} ${isLast ? 'is-last' : ''} ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   row.type = 'button';
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
@@ -1173,11 +1208,15 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   connector.setAttribute('aria-hidden', 'true');
   connector.textContent = '↳';
 
+  const compactLeftPlaceholder = document.createElement('div');
+  compactLeftPlaceholder.className = 'trade-left-placeholder';
+  compactLeftPlaceholder.setAttribute('aria-hidden', 'true');
+
   const compactMiddle = createCompactMiddleStack(pnl, pctChange);
   const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  row.append(connector, compactMiddle, compactRight, compactChevron);
+  row.append(connector, compactLeftPlaceholder, compactMiddle, compactRight, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -1194,7 +1233,7 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
-  row.className = `trade-group-header trade-group-header-row ${isExpanded ? 'is-expanded' : ''} ${group.stopMissing ? 'trade-tile-warning' : ''}`.trim();
+  row.className = `trade-group-header trade-group-header-row trade-row-grid ${isExpanded ? 'is-expanded' : ''} ${group.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   row.type = 'button';
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
