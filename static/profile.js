@@ -389,7 +389,7 @@ function renderSecurityState() {
   const investorToggle = document.getElementById('investor-accounts-enabled');
   if (investorToggle) {
     investorToggle.checked = !!profileState.investorAccountsEnabled;
-    investorToggle.disabled = !profileState.investorPortalAvailable || profileState.isGuest;
+    investorToggle.disabled = profileState.isGuest;
   }
   const investorSection = document.getElementById('investor-section');
   if (investorSection) {
@@ -1289,8 +1289,8 @@ async function loadInvestors() {
   }
 }
 
-function bindInvestorActions() {
-  if (!investorPortalEnabled) return;
+
+function bindInvestorAccountToggle() {
   document.getElementById('investor-accounts-save')?.addEventListener('click', async () => {
     const enabled = !!document.getElementById('investor-accounts-enabled')?.checked;
     const status = document.getElementById('investor-accounts-status');
@@ -1305,17 +1305,29 @@ function bindInvestorActions() {
       });
       profileState.investorAccountsEnabled = !!data.investorAccountsEnabled;
       const investorSection = document.getElementById('investor-section');
-      if (investorSection) investorSection.classList.toggle('is-hidden', !profileState.investorAccountsEnabled);
-      if (profileState.investorAccountsEnabled) {
+      if (investorSection) {
+        investorSection.classList.toggle('is-hidden', !(investorPortalEnabled && profileState.investorAccountsEnabled));
+      }
+      if (profileState.investorAccountsEnabled && investorPortalEnabled) {
         await loadInvestors();
       }
-      if (status) status.textContent = profileState.investorAccountsEnabled
-        ? 'Investor accounts enabled. Your account now has master investor access.'
-        : 'Investor accounts disabled.';
+      if (status) {
+        status.textContent = investorPortalEnabled
+          ? (profileState.investorAccountsEnabled
+              ? 'Investor accounts enabled. Your account now has master investor access.'
+              : 'Investor accounts disabled.')
+          : (profileState.investorAccountsEnabled
+              ? 'Investor accounts enabled. Set NEXT_PUBLIC_INVESTOR_PORTAL=true to use investor pages.'
+              : 'Investor accounts disabled.');
+      }
     } catch (error) {
       if (err) err.textContent = error?.data?.error || error.message;
     }
   });
+}
+
+function bindInvestorActions() {
+  if (!investorPortalEnabled) return;
   document.getElementById('investor-create-btn')?.addEventListener('click', async () => {
     const err = document.getElementById('investor-error');
     const status = document.getElementById('investor-status');
@@ -1350,6 +1362,7 @@ window.addEventListener('DOMContentLoaded', () => {
   loadIntegration();
   loadIbkrIntegration();
   loadIbkrDownloadMeta();
+  bindInvestorAccountToggle();
   bindInvestorActions();
   loadInvestors();
   const rawModal = document.getElementById('t212-raw-modal');
