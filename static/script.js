@@ -14,6 +14,9 @@ const state = {
   openLossPotentialGBP: 0,
   livePortfolioGBP: 0,
   activeTrades: [],
+  dashboardLoading: true,
+  dashboardLoadError: false,
+  activeTradesLoading: true,
   expandedActiveTradeId: null,
   activeTradeSort: 'newest',
   liveOpenPnlMode: 'computed',
@@ -873,6 +876,17 @@ function renderActiveTrades() {
   } else if (openLossCard) {
     openLossCard.classList.remove('negative');
   }
+  if (state.activeTradesLoading) {
+    if (pnlEl) pnlEl.textContent = 'Loading…';
+    if (openLossEl) openLossEl.textContent = 'Loading…';
+    list.innerHTML = '';
+    if (empty) {
+      empty.textContent = 'Loading active trades…';
+      empty.classList.remove('is-hidden');
+    }
+    if (showAll) showAll.classList.add('is-hidden');
+    return;
+  }
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
     return;
@@ -903,7 +917,10 @@ function renderActiveTrades() {
   list.innerHTML = '';
   if (!trades.length) {
     state.expandedActiveTradeId = null;
-    if (empty) empty.classList.remove('is-hidden');
+    if (empty) {
+      empty.textContent = 'No active trades yet — log one from the risk calculator.';
+      empty.classList.remove('is-hidden');
+    }
     if (showAll) showAll.classList.add('is-hidden');
     return;
   }
@@ -1382,6 +1399,10 @@ function renderPortfolioTrend() {
   const el = $('#portfolio-trend');
   if (!el) return;
   el.innerHTML = '';
+  if (state.dashboardLoading) {
+    el.innerHTML = '<p class="tool-note">Loading portfolio trend…</p>';
+    return;
+  }
   const entries = getAllEntries();
   const last = entries.slice(-12);
   if (!last.length) {
@@ -1788,6 +1809,16 @@ function setMetricTrend(el, value) {
 }
 
 function renderMetrics() {
+  if (state.dashboardLoading) {
+    const setText = (sel, value) => { const el = $(sel); if (el) el.textContent = value; };
+    setText('#header-portfolio-value', 'Loading…');
+    setText('#hero-net-deposits-value', 'Loading…');
+    setText('#hero-net-performance-value', 'Loading…');
+    setText('#header-portfolio-sub', '');
+    setText('#hero-net-deposits-sub', '');
+    setText('#hero-net-performance-sub', '');
+    return;
+  }
   const metrics = state.metrics || {};
   const latestGBP = Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : state.portfolioGBP;
   const liveGBP = Number.isFinite(state.livePortfolioGBP) ? state.livePortfolioGBP : latestGBP;
@@ -2454,36 +2485,38 @@ async function saveUiPrefs() {
 }
 
 async function loadData() {
+  state.dashboardLoading = true;
+  state.dashboardLoadError = false;
+  state.activeTradesLoading = true;
+  let hadError = false;
   try {
     state.data = await api('/api/pl');
   } catch (e) {
+    hadError = true;
     if (e?.message !== 'Profile incomplete') {
       console.error('Failed to load profit data', e);
     }
-    state.data = {};
   }
   try {
     const res = await api('/api/portfolio');
     const portfolioVal = Number(res?.portfolio);
-    state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
+    if (Number.isFinite(portfolioVal)) state.portfolioGBP = portfolioVal;
     const baselineVal = Number(res?.initialNetDeposits);
     const totalVal = Number(res?.netDepositsTotal);
-    state.netDepositsBaselineGBP = Number.isFinite(baselineVal) ? baselineVal : 0;
+    if (Number.isFinite(baselineVal)) state.netDepositsBaselineGBP = baselineVal;
     state.netDepositsTotalGBP = Number.isFinite(totalVal)
       ? totalVal
       : state.netDepositsBaselineGBP;
-    state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
-    state.livePortfolioGBP = state.portfolioGBP;
+    if (Number.isFinite(res?.liveOpenPnl)) state.liveOpenPnlGBP = res.liveOpenPnl;
+    state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : state.livePortfolioGBP;
     state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
       return;
     }
   } catch (e) {
+    hadError = true;
     console.error('Failed to load portfolio', e);
-    state.portfolioGBP = 0;
-    state.netDepositsBaselineGBP = 0;
-    state.netDepositsTotalGBP = 0;
   }
   computeLifetimeMetrics();
   try {
@@ -2491,7 +2524,7 @@ async function loadData() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : state.livePortfolioGBP;
     }
     state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
       ? activeRes.openLossPotential
@@ -2499,13 +2532,18 @@ async function loadData() {
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
   } catch (e) {
+    hadError = true;
     console.warn('Failed to load active trades', e);
-    state.activeTrades = [];
-    state.openLossPotentialGBP = 0;
+    state.activeTrades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
+  } finally {
+    state.activeTradesLoading = false;
   }
+  state.dashboardLoadError = hadError;
+  state.dashboardLoading = false;
 }
 
 async function refreshActiveTrades() {
+  state.activeTradesLoading = true;
   try {
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
@@ -2524,6 +2562,8 @@ async function refreshActiveTrades() {
   } catch (e) {
     console.warn('Failed to refresh active trades', e);
     state.openLossPotentialGBP = 0;
+  } finally {
+    state.activeTradesLoading = false;
   }
 }
 
