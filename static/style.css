@@ -1431,7 +1431,7 @@ select {
 #active-trades-card .trade-pill > .trade-compact-row,
 #active-trades-card .trade-pill > .trade-group-header-row,
 #active-trades-card .trade-pill > .trade-group-row {
-  padding: 8px 10px 8px 14px;
+  padding: 8px 8px 8px 10px;
 }
 #active-trades-card .trade-compact-row {
   width: 100%;
@@ -1442,18 +1442,18 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 6px;
+  column-gap: 4px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
 }
 #active-trades-card .trade-row-grid {
   width: 100%;
-  grid-template-columns: 110px minmax(120px, 1fr) 96px 28px;
+  grid-template-columns: 78px minmax(92px, 1fr) 96px 28px;
 }
 #active-trades-card .trade-row-grid-child {
   width: 100%;
-  grid-template-columns: 18px 92px minmax(120px, 1fr) 96px 28px;
+  grid-template-columns: 18px 56px minmax(92px, 1fr) 96px 28px;
 }
 #active-trades-card .trade-tile-warning {
   border: 1px solid rgba(209, 175, 87, 0.45);
@@ -1490,7 +1490,7 @@ select {
 }
 #active-trades-card .trade-compact-title {
   display: block;
-  max-width: 102px;
+  max-width: 72px;
   font-size: 16px;
   font-weight: 700;
   white-space: nowrap;
@@ -1528,7 +1528,7 @@ select {
   padding: 0;
   margin: 0;
   width: 100%;
-  max-width: 170px;
+  max-width: 140px;
   min-width: 0;
 }
 #active-trades-card .trade-compact-middle * {
@@ -1536,8 +1536,8 @@ select {
 }
 #active-trades-card .trade-middle-cell {
   width: 100%;
-  max-width: 170px;
-  min-width: 120px;
+  max-width: 140px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1645,7 +1645,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 6px;
+  column-gap: 4px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -1662,7 +1662,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 6px;
+  column-gap: 4px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
