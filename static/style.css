@@ -1437,7 +1437,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 96px 150px auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1450,9 +1450,12 @@ select {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 96px;
   min-width: 0;
 }
 #active-trades-card .trade-compact-title {
+  display: block;
+  max-width: 100%;
   font-size: 16px;
   font-weight: 700;
   white-space: nowrap;
@@ -1480,18 +1483,31 @@ select {
   justify-content: center;
   min-width: 0;
 }
+#active-trades-card .trade-middle-cell {
+  width: 100%;
+  justify-self: center;
+}
+#active-trades-card .trade-middle-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
 #active-trades-card .trade-compact-right {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
 }
-#active-trades-card .trade-compact-pnl-line {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+#active-trades-card .trade-right-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: center;
-  white-space: nowrap;
+  gap: 6px;
 }
 #active-trades-card .trade-compact-pnl {
   font-size: 18px;
@@ -1502,7 +1518,7 @@ select {
 #active-trades-card .trade-compact-pnl.positive { color: var(--positive); }
 #active-trades-card .trade-compact-pnl.negative { color: var(--negative); }
 #active-trades-card .trade-compact-percent {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   opacity: 0.84;
   color: var(--muted);
@@ -1517,6 +1533,12 @@ select {
   border: 1px solid var(--border);
   background: rgba(255,255,255,.06);
   color: var(--text);
+}
+#active-trades-card .trade-compact-risk {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  background: rgba(255,255,255,.05);
 }
 #active-trades-card .trade-compact-chevron {
   font-size: 24px;
@@ -1542,7 +1564,7 @@ select {
   color: inherit;
   padding: 12px 12px 12px 14px;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 96px 150px auto auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -1560,7 +1582,7 @@ select {
   color: inherit;
   padding: 10px 12px 10px 14px;
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 96px 150px auto auto;
   align-items: center;
   gap: 10px;
   text-align: left;
@@ -1576,6 +1598,11 @@ select {
   border-bottom: 2px solid rgba(255,255,255,0.24);
   border-bottom-left-radius: 8px;
   transform: translateY(-1px);
+}
+#active-trades-card .trade-left-placeholder {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 #active-trades-card .trade-group-row .trade-compact-chevron {
   font-size: 26px;
