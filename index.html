@@ -232,55 +232,63 @@
       <div class="side-column">
         <div class="column-panel">
           <section id="active-trades-card" class="tool-card panel interactive">
-            <div class="tool-header">
-              <div>
-                <p class="tool-overline">Active trades</p>
-                <h3 class="text-gold-grad text-gold-glow">Live positions & PnL</h3>
-                <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
-              </div>
-              <div class="trade-sort">
-                <label for="active-trade-sort">Sort</label>
-                <select id="active-trade-sort">
-                  <option value="newest" selected>Newest trade</option>
-                  <option value="oldest">Oldest trade</option>
-                  <option value="best-percent">Best % return</option>
-                  <option value="worst-percent">Worst % return</option>
-                  <option value="best-amount">Best monetary return</option>
-                  <option value="worst-amount">Lowest monetary return</option>
-                </select>
-              </div>
-              <div class="tool-portfolio-row">
-                <div class="tool-portfolio">
-                  <span>Live open PnL</span>
-                  <strong id="live-pnl-display">£0.00</strong>
+            <div class="active-trades-layout">
+              <div class="active-trades-top">
+                <div class="tool-header">
+                  <div>
+                    <p class="tool-overline">Active trades</p>
+                    <h3 class="text-gold-grad text-gold-glow">Live positions & PnL</h3>
+                    <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
+                  </div>
+                  <div class="trade-sort">
+                    <label for="active-trade-sort">Sort</label>
+                    <select id="active-trade-sort">
+                      <option value="newest" selected>Newest trade</option>
+                      <option value="oldest">Oldest trade</option>
+                      <option value="best-percent">Best % return</option>
+                      <option value="worst-percent">Worst % return</option>
+                      <option value="best-amount">Best monetary return</option>
+                      <option value="worst-amount">Lowest monetary return</option>
+                    </select>
+                  </div>
+                  <div class="tool-portfolio-row">
+                    <div class="tool-portfolio">
+                      <span>Live open PnL</span>
+                      <strong id="live-pnl-display">£0.00</strong>
+                    </div>
+                    <div class="tool-portfolio" id="open-loss-potential-card">
+                      <span>Open loss potential</span>
+                      <strong id="open-loss-potential-display">£0.00</strong>
+                    </div>
+                  </div>
                 </div>
-                <div class="tool-portfolio" id="open-loss-potential-card">
-                  <span>Open loss potential</span>
-                  <strong id="open-loss-potential-display">£0.00</strong>
+                <div class="mini-chart" id="portfolio-trend-card">
+                  <div class="mini-chart-head">
+                    <p class="tool-overline">Portfolio trend</p>
+                    <span class="mini-chart-note">Last updates</span>
+                  </div>
+                  <div id="portfolio-trend" class="mini-line"></div>
+                </div>
+                <div class="trade-sort" aria-label="Active trade sorting">
+                  <label for="active-trade-sort">Sort</label>
+                  <select id="active-trade-sort">
+                    <option value="newest" selected>Newest trade</option>
+                    <option value="oldest">Oldest trade</option>
+                    <option value="best-percent">Best % return</option>
+                    <option value="worst-percent">Worst % return</option>
+                    <option value="best-amount">Best monetary return</option>
+                    <option value="worst-amount">Lowest monetary return</option>
+                  </select>
                 </div>
               </div>
-            </div>
-            <div class="mini-chart" id="portfolio-trend-card">
-              <div class="mini-chart-head">
-                <p class="tool-overline">Portfolio trend</p>
-                <span class="mini-chart-note">Last updates</span>
+              <div class="active-trades-list-wrap activeTradesList">
+                <div id="active-trade-list" class="trade-list"></div>
+                <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
               </div>
-              <div id="portfolio-trend" class="mini-line"></div>
+              <div class="active-trades-footer">
+                <button id="active-trade-show-all" class="primary outline show-all-btn is-hidden" type="button">Show all trades</button>
+              </div>
             </div>
-            <div class="trade-sort" aria-label="Active trade sorting">
-              <label for="active-trade-sort">Sort</label>
-              <select id="active-trade-sort">
-                <option value="newest" selected>Newest trade</option>
-                <option value="oldest">Oldest trade</option>
-                <option value="best-percent">Best % return</option>
-                <option value="worst-percent">Worst % return</option>
-                <option value="best-amount">Best monetary return</option>
-                <option value="worst-amount">Lowest monetary return</option>
-              </select>
-            </div>
-            <div id="active-trade-list" class="trade-list active-trade-list-scroll"></div>
-            <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
-            <button id="active-trade-show-all" class="ghost show-all-btn is-hidden" type="button">Show all trades</button>
           </section>
         </div>
       </div>
