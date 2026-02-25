@@ -1390,7 +1390,7 @@ select {
   margin-top: 0;
   padding-bottom: 12px;
 }
-#active-trades-card .trade-list::-webkit-scrollbar {
+#active-trades-card .active-trades-list-wrap.activeTradesList::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
