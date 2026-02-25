@@ -44,7 +44,9 @@ const profileState = {
   nickname: '',
   isGuest: false,
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  investorAccountsEnabled: false,
+  investorPortalAvailable: false
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -232,6 +234,8 @@ async function loadProfile() {
     profileState.username = data.username || '';
     profileState.nickname = data.nickname || '';
     profileState.isGuest = !!data.isGuest;
+    profileState.investorAccountsEnabled = !!data.investorAccountsEnabled;
+    profileState.investorPortalAvailable = !!data.investorPortalAvailable;
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
     const deltaField = document.getElementById('profile-net-delta-field');
@@ -346,7 +350,11 @@ function applyGuestRestrictions() {
     't212-mode',
     't212-add-account',
     't212-save',
-    't212-run-now'
+    't212-run-now',
+    'investor-accounts-enabled',
+    'investor-accounts-save',
+    'investor-create-btn',
+    'investor-valuation-btn'
   ];
   disableIds.forEach(id => {
     const el = document.getElementById(id);
@@ -377,6 +385,15 @@ function renderSecurityState() {
   const nicknameInput = document.getElementById('account-nickname');
   if (nicknameInput) {
     nicknameInput.value = profileState.nickname || '';
+  }
+  const investorToggle = document.getElementById('investor-accounts-enabled');
+  if (investorToggle) {
+    investorToggle.checked = !!profileState.investorAccountsEnabled;
+    investorToggle.disabled = !profileState.investorPortalAvailable || profileState.isGuest;
+  }
+  const investorSection = document.getElementById('investor-section');
+  if (investorSection) {
+    investorSection.classList.toggle('is-hidden', !(investorPortalEnabled && profileState.investorAccountsEnabled));
   }
   const currentPasswordInput = document.getElementById('account-password-current');
   if (currentPasswordInput) {
@@ -1208,7 +1225,7 @@ async function logout() {
 const investorPortalEnabled = window.__INVESTOR_PORTAL__ === true;
 
 async function loadInvestors() {
-  if (!investorPortalEnabled) return;
+  if (!(investorPortalEnabled && profileState.investorAccountsEnabled)) return;
   const section = document.getElementById('investor-section');
   if (section) section.classList.remove('is-hidden');
   try {
@@ -1274,6 +1291,31 @@ async function loadInvestors() {
 
 function bindInvestorActions() {
   if (!investorPortalEnabled) return;
+  document.getElementById('investor-accounts-save')?.addEventListener('click', async () => {
+    const enabled = !!document.getElementById('investor-accounts-enabled')?.checked;
+    const status = document.getElementById('investor-accounts-status');
+    const err = document.getElementById('investor-accounts-error');
+    if (status) status.textContent = '';
+    if (err) err.textContent = '';
+    try {
+      const data = await api('/api/account/investor-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      profileState.investorAccountsEnabled = !!data.investorAccountsEnabled;
+      const investorSection = document.getElementById('investor-section');
+      if (investorSection) investorSection.classList.toggle('is-hidden', !profileState.investorAccountsEnabled);
+      if (profileState.investorAccountsEnabled) {
+        await loadInvestors();
+      }
+      if (status) status.textContent = profileState.investorAccountsEnabled
+        ? 'Investor accounts enabled. Your account now has master investor access.'
+        : 'Investor accounts disabled.';
+    } catch (error) {
+      if (err) err.textContent = error?.data?.error || error.message;
+    }
+  });
   document.getElementById('investor-create-btn')?.addEventListener('click', async () => {
     const err = document.getElementById('investor-error');
     const status = document.getElementById('investor-status');

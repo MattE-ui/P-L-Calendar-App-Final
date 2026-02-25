@@ -29,7 +29,7 @@ test.beforeEach(async () => {
   const now = new Date().toISOString();
   saveDB({
     users: {
-      master: { username: 'master', passwordHash, profileComplete: true, portfolioHistory: {}, tradeJournal: {}, trading212: {}, security: {} }
+      master: { username: 'master', passwordHash, profileComplete: true, investorAccountsEnabled: true, portfolioHistory: {}, tradeJournal: {}, trading212: {}, security: {} }
     },
     sessions: {
       mastertoken: 'master'
@@ -94,6 +94,18 @@ test('preview token cannot access master endpoints', async () => {
   assert.equal(res.status, 401);
 });
 
+
+
+test('user can enable investor accounts via account settings endpoint', async () => {
+  const res = await fetch(`${baseUrl}/api/account/investor-accounts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ enabled: true })
+  });
+  const data = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(data.investorAccountsEnabled, true);
+});
 test('expired preview token is rejected by investor endpoints', async () => {
   const expired = signToken({ role: 'investor_preview', investorProfileId: 'inv-1', masterUserId: 'master', exp: Date.now() - 1000 });
   const res = await fetch(`${baseUrl}/api/investor/me`, { headers: { authorization: `Bearer ${expired}` } });

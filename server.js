@@ -596,6 +596,15 @@ function requireMasterAuth(req, res, next) {
   return auth(req, res, next);
 }
 
+function requireMasterInvestorAccess(req, res, next) {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  if (req.user?.guest) return res.status(403).json({ error: 'Guests cannot perform this action. Please create an account.' });
+  if (!req.user?.investorAccountsEnabled) {
+    return res.status(403).json({ error: 'Enable investor accounts in profile settings before using this feature.' });
+  }
+  return next();
+}
+
 function requireInvestorAuth(req, res, next) {
   const db = loadDB();
   ensureInvestorTables(db);
@@ -950,6 +959,10 @@ function ensureUserShape(user, identifier) {
     const history = user.portfolioHistory || {};
     const hasEntries = Object.values(history).some(days => days && Object.keys(days).length);
     user.profileComplete = hasEntries;
+    mutated = true;
+  }
+  if (typeof user.investorAccountsEnabled !== 'boolean') {
+    user.investorAccountsEnabled = false;
     mutated = true;
   }
   if (!Number.isFinite(user.initialPortfolio)) {
@@ -4868,7 +4881,7 @@ app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
   res.json({ cashflows });
 });
 
-app.get('/api/master/investors', requireMasterAuth, (req, res) => {
+app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const db = loadDB();
   ensureInvestorTables(db);
@@ -4882,7 +4895,7 @@ app.get('/api/master/investors', requireMasterAuth, (req, res) => {
   res.json({ investors: list });
 });
 
-app.post('/api/master/investors', requireMasterAuth, (req, res) => {
+app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
   if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
   const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
@@ -4897,7 +4910,7 @@ app.post('/api/master/investors', requireMasterAuth, (req, res) => {
   res.status(201).json({ id, displayName, status: 'active' });
 });
 
-(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, (req, res) => {
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
@@ -4917,7 +4930,7 @@ app.post('/api/master/investors', requireMasterAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/master/investors/:id/invite', requireMasterAuth, (req, res) => {
+app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
@@ -4939,7 +4952,7 @@ app.post('/api/master/investors/:id/invite', requireMasterAuth, (req, res) => {
   res.json({ inviteUrl });
 });
 
-app.post('/api/master/investors/:id/reset-password', requireMasterAuth, asyncHandler(async (req, res) => {
+app.post('/api/master/investors/:id/reset-password', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
@@ -4965,7 +4978,7 @@ app.post('/api/master/investors/:id/reset-password', requireMasterAuth, asyncHan
   res.json({ tempPassword, email: login.email });
 }));
 
-app.get('/api/master/investors/:id/preview-token', requireMasterAuth, (req, res) => {
+app.get('/api/master/investors/:id/preview-token', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
   const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
@@ -4979,7 +4992,7 @@ app.get('/api/master/investors/:id/preview-token', requireMasterAuth, (req, res)
   res.json({ token, expiresInSeconds: 300 });
 });
 
-app.post('/api/master/investors/:id/valuation', requireMasterAuth, (req, res) => {
+app.post('/api/master/investors/:id/valuation', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
@@ -5111,7 +5124,9 @@ app.get('/api/profile', auth, (req,res)=>{
     displayName: user.displayName || user.username || req.username,
     nickname: user.nickname || user.displayName || user.username || req.username,
     isGuest: !!user.guest,
-    isAdmin: isAdminUser(user, req.username)
+    isAdmin: isAdminUser(user, req.username),
+    investorAccountsEnabled: !!user.investorAccountsEnabled,
+    investorPortalAvailable: INVESTOR_PORTAL_ENABLED
   });
 });
 
@@ -5497,6 +5512,19 @@ app.post('/api/account/nickname', auth, (req, res) => {
   saveDB(db);
   res.json({ ok: true, nickname });
 });
+
+app.post('/api/account/investor-accounts', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const enabled = !!req.body?.enabled;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  user.investorAccountsEnabled = enabled;
+  saveDB(db);
+  res.json({ ok: true, investorAccountsEnabled: !!user.investorAccountsEnabled });
+});
+
 
 app.delete('/api/profile', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
