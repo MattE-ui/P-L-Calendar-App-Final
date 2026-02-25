@@ -136,3 +136,17 @@ If Git reports conflicts, keep the versions that reference **recording daily por
 ```bash
 git push origin main
 ```
+
+
+## Investor Portal
+Investor accounts are enabled per user from the website UI (Profile settings), not via public environment variables.
+
+### How to use
+1. Log in and open **Profile**.
+2. In **Account & security**, toggle **Enable investor accounts (Master mode)** and save.
+3. The **Investors** section appears immediately.
+4. Create an investor profile and use **Invite Link** and/or **Reset Password** for onboarding.
+5. Investor signs in at `/investor/login` and sees `/investor/dashboard` (read-only).
+6. From profile, click **Preview** to open `/investor/preview?token=...` in a new tab.
+
+Preview uses a short-lived bearer token and does not reuse investor cookies.

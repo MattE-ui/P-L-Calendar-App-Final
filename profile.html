@@ -128,7 +128,44 @@
       <div id="account-nickname-error" class="error"></div>
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="investor-accounts-enabled">
+          <span>Enable investor accounts (Master mode)</span>
+        </label>
+        <p class="helper">Turn this on to provision investor accounts and access the Investors section.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="investor-accounts-save" class="ghost" type="button">Save investor account access</button>
+      </div>
+      <div id="investor-accounts-status" class="status-line"></div>
+      <div id="investor-accounts-error" class="error"></div>
     </section>
+
+    <section class="card profile-card is-hidden" id="investor-section">
+      <header class="profile-automation-header">
+        <h2>Investors</h2>
+        <p class="helper">Manage view-only investor accounts and preview their portal.</p>
+      </header>
+      <div class="profile-field">
+        <label for="investor-display-name">New investor display name</label>
+        <input id="investor-display-name" type="text" placeholder="Investor name">
+        <button id="investor-create-btn" class="primary" type="button">Create investor</button>
+      </div>
+      <div class="profile-field">
+        <label for="investor-valuation-id">Record valuation</label>
+        <select id="investor-valuation-id"></select>
+        <input id="investor-valuation-date" type="date">
+        <input id="investor-valuation-nav" type="number" step="0.01" min="0.01" placeholder="NAV">
+        <p class="helper">NAV = investor account value for that date (e.g., 1000.00)</p>
+        <button id="investor-valuation-btn" class="ghost" type="button" disabled>Record valuation</button>
+      </div>
+      <div id="investor-list"></div>
+      <div id="investor-status" class="helper"></div>
+      <div class="helper">Last action: <span id="investor-last-action">—</span></div>
+      <div id="investor-error" class="error"></div>
+    </section>
+
     <section class="card profile-card automation-card" id="automation-card">
       <header class="profile-automation-header">
         <div class="profile-automation-title">

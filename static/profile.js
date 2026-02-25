@@ -44,7 +44,9 @@ const profileState = {
   nickname: '',
   isGuest: false,
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  investorAccountsEnabled: false,
+  investorPortalAvailable: false
 };
 
 const currencySymbols = { GBP: '£', USD: '$' };
@@ -218,6 +220,15 @@ function bindNav() {
     });
 }
 
+async function loadMasterSettings() {
+  try {
+    const settings = await api('/api/master/settings');
+    profileState.investorAccountsEnabled = !!settings.investor_portal_enabled;
+  } catch (error) {
+    // Guests may receive 403; keep defaults.
+  }
+}
+
 async function loadProfile() {
   try {
     const data = await api('/api/profile');
@@ -232,6 +243,8 @@ async function loadProfile() {
     profileState.username = data.username || '';
     profileState.nickname = data.nickname || '';
     profileState.isGuest = !!data.isGuest;
+    profileState.investorPortalAvailable = !!data.investorPortalAvailable;
+    await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
     const netInput = document.getElementById('profile-net-deposits');
     const deltaField = document.getElementById('profile-net-delta-field');
@@ -324,6 +337,9 @@ async function loadProfile() {
     }
     applyGuestRestrictions();
     renderSecurityState();
+    if (profileState.investorAccountsEnabled) {
+      await loadInvestors();
+    }
   } catch (e) {
     console.error('Unable to load profile details', e);
   }
@@ -346,7 +362,11 @@ function applyGuestRestrictions() {
     't212-mode',
     't212-add-account',
     't212-save',
-    't212-run-now'
+    't212-run-now',
+    'investor-accounts-enabled',
+    'investor-accounts-save',
+    'investor-create-btn',
+    'investor-valuation-btn'
   ];
   disableIds.forEach(id => {
     const el = document.getElementById(id);
@@ -377,6 +397,15 @@ function renderSecurityState() {
   const nicknameInput = document.getElementById('account-nickname');
   if (nicknameInput) {
     nicknameInput.value = profileState.nickname || '';
+  }
+  const investorToggle = document.getElementById('investor-accounts-enabled');
+  if (investorToggle) {
+    investorToggle.checked = !!profileState.investorAccountsEnabled;
+    investorToggle.disabled = profileState.isGuest;
+  }
+  const investorSection = document.getElementById('investor-section');
+  if (investorSection) {
+    investorSection.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   }
   const currentPasswordInput = document.getElementById('account-password-current');
   if (currentPasswordInput) {
@@ -1203,12 +1232,262 @@ async function logout() {
   window.location.href = '/login.html';
 }
 
+
+
+const investorPortalEnabled = () => profileState.investorPortalAvailable !== false;
+
+function setInvestorUiBusy(isBusy) {
+  const createBtn = document.getElementById('investor-create-btn');
+  const valuationBtn = document.getElementById('investor-valuation-btn');
+  const nameInput = document.getElementById('investor-display-name');
+  const investorSelect = document.getElementById('investor-valuation-id');
+  const dateInput = document.getElementById('investor-valuation-date');
+  const navInput = document.getElementById('investor-valuation-nav');
+  if (createBtn) {
+    createBtn.disabled = isBusy || profileState.isGuest;
+    createBtn.textContent = isBusy ? 'Creating…' : 'Create investor';
+  }
+  if (valuationBtn) {
+    valuationBtn.disabled = isBusy || profileState.isGuest;
+    valuationBtn.textContent = isBusy ? 'Saving…' : 'Record valuation';
+  }
+  [nameInput, investorSelect, dateInput, navInput].forEach(el => {
+    if (el) el.disabled = isBusy || profileState.isGuest;
+  });
+}
+
+function setInvestorActionStatus(message) {
+  const el = document.getElementById('investor-last-action');
+  if (el) el.textContent = message || '—';
+}
+
+function showInvestorFeedback(message, { isError = false } = {}) {
+  const status = document.getElementById('investor-status');
+  const error = document.getElementById('investor-error');
+  if (isError) {
+    if (error) error.textContent = message || '';
+    if (status) status.textContent = '';
+  } else {
+    if (status) status.textContent = message || '';
+    if (error) error.textContent = '';
+  }
+}
+
+function getSelectedInvestorLabel() {
+  const select = document.getElementById('investor-valuation-id');
+  if (!select) return '';
+  const option = select.options[select.selectedIndex];
+  return option?.textContent || '';
+}
+
+function validateInvestorValuationForm() {
+  const investorId = document.getElementById('investor-valuation-id')?.value || '';
+  const valuationDate = document.getElementById('investor-valuation-date')?.value || '';
+  const navRaw = document.getElementById('investor-valuation-nav')?.value || '';
+  const nav = Number(navRaw);
+  if (!investorId) return { ok: false, error: 'Choose an investor before recording a valuation.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate)) return { ok: false, error: 'Choose a valid valuation date.' };
+  if (!Number.isFinite(nav) || nav <= 0) return { ok: false, error: 'NAV must be a number greater than 0.' };
+  return { ok: true, investorId, valuationDate, nav };
+}
+
+function updateRecordValuationButtonState() {
+  const btn = document.getElementById('investor-valuation-btn');
+  if (!btn) return;
+  const valid = validateInvestorValuationForm().ok;
+  btn.disabled = !valid || profileState.isGuest;
+}
+
+async function loadInvestors() {
+  const section = document.getElementById('investor-section');
+  if (section) section.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
+  if (!(investorPortalEnabled() && profileState.investorAccountsEnabled)) return;
+  showInvestorFeedback('Loading investors…');
+  try {
+    const data = await api('/api/master/investors');
+    const listEl = document.getElementById('investor-list');
+    const selectEl = document.getElementById('investor-valuation-id');
+    const investors = Array.isArray(data.investors) ? data.investors : [];
+    if (selectEl) {
+      selectEl.innerHTML = ['<option value="">Select investor</option>', ...investors.map(inv => `<option value="${inv.id}">${inv.displayName}</option>`)].join('');
+    }
+    if (listEl) {
+      listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Permissions</th><th>Last login</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
+        const perms = inv.permissions || {};
+        return `<tr>
+          <td>${inv.displayName}</td>
+          <td>${inv.email || '—'}</td>
+          <td>${inv.status}</td>
+          <td>positions:${perms.canViewPositions ? 'Y' : 'N'} trades:${perms.canViewTradeLog ? 'Y' : 'N'} notes:${perms.canViewNotes === false ? 'N' : 'Y'}</td>
+          <td>${inv.lastLoginAt || '—'}</td>
+          <td>
+            <button class="ghost investor-invite" data-id="${inv.id}">Invite Link</button>
+            <button class="ghost investor-reset" data-id="${inv.id}">Reset Password</button>
+            <button class="ghost investor-preview" data-id="${inv.id}">Preview</button>
+            <button class="ghost investor-suspend" data-id="${inv.id}" data-status="${inv.status === 'active' ? 'suspended' : 'active'}">${inv.status === 'active' ? 'Suspend' : 'Activate'}</button>
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+      listEl.querySelectorAll('.investor-invite').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          const id = btn.dataset.id;
+          const invite = await api(`/api/master/investors/${id}/invite`, { method: 'POST' });
+          await navigator.clipboard.writeText(invite.inviteUrl);
+          showInvestorFeedback(`Invite link copied for ${id}.`);
+          setInvestorActionStatus(`Invite link copied at ${new Date().toLocaleTimeString()}`);
+        } catch (error) {
+          console.error('Investor invite failed', error, error?.data);
+          showInvestorFeedback(error?.data?.error || error.message || 'Failed to create invite link.', { isError: true });
+        }
+      }));
+      listEl.querySelectorAll('.investor-reset').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          const id = btn.dataset.id;
+          const email = prompt('Investor email for login (required first time):') || '';
+          const reset = await api(`/api/master/investors/${id}/reset-password`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
+          });
+          showInvestorFeedback(`Password reset ready for ${reset.email}.`);
+          setInvestorActionStatus(`Reset password issued for ${reset.email}`);
+        } catch (error) {
+          console.error('Investor reset password failed', error, error?.data);
+          showInvestorFeedback(error?.data?.error || error.message || 'Failed to reset password.', { isError: true });
+        }
+      }));
+      listEl.querySelectorAll('.investor-preview').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          const id = btn.dataset.id;
+          const dataPreview = await api(`/api/master/investors/${id}/preview-token`);
+          window.open(`/investor/preview?token=${encodeURIComponent(dataPreview.token)}`, '_blank', 'noopener');
+          setInvestorActionStatus(`Opened preview for ${id}`);
+        } catch (error) {
+          console.error('Investor preview failed', error, error?.data);
+          showInvestorFeedback(error?.data?.error || error.message || 'Failed to preview investor.', { isError: true });
+        }
+      }));
+      listEl.querySelectorAll('.investor-suspend').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          const id = btn.dataset.id;
+          const status = btn.dataset.status;
+          await api(`/api/master/investors/${id}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
+          });
+          showInvestorFeedback(`Investor ${status === 'suspended' ? 'suspended' : 'activated'}.`);
+          setInvestorActionStatus(`Investor ${id} -> ${status}`);
+          await loadInvestors();
+        } catch (error) {
+          console.error('Investor status update failed', error, error?.data);
+          showInvestorFeedback(error?.data?.error || error.message || 'Failed to update investor status.', { isError: true });
+        }
+      }));
+    }
+    showInvestorFeedback(investors.length ? `Loaded ${investors.length} investor${investors.length === 1 ? '' : 's'}.` : 'No investors yet. Create your first investor.');
+    updateRecordValuationButtonState();
+  } catch (error) {
+    console.error('Load investors failed', error, error?.data);
+    showInvestorFeedback(error?.data?.error || error.message || 'Unable to load investors.', { isError: true });
+  }
+}
+
+function bindInvestorAccountToggle() {
+  document.getElementById('investor-accounts-save')?.addEventListener('click', async () => {
+    const enabled = !!document.getElementById('investor-accounts-enabled')?.checked;
+    const status = document.getElementById('investor-accounts-status');
+    const err = document.getElementById('investor-accounts-error');
+    if (status) status.textContent = '';
+    if (err) err.textContent = '';
+    try {
+      const data = await api('/api/master/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ investor_portal_enabled: enabled })
+      });
+      profileState.investorAccountsEnabled = !!data.investor_portal_enabled;
+      await loadInvestors();
+      if (status) status.textContent = profileState.investorAccountsEnabled ? 'Investor accounts enabled.' : 'Investor accounts disabled.';
+    } catch (error) {
+      console.error('Investor settings save failed', error, error?.data);
+      if (err) err.textContent = error?.data?.error || error.message;
+    }
+  });
+}
+
+function bindInvestorActions() {
+  const createBtn = document.getElementById('investor-create-btn');
+  const valuationBtn = document.getElementById('investor-valuation-btn');
+  const valuationIdInput = document.getElementById('investor-valuation-id');
+  const valuationDateInput = document.getElementById('investor-valuation-date');
+  const valuationNavInput = document.getElementById('investor-valuation-nav');
+
+  [valuationIdInput, valuationDateInput, valuationNavInput].forEach(el => {
+    el?.addEventListener('input', updateRecordValuationButtonState);
+    el?.addEventListener('change', updateRecordValuationButtonState);
+  });
+
+  createBtn?.addEventListener('click', async () => {
+    const err = document.getElementById('investor-error');
+    const displayName = document.getElementById('investor-display-name')?.value?.trim();
+    if (err) err.textContent = '';
+    if (!displayName) {
+      showInvestorFeedback('Enter a display name before creating an investor.', { isError: true });
+      return;
+    }
+    setInvestorUiBusy(true);
+    try {
+      const created = await api('/api/master/investors', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: displayName })
+      });
+      showInvestorFeedback('Investor created.');
+      setInvestorActionStatus(`Created investor ${created.displayName || displayName}`);
+      const nameInput = document.getElementById('investor-display-name');
+      if (nameInput) nameInput.value = '';
+      await loadInvestors();
+    } catch (error) {
+      console.error('Create investor failed', error, error?.data);
+      showInvestorFeedback(error?.data?.error || error.message || 'Unable to create investor.', { isError: true });
+    } finally {
+      setInvestorUiBusy(false);
+      updateRecordValuationButtonState();
+    }
+  });
+
+  valuationBtn?.addEventListener('click', async () => {
+    const validation = validateInvestorValuationForm();
+    if (!validation.ok) {
+      showInvestorFeedback(validation.error, { isError: true });
+      return;
+    }
+    setInvestorUiBusy(true);
+    try {
+      await api(`/api/master/investors/${validation.investorId}/valuations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valuation_date: validation.valuationDate, nav: validation.nav })
+      });
+      showInvestorFeedback('Valuation recorded.');
+      setInvestorActionStatus(`Recorded NAV ${validation.nav.toFixed(2)} for ${getSelectedInvestorLabel()} on ${validation.valuationDate}`);
+      if (valuationNavInput) valuationNavInput.value = '';
+      updateRecordValuationButtonState();
+    } catch (error) {
+      console.error('Record valuation failed', error, error?.data);
+      showInvestorFeedback(error?.data?.error || error.message || 'Unable to record valuation.', { isError: true });
+    } finally {
+      setInvestorUiBusy(false);
+      updateRecordValuationButtonState();
+    }
+  });
+
+  updateRecordValuationButtonState();
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadProfile();
   loadIntegration();
   loadIbkrIntegration();
   loadIbkrDownloadMeta();
+  bindInvestorAccountToggle();
+  bindInvestorActions();
   const rawModal = document.getElementById('t212-raw-modal');
   const rawContent = document.getElementById('t212-raw-content');
   document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
