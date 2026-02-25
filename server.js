@@ -59,6 +59,8 @@ const IBKR_CONNECTOR_WINDOWS_SHA256 = process.env.IBKR_CONNECTOR_WINDOWS_SHA256 
 const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES || '';
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
+const INVESTOR_PORTAL_ENABLED = String(process.env.NEXT_PUBLIC_INVESTOR_PORTAL || 'false').toLowerCase() === 'true';
+const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -355,6 +357,25 @@ function loadDB() {
     if (!Array.isArray(db.ibkrConnectorKeys)) {
       db.ibkrConnectorKeys = [];
     }
+    if (!Array.isArray(db.investorProfiles)) {
+      db.investorProfiles = [];
+    }
+    if (!Array.isArray(db.investorLogins)) {
+      db.investorLogins = [];
+    }
+    if (!Array.isArray(db.investorPermissions)) {
+      db.investorPermissions = [];
+    }
+    if (!Array.isArray(db.investorCashflows)) {
+      db.investorCashflows = [];
+    }
+    if (!Array.isArray(db.investorValuations)) {
+      db.investorValuations = [];
+    }
+    if (!Array.isArray(db.investorInvites)) {
+      db.investorInvites = [];
+    }
+    db.investorSessions ||= {};
     const mutated = reconcileIbkrTokenSecret(db);
     if (mutated) {
       try {
@@ -372,7 +393,14 @@ function loadDB() {
       instrumentMappings: [],
       brokerSnapshots: [],
       ibkrConnectorTokens: [],
-      ibkrConnectorKeys: []
+      ibkrConnectorKeys: [],
+      investorProfiles: [],
+      investorLogins: [],
+      investorPermissions: [],
+      investorCashflows: [],
+      investorValuations: [],
+      investorInvites: [],
+      investorSessions: {}
     };
   }
 }
@@ -488,6 +516,112 @@ function asyncHandler(fn) {
   return function wrapped(req, res, next) {
     Promise.resolve(fn(req, res, next)).catch(next);
   };
+}
+
+function ensureInvestorTables(db) {
+  db.investorProfiles ||= [];
+  db.investorLogins ||= [];
+  db.investorPermissions ||= [];
+  db.investorCashflows ||= [];
+  db.investorValuations ||= [];
+  db.investorInvites ||= [];
+  db.investorSessions ||= {};
+}
+
+function createSignedToken(payload, ttlMs) {
+  const fullPayload = { ...payload, exp: Date.now() + ttlMs };
+  const encoded = Buffer.from(JSON.stringify(fullPayload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', INVESTOR_TOKEN_SECRET).update(encoded).digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function verifySignedToken(token) {
+  if (typeof token !== 'string' || !token.includes('.')) return null;
+  const [encoded, signature] = token.split('.');
+  if (!encoded || !signature) return null;
+  const expected = crypto.createHmac('sha256', INVESTOR_TOKEN_SECRET).update(encoded).digest('base64url');
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch (error) {
+    return null;
+  }
+  if (!payload?.exp || payload.exp < Date.now()) return null;
+  return payload;
+}
+
+function hashInviteToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function getInvestorPermissions(db, investorProfileId) {
+  return db.investorPermissions.find(p => p.investorProfileId === investorProfileId) || {
+    investorProfileId,
+    canViewPositions: false,
+    canViewTradeLog: false,
+    canViewNotes: true,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function computeInvestorSummary(db, investorProfileId) {
+  const cashflows = db.investorCashflows.filter(c => c.investorProfileId === investorProfileId);
+  const valuations = db.investorValuations
+    .filter(v => v.investorProfileId === investorProfileId)
+    .sort((a, b) => String(a.valuationDate).localeCompare(String(b.valuationDate)));
+  const latest = valuations[valuations.length - 1] || null;
+  const netDeposits = cashflows.reduce((sum, flow) => {
+    const amount = Number(flow.amount) || 0;
+    if (flow.type === 'deposit') return sum + amount;
+    if (flow.type === 'withdrawal' || flow.type === 'fee') return sum - amount;
+    return sum;
+  }, 0);
+  const nav = Number(latest?.nav) || 0;
+  const totalPnl = nav - netDeposits;
+  const totalReturnPct = netDeposits === 0 ? 0 : (totalPnl / netDeposits) * 100;
+  return {
+    nav,
+    netDeposits,
+    totalPnl,
+    totalReturnPct,
+    mtdPnl: latest?.pnlMtd ?? null,
+    mtdPct: null,
+    ytdPnl: latest?.pnlYtd ?? null,
+    ytdPct: null
+  };
+}
+
+function requireMasterAuth(req, res, next) {
+  return auth(req, res, next);
+}
+
+function requireInvestorAuth(req, res, next) {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  let authContext = null;
+  const bearer = typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7).trim()
+    : '';
+  if (bearer) {
+    const payload = verifySignedToken(bearer);
+    if (payload && (payload.role === 'investor_preview' || payload.role === 'investor')) {
+      authContext = payload;
+    }
+  }
+  if (!authContext) {
+    const investorToken = req.cookies?.investor_session;
+    const investorSession = investorToken ? db.investorSessions[investorToken] : null;
+    if (investorSession) authContext = investorSession;
+  }
+  if (!authContext?.investorProfileId) return res.status(401).json({ error: 'Unauthenticated investor session.' });
+  const profile = db.investorProfiles.find(p => p.id === authContext.investorProfileId);
+  if (!profile || profile.status !== 'active') return res.status(403).json({ error: 'Investor account inactive.' });
+  req.investorAuth = authContext;
+  req.investorProfile = profile;
+  req.investorPermissions = getInvestorPermissions(db, profile.id);
+  req.investorDb = db;
+  next();
 }
 
 function ensurePortfolioHistory(user) {
@@ -4382,7 +4516,32 @@ app.get('/', (req, res) => {
 });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
-app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
+app.get('/profile.html', (req,res)=>{
+  const profilePath = path.join(__dirname, 'profile.html');
+  fs.readFile(profilePath, 'utf8', (err, html) => {
+    if (err) {
+      res.sendFile(profilePath);
+      return;
+    }
+    res.type('html').send(html.replace('__INVESTOR_PORTAL__', INVESTOR_PORTAL_ENABLED ? 'true' : 'false'));
+  });
+});
+app.get('/investor/login', (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  res.sendFile(path.join(__dirname, 'investor-login.html'));
+});
+app.get('/investor/dashboard', (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  res.sendFile(path.join(__dirname, 'investor-dashboard.html'));
+});
+app.get('/investor/activate', (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  res.sendFile(path.join(__dirname, 'investor-activate.html'));
+});
+app.get('/investor/preview', (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).send('Investor portal disabled');
+  res.sendFile(path.join(__dirname, 'investor-preview.html'));
+});
 app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
@@ -4593,6 +4752,263 @@ app.post('/api/logout', (req,res)=>{
   res.clearCookie('auth_token');
   res.json({ ok: true });
 });
+
+
+app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const login = db.investorLogins.find(l => l.email === email);
+  if (!login || !login.passwordHash) return res.status(401).json({ error: 'Invalid credentials.' });
+  const ok = await bcrypt.compare(password, login.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
+  const profile = db.investorProfiles.find(p => p.id === login.investorProfileId);
+  if (!profile || profile.status !== 'active') return res.status(403).json({ error: 'Investor account inactive.' });
+  const token = crypto.randomBytes(24).toString('hex');
+  db.investorSessions[token] = {
+    role: 'investor',
+    investorProfileId: profile.id,
+    masterUserId: profile.masterUserId,
+    email
+  };
+  login.lastLoginAt = new Date().toISOString();
+  saveDB(db);
+  res.cookie('investor_session', token, {
+    httpOnly: true,
+    sameSite: 'Strict',
+    secure: !!process.env.RENDER,
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+  res.json({ ok: true });
+}));
+
+app.post('/api/investor/auth/logout', (req, res) => {
+  const token = req.cookies?.investor_session;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  if (token) {
+    delete db.investorSessions[token];
+    saveDB(db);
+  }
+  res.clearCookie('investor_session');
+  res.json({ ok: true });
+});
+
+app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  const rawToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!rawToken || !password) return res.status(400).json({ error: 'Token and password are required.' });
+  if (!isStrongPassword(password)) return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol).' });
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const invite = db.investorInvites.find(inv => inv.tokenHash === hashInviteToken(rawToken));
+  if (!invite) return res.status(400).json({ error: 'Invalid invite token.' });
+  if (invite.usedAt) return res.status(400).json({ error: 'Invite link has already been used.' });
+  if (Date.parse(invite.expiresAt) <= Date.now()) return res.status(400).json({ error: 'Invite link has expired.' });
+  const profile = db.investorProfiles.find(p => p.id === invite.investorProfileId);
+  if (!profile) return res.status(404).json({ error: 'Investor profile not found.' });
+  const passwordHash = await bcrypt.hash(password, 10);
+  let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
+  if (!login) {
+    login = {
+      id: crypto.randomUUID(),
+      investorProfileId: profile.id,
+      email: `investor+${profile.id}@example.local`,
+      passwordHash,
+      lastLoginAt: null,
+      createdAt: new Date().toISOString()
+    };
+    db.investorLogins.push(login);
+  } else {
+    login.passwordHash = passwordHash;
+  }
+  invite.usedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true });
+}));
+
+app.get('/api/investor/me', requireInvestorAuth, (req, res) => {
+  res.json({
+    displayName: req.investorProfile.displayName,
+    status: req.investorProfile.status,
+    permissions: req.investorPermissions,
+    preview: req.investorAuth.role === 'investor_preview'
+  });
+});
+
+app.get('/api/investor/summary', requireInvestorAuth, (req, res) => {
+  const summary = computeInvestorSummary(req.investorDb, req.investorProfile.id);
+  res.json(summary);
+});
+
+app.get('/api/investor/equity-curve', requireInvestorAuth, (req, res) => {
+  const range = typeof req.query?.range === 'string' ? req.query.range : 'ALL';
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const days = range === '1M' ? 31 : range === '3M' ? 93 : range === '1Y' ? 366 : null;
+  const minDate = days ? new Date(now.getTime() - (days * dayMs)).toISOString().slice(0, 10) : null;
+  const points = req.investorDb.investorValuations
+    .filter(v => v.investorProfileId === req.investorProfile.id)
+    .filter(v => !minDate || v.valuationDate >= minDate)
+    .sort((a, b) => String(a.valuationDate).localeCompare(String(b.valuationDate)));
+  res.json({ points });
+});
+
+app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
+  const limitRaw = Number(req.query?.limit);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(100, Math.floor(limitRaw)) : 20;
+  const cashflows = req.investorDb.investorCashflows
+    .filter(c => c.investorProfileId === req.investorProfile.id)
+    .sort((a, b) => String(b.effectiveDate).localeCompare(String(a.effectiveDate)))
+    .slice(0, limit);
+  res.json({ cashflows });
+});
+
+app.get('/api/master/investors', requireMasterAuth, (req, res) => {
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const list = db.investorProfiles
+    .filter(p => p.masterUserId === req.username)
+    .map(profile => {
+      const login = db.investorLogins.find(l => l.investorProfileId === profile.id) || null;
+      const permissions = getInvestorPermissions(db, profile.id);
+      return { ...profile, email: login?.email || null, lastLoginAt: login?.lastLoginAt || null, permissions };
+    });
+  res.json({ investors: list });
+});
+
+app.post('/api/master/investors', requireMasterAuth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  if (!INVESTOR_PORTAL_ENABLED) return res.status(404).json({ error: 'Investor portal disabled.' });
+  const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
+  if (!displayName) return res.status(400).json({ error: 'display_name is required.' });
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const id = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', createdAt: nowIso });
+  db.investorPermissions.push({ investorProfileId: id, canViewPositions: false, canViewTradeLog: false, canViewNotes: true, createdAt: nowIso });
+  saveDB(db);
+  res.status(201).json({ id, displayName, status: 'active' });
+});
+
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : null;
+  if (displayName) profile.displayName = displayName;
+  if (req.body?.status === 'active' || req.body?.status === 'suspended') profile.status = req.body.status;
+  const perms = getInvestorPermissions(db, profile.id);
+  if (!db.investorPermissions.find(p => p.investorProfileId === profile.id)) db.investorPermissions.push(perms);
+  if (req.body?.permissions && typeof req.body.permissions === 'object') {
+    if (typeof req.body.permissions.can_view_positions === 'boolean') perms.canViewPositions = req.body.permissions.can_view_positions;
+    if (typeof req.body.permissions.can_view_trade_log === 'boolean') perms.canViewTradeLog = req.body.permissions.can_view_trade_log;
+    if (typeof req.body.permissions.can_view_notes === 'boolean') perms.canViewNotes = req.body.permissions.can_view_notes;
+  }
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/master/investors/:id/invite', requireMasterAuth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const nowIso = new Date().toISOString();
+  const invite = {
+    id: crypto.randomUUID(),
+    investorProfileId: profile.id,
+    tokenHash: hashInviteToken(rawToken),
+    expiresAt: new Date(Date.now() + (72 * 60 * 60 * 1000)).toISOString(),
+    usedAt: null,
+    createdAt: nowIso
+  };
+  db.investorInvites.push(invite);
+  saveDB(db);
+  const inviteUrl = `${appBaseUrl(req)}/investor/activate?token=${rawToken}`;
+  res.json({ inviteUrl });
+});
+
+app.post('/api/master/investors/:id/reset-password', requireMasterAuth, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const tempPassword = `${crypto.randomBytes(6).toString('base64url')}Aa1!`;
+  let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
+  if (!login) {
+    login = {
+      id: crypto.randomUUID(),
+      investorProfileId: profile.id,
+      email: typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '',
+      passwordHash: '',
+      lastLoginAt: null,
+      createdAt: new Date().toISOString()
+    };
+    if (!login.email) return res.status(400).json({ error: 'Email required when creating investor login.' });
+    if (db.investorLogins.find(l => l.email === login.email)) return res.status(409).json({ error: 'Email already in use.' });
+    db.investorLogins.push(login);
+  }
+  login.passwordHash = await bcrypt.hash(tempPassword, 10);
+  saveDB(db);
+  res.json({ tempPassword, email: login.email });
+}));
+
+app.get('/api/master/investors/:id/preview-token', requireMasterAuth, (req, res) => {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const token = createSignedToken({
+    role: 'investor_preview',
+    investorProfileId: profile.id,
+    masterUserId: req.username,
+    email: null
+  }, 5 * 60 * 1000);
+  res.json({ token, expiresInSeconds: 300 });
+});
+
+app.post('/api/master/investors/:id/valuation', requireMasterAuth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const valuationDate = typeof req.body?.date === 'string' ? req.body.date : '';
+  const nav = Number(req.body?.nav);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate) || !Number.isFinite(nav)) {
+    return res.status(400).json({ error: 'Valid date and nav are required.' });
+  }
+  const existing = db.investorValuations.find(v => v.investorProfileId === profile.id && v.valuationDate === valuationDate);
+  if (existing) {
+    existing.nav = nav;
+  } else {
+    db.investorValuations.push({
+      id: crypto.randomUUID(),
+      investorProfileId: profile.id,
+      valuationDate,
+      nav,
+      pnlDay: null,
+      pnlMtd: null,
+      pnlYtd: null,
+      createdAt: new Date().toISOString()
+    });
+  }
+  saveDB(db);
+  res.json({ ok: true });
+});
+
 
 // --- user data ---
 app.get('/api/portfolio', auth, async (req,res)=>{

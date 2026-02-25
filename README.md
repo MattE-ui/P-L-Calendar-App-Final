@@ -136,3 +136,22 @@ If Git reports conflicts, keep the versions that reference **recording daily por
 ```bash
 git push origin main
 ```
+
+
+## Investor Portal (feature-flagged)
+Enable the investor portal with:
+
+```bash
+NEXT_PUBLIC_INVESTOR_PORTAL=true
+```
+
+By default this is disabled (`false`).
+
+### How to use
+1. Log in as a master user and open **Profile**.
+2. In the **Investors** section, create an investor profile.
+3. Use **Reset Password** (first-time provisioning) and/or **Invite Link** to onboard the investor.
+4. Investor signs in at `/investor/login` and sees `/investor/dashboard` (read-only).
+5. From master profile, click **Preview** to open `/investor/preview?token=...` in a new tab.
+
+Preview uses a short-lived bearer token and does not reuse investor cookies.
