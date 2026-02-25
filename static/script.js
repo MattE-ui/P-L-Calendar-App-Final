@@ -1122,15 +1122,19 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
 
+  const compactLeftPlaceholder = document.createElement('div');
+  compactLeftPlaceholder.className = 'trade-compact-left trade-left-placeholder';
+  compactLeftPlaceholder.setAttribute('aria-hidden', 'true');
   const connector = document.createElement('span');
   connector.className = 'trade-group-row-connector';
   connector.setAttribute('aria-hidden', 'true');
+  compactLeftPlaceholder.appendChild(connector);
 
   const compactMiddle = createCompactMiddleStack(pnl, pctChange);
   const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  row.append(connector, compactMiddle, compactRight, compactChevron);
+  row.append(compactLeftPlaceholder, compactMiddle, compactRight, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
