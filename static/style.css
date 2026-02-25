@@ -1662,7 +1662,7 @@ select {
   color: inherit;
   display: grid;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 12px;
   text-align: left;
   cursor: pointer;
   min-width: 0;
