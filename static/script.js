@@ -1037,6 +1037,26 @@ function renderActiveTrades() {
 
     const expandedWrap = document.createElement('div');
     expandedWrap.className = `trade-expanded-content ${isExpanded ? '' : 'is-collapsed'}`.trim();
+
+    const expandedHeader = document.createElement('div');
+    expandedHeader.className = 'trade-expanded-header';
+    const expandedTitle = document.createElement('span');
+    expandedTitle.className = 'trade-expanded-title';
+    expandedTitle.textContent = `${sym} (${directionLabel})`;
+    const expandedStats = document.createElement('div');
+    expandedStats.className = 'trade-expanded-stats';
+    const expandedPnl = document.createElement('strong');
+    expandedPnl.className = `trade-expanded-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+    expandedPnl.dataset.role = 'trade-expanded-pnl';
+    expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+    const expandedR = document.createElement('span');
+    expandedR.className = 'trade-expanded-r';
+    expandedR.dataset.role = 'trade-expanded-r';
+    expandedR.textContent = riskMultipleLabel;
+    expandedStats.append(expandedPnl, expandedR);
+    expandedHeader.append(expandedTitle, expandedStats);
+    expandedWrap.appendChild(expandedHeader);
+
     if (isExpanded && isMissingStop) {
       const alertBanner = document.createElement('div');
       alertBanner.className = 'trade-alert-banner';
@@ -1262,8 +1282,19 @@ function updateActiveTradeDisplay(trades) {
       if (pnl < 0) compactPnl.classList.add('negative');
     }
 
+    const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
     const compactR = pill.querySelector('[data-role="trade-compact-r"]');
-    if (compactR) compactR.textContent = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
+    if (compactR) compactR.textContent = riskMultipleLabel;
+
+    const expandedPnl = pill.querySelector('[data-role="trade-expanded-pnl"]');
+    if (expandedPnl) {
+      expandedPnl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+      expandedPnl.classList.remove('positive', 'negative');
+      if (pnl > 0) expandedPnl.classList.add('positive');
+      if (pnl < 0) expandedPnl.classList.add('negative');
+    }
+    const expandedR = pill.querySelector('[data-role="trade-expanded-r"]');
+    if (expandedR) expandedR.textContent = riskMultipleLabel;
 
     const pnlCard = pill.querySelector('[data-role="trade-pnl-card"]');
     const pnlValue = pill.querySelector('[data-role="trade-pnl"]');
