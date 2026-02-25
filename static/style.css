@@ -1375,22 +1375,24 @@ select {
 #active-trades-card .active-trades-list-wrap {
   flex: 1 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-#active-trades-card .trade-list {
-  flex: 1 1 auto;
-  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  display: flex;
+  flex-direction: column;
+}
+#active-trades-card .trade-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
   gap: 0;
   margin-top: 0;
   padding-bottom: 12px;
 }
-#active-trades-card .active-trades-list-wrap.activeTradesList::-webkit-scrollbar {
+#active-trades-card .active-trades-list-wrap.activeTradesList::-webkit-scrollbar,
+#active-trades-card .active-trades-list-wrap::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -1526,7 +1528,7 @@ select {
   transform: rotate(180deg);
 }
 #active-trades-card .trade-group-card {
-  overflow: hidden;
+  overflow: visible;
 }
 #active-trades-card .trade-group-header {
   display: block;
