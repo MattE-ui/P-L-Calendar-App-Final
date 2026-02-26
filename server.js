@@ -554,6 +554,28 @@ function hashInviteToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function normalizeIsoDateInput(input) {
+  if (typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function parseInvestorShareBps(rawValue) {
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000) return null;
+  return parsed;
+}
+
+function findMasterInvestorProfile(db, investorId, masterUserId) {
+  const profile = db.investorProfiles.find(p => p.id === investorId);
+  if (!profile) return { error: { status: 404, message: 'Investor not found.' } };
+  if (profile.masterUserId !== masterUserId) return { error: { status: 403, message: 'Forbidden' } };
+  return { profile };
+}
+
 function getInvestorProfitSplit(db, investorProfileId) {
   const split = db.investorProfitSplits.find(p => p.investorProfileId === investorProfileId);
   if (split && Number(split.investorShareBps) + Number(split.masterShareBps) === 10000) {
@@ -592,7 +614,8 @@ function computeInvestorSummary(db, profile) {
   let netContributions = 0;
   for (const flow of cashflows) {
     const amount = Number(flow.amount) || 0;
-    const navRecord = findNavForDate(db, profile.masterUserId, flow.effectiveDate);
+    const navLookupDate = flow.navReferenceDate || flow.effectiveDate;
+    const navRecord = findNavForDate(db, profile.masterUserId, navLookupDate);
     const flowNav = Number(navRecord?.nav) || 0;
     if (!flowNav) continue;
     const sign = flow.type === 'deposit' ? 1 : -1;
@@ -4957,20 +4980,20 @@ app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess
 app.get('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
+  if (error) return res.status(error.status).json({ error: error.message });
   const split = getInvestorProfitSplit(db, profile.id);
   res.json({ investor_profile_id: profile.id, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom });
 });
 
 app.put('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
-  const investorShare = Number(req.body?.investor_share_bps);
-  if (!Number.isInteger(investorShare) || investorShare < 0 || investorShare > 10000) return res.status(400).json({ error: 'investor_share_bps must be an integer between 0 and 10000.' });
+  const investorShare = parseInvestorShareBps(req.body?.investor_share_bps);
+  if (investorShare === null) return res.status(400).json({ error: 'Investor share must be an integer between 0 and 10000 bps.' });
   const db = loadDB();
   ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
+  if (error) return res.status(error.status).json({ error: error.message });
   let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
   if (!split) {
     split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0,10) };
@@ -4978,7 +5001,6 @@ app.put('/api/master/investors/:id/profit-split', requireMasterAuth, requireMast
   }
   split.investorShareBps = investorShare;
   split.masterShareBps = 10000 - investorShare;
-  if ((Number(split.investorShareBps) + Number(split.masterShareBps)) !== 10000) return res.status(400).json({ error: 'Profit split must sum to 10000 bps.' });
   saveDB(db);
   res.json({ investor_profile_id: profile.id, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom });
 });
@@ -4998,17 +5020,18 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
+  if (error) return res.status(error.status).json({ error: error.message });
   const type = typeof req.body?.type === 'string' ? req.body.type : '';
   const amount = Number(req.body?.amount);
-  const effectiveDate = typeof req.body?.effective_date === 'string' ? req.body.effective_date : '';
+  const effectiveDate = normalizeIsoDateInput(req.body?.effective_date);
   const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
   if (!['deposit','withdrawal','fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) return res.status(400).json({ error: 'effective_date must be YYYY-MM-DD.' });
-  if (!findNavForDate(db, req.username, effectiveDate)) return res.status(400).json({ error: 'Record a master NAV on or before effective_date first.' });
-  const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, reference: reference || null, createdAt: new Date().toISOString() };
+  if (!effectiveDate) return res.status(400).json({ error: 'effective_date must be YYYY-MM-DD.' });
+  const navRecord = findNavForDate(db, req.username, effectiveDate);
+  if (!navRecord) return res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' });
+  const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, navReferenceDate: navRecord.valuationDate, reference: reference || null, createdAt: new Date().toISOString() };
   db.investorCashflows.push(row);
   saveDB(db);
   res.status(201).json({ cashflow: row });
@@ -5023,20 +5046,18 @@ app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess
 
 app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
-  const valuationDate = typeof req.body?.valuation_date === 'string' ? req.body.valuation_date : '';
+  const valuationDate = normalizeIsoDateInput(req.body?.valuation_date);
   const nav = Number(req.body?.nav);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate) || !Number.isFinite(nav) || nav <= 0) return res.status(400).json({ error: 'Valid valuation_date and nav > 0 are required.' });
+  if (!valuationDate) return res.status(400).json({ error: 'valuation_date must be YYYY-MM-DD.' });
+  if (!Number.isFinite(nav) || nav <= 0) return res.status(400).json({ error: 'NAV must be a number greater than 0.' });
   const db = loadDB();
   ensureInvestorTables(db);
-  let row = db.masterValuations.find(v => v.masterUserId === req.username && v.valuationDate === valuationDate);
-  if (!row) {
-    row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, createdAt: new Date().toISOString() };
-    db.masterValuations.push(row);
-  } else {
-    row.nav = nav;
-  }
+  const exists = db.masterValuations.find(v => v.masterUserId === req.username && v.valuationDate === valuationDate);
+  if (exists) return res.status(409).json({ error: 'A valuation already exists for this date.' });
+  const row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, createdAt: new Date().toISOString() };
+  db.masterValuations.push(row);
   saveDB(db);
-  res.json({ valuation: row });
+  res.status(201).json({ valuation: row });
 });
 
 app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
