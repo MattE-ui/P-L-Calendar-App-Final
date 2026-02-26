@@ -121,23 +121,9 @@
   <div id="transactions-settings-modal" class="modal hidden">
     <div class="modal-card">
       <h3>Quick settings</h3>
-      <div class="modal-field toggle-field">
-        <label class="toggle" for="transactions-qs-split-profits">
-          <input id="transactions-qs-split-profits" type="checkbox">
-          Split Profits
-        </label>
-        <p class="tool-note">For investors managing pooled funds. Track depositor profiles, set a profit split, and see who is owed what. Notes: this works on a combined portfolio basis only and does not assign trades to individual profiles.</p>
-      </div>
-      <div id="transactions-split-profiles" class="modal-field is-hidden">
-        <div class="section-header">
-          <div>
-            <p class="tool-overline">Set up Split Profits Profiles</p>
-            <h3>Profiles</h3>
-          </div>
-          <button id="transactions-add-profile-btn" class="ghost">Add profile</button>
-        </div>
-        <div id="transactions-profiles-list" class="integration-fields"></div>
-        <p class="tool-note">Profiles are saved to this account and can be selected when splitting deposits or withdrawals.</p>
+      <div class="modal-field">
+        <p class="tool-note">Split Profits has been replaced by Investor Accounts.</p>
+        <p class="tool-note"><a href="/profile.html">Open Profile & Settings → Investors</a></p>
       </div>
       <div class="row">
         <button id="transactions-save-qs-btn" class="primary">Save</button>
@@ -164,67 +150,7 @@
     </div>
   </div>
 
-  <div id="transactions-split-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>Split profits settings</h3>
-        <button id="transactions-split-close-btn" class="ghost close-btn" aria-label="Close split settings">✕</button>
-      </div>
-      <div class="modal-field">
-        <label for="transactions-split-total">Total amount</label>
-        <input id="transactions-split-total" type="number" step="0.01" min="0">
-      </div>
-      <div class="modal-field">
-        <label>Splits</label>
-        <div id="transactions-split-list" class="integration-fields"></div>
-        <button id="transactions-add-split-btn" class="ghost">Add profile split</button>
-      </div>
-      <div class="modal-field">
-        <label>Profit split ratio (deposit only)</label>
-        <p id="transactions-split-ratio" class="tool-note">—</p>
-        <p class="tool-note">Calculated from the split amounts; withdrawals ignore this ratio.</p>
-      </div>
-      <div id="transactions-split-status" class="helper" aria-live="polite"></div>
-      <div class="row">
-        <button id="transactions-split-save-btn" class="primary">Save</button>
-        <button id="transactions-split-cancel-btn" class="ghost">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="transactions-profile-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3 id="transactions-profile-title">Profile stats</h3>
-        <button id="transactions-profile-close-btn" class="ghost close-btn" aria-label="Close profile stats">✕</button>
-      </div>
-      <div class="stats-grid">
-        <article class="stats-card">
-          <p class="stats-label">Total deposits</p>
-          <p class="stats-value" id="transactions-profile-deposits">£0.00</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Total withdrawals</p>
-          <p class="stats-value" id="transactions-profile-withdrawals">£0.00</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Portfolio value</p>
-          <p class="stats-value" id="transactions-profile-value">£0.00</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Rate of return</p>
-          <p class="stats-value" id="transactions-profile-return">0.00%</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Net performance</p>
-          <p class="stats-value" id="transactions-profile-performance">£0.00</p>
-        </article>
-      </div>
-      <div class="row">
-        <button id="transactions-profile-close-btn-bottom" class="ghost">Close</button>
-      </div>
-    </div>
-  </div>
+  
 
   <script src="static/theme-utils.js"></script>
   <script src="static/transactions.js"></script>
