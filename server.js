@@ -5174,7 +5174,9 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
   if (rejectGuest(req, res)) return;
   const valuationDate = normalizeIsoDateInput(req.body?.valuation_date);
   const nav = Number(req.body?.nav);
+  const today = currentDateKey();
   if (!valuationDate) return res.status(400).json({ error: 'valuation_date must be YYYY-MM-DD.' });
+  if (valuationDate > today) return res.status(400).json({ error: 'Valuation date cannot be in the future.' });
   if (!Number.isFinite(nav) || nav <= 0) return res.status(400).json({ error: 'NAV must be a number greater than 0.' });
   const db = loadDB();
   ensureInvestorTables(db);

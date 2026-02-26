@@ -1518,7 +1518,7 @@ function bindInvestorActions() {
     const nav = Number(document.getElementById('investor-valuation-nav')?.value || 0);
     const future = valuationDate > new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate)) return 'Valuation date is required.';
-    if (future) return 'Future valuation dates are not allowed.';
+    if (future) return 'Valuation date cannot be in the future.';
     if (!Number.isFinite(nav) || nav <= 0) return 'NAV must be a number greater than 0.';
     if (investorUiState.valuations.some((v) => v.valuationDate === valuationDate)) return 'A valuation already exists for this date.';
     return '';
