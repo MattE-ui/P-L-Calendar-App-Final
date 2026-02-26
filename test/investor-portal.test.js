@@ -351,6 +351,15 @@ test('master valuation endpoint enforces unique date and nav validation', async 
     body: JSON.stringify({ valuation_date: '2026-02-01T12:00:00.000Z', nav: 101.5 })
   });
   let data = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(data.error, 'Invalid date. Use YYYY-MM-DD.');
+
+  res = await fetch(`${baseUrl}/api/master/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: '2026-02-01', nav: 101.5 })
+  });
+  data = await res.json();
   assert.equal(res.status, 201);
   assert.equal(data.valuation.valuationDate, '2026-02-01');
 
