@@ -1,17 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Investor Portal - Activate</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Investor Activation</title>
+  <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
-  <main class="login-container">
-    <section class="card">
-      <h2>Set your investor password</h2>
-      <label>New password</label>
-      <input id="investor-activate-password" type="password">
+  <main class="auth-shell">
+    <section class="auth-card">
+      <h1>Activate investor access</h1>
+      <p class="helper">Create a password for your investor portal.</p>
+      <input id="investor-activate-password" type="password" placeholder="New password">
+      <input id="investor-activate-password-confirm" type="password" placeholder="Confirm password">
       <button id="investor-activate-btn" class="primary">Activate account</button>
       <div id="investor-activate-error" class="error"></div>
       <div id="investor-activate-ok" class="helper"></div>

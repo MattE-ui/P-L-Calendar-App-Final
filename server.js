@@ -60,6 +60,7 @@ const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES ||
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
+const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -525,6 +526,27 @@ function ensureInvestorTables(db) {
   db.masterValuations ||= [];
   db.investorInvites ||= [];
   db.investorSessions ||= {};
+
+  for (const login of db.investorLogins) {
+    if (login.password_hash && !login.passwordHash) login.passwordHash = login.password_hash;
+    if (login.last_login_at && !login.lastLoginAt) login.lastLoginAt = login.last_login_at;
+    if (login.investor_profile_id && !login.investorProfileId) login.investorProfileId = login.investor_profile_id;
+  }
+
+  for (const invite of db.investorInvites) {
+    if (invite.token_hash && !invite.tokenHash) invite.tokenHash = invite.token_hash;
+    if (invite.expires_at && !invite.expiresAt) invite.expiresAt = invite.expires_at;
+    if (invite.used_at && !invite.usedAt) invite.usedAt = invite.used_at;
+    if (invite.investor_profile_id && !invite.investorProfileId) invite.investorProfileId = invite.investor_profile_id;
+  }
+}
+
+function appBaseUrl(req) {
+  const forwardedProto = typeof req.headers['x-forwarded-proto'] === 'string' ? req.headers['x-forwarded-proto'].split(',')[0].trim() : '';
+  const proto = forwardedProto || req.protocol || 'http';
+  const host = req.get('host');
+  if (!host) return INVESTOR_INVITE_BASE_URL;
+  return `${proto}://${host}`;
 }
 
 function createSignedToken(payload, ttlMs) {
@@ -764,7 +786,7 @@ function requireInvestorAuth(req, res, next) {
     : '';
   if (bearer) {
     const payload = verifySignedToken(bearer);
-    if (payload && (payload.role === 'investor_preview' || payload.role === 'investor')) {
+    if (payload && payload.role === 'investor_preview') {
       authContext = payload;
     }
   }
@@ -4922,7 +4944,7 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
   const ok = await bcrypt.compare(password, login.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
   const profile = db.investorProfiles.find(p => p.id === login.investorProfileId);
-  if (!profile || profile.status !== 'active') return res.status(403).json({ error: 'Investor account inactive.' });
+  if (!profile || profile.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
   const token = crypto.randomBytes(24).toString('hex');
   db.investorSessions[token] = {
     role: 'investor',
@@ -4966,13 +4988,14 @@ app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
   if (Date.parse(invite.expiresAt) <= Date.now()) return res.status(400).json({ error: 'Invite link has expired.' });
   const profile = db.investorProfiles.find(p => p.id === invite.investorProfileId);
   if (!profile) return res.status(404).json({ error: 'Investor profile not found.' });
+  if (profile.status !== 'active') return res.status(400).json({ error: 'Investor account inactive.' });
   const passwordHash = await bcrypt.hash(password, 10);
   let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
   if (!login) {
     login = {
       id: crypto.randomUUID(),
       investorProfileId: profile.id,
-      email: `investor+${profile.id}@example.local`,
+      email: profile.email || `investor+${profile.id}@example.local`,
       passwordHash,
       lastLoginAt: null,
       createdAt: new Date().toISOString()
@@ -5047,16 +5070,15 @@ app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess
   const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   if (!displayName) return res.status(400).json({ error: 'display_name is required.' });
+  if (!email) return res.status(400).json({ error: 'email is required.' });
   const db = loadDB();
   ensureInvestorTables(db);
+  if (db.investorLogins.find(l => l.email === email)) return res.status(409).json({ error: 'Email already in use.' });
   const id = crypto.randomUUID();
   const nowIso = new Date().toISOString();
   db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', defaultCurrency: 'GBP', createdAt: nowIso });
   db.investorProfitSplits.push({ investorProfileId: id, investorShareBps: 8000, masterShareBps: 2000, effectiveFrom: nowIso.slice(0,10), createdAt: nowIso });
-  if (email) {
-    if (db.investorLogins.find(l => l.email === email)) return res.status(409).json({ error: 'Email already in use.' });
-    db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash: '', lastLoginAt: null, createdAt: nowIso });
-  }
+  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash: '', lastLoginAt: null, createdAt: nowIso });
   saveDB(db);
   res.status(201).json({ id, displayName, status: 'active' });
 });
@@ -5215,7 +5237,7 @@ app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInv
   const invite = { id: crypto.randomUUID(), investorProfileId: profile.id, tokenHash: hashInviteToken(rawToken), expiresAt: new Date(Date.now() + (72 * 60 * 60 * 1000)).toISOString(), usedAt: null, createdAt: nowIso };
   db.investorInvites.push(invite);
   saveDB(db);
-  const inviteUrl = `${appBaseUrl(req)}/investor/activate?token=${rawToken}`;
+  const inviteUrl = `${INVESTOR_INVITE_BASE_URL}/investor/activate?token=${rawToken}`;
   res.json({ inviteUrl });
 });
 

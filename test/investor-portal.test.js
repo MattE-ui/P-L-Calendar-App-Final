@@ -365,3 +365,78 @@ test('cashflow endpoint requires prior nav and stores nav reference date', async
   assert.equal(res.status, 201);
   assert.equal(data.cashflow.navReferenceDate, '2026-01-03');
 });
+
+test('master invite + investor activate + login flow works end-to-end', async () => {
+  let res = await fetch(`${baseUrl}/api/master/investors`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ display_name: 'Charlie', email: 'charlie@example.com' })
+  });
+  assert.equal(res.status, 201);
+  const created = await res.json();
+
+  res = await fetch(`${baseUrl}/api/master/investors/${created.id}/invite`, {
+    method: 'POST',
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  assert.equal(res.status, 200);
+  const inviteData = await res.json();
+  assert.match(inviteData.inviteUrl, /^https:\/\/veracitysuite\.com\/investor\/activate\?token=/);
+
+  const token = new URL(inviteData.inviteUrl).searchParams.get('token');
+  assert.ok(token);
+
+  res = await fetch(`${baseUrl}/api/investor/auth/activate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, password: 'InvestorPass123!' })
+  });
+  assert.equal(res.status, 200);
+
+  res = await fetch(`${baseUrl}/api/investor/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'charlie@example.com', password: 'InvestorPass123!' })
+  });
+  assert.equal(res.status, 200);
+  const cookie = res.headers.get('set-cookie') || '';
+  assert.match(cookie, /investor_session=/);
+
+  const summaryRes = await fetch(`${baseUrl}/api/investor/summary`, { headers: { cookie } });
+  assert.equal(summaryRes.status, 200);
+});
+
+test('suspended investor login is blocked with generic error', async () => {
+  const now = new Date().toISOString();
+  const investorHash = await bcrypt.hash('InvestorPass123!', 10);
+  saveDB({
+    users: {
+      master: { username: 'master', passwordHash: await bcrypt.hash('MasterPass123!', 10), profileComplete: true, investorAccountsEnabled: true, portfolioHistory: {}, tradeJournal: {}, trading212: {}, security: {} }
+    },
+    sessions: { mastertoken: 'master' },
+    investorProfiles: [
+      { id: 'inv-suspended', masterUserId: 'master', displayName: 'Suspended', status: 'suspended', createdAt: now }
+    ],
+    investorLogins: [
+      { id: 'login-suspended', investorProfileId: 'inv-suspended', email: 'suspended@example.com', passwordHash: investorHash, lastLoginAt: null, createdAt: now }
+    ],
+    investorCashflows: [],
+    investorProfitSplits: [],
+    masterValuations: [],
+    investorInvites: [],
+    investorSessions: {}
+  });
+
+  if (server) server.close();
+  server = app.listen(0);
+  baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  const res = await fetch(`${baseUrl}/api/investor/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'suspended@example.com', password: 'InvestorPass123!' })
+  });
+  const data = await res.json();
+  assert.equal(res.status, 401);
+  assert.equal(data.error, 'Invalid credentials.');
+});
