@@ -1974,6 +1974,10 @@ button:disabled {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
 }
 
+#investor-section {
+  grid-column: 1 / -1;
+}
+
 .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tag-chip {
   background: color-mix(in srgb, var(--surface-2) 90%, transparent);
@@ -2150,18 +2154,40 @@ td .mapping-badge {
 .ledger-actions { display: inline-flex; gap: 6px; justify-self: end; }
 .ledger-actions .ghost.small { min-width: 30px; padding: 4px 6px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
-.investor-table-wrap { overflow-x: auto; }
-.investor-dense-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.investor-dense-table th, .investor-dense-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.investor-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 0.35rem;
+}
+.investor-dense-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: auto;
+}
+.investor-dense-table th, .investor-dense-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
 .investor-dense-table th { color: var(--muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
 .investor-dense-table .num { text-align: right; }
 .investor-dense-table .muted { color: var(--muted); }
+.investor-dense-table .table-actions {
+  min-width: 240px;
+}
+.investor-dense-table .table-actions .ghost.small {
+  margin: 2px 4px 2px 0;
+}
 .status-badge { display: inline-flex; padding: 2px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); }
 .status-badge.active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, var(--border) 45%); background: color-mix(in srgb, var(--ok) 15%, transparent); }
 .status-badge.suspended { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, var(--border) 45%); background: color-mix(in srgb, var(--warning) 15%, transparent); }
 .split-controls { display: grid; gap: 0.75rem; }
 @media (max-width: 1279px) {
   .profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .investor-dense-table .optional-col { display: none; }
 }
 @media (max-width: 1120px) {
   .investor-summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1416,7 +1416,7 @@ function renderCashflowLedger() {
 function renderInvestorsTable() {
   const listEl = document.getElementById('investor-list');
   if (!listEl) return;
-  listEl.innerHTML = `<table class="investor-dense-table"><thead><tr><th>Investor Name</th><th>Status</th><th class="num">Split</th><th class="num">Net Contrib (£)</th><th class="num">Value (£)</th><th class="num">Profit (£)</th><th class="num">Return (%)</th><th class="num muted">Units</th><th>Last Cashflow Date</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>${investorUiState.investors.map((inv) => {
+  listEl.innerHTML = `<table class="investor-dense-table"><thead><tr><th>Investor Name</th><th>Status</th><th>Last Login</th><th class="num">Split</th><th class="num optional-col">Net Contrib (£)</th><th class="num">Value (£)</th><th class="num">Profit (£)</th><th class="num optional-col">Return (%)</th><th class="num muted optional-col">Units</th><th class="optional-col">Last Cashflow Date</th><th>Actions</th></tr></thead><tbody>${investorUiState.investors.map((inv) => {
     const m = investorUiState.perfById.get(inv.id) || {};
     const profit = Number(m.investor_profit_share || 0);
     const ret = Number(m.investor_return_pct || 0);
@@ -1426,14 +1426,14 @@ function renderInvestorsTable() {
     return `<tr>
       <td>${escapeHtml(inv.displayName)}</td>
       <td><span class="status-badge ${inv.status === 'active' ? 'active' : 'suspended'}">${inv.status === 'active' ? 'Active' : 'Suspended'}</span></td>
+      <td>${lastLogin}</td>
       <td class="num">Investor ${split.toFixed(0)}% / You ${(100 - split).toFixed(0)}%</td>
-      <td class="num">${formatGbp(m.net_contributions || 0)}</td>
+      <td class="num optional-col">${formatGbp(m.net_contributions || 0)}</td>
       <td class="num">${formatGbp(m.investor_net_value || 0)}</td>
       <td class="num ${profit >= 0 ? 'pos' : 'neg'}">${formatGbp(profit)}</td>
-      <td class="num ${ret >= 0 ? 'pos' : 'neg'}">${formatPct(ret)}</td>
-      <td class="num muted">${Number(m.total_units || 0).toFixed(4)}</td>
-      <td>${lastCf}</td>
-      <td>${lastLogin}</td>
+      <td class="num optional-col ${ret >= 0 ? 'pos' : 'neg'}">${formatPct(ret)}</td>
+      <td class="num muted optional-col">${Number(m.total_units || 0).toFixed(4)}</td>
+      <td class="optional-col">${lastCf}</td>
       <td class="table-actions"><button class="ghost small investor-preview" data-id="${inv.id}">Preview</button><button class="ghost small investor-invite" data-id="${inv.id}">Invite</button><button class="ghost small investor-edit" data-id="${inv.id}">Edit</button><button class="ghost small investor-suspend" data-id="${inv.id}" data-next="${inv.status === 'active' ? 'suspended' : 'active'}">${inv.status === 'active' ? 'Suspend' : 'Activate'}</button></td>
     </tr>`;
   }).join('')}</tbody></table>`;
