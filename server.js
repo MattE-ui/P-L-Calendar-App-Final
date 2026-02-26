@@ -5173,6 +5173,52 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
   res.status(201).json({ cashflow: row });
 });
 
+app.patch('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
+  if (error) return res.status(error.status).json({ error: error.message });
+  const cashflow = db.investorCashflows.find((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
+  if (!cashflow) return res.status(404).json({ error: 'Cashflow not found.' });
+
+  const type = typeof req.body?.type === 'string' ? req.body.type : '';
+  const amount = Number(req.body?.amount);
+  const effectiveDate = normalizeIsoDateInput(req.body?.effective_date);
+  const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
+
+  if (!['deposit', 'withdrawal', 'fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
+  if (!effectiveDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
+
+  const navRecord = findNavForDate(db, req.username, effectiveDate);
+  if (!navRecord) return res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' });
+
+  cashflow.type = type;
+  cashflow.amount = amount;
+  cashflow.effectiveDate = effectiveDate;
+  cashflow.navReferenceDate = navRecord.valuationDate;
+  cashflow.reference = reference || null;
+
+  saveDB(db);
+  res.json({ cashflow });
+});
+
+app.delete('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
+  if (error) return res.status(error.status).json({ error: error.message });
+
+  const index = db.investorCashflows.findIndex((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
+  if (index < 0) return res.status(404).json({ error: 'Cashflow not found.' });
+
+  const [deleted] = db.investorCashflows.splice(index, 1);
+  saveDB(db);
+  res.json({ deleted: { id: deleted.id } });
+});
+
 app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);

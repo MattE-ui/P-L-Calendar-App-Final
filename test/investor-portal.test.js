@@ -547,3 +547,66 @@ test('suspended investor login is rejected', async () => {
   const body = await loginRes.json();
   assert.equal(body.error, 'Investor account is suspended.');
 });
+
+
+test('master can edit cashflow and nav reference date is re-evaluated', async () => {
+  let res = await fetch(`${baseUrl}/api/master/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: '2026-01-03', nav: 900 })
+  });
+  assert.equal(res.status, 201);
+
+  res = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ type: 'deposit', amount: 500, effective_date: '2026-01-03', reference: 'initial' })
+  });
+  assert.equal(res.status, 201);
+  const created = await res.json();
+
+  res = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows/${created.cashflow.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ type: 'withdrawal', amount: 200, effective_date: '2026-01-02', reference: 'updated' })
+  });
+  const edited = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(edited.cashflow.type, 'withdrawal');
+  assert.equal(edited.cashflow.amount, 200);
+  assert.equal(edited.cashflow.effectiveDate, '2026-01-02');
+  assert.equal(edited.cashflow.navReferenceDate, '2026-01-02');
+  assert.equal(edited.cashflow.reference, 'updated');
+});
+
+test('edit cashflow rejects dates before first NAV and delete removes cashflow', async () => {
+  let res = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ type: 'deposit', amount: 500, effective_date: '2026-01-01', reference: 'to-delete' })
+  });
+  assert.equal(res.status, 201);
+  const created = await res.json();
+
+  res = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows/${created.cashflow.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ type: 'deposit', amount: 500, effective_date: '2025-12-31', reference: 'invalid-date' })
+  });
+  assert.equal(res.status, 400);
+  const invalid = await res.json();
+  assert.equal(invalid.error, 'Record a master NAV on or before this cashflow date.');
+
+  res = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows/${created.cashflow.id}`, {
+    method: 'DELETE',
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  assert.equal(res.status, 200);
+
+  const listRes = await fetch(`${baseUrl}/api/master/investors/inv-1/cashflows?limit=50`, {
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  const listed = await listRes.json();
+  assert.equal(listRes.status, 200);
+  assert.equal(listed.cashflows.some((row) => row.id === created.cashflow.id), false);
+});

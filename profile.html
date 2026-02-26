@@ -231,7 +231,41 @@
           <h3>Delete cashflow</h3>
           <button id="investor-delete-close" class="ghost" type="button">Close</button>
         </div>
-        <p class="helper">Deleting cashflows is not yet available via API.</p>
+        <p class="helper">This action cannot be undone.</p>
+        <div class="modal-actions">
+          <button id="investor-delete-confirm" class="danger" type="button">Delete cashflow</button>
+          <button id="investor-delete-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="investor-cashflow-edit-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Edit cashflow</h3>
+          <button id="investor-cashflow-edit-close" class="ghost" type="button">Close</button>
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-type">Type</label>
+          <select id="investor-cashflow-edit-type"><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option><option value="fee">Fee</option></select>
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-amount">Amount (£)</label>
+          <input id="investor-cashflow-edit-amount" type="number" step="0.01" min="0.01">
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-date">Date</label>
+          <input id="investor-cashflow-edit-date" type="date">
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-reference">Reference</label>
+          <input id="investor-cashflow-edit-reference" type="text" placeholder="Reference (optional)">
+        </div>
+        <div id="investor-cashflow-edit-error" class="error"></div>
+        <div class="modal-actions">
+          <button id="investor-cashflow-edit-save" class="primary" type="button">Save changes</button>
+          <button id="investor-cashflow-edit-cancel" class="ghost" type="button">Cancel</button>
+        </div>
       </div>
     </div>
 

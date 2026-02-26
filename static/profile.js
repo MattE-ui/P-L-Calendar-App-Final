@@ -1243,7 +1243,9 @@ const investorUiState = {
   cashflowsByInvestor: new Map(),
   selectedCashflowInvestorId: '',
   selectedSplitInvestorId: '',
-  lastSelectedInvestorId: ''
+  lastSelectedInvestorId: '',
+  pendingDeleteCashflow: null,
+  editingCashflow: null
 };
 
 let toastContainer;
@@ -1381,11 +1383,33 @@ function renderCashflowLedger() {
       <span>${row.effectiveDate} · ${escapeHtml(row.type)}</span>
       <strong>${formatGbp(row.amount)}</strong>
       <span class="muted">${escapeHtml(row.reference || '—')}</span>
-      <button class="ghost small investor-delete-cf" data-id="${row.id}">Delete</button>
+      <div class="ledger-actions">
+        <button class="ghost small investor-edit-cf" data-id="${row.id}" title="Edit cashflow" aria-label="Edit cashflow">✏️</button>
+        <button class="ghost small investor-delete-cf" data-id="${row.id}" title="Delete cashflow" aria-label="Delete cashflow">🗑️</button>
+      </div>
     </div>
   `).join('') || '<p class="helper">No cashflows for selected investor.</p>';
   ledger.querySelectorAll('.investor-delete-cf').forEach((btn) => btn.addEventListener('click', () => {
+    const cashflowId = btn.getAttribute('data-id') || '';
+    investorUiState.pendingDeleteCashflow = { investorId, cashflowId };
     document.getElementById('investor-delete-modal')?.classList.remove('hidden');
+  }));
+  ledger.querySelectorAll('.investor-edit-cf').forEach((btn) => btn.addEventListener('click', () => {
+    const cashflowId = btn.getAttribute('data-id') || '';
+    const cashflow = rows.find((row) => row.id === cashflowId);
+    if (!cashflow) return;
+    investorUiState.editingCashflow = { investorId, cashflowId };
+    const typeInput = document.getElementById('investor-cashflow-edit-type');
+    const amountInput = document.getElementById('investor-cashflow-edit-amount');
+    const dateInput = document.getElementById('investor-cashflow-edit-date');
+    const referenceInput = document.getElementById('investor-cashflow-edit-reference');
+    if (typeInput) typeInput.value = cashflow.type || 'deposit';
+    if (amountInput) amountInput.value = String(Number(cashflow.amount) || '');
+    if (dateInput) dateInput.value = normalizeIsoDateString(cashflow.effectiveDate) || '';
+    if (referenceInput) referenceInput.value = cashflow.reference || '';
+    const err = document.getElementById('investor-cashflow-edit-error');
+    if (err) err.textContent = '';
+    document.getElementById('investor-cashflow-edit-modal')?.classList.remove('hidden');
   }));
 }
 
@@ -1659,7 +1683,22 @@ function bindInvestorActions() {
 
   document.getElementById('investor-open-valuation-modal')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.remove('hidden'));
   document.getElementById('investor-valuation-close')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.add('hidden'));
-  document.getElementById('investor-delete-close')?.addEventListener('click', () => document.getElementById('investor-delete-modal')?.classList.add('hidden'));
+  document.getElementById('investor-delete-close')?.addEventListener('click', () => {
+    investorUiState.pendingDeleteCashflow = null;
+    document.getElementById('investor-delete-modal')?.classList.add('hidden');
+  });
+  document.getElementById('investor-delete-cancel')?.addEventListener('click', () => {
+    investorUiState.pendingDeleteCashflow = null;
+    document.getElementById('investor-delete-modal')?.classList.add('hidden');
+  });
+  document.getElementById('investor-cashflow-edit-close')?.addEventListener('click', () => {
+    investorUiState.editingCashflow = null;
+    document.getElementById('investor-cashflow-edit-modal')?.classList.add('hidden');
+  });
+  document.getElementById('investor-cashflow-edit-cancel')?.addEventListener('click', () => {
+    investorUiState.editingCashflow = null;
+    document.getElementById('investor-cashflow-edit-modal')?.classList.add('hidden');
+  });
   document.getElementById('investor-invite-close')?.addEventListener('click', () => document.getElementById('investor-invite-modal')?.classList.add('hidden'));
   document.getElementById('investor-invite-copy')?.addEventListener('click', async () => {
     const inviteLinkInput = document.getElementById('investor-invite-link');
@@ -1670,6 +1709,71 @@ function bindInvestorActions() {
       showToast('success', 'Invite link copied');
     } catch (error) {
       showToast('error', 'Unable to copy invite link');
+    }
+  });
+
+
+  document.getElementById('investor-delete-confirm')?.addEventListener('click', async () => {
+    const pending = investorUiState.pendingDeleteCashflow;
+    if (!pending?.investorId || !pending?.cashflowId) return;
+    const btn = document.getElementById('investor-delete-confirm');
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+    try {
+      await api(`/api/master/investors/${pending.investorId}/cashflows/${pending.cashflowId}`, { method: 'DELETE' });
+      investorUiState.lastSelectedInvestorId = pending.investorId;
+      showToast('success', 'Cashflow deleted');
+      investorUiState.pendingDeleteCashflow = null;
+      document.getElementById('investor-delete-modal')?.classList.add('hidden');
+      await loadInvestors();
+    } catch (error) {
+      showToast('error', parseApiError(error));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete cashflow'; }
+    }
+  });
+
+  document.getElementById('investor-cashflow-edit-save')?.addEventListener('click', async () => {
+    const editing = investorUiState.editingCashflow;
+    if (!editing?.investorId || !editing?.cashflowId) return;
+    const type = document.getElementById('investor-cashflow-edit-type')?.value || '';
+    const amount = Number(document.getElementById('investor-cashflow-edit-amount')?.value || 0);
+    const effectiveDateInput = document.getElementById('investor-cashflow-edit-date');
+    const effectiveDate = normalizeIsoDateString(effectiveDateInput?.value || '') || '';
+    const reference = document.getElementById('investor-cashflow-edit-reference')?.value || '';
+    const err = document.getElementById('investor-cashflow-edit-error');
+
+    if (!['deposit', 'withdrawal', 'fee'].includes(type)) {
+      if (err) err.textContent = 'Select a valid cashflow type.';
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      if (err) err.textContent = 'Cashflow amount must be greater than 0.';
+      return;
+    }
+    if (!effectiveDate) {
+      if (err) err.textContent = 'Enter an effective date.';
+      return;
+    }
+    if (effectiveDateInput) effectiveDateInput.value = effectiveDate;
+    if (err) err.textContent = '';
+
+    const btn = document.getElementById('investor-cashflow-edit-save');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    try {
+      await api(`/api/master/investors/${editing.investorId}/cashflows/${editing.cashflowId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference })
+      });
+      investorUiState.lastSelectedInvestorId = editing.investorId;
+      investorUiState.editingCashflow = null;
+      showToast('success', 'Cashflow updated');
+      document.getElementById('investor-cashflow-edit-modal')?.classList.add('hidden');
+      await loadInvestors();
+    } catch (error) {
+      if (err) err.textContent = parseApiError(error);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save changes'; }
     }
   });
 
