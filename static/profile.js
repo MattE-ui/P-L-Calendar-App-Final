@@ -1391,7 +1391,7 @@ function renderInvestorsTable() {
       <td class="num muted">${Number(m.total_units || 0).toFixed(4)}</td>
       <td>${lastCf}</td>
       <td>${lastLogin}</td>
-      <td class="table-actions"><button class="ghost small investor-preview" data-id="${inv.id}">Preview</button><button class="ghost small investor-edit" data-id="${inv.id}">Edit</button><button class="ghost small investor-suspend" data-id="${inv.id}" data-next="${inv.status === 'active' ? 'suspended' : 'active'}">${inv.status === 'active' ? 'Suspend' : 'Activate'}</button></td>
+      <td class="table-actions"><button class="ghost small investor-preview" data-id="${inv.id}">Preview</button><button class="ghost small investor-invite" data-id="${inv.id}">Invite</button><button class="ghost small investor-edit" data-id="${inv.id}">Edit</button><button class="ghost small investor-suspend" data-id="${inv.id}" data-next="${inv.status === 'active' ? 'suspended' : 'active'}">${inv.status === 'active' ? 'Suspend' : 'Activate'}</button></td>
     </tr>`;
   }).join('')}</tbody></table>`;
 
@@ -1411,6 +1411,21 @@ function renderInvestorsTable() {
     const splitSelect = document.getElementById('investor-split-id');
     if (splitSelect) splitSelect.value = id;
     document.getElementById('investor-split-percent')?.focus();
+  }));
+
+  listEl.querySelectorAll('.investor-invite').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.getAttribute('data-id');
+    const inviteModal = document.getElementById('investor-invite-modal');
+    const inviteLinkInput = document.getElementById('investor-invite-link');
+    setInlineError('investor-preview-error', '');
+    try {
+      const data = await api(`/api/master/investors/${id}/invite`, { method: 'POST' });
+      if (inviteLinkInput) inviteLinkInput.value = data.inviteUrl || '';
+      inviteModal?.classList.remove('hidden');
+      showToast('success', 'Invite link generated');
+    } catch (error) {
+      setInlineError('investor-preview-error', parseApiError(error));
+    }
   }));
 
   listEl.querySelectorAll('.investor-suspend').forEach((btn) => btn.addEventListener('click', async () => {
@@ -1565,6 +1580,18 @@ function bindInvestorActions() {
   document.getElementById('investor-open-valuation-modal')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.remove('hidden'));
   document.getElementById('investor-valuation-close')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.add('hidden'));
   document.getElementById('investor-delete-close')?.addEventListener('click', () => document.getElementById('investor-delete-modal')?.classList.add('hidden'));
+  document.getElementById('investor-invite-close')?.addEventListener('click', () => document.getElementById('investor-invite-modal')?.classList.add('hidden'));
+  document.getElementById('investor-invite-copy')?.addEventListener('click', async () => {
+    const inviteLinkInput = document.getElementById('investor-invite-link');
+    const inviteLink = inviteLinkInput?.value || '';
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      showToast('success', 'Invite link copied');
+    } catch (error) {
+      showToast('error', 'Unable to copy invite link');
+    }
+  });
 
   document.getElementById('investor-cashflow-id')?.addEventListener('change', renderCashflowLedger);
   document.getElementById('investor-cashflow-search')?.addEventListener('input', (e) => {

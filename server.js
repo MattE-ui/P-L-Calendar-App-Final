@@ -4944,7 +4944,9 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
   const ok = await bcrypt.compare(password, login.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
   const profile = db.investorProfiles.find(p => p.id === login.investorProfileId);
-  if (!profile || profile.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
+  if (!profile) return res.status(401).json({ error: 'Invalid credentials.' });
+  if (profile.status === 'suspended') return res.status(403).json({ error: 'Investor account is suspended.' });
+  if (profile.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
   const token = crypto.randomBytes(24).toString('hex');
   db.investorSessions[token] = {
     role: 'investor',
@@ -4953,6 +4955,7 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
     email
   };
   login.lastLoginAt = new Date().toISOString();
+  login.last_login_at = login.lastLoginAt;
   saveDB(db);
   res.cookie('investor_session', token, {
     httpOnly: true,
@@ -4998,6 +5001,7 @@ app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
       email: profile.email || `investor+${profile.id}@example.local`,
       passwordHash,
       lastLoginAt: null,
+      last_login_at: null,
       createdAt: new Date().toISOString()
     };
     db.investorLogins.push(login);
@@ -5078,7 +5082,7 @@ app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess
   const nowIso = new Date().toISOString();
   db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', defaultCurrency: 'GBP', createdAt: nowIso });
   db.investorProfitSplits.push({ investorProfileId: id, investorShareBps: 8000, masterShareBps: 2000, effectiveFrom: nowIso.slice(0,10), createdAt: nowIso });
-  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash: '', lastLoginAt: null, createdAt: nowIso });
+  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash: '', lastLoginAt: null, last_login_at: null, createdAt: nowIso });
   saveDB(db);
   res.status(201).json({ id, displayName, status: 'active' });
 });
