@@ -2150,18 +2150,61 @@ td .mapping-badge {
 .ledger-actions { display: inline-flex; gap: 6px; justify-self: end; }
 .ledger-actions .ghost.small { min-width: 30px; padding: 4px 6px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
-.investor-table-wrap { overflow-x: auto; }
-.investor-dense-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.investor-dense-table th, .investor-dense-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.investor-table-wrap { overflow-x: visible; }
+.investor-dense-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.investor-dense-table th, .investor-dense-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .investor-dense-table th { color: var(--muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
 .investor-dense-table .num { text-align: right; }
 .investor-dense-table .muted { color: var(--muted); }
+.investor-dense-table th:nth-child(1),
+.investor-dense-table td:nth-child(1) { width: 16%; }
+.investor-dense-table th:nth-child(2),
+.investor-dense-table td:nth-child(2) { width: 8%; }
+.investor-dense-table th:nth-child(3),
+.investor-dense-table td:nth-child(3) { width: 10%; }
+.investor-dense-table th:nth-child(4),
+.investor-dense-table td:nth-child(4) { width: 13%; }
+.investor-dense-table th:nth-child(5),
+.investor-dense-table td:nth-child(5),
+.investor-dense-table th:nth-child(6),
+.investor-dense-table td:nth-child(6),
+.investor-dense-table th:nth-child(7),
+.investor-dense-table td:nth-child(7),
+.investor-dense-table th:nth-child(8),
+.investor-dense-table td:nth-child(8),
+.investor-dense-table th:nth-child(9),
+.investor-dense-table td:nth-child(9) { width: 9%; }
+.investor-dense-table th:nth-child(10),
+.investor-dense-table td:nth-child(10) { width: 10%; }
+.investor-dense-table th:nth-child(11),
+.investor-dense-table td:nth-child(11) { width: 16%; }
+.investor-dense-table .table-actions {
+  white-space: normal;
+}
+.investor-dense-table .table-actions .ghost.small {
+  margin: 2px 4px 2px 0;
+}
 .status-badge { display: inline-flex; padding: 2px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); }
 .status-badge.active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, var(--border) 45%); background: color-mix(in srgb, var(--ok) 15%, transparent); }
 .status-badge.suspended { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, var(--border) 45%); background: color-mix(in srgb, var(--warning) 15%, transparent); }
 .split-controls { display: grid; gap: 0.75rem; }
 @media (max-width: 1279px) {
   .profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .investor-dense-table .optional-col { display: none; }
+  .investor-dense-table th:nth-child(1),
+  .investor-dense-table td:nth-child(1) { width: 22%; }
+  .investor-dense-table th:nth-child(2),
+  .investor-dense-table td:nth-child(2) { width: 12%; }
+  .investor-dense-table th:nth-child(3),
+  .investor-dense-table td:nth-child(3) { width: 15%; }
+  .investor-dense-table th:nth-child(4),
+  .investor-dense-table td:nth-child(4) { width: 19%; }
+  .investor-dense-table th:nth-child(6),
+  .investor-dense-table td:nth-child(6),
+  .investor-dense-table th:nth-child(7),
+  .investor-dense-table td:nth-child(7) { width: 12%; }
+  .investor-dense-table th:nth-child(11),
+  .investor-dense-table td:nth-child(11) { width: 20%; }
 }
 @media (max-width: 1120px) {
   .investor-summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
