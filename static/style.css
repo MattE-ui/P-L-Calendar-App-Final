@@ -2786,3 +2786,42 @@ textarea {
   opacity: 0;
   transform: translateY(-4px);
 }
+
+.investor-equity-card {
+  padding: 14px;
+}
+.investor-equity-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.investor-equity-subtitle {
+  margin: 4px 0 0;
+}
+.investor-equity-ranges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.investor-equity-ranges .ghost {
+  min-width: 42px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.investor-equity-ranges .ghost.is-active {
+  border-color: var(--accent);
+  color: var(--text-1);
+  background: rgba(11,191,122,0.14);
+}
+.investor-equity-wrap {
+  height: 220px;
+  position: relative;
+  overflow: hidden;
+}
+.investor-equity-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}

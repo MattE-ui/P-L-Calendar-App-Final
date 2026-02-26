@@ -11,9 +11,26 @@
     <section class="page-title"><h2>Investor Preview</h2></section>
     <p class="helper">Read-only preview mode (expires after 5 minutes).</p>
     <section class="hero-metrics key-metrics" id="investor-metrics"></section>
-    <section class="card"><h3>Equity curve</h3><pre id="investor-equity" class="helper">Loading…</pre></section>
+    <section class="card investor-equity-card">
+      <div class="investor-equity-head">
+        <div>
+          <h3>Equity Curve</h3>
+          <p class="helper investor-equity-subtitle">Net value over time</p>
+        </div>
+        <div class="investor-equity-ranges" id="investor-equity-ranges">
+          <button type="button" class="ghost is-active" data-range="1M">1M</button>
+          <button type="button" class="ghost" data-range="3M">3M</button>
+          <button type="button" class="ghost" data-range="1Y">1Y</button>
+          <button type="button" class="ghost" data-range="ALL">ALL</button>
+        </div>
+      </div>
+      <div id="investor-equity" class="investor-equity-wrap">
+        <p class="helper">Loading…</p>
+      </div>
+    </section>
     <section class="card"><h3>Cashflows</h3><div id="investor-cashflows"></div></section>
   </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/static/investor-portal.js"></script>
 </body>
 </html>

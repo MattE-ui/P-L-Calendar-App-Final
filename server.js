@@ -672,6 +672,77 @@ function computeInvestorPerformance({ db, masterUserId, investorId }) {
   };
 }
 
+function computeInvestorEquityCurve({ db, masterUserId, investorId, range = 'ALL' }) {
+  const profile = db.investorProfiles.find(p => p.id === investorId && p.masterUserId === masterUserId);
+  if (!profile) return { error: 'Investor not found.' };
+
+  const rangeDays = range === '1M' ? 31 : range === '3M' ? 93 : range === '1Y' ? 366 : null;
+  const minDate = rangeDays
+    ? new Date(Date.now() - (rangeDays * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)
+    : null;
+
+  const valuations = db.masterValuations
+    .filter(v => v.masterUserId === masterUserId)
+    .map(v => ({ date: String(v.valuationDate || ''), nav: Number(v.nav) || 0 }))
+    .filter(v => /^\d{4}-\d{2}-\d{2}$/.test(v.date) && v.nav > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (!valuations.length) return { points: [] };
+
+  const cashflows = db.investorCashflows
+    .filter(c => c.investorProfileId === profile.id)
+    .map(c => ({
+      type: c.type,
+      amount: Number(c.amount) || 0,
+      effectiveDate: String(c.effectiveDate || ''),
+      navReferenceDate: String(c.navReferenceDate || c.effectiveDate || '')
+    }))
+    .filter(c => c.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(c.effectiveDate) && /^\d{4}-\d{2}-\d{2}$/.test(c.navReferenceDate))
+    .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+
+  const navByDate = new Map(valuations.map(v => [v.date, v.nav]));
+  const split = getInvestorProfitSplit(db, profile.id);
+  const investorShareBps = Number(split.investorShareBps) || 0;
+  const points = [];
+  let totalUnits = 0;
+  let depositsTotal = 0;
+  let withdrawalsTotal = 0;
+  let feesTotal = 0;
+  let flowIndex = 0;
+
+  for (const valuation of valuations) {
+    while (flowIndex < cashflows.length && cashflows[flowIndex].effectiveDate <= valuation.date) {
+      const flow = cashflows[flowIndex];
+      const navAtReference = findNavForDate(db, masterUserId, flow.navReferenceDate)?.nav ?? navByDate.get(flow.navReferenceDate);
+      const nav = Number(navAtReference) || 0;
+      if (nav > 0) {
+        if (flow.type === 'deposit') {
+          totalUnits += flow.amount / nav;
+          depositsTotal += flow.amount;
+        } else if (flow.type === 'withdrawal') {
+          totalUnits -= flow.amount / nav;
+          withdrawalsTotal += flow.amount;
+        } else if (flow.type === 'fee') {
+          totalUnits -= flow.amount / nav;
+          feesTotal += flow.amount;
+        }
+      }
+      flowIndex += 1;
+    }
+
+    const currentValueGross = totalUnits * valuation.nav;
+    const netContributions = depositsTotal - withdrawalsTotal - feesTotal;
+    const grossPnl = currentValueGross - netContributions;
+    const investorProfitShare = grossPnl * (investorShareBps / 10000);
+    const investorNetValue = netContributions + investorProfitShare;
+    if (!minDate || valuation.date >= minDate) {
+      points.push({ date: valuation.date, value: roundTo(investorNetValue) });
+    }
+  }
+
+  return { points };
+}
+
 function requireMasterAuth(req, res, next) {
   return auth(req, res, next);
 }
@@ -4930,16 +5001,16 @@ app.get('/api/investor/summary', requireInvestorAuth, (req, res) => {
 });
 
 app.get('/api/investor/equity-curve', requireInvestorAuth, (req, res) => {
-  const range = typeof req.query?.range === 'string' ? req.query.range : 'ALL';
-  const now = new Date();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const days = range === '1M' ? 31 : range === '3M' ? 93 : range === '1Y' ? 366 : null;
-  const minDate = days ? new Date(now.getTime() - (days * dayMs)).toISOString().slice(0, 10) : null;
-  const points = req.investorDb.masterValuations
-    .filter(v => v.masterUserId === req.investorProfile.masterUserId)
-    .filter(v => !minDate || v.valuationDate >= minDate)
-    .sort((a, b) => String(a.valuationDate).localeCompare(String(b.valuationDate)));
-  res.json({ points });
+  const rawRange = typeof req.query?.range === 'string' ? req.query.range.toUpperCase() : 'ALL';
+  const range = ['1M', '3M', '1Y', 'ALL'].includes(rawRange) ? rawRange : 'ALL';
+  const curve = computeInvestorEquityCurve({
+    db: req.investorDb,
+    masterUserId: req.investorProfile.masterUserId,
+    investorId: req.investorProfile.id,
+    range
+  });
+  if (curve.error) return res.status(curve.error === 'Investor not found.' ? 404 : 400).json({ error: curve.error });
+  res.json({ points: curve.points || [] });
 });
 
 app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
