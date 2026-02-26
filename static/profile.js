@@ -1331,22 +1331,34 @@ async function loadInvestors() {
   if (splitSelect) splitSelect.innerHTML = options;
   if (cashflowSelect) cashflowSelect.innerHTML = options;
   if (listEl) {
-    listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Status</th><th>Investor %</th><th>Master %</th><th>Net contrib</th><th>Value</th><th>P&L</th><th>Return %</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
+    listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Status</th><th>Email</th><th>Last login</th><th>Investor %</th><th>Master %</th><th>Net contrib</th><th>Value</th><th>P&L</th><th>Return %</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
       const m = perfById.get(inv.id) || {};
       const invPct = (Number(inv.investor_share_bps || m.investor_share_bps || 0) / 100).toFixed(2);
       const masterPct = (Number(inv.master_share_bps || m.master_share_bps || 0) / 100).toFixed(2);
+      const lastLogin = inv.lastLoginAt ? new Date(inv.lastLoginAt).toLocaleString() : 'Never';
       return `<tr>
         <td>${inv.displayName}</td>
         <td>${inv.status}</td>
+        <td>${inv.email || '—'}</td>
+        <td>${lastLogin}</td>
         <td>${invPct}%</td>
         <td>${masterPct}%</td>
         <td>£${Number(m.net_contributions || 0).toFixed(2)}</td>
         <td>£${Number(m.investor_net_value || 0).toFixed(2)}</td>
         <td>£${Number(m.investor_profit_share || 0).toFixed(2)}</td>
         <td>${(Number(m.investor_return_pct || 0) * 100).toFixed(2)}%</td>
-        <td><button class="ghost investor-preview" data-id="${inv.id}">Preview</button></td>
+        <td><button class="ghost investor-preview" data-id="${inv.id}">Preview</button> <button class="ghost investor-invite" data-id="${inv.id}">Create Invite</button> <button class="ghost investor-reset" data-id="${inv.id}">Reset Password</button></td>
       </tr>`;
     }).join('')}</tbody></table>`;
+
+    const copyInviteLink = async (inviteUrl) => {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(inviteUrl);
+        return;
+      }
+      window.prompt('Copy invite link', inviteUrl);
+    };
+
     listEl.querySelectorAll('.investor-preview').forEach(btn => btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-id');
       btn.disabled = true;
@@ -1361,6 +1373,49 @@ async function loadInvestors() {
       } catch (error) {
         const message = parseApiError(error);
         console.error('Investor portal preview failed', error);
+        setInlineError('investor-preview-error', message);
+        setInvestorActionFailure(message);
+        showToast('error', `Error: ${message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = previousLabel;
+      }
+    }));
+
+    listEl.querySelectorAll('.investor-invite').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      btn.disabled = true;
+      const previousLabel = btn.textContent;
+      btn.textContent = 'Generating...';
+      setInlineError('investor-preview-error', '');
+      try {
+        const dataInvite = await api(`/api/master/investors/${id}/invite`, { method: 'POST' });
+        await copyInviteLink(dataInvite.inviteUrl);
+        setInvestorActionStatus('Invite link created and copied');
+        showToast('success', 'Invite link created');
+      } catch (error) {
+        const message = parseApiError(error);
+        setInlineError('investor-preview-error', message);
+        setInvestorActionFailure(message);
+        showToast('error', `Error: ${message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = previousLabel;
+      }
+    }));
+
+    listEl.querySelectorAll('.investor-reset').forEach(btn => btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      btn.disabled = true;
+      const previousLabel = btn.textContent;
+      btn.textContent = 'Resetting...';
+      setInlineError('investor-preview-error', '');
+      try {
+        const dataReset = await api(`/api/master/investors/${id}/reset-password`, { method: 'POST' });
+        setInvestorActionStatus(`Temporary password generated for ${dataReset.email}`);
+        showToast('success', 'Password reset complete');
+      } catch (error) {
+        const message = parseApiError(error);
         setInlineError('investor-preview-error', message);
         setInvestorActionFailure(message);
         showToast('error', `Error: ${message}`);
@@ -1406,7 +1461,8 @@ function bindInvestorActions() {
     const displayName = document.getElementById('investor-display-name')?.value?.trim() || '';
     const email = document.getElementById('investor-email')?.value?.trim() || '';
     if (displayName.length < 2 || displayName.length > 50) return 'Display name must be between 2 and 50 characters.';
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.';
+    if (!email) return 'Investor login email is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.';
     return '';
   };
   const validateValuationForm = () => {
@@ -1479,11 +1535,15 @@ function bindInvestorActions() {
     setDisabled(createIds, true);
     setInlineError('investor-create-error', '');
     try {
-      await api('/api/master/investors', {
+      const created = await api('/api/master/investors', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: displayName, email })
       });
-      setInvestorActionStatus(`Created investor ${displayName}`);
-      showToast('success', 'Success: Investor created');
+      const invite = await api(`/api/master/investors/${created.id}/invite`, { method: 'POST' });
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(invite.inviteUrl);
+      }
+      setInvestorActionStatus(`Created investor ${displayName} and generated invite`);
+      showToast('success', 'Success: Investor created, invite link copied');
       document.getElementById('investor-display-name').value = '';
       if (document.getElementById('investor-email')) document.getElementById('investor-email').value = '';
       await loadInvestors();

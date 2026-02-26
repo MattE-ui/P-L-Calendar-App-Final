@@ -201,6 +201,10 @@ async function initInvestorActivate() {
     try {
       const token = new URLSearchParams(window.location.search).get('token') || '';
       const password = document.getElementById('investor-activate-password')?.value || '';
+      const confirmPassword = document.getElementById('investor-activate-password-confirm')?.value || '';
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
       await investorApi('/api/investor/auth/activate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password })
       });
