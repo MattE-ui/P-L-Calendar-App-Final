@@ -1947,10 +1947,33 @@ button:disabled {
 .auth-switch p { margin: 0; color: var(--muted); font-size: 14px; }
 .auth-switch button { width: 100%; }
 .success { color: var(--positive); margin-top: 8px; font-size: 14px; font-weight: 600; }
-.profile-container { max-width: 520px; margin: 64px auto; padding: 0 20px 48px; display: flex; flex-direction: column; gap: 18px; }
+.profile-container {
+  width: clamp(75%, 86vw, 90%);
+  max-width: 1680px;
+  margin: 20px auto 0;
+  padding: 0.75rem 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  align-items: start;
+}
+
 .profile-header h1 { margin: 0; font-size: 26px; }
-.profile-subtitle { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
-.profile-card { display: flex; flex-direction: column; gap: 18px; }
+.profile-card-header h2 { margin: 0; font-size: 24px; font-weight: 700; }
+
+.profile-subtitle { margin: 0.75rem 0 0; color: var(--muted); font-size: 15px; }
+.profile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
 .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .tag-chip {
   background: color-mix(in srgb, var(--surface-2) 90%, transparent);
@@ -2097,13 +2120,22 @@ td .mapping-badge {
   margin-top: 0;
 }
 .profile-date { margin: 0; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.profile-field { display: flex; flex-direction: column; gap: 8px; }
+.profile-field { display: flex; flex-direction: column; gap: 0.75rem; }
 .profile-field label { margin-top: 0; }
 .profile-field .helper { margin: 0; font-size: 13px; color: var(--muted); }
-.investor-create-grid { gap: 6px; }
-.investor-layout-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.investor-control-card { background: color-mix(in srgb, var(--surface-2) 78%, transparent); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
-.investor-summary-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.investor-create-grid { gap: 0.75rem; }
+.investor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.investor-grid .investor-control-card:last-child {
+  grid-column: 1 / -1;
+}
+
+.investor-control-card { background: color-mix(in srgb, var(--surface-2) 78%, transparent); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
+.investor-summary-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
 .investor-summary-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .investor-summary-card span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
 .investor-summary-card strong { font-size: 15px; }
@@ -2124,10 +2156,19 @@ td .mapping-badge {
 .status-badge { display: inline-flex; padding: 2px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); }
 .status-badge.active { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, var(--border) 45%); background: color-mix(in srgb, var(--ok) 15%, transparent); }
 .status-badge.suspended { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, var(--border) 45%); background: color-mix(in srgb, var(--warning) 15%, transparent); }
-.split-controls { display: grid; gap: 6px; }
-@media (max-width: 1120px) {
-  .investor-layout-grid, .investor-summary-row { grid-template-columns: 1fr; }
+.split-controls { display: grid; gap: 0.75rem; }
+@media (max-width: 1279px) {
+  .profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (max-width: 1120px) {
+  .investor-summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .profile-grid { grid-template-columns: 1fr; }
+  .investor-grid,
+  .investor-summary-row { grid-template-columns: 1fr; }
+}
+
 .inline-field { display: flex; gap: 10px; align-items: center; }
 .inline-field input { flex: 1; }
 .read-only-field {
@@ -2147,10 +2188,10 @@ td .mapping-badge {
   outline: none;
 }
 .profile-field .helper code { padding: 0 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.08); color: inherit; font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; }
-.profile-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.profile-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 .profile-actions button { flex: 1; min-width: 160px; }
-.automation-card { gap: 16px; }
-.profile-automation-header h2 { margin: 0; font-size: 24px; }
+.automation-card { gap: 1rem; }
+.profile-automation-header h2 { margin: 0; font-size: 24px; font-weight: 700; }
 .profile-automation-title {
   display: flex;
   align-items: center;
@@ -2478,11 +2519,16 @@ textarea {
 }
 
 @media (max-width: 540px) {
-  .profile-container { margin-top: 36px; padding-inline: 16px; }
+  .profile-container {
+    width: 100%;
+    margin-top: 20px;
+    padding-inline: 0.75rem;
+  }
   .profile-header h1 { font-size: 22px; }
   .profile-actions button { flex: 1 1 100%; }
   .integration-instructions ol { gap: 6px; }
 }
+
 
 @media (max-width: 960px) {
   .grid.view-month { grid-template-columns: repeat(7, minmax(96px, 1fr)); }
