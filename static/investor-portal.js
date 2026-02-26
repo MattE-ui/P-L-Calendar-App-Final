@@ -29,10 +29,10 @@ async function loadInvestorDashboard(previewToken = '') {
   const container = document.getElementById('investor-metrics');
   if (container) {
     container.innerHTML = [
-      metric('Current value', formatMoney(summary.investor_net_value_today)),
+      metric('Current value', formatMoney(summary.investor_net_value)),
       metric('Net contributions', formatMoney(summary.net_contributions)),
       metric('Profit share', formatMoney(summary.investor_profit_share)),
-      metric('Return %', `${Number(summary.investor_return_pct || 0).toFixed(2)}%`),
+      metric('Return %', `${(Number(summary.investor_return_pct || 0) * 100).toFixed(2)}%`),
       metric('NAV today', formatMoney(summary.nav_today))
     ].join('');
   }

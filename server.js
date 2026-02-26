@@ -604,43 +604,71 @@ function latestMasterNav(db, masterUserId) {
   return valuations[valuations.length - 1] || null;
 }
 
-function computeInvestorSummary(db, profile) {
+function roundTo(value, places = 4) {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
+}
+
+function computeInvestorPerformance({ db, masterUserId, investorId }) {
+  const profile = db.investorProfiles.find(p => p.id === investorId && p.masterUserId === masterUserId);
+  if (!profile) return { error: 'Investor not found.' };
+  const navTodayRecord = latestMasterNav(db, masterUserId);
+  if (!navTodayRecord) return { error: 'No master valuations recorded yet.' };
+
   const cashflows = db.investorCashflows
     .filter(c => c.investorProfileId === profile.id)
     .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)));
-  const navTodayRecord = latestMasterNav(db, profile.masterUserId);
-  const navToday = Number(navTodayRecord?.nav) || 0;
-  let investorUnits = 0;
-  let netContributions = 0;
+
+  const navToday = Number(navTodayRecord.nav) || 0;
+  let totalUnits = 0;
+  let depositsTotal = 0;
+  let withdrawalsTotal = 0;
+  let feesTotal = 0;
+
   for (const flow of cashflows) {
     const amount = Number(flow.amount) || 0;
+    if (amount <= 0) continue;
     const navLookupDate = flow.navReferenceDate || flow.effectiveDate;
-    const navRecord = findNavForDate(db, profile.masterUserId, navLookupDate);
-    const flowNav = Number(navRecord?.nav) || 0;
-    if (!flowNav) continue;
-    const sign = flow.type === 'deposit' ? 1 : -1;
-    investorUnits += (amount / flowNav) * sign;
-    netContributions += amount * sign;
+    const navRecord = findNavForDate(db, masterUserId, navLookupDate);
+    const navAtReference = Number(navRecord?.nav) || 0;
+    if (navAtReference <= 0) continue;
+
+    if (flow.type === 'deposit') {
+      totalUnits += amount / navAtReference;
+      depositsTotal += amount;
+    } else if (flow.type === 'withdrawal') {
+      totalUnits -= amount / navAtReference;
+      withdrawalsTotal += amount;
+    } else if (flow.type === 'fee') {
+      totalUnits -= amount / navAtReference;
+      feesTotal += amount;
+    }
   }
-  const grossValueToday = investorUnits * navToday;
-  const grossPnl = grossValueToday - netContributions;
+
+  const currentValueGross = totalUnits * navToday;
+  const netContributions = depositsTotal - withdrawalsTotal - feesTotal;
+  const grossPnl = currentValueGross - netContributions;
   const split = getInvestorProfitSplit(db, profile.id);
-  const investorProfitShare = grossPnl * (Number(split.investorShareBps) / 10000);
-  const masterProfitShare = grossPnl * (Number(split.masterShareBps) / 10000);
-  const investorNetValueToday = netContributions + investorProfitShare;
-  const investorReturnPct = netContributions > 0 ? (investorProfitShare / netContributions) * 100 : 0;
+  const investorShareBps = Number(split.investorShareBps) || 0;
+  const masterShareBps = Number(split.masterShareBps) || 0;
+  const investorProfitShare = grossPnl * (investorShareBps / 10000);
+  const masterProfitShare = grossPnl - investorProfitShare;
+  const investorNetValue = netContributions + investorProfitShare;
+  const investorReturnPct = netContributions > 0 ? (investorProfitShare / netContributions) : 0;
+
   return {
-    nav_today: navToday,
-    investor_units: investorUnits,
-    net_contributions: netContributions,
-    gross_value_today: grossValueToday,
-    gross_pnl: grossPnl,
-    investor_share_bps: Number(split.investorShareBps),
-    master_share_bps: Number(split.masterShareBps),
-    investor_profit_share: investorProfitShare,
-    master_profit_share: masterProfitShare,
-    investor_net_value_today: investorNetValueToday,
-    investor_return_pct: investorReturnPct
+    nav_today: roundTo(navToday),
+    total_units: roundTo(totalUnits),
+    net_contributions: roundTo(netContributions),
+    current_value_gross: roundTo(currentValueGross),
+    gross_pnl: roundTo(grossPnl),
+    investor_share_bps: investorShareBps,
+    master_share_bps: masterShareBps,
+    investor_profit_share: roundTo(investorProfitShare),
+    master_profit_share: roundTo(masterProfitShare),
+    investor_net_value: roundTo(investorNetValue),
+    investor_return_pct: roundTo(investorReturnPct)
   };
 }
 
@@ -4896,7 +4924,8 @@ app.get('/api/investor/me', requireInvestorAuth, (req, res) => {
 });
 
 app.get('/api/investor/summary', requireInvestorAuth, (req, res) => {
-  const summary = computeInvestorSummary(req.investorDb, req.investorProfile);
+  const summary = computeInvestorPerformance({ db: req.investorDb, masterUserId: req.investorProfile.masterUserId, investorId: req.investorProfile.id });
+  if (summary.error) return res.status(summary.error === 'Investor not found.' ? 404 : 400).json({ error: summary.error });
   res.json(summary);
 });
 
@@ -5065,18 +5094,42 @@ app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMaste
   ensureInvestorTables(db);
   const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
   if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  res.json(computeInvestorSummary(db, profile));
+  const summary = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
+  if (summary.error) return res.status(summary.error === 'Investor not found.' ? 404 : 400).json({ error: summary.error });
+  res.json(summary);
 });
 
 app.get('/api/master/investors/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
-  const items = db.investorProfiles.filter(p => p.masterUserId === req.username).map(profile => ({
-    investor_profile_id: profile.id,
-    display_name: profile.displayName,
-    status: profile.status,
-    ...computeInvestorSummary(db, profile)
-  }));
+  const items = db.investorProfiles.filter(p => p.masterUserId === req.username).map(profile => {
+    const summary = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
+    if (summary.error) {
+      return {
+        investor_profile_id: profile.id,
+        display_name: profile.displayName,
+        status: profile.status,
+        nav_today: 0,
+        total_units: 0,
+        net_contributions: 0,
+        current_value_gross: 0,
+        gross_pnl: 0,
+        investor_share_bps: getInvestorProfitSplit(db, profile.id).investorShareBps,
+        master_share_bps: getInvestorProfitSplit(db, profile.id).masterShareBps,
+        investor_profit_share: 0,
+        master_profit_share: 0,
+        investor_net_value: 0,
+        investor_return_pct: 0,
+        error: summary.error
+      };
+    }
+    return {
+      investor_profile_id: profile.id,
+      display_name: profile.displayName,
+      status: profile.status,
+      ...summary
+    };
+  });
   res.json({ investors: items });
 });
 

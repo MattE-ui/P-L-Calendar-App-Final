@@ -1331,7 +1331,7 @@ async function loadInvestors() {
   if (splitSelect) splitSelect.innerHTML = options;
   if (cashflowSelect) cashflowSelect.innerHTML = options;
   if (listEl) {
-    listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Status</th><th>Investor %</th><th>Master %</th><th>Net contrib</th><th>Value</th><th>P&L</th><th>Investor share</th><th>Return %</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
+    listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Status</th><th>Investor %</th><th>Master %</th><th>Net contrib</th><th>Value</th><th>P&L</th><th>Return %</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
       const m = perfById.get(inv.id) || {};
       const invPct = (Number(inv.investor_share_bps || m.investor_share_bps || 0) / 100).toFixed(2);
       const masterPct = (Number(inv.master_share_bps || m.master_share_bps || 0) / 100).toFixed(2);
@@ -1341,10 +1341,9 @@ async function loadInvestors() {
         <td>${invPct}%</td>
         <td>${masterPct}%</td>
         <td>£${Number(m.net_contributions || 0).toFixed(2)}</td>
-        <td>£${Number(m.investor_net_value_today || 0).toFixed(2)}</td>
-        <td>£${Number(m.gross_pnl || 0).toFixed(2)}</td>
+        <td>£${Number(m.investor_net_value || 0).toFixed(2)}</td>
         <td>£${Number(m.investor_profit_share || 0).toFixed(2)}</td>
-        <td>${Number(m.investor_return_pct || 0).toFixed(2)}%</td>
+        <td>${(Number(m.investor_return_pct || 0) * 100).toFixed(2)}%</td>
         <td><button class="ghost investor-preview" data-id="${inv.id}">Preview</button></td>
       </tr>`;
     }).join('')}</tbody></table>`;
