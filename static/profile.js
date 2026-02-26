@@ -1237,8 +1237,13 @@ async function logout() {
 const investorPortalEnabled = () => profileState.investorPortalAvailable !== false;
 
 const investorUiState = {
-  lastActionMessage: '—',
-  lastActionFailed: false
+  investors: [],
+  perfById: new Map(),
+  valuations: [],
+  cashflowsByInvestor: new Map(),
+  selectedCashflowInvestorId: '',
+  selectedSplitInvestorId: '',
+  lastSelectedInvestorId: ''
 };
 
 let toastContainer;
@@ -1252,7 +1257,6 @@ function parseApiError(errorOrResponse) {
   if (typeof errorOrResponse?.data?.message === 'string' && errorOrResponse.data.message.trim()) return errorOrResponse.data.message.trim();
   if (typeof errorOrResponse?.error === 'string' && errorOrResponse.error.trim()) return errorOrResponse.error.trim();
   if (typeof errorOrResponse?.message === 'string' && errorOrResponse.message.trim()) return errorOrResponse.message.trim();
-  if (typeof errorOrResponse?.statusText === 'string' && errorOrResponse.statusText.trim()) return errorOrResponse.statusText.trim();
   return fallback;
 }
 
@@ -1288,20 +1292,6 @@ function setDisabled(ids, disabled) {
   });
 }
 
-function setInvestorActionStatus(message) {
-  const el = document.getElementById('investor-last-action');
-  investorUiState.lastActionMessage = message || '—';
-  investorUiState.lastActionFailed = false;
-  if (el) el.textContent = investorUiState.lastActionMessage;
-}
-
-function setInvestorActionFailure(message) {
-  const el = document.getElementById('investor-last-action');
-  investorUiState.lastActionMessage = `Last action failed: ${message || 'Something went wrong'}`;
-  investorUiState.lastActionFailed = true;
-  if (el) el.textContent = investorUiState.lastActionMessage;
-}
-
 function showInvestorFeedback(message, { isError = false } = {}) {
   const status = document.getElementById('investor-status');
   const error = document.getElementById('investor-error');
@@ -1314,118 +1304,161 @@ function showInvestorFeedback(message, { isError = false } = {}) {
   }
 }
 
+const toIsoDate = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
+  return d.toISOString().slice(0, 10);
+};
+
+const formatGbp = (value) => formatCurrency(Number(value) || 0, 'GBP');
+const formatPct = (value) => `${((Number(value) || 0) * 100).toFixed(2)}%`;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[ch]));
+}
+
+function renderInvestorSummary() {
+  const el = document.getElementById('investor-summary');
+  if (!el) return;
+  const totals = investorUiState.investors.reduce((acc, inv) => {
+    const m = investorUiState.perfById.get(inv.id) || {};
+    acc.capital += Number(m.net_contributions || 0);
+    acc.value += Number(m.investor_net_value || 0);
+    acc.profit += Number(m.investor_profit_share || 0);
+    acc.master += Number(m.master_profit_share || 0);
+    return acc;
+  }, { capital: 0, value: 0, profit: 0, master: 0 });
+  el.innerHTML = [
+    ['Total Investor Capital', totals.capital],
+    ['Total Investor Value', totals.value],
+    ['Total Investor Profit', totals.profit],
+    ['Your Earned Share', totals.master]
+  ].map(([label, value]) => `<article class="investor-summary-card"><span>${label}</span><strong class="${Number(value) >= 0 ? 'pos' : 'neg'}">${formatGbp(value)}</strong></article>`).join('');
+}
+
+function renderValuationPanel() {
+  const latest = investorUiState.valuations[0] || null;
+  const latestNav = document.getElementById('investor-nav-latest');
+  const latestDate = document.getElementById('investor-nav-last-date');
+  const count = document.getElementById('investor-nav-count');
+  if (latestNav) latestNav.textContent = formatGbp(latest?.nav || 0);
+  if (latestDate) latestDate.textContent = latest?.valuationDate || '—';
+  if (count) count.textContent = String(investorUiState.valuations.length);
+  const history = document.getElementById('investor-valuation-history');
+  if (history) {
+    history.innerHTML = investorUiState.valuations.slice(0, 5).map((v) => `<div class="mini-row"><span>${v.valuationDate}</span><strong>${formatGbp(v.nav)}</strong></div>`).join('') || '<p class="helper">No valuations yet.</p>';
+  }
+}
+
+function renderCashflowLedger() {
+  const investorId = document.getElementById('investor-cashflow-id')?.value || '';
+  if (investorId) investorUiState.lastSelectedInvestorId = investorId;
+  const rows = investorUiState.cashflowsByInvestor.get(investorId) || [];
+  const ledger = document.getElementById('investor-cashflow-ledger');
+  if (!ledger) return;
+  ledger.innerHTML = rows.slice(0, 8).map((row) => `
+    <div class="mini-row ledger-row">
+      <span>${row.effectiveDate} · ${escapeHtml(row.type)}</span>
+      <strong>${formatGbp(row.amount)}</strong>
+      <span class="muted">${escapeHtml(row.reference || '—')}</span>
+      <button class="ghost small investor-delete-cf" data-id="${row.id}">Delete</button>
+    </div>
+  `).join('') || '<p class="helper">No cashflows for selected investor.</p>';
+  ledger.querySelectorAll('.investor-delete-cf').forEach((btn) => btn.addEventListener('click', () => {
+    document.getElementById('investor-delete-modal')?.classList.remove('hidden');
+  }));
+}
+
+function renderInvestorsTable() {
+  const listEl = document.getElementById('investor-list');
+  if (!listEl) return;
+  listEl.innerHTML = `<table class="investor-dense-table"><thead><tr><th>Investor Name</th><th>Status</th><th class="num">Split</th><th class="num">Net Contrib (£)</th><th class="num">Value (£)</th><th class="num">Profit (£)</th><th class="num">Return (%)</th><th class="num muted">Units</th><th>Last Cashflow Date</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>${investorUiState.investors.map((inv) => {
+    const m = investorUiState.perfById.get(inv.id) || {};
+    const profit = Number(m.investor_profit_share || 0);
+    const ret = Number(m.investor_return_pct || 0);
+    const split = Number(inv.investor_share_bps || m.investor_share_bps || 0) / 100;
+    const lastCf = (investorUiState.cashflowsByInvestor.get(inv.id) || [])[0]?.effectiveDate || '—';
+    const lastLogin = inv.lastLoginAt ? toIsoDate(inv.lastLoginAt) : 'Never';
+    return `<tr>
+      <td>${escapeHtml(inv.displayName)}</td>
+      <td><span class="status-badge ${inv.status === 'active' ? 'active' : 'suspended'}">${inv.status === 'active' ? 'Active' : 'Suspended'}</span></td>
+      <td class="num">Investor ${split.toFixed(0)}% / You ${(100 - split).toFixed(0)}%</td>
+      <td class="num">${formatGbp(m.net_contributions || 0)}</td>
+      <td class="num">${formatGbp(m.investor_net_value || 0)}</td>
+      <td class="num ${profit >= 0 ? 'pos' : 'neg'}">${formatGbp(profit)}</td>
+      <td class="num ${ret >= 0 ? 'pos' : 'neg'}">${formatPct(ret)}</td>
+      <td class="num muted">${Number(m.total_units || 0).toFixed(4)}</td>
+      <td>${lastCf}</td>
+      <td>${lastLogin}</td>
+      <td class="table-actions"><button class="ghost small investor-preview" data-id="${inv.id}">Preview</button><button class="ghost small investor-edit" data-id="${inv.id}">Edit</button><button class="ghost small investor-suspend" data-id="${inv.id}" data-next="${inv.status === 'active' ? 'suspended' : 'active'}">${inv.status === 'active' ? 'Suspend' : 'Activate'}</button></td>
+    </tr>`;
+  }).join('')}</tbody></table>`;
+
+  listEl.querySelectorAll('.investor-preview').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.getAttribute('data-id');
+    try {
+      const dataPreview = await api(`/api/master/investors/${id}/preview-token`);
+      window.open(`/investor/preview?token=${encodeURIComponent(dataPreview.token)}`, '_blank', 'noopener');
+      showToast('success', 'Investor portal preview opened');
+    } catch (error) {
+      setInlineError('investor-preview-error', parseApiError(error));
+    }
+  }));
+
+  listEl.querySelectorAll('.investor-edit').forEach((btn) => btn.addEventListener('click', () => {
+    const id = btn.getAttribute('data-id') || '';
+    const splitSelect = document.getElementById('investor-split-id');
+    if (splitSelect) splitSelect.value = id;
+    document.getElementById('investor-split-percent')?.focus();
+  }));
+
+  listEl.querySelectorAll('.investor-suspend').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.getAttribute('data-id');
+    const next = btn.getAttribute('data-next');
+    try {
+      await api(`/api/master/investors/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next }) });
+      showToast('success', `Investor ${next === 'active' ? 'activated' : 'suspended'}`);
+      await loadInvestors();
+    } catch (error) {
+      setInlineError('investor-preview-error', parseApiError(error));
+    }
+  }));
+}
+
+function applyInvestorOptions() {
+  const options = ['<option value="">Select investor</option>', ...investorUiState.investors.map((inv) => `<option value="${inv.id}">${escapeHtml(inv.displayName)}</option>`)].join('');
+  const splitSelect = document.getElementById('investor-split-id');
+  const cashflowSelect = document.getElementById('investor-cashflow-id');
+  if (splitSelect) splitSelect.innerHTML = options;
+  if (cashflowSelect) cashflowSelect.innerHTML = options;
+  if (splitSelect && investorUiState.selectedSplitInvestorId) splitSelect.value = investorUiState.selectedSplitInvestorId;
+  if (cashflowSelect) cashflowSelect.value = investorUiState.lastSelectedInvestorId || investorUiState.selectedCashflowInvestorId || '';
+}
+
 async function loadInvestors() {
   const section = document.getElementById('investor-section');
   if (section) section.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   if (!(investorPortalEnabled() && profileState.investorAccountsEnabled)) return;
-  const [data, perf] = await Promise.all([
+  const [data, perf, valuations] = await Promise.all([
     api('/api/master/investors'),
-    api('/api/master/investors/performance').catch(() => ({ investors: [] }))
+    api('/api/master/investors/performance').catch(() => ({ investors: [] })),
+    api('/api/master/valuations').catch(() => ({ valuations: [] }))
   ]);
-  const perfById = new Map((perf.investors || []).map(item => [item.investor_profile_id, item]));
-  const investors = Array.isArray(data.investors) ? data.investors : [];
-  const listEl = document.getElementById('investor-list');
-  const splitSelect = document.getElementById('investor-split-id');
-  const cashflowSelect = document.getElementById('investor-cashflow-id');
-  const options = ['<option value="">Select investor</option>', ...investors.map(inv => `<option value="${inv.id}">${inv.displayName}</option>`)].join('');
-  if (splitSelect) splitSelect.innerHTML = options;
-  if (cashflowSelect) cashflowSelect.innerHTML = options;
-  if (listEl) {
-    listEl.innerHTML = `<table><thead><tr><th>Name</th><th>Status</th><th>Email</th><th>Last login</th><th>Investor %</th><th>Master %</th><th>Net contrib</th><th>Value</th><th>P&L</th><th>Return %</th><th>Actions</th></tr></thead><tbody>${investors.map(inv => {
-      const m = perfById.get(inv.id) || {};
-      const invPct = (Number(inv.investor_share_bps || m.investor_share_bps || 0) / 100).toFixed(2);
-      const masterPct = (Number(inv.master_share_bps || m.master_share_bps || 0) / 100).toFixed(2);
-      const lastLogin = inv.lastLoginAt ? new Date(inv.lastLoginAt).toLocaleString() : 'Never';
-      return `<tr>
-        <td>${inv.displayName}</td>
-        <td>${inv.status}</td>
-        <td>${inv.email || '—'}</td>
-        <td>${lastLogin}</td>
-        <td>${invPct}%</td>
-        <td>${masterPct}%</td>
-        <td>£${Number(m.net_contributions || 0).toFixed(2)}</td>
-        <td>£${Number(m.investor_net_value || 0).toFixed(2)}</td>
-        <td>£${Number(m.investor_profit_share || 0).toFixed(2)}</td>
-        <td>${(Number(m.investor_return_pct || 0) * 100).toFixed(2)}%</td>
-        <td><button class="ghost investor-preview" data-id="${inv.id}">Preview</button> <button class="ghost investor-invite" data-id="${inv.id}">Create Invite</button> <button class="ghost investor-reset" data-id="${inv.id}">Reset Password</button></td>
-      </tr>`;
-    }).join('')}</tbody></table>`;
-
-    const copyInviteLink = async (inviteUrl) => {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(inviteUrl);
-        return;
-      }
-      window.prompt('Copy invite link', inviteUrl);
-    };
-
-    listEl.querySelectorAll('.investor-preview').forEach(btn => btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      btn.disabled = true;
-      const previousLabel = btn.textContent;
-      btn.textContent = 'Opening...';
-      setInlineError('investor-preview-error', '');
-      try {
-        const dataPreview = await api(`/api/master/investors/${id}/preview-token`);
-        window.open(`/investor/preview?token=${encodeURIComponent(dataPreview.token)}`, '_blank', 'noopener');
-        setInvestorActionStatus('Opened investor portal preview');
-        showToast('success', 'Success: Investor portal preview opened');
-      } catch (error) {
-        const message = parseApiError(error);
-        console.error('Investor portal preview failed', error);
-        setInlineError('investor-preview-error', message);
-        setInvestorActionFailure(message);
-        showToast('error', `Error: ${message}`);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = previousLabel;
-      }
-    }));
-
-    listEl.querySelectorAll('.investor-invite').forEach(btn => btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      btn.disabled = true;
-      const previousLabel = btn.textContent;
-      btn.textContent = 'Generating...';
-      setInlineError('investor-preview-error', '');
-      try {
-        const dataInvite = await api(`/api/master/investors/${id}/invite`, { method: 'POST' });
-        await copyInviteLink(dataInvite.inviteUrl);
-        setInvestorActionStatus('Invite link created and copied');
-        showToast('success', 'Invite link created');
-      } catch (error) {
-        const message = parseApiError(error);
-        setInlineError('investor-preview-error', message);
-        setInvestorActionFailure(message);
-        showToast('error', `Error: ${message}`);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = previousLabel;
-      }
-    }));
-
-    listEl.querySelectorAll('.investor-reset').forEach(btn => btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      btn.disabled = true;
-      const previousLabel = btn.textContent;
-      btn.textContent = 'Resetting...';
-      setInlineError('investor-preview-error', '');
-      try {
-        const dataReset = await api(`/api/master/investors/${id}/reset-password`, { method: 'POST' });
-        setInvestorActionStatus(`Temporary password generated for ${dataReset.email}`);
-        showToast('success', 'Password reset complete');
-      } catch (error) {
-        const message = parseApiError(error);
-        setInlineError('investor-preview-error', message);
-        setInvestorActionFailure(message);
-        showToast('error', `Error: ${message}`);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = previousLabel;
-      }
-    }));
-  }
-  showInvestorFeedback(investors.length ? `Loaded ${investors.length} investor${investors.length === 1 ? '' : 's'}.` : 'No investors yet.');
+  investorUiState.investors = Array.isArray(data.investors) ? data.investors : [];
+  investorUiState.perfById = new Map((perf.investors || []).map((item) => [item.investor_profile_id, item]));
+  investorUiState.valuations = Array.isArray(valuations.valuations) ? valuations.valuations : [];
+  const latestCashflows = await Promise.all(investorUiState.investors.map(async (inv) => {
+    const rows = await api(`/api/master/investors/${inv.id}/cashflows?limit=8`).catch(() => ({ cashflows: [] }));
+    return [inv.id, rows.cashflows || []];
+  }));
+  investorUiState.cashflowsByInvestor = new Map(latestCashflows);
+  applyInvestorOptions();
+  renderInvestorSummary();
+  renderValuationPanel();
+  renderInvestorsTable();
+  renderCashflowLedger();
+  showInvestorFeedback(investorUiState.investors.length ? `Loaded ${investorUiState.investors.length} investors.` : 'No investors yet.');
   refreshInvestorActionAvailability();
 }
 
@@ -1446,7 +1479,7 @@ function bindInvestorAccountToggle() {
       await loadInvestors();
       if (status) status.textContent = profileState.investorAccountsEnabled ? 'Investor accounts enabled.' : 'Investor accounts disabled.';
     } catch (error) {
-      if (err) err.textContent = error?.data?.error || error.message;
+      if (err) err.textContent = parseApiError(error);
     }
   });
 }
@@ -1454,7 +1487,7 @@ function bindInvestorAccountToggle() {
 function bindInvestorActions() {
   const createIds = ['investor-display-name', 'investor-email', 'investor-create-btn'];
   const valuationIds = ['investor-valuation-date', 'investor-valuation-nav', 'investor-valuation-btn'];
-  const splitIds = ['investor-split-id', 'investor-split-bps', 'investor-split-btn'];
+  const splitIds = ['investor-split-id', 'investor-split-slider', 'investor-split-percent', 'investor-split-btn'];
   const cashflowIds = ['investor-cashflow-id', 'investor-cashflow-type', 'investor-cashflow-amount', 'investor-cashflow-date', 'investor-cashflow-reference', 'investor-cashflow-btn'];
 
   const validateCreateForm = () => {
@@ -1467,25 +1500,25 @@ function bindInvestorActions() {
   };
   const validateValuationForm = () => {
     const valuationDate = document.getElementById('investor-valuation-date')?.value || '';
-    const navRaw = document.getElementById('investor-valuation-nav')?.value || '';
-    const nav = Number(navRaw);
+    const nav = Number(document.getElementById('investor-valuation-nav')?.value || 0);
+    const future = valuationDate > new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate)) return 'Valuation date is required.';
+    if (future) return 'Future valuation dates are not allowed.';
     if (!Number.isFinite(nav) || nav <= 0) return 'NAV must be a number greater than 0.';
+    if (investorUiState.valuations.some((v) => v.valuationDate === valuationDate)) return 'A valuation already exists for this date.';
     return '';
   };
   const validateSplitForm = () => {
     const investorId = document.getElementById('investor-split-id')?.value || '';
-    const bpsRaw = document.getElementById('investor-split-bps')?.value || '';
-    const bps = Number(bpsRaw);
+    const pct = Number(document.getElementById('investor-split-percent')?.value || NaN);
     if (!investorId) return 'Select an investor for profit split.';
-    if (!Number.isInteger(bps) || bps < 0 || bps > 10000) return 'Investor share bps must be an integer between 0 and 10000.';
+    if (!Number.isInteger(pct) || pct < 0 || pct > 100) return 'Investor share must be an integer from 0 to 100.';
     return '';
   };
   const validateCashflowForm = () => {
     const investorId = document.getElementById('investor-cashflow-id')?.value || '';
     const type = document.getElementById('investor-cashflow-type')?.value || '';
-    const amountRaw = document.getElementById('investor-cashflow-amount')?.value || '';
-    const amount = Number(amountRaw);
+    const amount = Number(document.getElementById('investor-cashflow-amount')?.value || 0);
     const effectiveDate = document.getElementById('investor-cashflow-date')?.value || '';
     const reference = document.getElementById('investor-cashflow-reference')?.value || '';
     if (!investorId) return 'Select an investor for cashflow.';
@@ -1494,6 +1527,12 @@ function bindInvestorActions() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) return 'Effective date is required.';
     if (reference.length > 80) return 'Reference must be 80 characters or fewer.';
     return '';
+  };
+
+  const updateSplitText = () => {
+    const pct = Number(document.getElementById('investor-split-percent')?.value || 0);
+    const splitText = document.getElementById('investor-split-text');
+    if (splitText) splitText.textContent = `Investor receives ${pct}% of profits · You receive ${100 - pct}%`;
   };
 
   const syncInvestorActionAvailability = () => {
@@ -1513,51 +1552,64 @@ function bindInvestorActions() {
     if (valuationBtn && valuationBtn.dataset.loading !== 'true') valuationBtn.disabled = !!valuationError;
     if (splitBtn && splitBtn.dataset.loading !== 'true') splitBtn.disabled = !!splitError;
     if (cashflowBtn && cashflowBtn.dataset.loading !== 'true') cashflowBtn.disabled = !!cashflowError;
+    updateSplitText();
   };
 
   refreshInvestorActionAvailability = syncInvestorActionAvailability;
 
-  [...createIds, ...valuationIds, ...splitIds, ...cashflowIds].forEach((id) => {
+  [...createIds, ...valuationIds, ...splitIds, ...cashflowIds, 'investor-cashflow-search'].forEach((id) => {
     document.getElementById(id)?.addEventListener('input', syncInvestorActionAvailability);
     document.getElementById(id)?.addEventListener('change', syncInvestorActionAvailability);
+  });
+
+  document.getElementById('investor-open-valuation-modal')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.remove('hidden'));
+  document.getElementById('investor-valuation-close')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.add('hidden'));
+  document.getElementById('investor-delete-close')?.addEventListener('click', () => document.getElementById('investor-delete-modal')?.classList.add('hidden'));
+
+  document.getElementById('investor-cashflow-id')?.addEventListener('change', renderCashflowLedger);
+  document.getElementById('investor-cashflow-search')?.addEventListener('input', (e) => {
+    const term = String(e.target?.value || '').toLowerCase();
+    const select = document.getElementById('investor-cashflow-id');
+    if (!select) return;
+    const match = investorUiState.investors.find((inv) => inv.displayName.toLowerCase().includes(term));
+    if (match) {
+      select.value = match.id;
+      renderCashflowLedger();
+    }
+  });
+
+  const slider = document.getElementById('investor-split-slider');
+  const pctInput = document.getElementById('investor-split-percent');
+  slider?.addEventListener('input', () => { if (pctInput) pctInput.value = slider.value; updateSplitText(); });
+  pctInput?.addEventListener('input', () => { if (slider) slider.value = String(Math.max(0, Math.min(100, Number(pctInput.value || 0)))); updateSplitText(); });
+  document.getElementById('investor-split-id')?.addEventListener('change', () => {
+    const investorId = document.getElementById('investor-split-id')?.value || '';
+    investorUiState.selectedSplitInvestorId = investorId;
+    const investor = investorUiState.investors.find((inv) => inv.id === investorId);
+    const pct = Math.round(Number((investor?.investor_share_bps ?? 8000)) / 100);
+    if (slider) slider.value = String(pct);
+    if (pctInput) pctInput.value = String(pct);
+    updateSplitText();
   });
 
   document.getElementById('investor-create-btn')?.addEventListener('click', async () => {
     const validationError = validateCreateForm();
     if (validationError) return;
-    const displayName = document.getElementById('investor-display-name')?.value?.trim() || '';
+    const displayName = document.getElementById('investor-display-name')?.value?.trim();
     const email = document.getElementById('investor-email')?.value?.trim() || '';
     const btn = document.getElementById('investor-create-btn');
-    if (btn) {
-      btn.dataset.loading = 'true';
-      btn.textContent = 'Creating...';
-    }
+    if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Creating...'; }
     setDisabled(createIds, true);
-    setInlineError('investor-create-error', '');
     try {
-      const created = await api('/api/master/investors', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: displayName, email })
-      });
-      const invite = await api(`/api/master/investors/${created.id}/invite`, { method: 'POST' });
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(invite.inviteUrl);
-      }
-      setInvestorActionStatus(`Created investor ${displayName} and generated invite`);
-      showToast('success', 'Success: Investor created, invite link copied');
+      await api('/api/master/investors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ display_name: displayName, email }) });
+      showToast('success', 'Investor created');
       document.getElementById('investor-display-name').value = '';
-      if (document.getElementById('investor-email')) document.getElementById('investor-email').value = '';
+      document.getElementById('investor-email').value = '';
       await loadInvestors();
     } catch (error) {
-      const message = parseApiError(error);
-      console.error('Create investor failed', error);
-      setInlineError('investor-create-error', message);
-      setInvestorActionFailure(message);
-      showToast('error', `Error: ${message}`);
+      setInlineError('investor-create-error', parseApiError(error));
     } finally {
-      if (btn) {
-        btn.dataset.loading = 'false';
-        btn.textContent = 'Create investor';
-      }
+      if (btn) { btn.dataset.loading = 'false'; btn.textContent = 'Create investor'; }
       setDisabled(createIds, false);
       syncInvestorActionAvailability();
     }
@@ -1569,31 +1621,18 @@ function bindInvestorActions() {
     const valuationDate = document.getElementById('investor-valuation-date')?.value || '';
     const nav = Number(document.getElementById('investor-valuation-nav')?.value || 0);
     const btn = document.getElementById('investor-valuation-btn');
-    if (btn) {
-      btn.dataset.loading = 'true';
-      btn.textContent = 'Recording...';
-    }
+    if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Saving...'; }
     setDisabled(valuationIds, true);
-    setInlineError('investor-valuation-error', '');
     try {
-      await api('/api/master/valuations', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valuation_date: valuationDate, nav })
-      });
-      setInvestorActionStatus(`Recorded master NAV ${nav.toFixed(2)} on ${valuationDate}`);
-      showToast('success', 'Success: Master NAV recorded');
+      await api('/api/master/valuations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valuation_date: valuationDate, nav }) });
+      showToast('success', 'Master NAV recorded');
       document.getElementById('investor-valuation-nav').value = '';
+      document.getElementById('investor-valuation-modal')?.classList.add('hidden');
       await loadInvestors();
     } catch (error) {
-      const message = parseApiError(error);
-      console.error('Record valuation failed', error);
-      setInlineError('investor-valuation-error', message);
-      setInvestorActionFailure(message);
-      showToast('error', `Error: ${message}`);
+      setInlineError('investor-valuation-error', parseApiError(error));
     } finally {
-      if (btn) {
-        btn.dataset.loading = 'false';
-        btn.textContent = 'Record valuation';
-      }
+      if (btn) { btn.dataset.loading = 'false'; btn.textContent = 'Save NAV'; }
       setDisabled(valuationIds, false);
       syncInvestorActionAvailability();
     }
@@ -1608,32 +1647,19 @@ function bindInvestorActions() {
     const effectiveDate = document.getElementById('investor-cashflow-date')?.value || '';
     const reference = document.getElementById('investor-cashflow-reference')?.value || '';
     const btn = document.getElementById('investor-cashflow-btn');
-    if (btn) {
-      btn.dataset.loading = 'true';
-      btn.textContent = 'Saving...';
-    }
+    if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Saving...'; }
     setDisabled(cashflowIds, true);
-    setInlineError('investor-cashflow-error', '');
     try {
-      await api(`/api/master/investors/${investorId}/cashflows`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference })
-      });
-      setInvestorActionStatus(`Saved ${type} cashflow for ${investorId}`);
-      showToast('success', 'Success: Cashflow added');
+      await api(`/api/master/investors/${investorId}/cashflows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference }) });
+      investorUiState.lastSelectedInvestorId = investorId;
+      showToast('success', 'Cashflow added');
       document.getElementById('investor-cashflow-amount').value = '';
       document.getElementById('investor-cashflow-reference').value = '';
       await loadInvestors();
     } catch (error) {
-      const message = parseApiError(error);
-      console.error('Add cashflow failed', error);
-      setInlineError('investor-cashflow-error', message);
-      setInvestorActionFailure(message);
-      showToast('error', `Error: ${message}`);
+      setInlineError('investor-cashflow-error', parseApiError(error));
     } finally {
-      if (btn) {
-        btn.dataset.loading = 'false';
-        btn.textContent = 'Add cashflow';
-      }
+      if (btn) { btn.dataset.loading = 'false'; btn.textContent = 'Add cashflow'; }
       setDisabled(cashflowIds, false);
       syncInvestorActionAvailability();
     }
@@ -1643,32 +1669,18 @@ function bindInvestorActions() {
     const validationError = validateSplitForm();
     if (validationError) return;
     const investorId = document.getElementById('investor-split-id')?.value || '';
-    const investorShareBps = Number(document.getElementById('investor-split-bps')?.value || 0);
+    const investorShareBps = Number(document.getElementById('investor-split-percent')?.value || 0) * 100;
     const btn = document.getElementById('investor-split-btn');
-    if (btn) {
-      btn.dataset.loading = 'true';
-      btn.textContent = 'Saving...';
-    }
+    if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Saving...'; }
     setDisabled(splitIds, true);
-    setInlineError('investor-split-error', '');
     try {
-      await api(`/api/master/investors/${investorId}/profit-split`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ investor_share_bps: investorShareBps })
-      });
-      setInvestorActionStatus(`Updated profit split for ${investorId}`);
-      showToast('success', 'Success: Profit split saved');
+      await api(`/api/master/investors/${investorId}/profit-split`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ investor_share_bps: investorShareBps }) });
+      showToast('success', 'Profit split saved');
       await loadInvestors();
     } catch (error) {
-      const message = parseApiError(error);
-      console.error('Save profit split failed', error);
-      setInlineError('investor-split-error', message);
-      setInvestorActionFailure(message);
-      showToast('error', `Error: ${message}`);
+      setInlineError('investor-split-error', parseApiError(error));
     } finally {
-      if (btn) {
-        btn.dataset.loading = 'false';
-        btn.textContent = 'Save profit split';
-      }
+      if (btn) { btn.dataset.loading = 'false'; btn.textContent = 'Save profit split'; }
       setDisabled(splitIds, false);
       syncInvestorActionAvailability();
     }
