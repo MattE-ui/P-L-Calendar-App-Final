@@ -152,6 +152,7 @@
         <input id="investor-display-name" type="text" placeholder="Investor name">
         <input id="investor-email" type="email" placeholder="Investor portal email (optional)">
         <button id="investor-create-btn" class="primary" type="button">Create investor</button>
+        <div id="investor-create-error" class="error"></div>
       </div>
       <div class="profile-field">
         <label for="investor-valuation-date">Record master NAV valuation</label>
@@ -159,12 +160,14 @@
         <input id="investor-valuation-nav" type="number" step="0.01" min="0.01" placeholder="NAV">
         <p class="helper">NAV = investor account value for that date (e.g., 1000.00)</p>
         <button id="investor-valuation-btn" class="ghost" type="button">Record valuation</button>
+        <div id="investor-valuation-error" class="error"></div>
       </div>
       <div class="profile-field">
         <label>Profit split (investor share bps)</label>
         <select id="investor-split-id"></select>
         <input id="investor-split-bps" type="number" min="0" max="10000" step="1" value="8000">
         <button id="investor-split-btn" class="ghost" type="button">Save profit split</button>
+        <div id="investor-split-error" class="error"></div>
       </div>
       <div class="profile-field">
         <label>Investor cashflow</label>
@@ -174,8 +177,10 @@
         <input id="investor-cashflow-date" type="date">
         <input id="investor-cashflow-reference" type="text" placeholder="Reference (optional)">
         <button id="investor-cashflow-btn" class="ghost" type="button">Add cashflow</button>
+        <div id="investor-cashflow-error" class="error"></div>
       </div>
       <div id="investor-list"></div>
+      <div id="investor-preview-error" class="error"></div>
       <div id="investor-status" class="helper"></div>
       <div class="helper">Last action: <span id="investor-last-action">—</span></div>
       <div id="investor-error" class="error"></div>
