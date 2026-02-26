@@ -72,7 +72,11 @@
         <h1>Finish setting up your profile</h1>
         <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
       </header>
+      <div class="profile-grid">
       <section class="card profile-card">
+      <header class="profile-card-header">
+        <h2>Profile Setup</h2>
+      </header>
       <p class="profile-date" id="profile-date"></p>
       <div class="profile-field">
         <label for="profile-portfolio">Current portfolio value (£)</label>
@@ -128,6 +132,13 @@
       <div id="account-nickname-error" class="error"></div>
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>
+    </section>
+
+    <section class="card profile-card is-hidden" id="investor-section">
+      <header class="profile-automation-header">
+        <h2>Investors</h2>
+        <p class="helper">Manage view-only investor accounts and preview their portal.</p>
+      </header>
       <div class="profile-field toggle-field">
         <label class="toggle">
           <input type="checkbox" id="investor-accounts-enabled">
@@ -140,13 +151,6 @@
       </div>
       <div id="investor-accounts-status" class="status-line"></div>
       <div id="investor-accounts-error" class="error"></div>
-    </section>
-
-    <section class="card profile-card is-hidden" id="investor-section">
-      <header class="profile-automation-header">
-        <h2>Investors</h2>
-        <p class="helper">Manage view-only investor accounts and preview their portal.</p>
-      </header>
       <div class="profile-field investor-create-grid">
         <label for="investor-display-name">New investor display name</label>
         <input id="investor-display-name" type="text" placeholder="Investor name">
@@ -155,7 +159,7 @@
         <div id="investor-create-error" class="error"></div>
       </div>
       <section class="investor-summary-row" id="investor-summary"></section>
-      <section class="investor-layout-grid">
+      <section class="investor-grid">
         <div class="profile-field investor-control-card">
           <div class="section-header"><h3>Master NAV</h3></div>
           <div class="investor-nav-stats">
@@ -198,7 +202,8 @@
       <div id="investor-preview-error" class="error"></div>
       <div id="investor-status" class="helper"></div>
       <div id="investor-error" class="error"></div>
-    </section>
+      </section>
+      </div>
 
     <div id="investor-valuation-modal" class="modal hidden">
       <div class="modal-card">
