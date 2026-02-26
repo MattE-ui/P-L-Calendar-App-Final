@@ -222,6 +222,11 @@ async function initInvestorDashboardOrPreview() {
   initInvestorRangeSelector();
   const isPreview = window.location.pathname === '/investor/preview';
   const previewToken = isPreview ? (new URLSearchParams(window.location.search).get('token') || '') : '';
+  const previewBadge = document.getElementById('investor-preview-badge');
+  if (previewBadge) {
+    const showPreviewBadge = isPreview && !!previewToken;
+    previewBadge.hidden = !showPreviewBadge;
+  }
   try {
     await loadInvestorDashboard(previewToken);
   } catch (error) {
