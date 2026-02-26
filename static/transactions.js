@@ -48,7 +48,6 @@ const state = {
   transactions: [],
   notes: {},
   splits: {},
-  splitProfitsEnabled: false,
   data: {},
   profiles: [],
   filters: {
@@ -63,8 +62,6 @@ async function loadTransactionPrefs() {
   if (isGuestSession()) return;
   try {
     const prefs = await api('/api/transactions/prefs');
-    state.splitProfitsEnabled = !!prefs?.splitProfits;
-    localStorage.setItem('plc-transactions-prefs', JSON.stringify({ splitProfits: state.splitProfitsEnabled }));
     return prefs || {};
   } catch (e) {
     console.warn('Failed to load transaction prefs', e);
@@ -78,7 +75,7 @@ async function saveTransactionPrefs() {
     await api('/api/transactions/prefs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ splitProfits: state.splitProfitsEnabled })
+      body: JSON.stringify({})
     });
   } catch (e) {
     console.warn('Failed to save transaction prefs', e);
@@ -257,14 +254,6 @@ function renderTransactions(transactions = []) {
     editBtn.textContent = 'Edit Notes';
     editBtn.addEventListener('click', () => openNoteModal(tx));
     editCell.appendChild(editBtn);
-    if (state.splitProfitsEnabled) {
-      const splitBtn = document.createElement('button');
-      splitBtn.className = 'ghost';
-      splitBtn.type = 'button';
-      splitBtn.textContent = 'Split Profits Settings';
-      splitBtn.addEventListener('click', () => openSplitModal(tx));
-      splitCell.appendChild(splitBtn);
-    }
     row.append(dateCell, typeCell, amountCell, noteCell, editCell, splitCell);
     tbody.appendChild(row);
   });
@@ -923,12 +912,6 @@ function setupNav() {
   document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
     setNavOpen(false);
     const modal = document.getElementById('transactions-settings-modal');
-    const splitToggle = document.getElementById('transactions-qs-split-profits');
-    const profilesSection = document.getElementById('transactions-split-profiles');
-    modal?.classList.remove('hidden');
-    const applyPrefs = prefs => {
-      if (splitToggle) splitToggle.checked = !!prefs?.splitProfits;
-    };
     try {
       const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
@@ -937,52 +920,15 @@ function setupNav() {
     } catch (e) {
       console.warn(e);
     }
-    if (!isGuestSession()) {
-      loadTransactionPrefs().then(() => applyPrefs({ splitProfits: state.splitProfitsEnabled }));
-    }
-    if (profilesSection) {
-      profilesSection.classList.toggle('is-hidden', !splitToggle?.checked);
-    }
     try {
       renderProfiles();
     } catch (e) {
       console.warn('Failed to render transaction profiles', e);
     }
   });
-  document.getElementById('transactions-qs-split-profits')?.addEventListener('change', (event) => {
-    const enabled = event.target.checked;
-    const profilesSection = document.getElementById('transactions-split-profiles');
-    if (profilesSection) {
-      profilesSection.classList.toggle('is-hidden', !enabled);
-    }
-    state.splitProfitsEnabled = enabled;
-    try {
-      localStorage.setItem('plc-transactions-prefs', JSON.stringify({ splitProfits: enabled }));
-    } catch (e) {
-      console.warn(e);
-    }
-    saveTransactionPrefs();
-    renderTransactions(applyFilters(state.transactions));
-    renderProfiles();
-  });
   const closeQs = () => document.getElementById('transactions-settings-modal')?.classList.add('hidden');
   document.getElementById('transactions-close-qs-btn')?.addEventListener('click', closeQs);
   document.getElementById('transactions-save-qs-btn')?.addEventListener('click', () => {
-    const splitToggle = document.getElementById('transactions-qs-split-profits');
-    const profilesSection = document.getElementById('transactions-split-profiles');
-    const prefs = {};
-    if (splitToggle) prefs.splitProfits = splitToggle.checked;
-    try {
-      localStorage.setItem('plc-transactions-prefs', JSON.stringify(prefs));
-      state.splitProfitsEnabled = !!prefs.splitProfits;
-      renderTransactions(applyFilters(state.transactions));
-      if (profilesSection) {
-        profilesSection.classList.toggle('is-hidden', !state.splitProfitsEnabled);
-      }
-    } catch (e) {
-      console.warn(e);
-    }
-    saveTransactionPrefs();
     closeQs();
   });
   document.getElementById('transactions-note-close-btn')?.addEventListener('click', closeNoteModal);
@@ -1027,14 +973,6 @@ async function loadTransactions() {
       state.splits = {};
     }
     try {
-      const savedPrefs = localStorage.getItem('plc-transactions-prefs');
-      const prefs = savedPrefs ? JSON.parse(savedPrefs) : {};
-      state.splitProfitsEnabled = !!prefs?.splitProfits;
-    } catch (e) {
-      console.warn('Failed to load transaction prefs', e);
-      state.splitProfitsEnabled = false;
-    }
-    try {
       const savedProfiles = localStorage.getItem('plc-transactions-profiles');
       state.profiles = savedProfiles ? JSON.parse(savedProfiles) : [];
     } catch (e) {
@@ -1043,9 +981,6 @@ async function loadTransactions() {
     }
     const serverPrefs = await loadTransactionPrefs();
     const serverProfiles = await loadTransactionProfiles();
-    if (serverPrefs && serverPrefs.splitProfits === undefined) {
-      saveTransactionPrefs();
-    }
     if (Array.isArray(serverProfiles) && !serverProfiles.length && state.profiles.length) {
       saveTransactionProfiles();
     }

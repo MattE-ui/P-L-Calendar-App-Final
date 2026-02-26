@@ -29,11 +29,11 @@ async function loadInvestorDashboard(previewToken = '') {
   const container = document.getElementById('investor-metrics');
   if (container) {
     container.innerHTML = [
-      metric('Current NAV', formatMoney(summary.nav)),
-      metric('Net Deposits', formatMoney(summary.netDeposits)),
-      metric('Total P&L', formatMoney(summary.totalPnl)),
-      metric('Total Return %', `${Number(summary.totalReturnPct || 0).toFixed(2)}%`),
-      metric('MTD P&L', summary.mtdPnl == null ? '—' : formatMoney(summary.mtdPnl))
+      metric('Current value', formatMoney(summary.investor_net_value_today)),
+      metric('Net contributions', formatMoney(summary.net_contributions)),
+      metric('Profit share', formatMoney(summary.investor_profit_share)),
+      metric('Return %', `${Number(summary.investor_return_pct || 0).toFixed(2)}%`),
+      metric('NAV today', formatMoney(summary.nav_today))
     ].join('');
   }
   const equityEl = document.getElementById('investor-equity');
