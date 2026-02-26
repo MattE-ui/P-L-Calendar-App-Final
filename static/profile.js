@@ -1285,6 +1285,25 @@ function setInlineError(id, message) {
   if (el) el.textContent = message || '';
 }
 
+function normalizeIsoDateString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utcDate.getUTCFullYear() !== year
+    || utcDate.getUTCMonth() !== month - 1
+    || utcDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
 function setDisabled(ids, disabled) {
   ids.forEach((id) => {
     const el = document.getElementById(id);
@@ -1514,13 +1533,16 @@ function bindInvestorActions() {
     return '';
   };
   const validateValuationForm = () => {
-    const valuationDate = document.getElementById('investor-valuation-date')?.value || '';
+    const valuationDateInput = document.getElementById('investor-valuation-date');
+    const valuationDate = valuationDateInput?.value || '';
+    const normalizedDate = normalizeIsoDateString(valuationDate);
     const nav = Number(document.getElementById('investor-valuation-nav')?.value || 0);
-    const future = valuationDate > new Date().toISOString().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(valuationDate)) return 'Valuation date is required.';
+    const future = normalizedDate && normalizedDate > new Date().toISOString().slice(0, 10);
+    if (!normalizedDate) return 'Invalid date. Use YYYY-MM-DD.';
+    if (valuationDateInput) valuationDateInput.value = normalizedDate;
     if (future) return 'Valuation date cannot be in the future.';
     if (!Number.isFinite(nav) || nav <= 0) return 'NAV must be a number greater than 0.';
-    if (investorUiState.valuations.some((v) => v.valuationDate === valuationDate)) return 'A valuation already exists for this date.';
+    if (investorUiState.valuations.some((v) => v.valuationDate === normalizedDate)) return 'A valuation already exists for this date.';
     return '';
   };
   const validateSplitForm = () => {
@@ -1534,12 +1556,15 @@ function bindInvestorActions() {
     const investorId = document.getElementById('investor-cashflow-id')?.value || '';
     const type = document.getElementById('investor-cashflow-type')?.value || '';
     const amount = Number(document.getElementById('investor-cashflow-amount')?.value || 0);
-    const effectiveDate = document.getElementById('investor-cashflow-date')?.value || '';
+    const effectiveDateInput = document.getElementById('investor-cashflow-date');
+    const effectiveDate = effectiveDateInput?.value || '';
+    const normalizedDate = normalizeIsoDateString(effectiveDate);
     const reference = document.getElementById('investor-cashflow-reference')?.value || '';
     if (!investorId) return 'Select an investor for cashflow.';
     if (!['deposit', 'withdrawal', 'fee'].includes(type)) return 'Select a valid cashflow type.';
     if (!Number.isFinite(amount) || amount <= 0) return 'Amount must be a number greater than 0.';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) return 'Effective date is required.';
+    if (!normalizedDate) return 'Invalid date. Use YYYY-MM-DD.';
+    if (effectiveDateInput) effectiveDateInput.value = normalizedDate;
     if (reference.length > 80) return 'Reference must be 80 characters or fewer.';
     return '';
   };
@@ -1575,6 +1600,16 @@ function bindInvestorActions() {
   [...createIds, ...valuationIds, ...splitIds, ...cashflowIds, 'investor-cashflow-search'].forEach((id) => {
     document.getElementById(id)?.addEventListener('input', syncInvestorActionAvailability);
     document.getElementById(id)?.addEventListener('change', syncInvestorActionAvailability);
+  });
+
+  ['investor-valuation-date', 'investor-cashflow-date'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('blur', (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement)) return;
+      const normalized = normalizeIsoDateString(input.value);
+      if (normalized) input.value = normalized;
+      syncInvestorActionAvailability();
+    });
   });
 
   document.getElementById('investor-open-valuation-modal')?.addEventListener('click', () => document.getElementById('investor-valuation-modal')?.classList.remove('hidden'));
@@ -1645,8 +1680,10 @@ function bindInvestorActions() {
   document.getElementById('investor-valuation-btn')?.addEventListener('click', async () => {
     const validationError = validateValuationForm();
     if (validationError) return;
-    const valuationDate = document.getElementById('investor-valuation-date')?.value || '';
+    const valuationDateInput = document.getElementById('investor-valuation-date');
+    const valuationDate = normalizeIsoDateString(valuationDateInput?.value || '') || '';
     const nav = Number(document.getElementById('investor-valuation-nav')?.value || 0);
+    if (valuationDateInput && valuationDate) valuationDateInput.value = valuationDate;
     const btn = document.getElementById('investor-valuation-btn');
     if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Saving...'; }
     setDisabled(valuationIds, true);
@@ -1671,8 +1708,10 @@ function bindInvestorActions() {
     const investorId = document.getElementById('investor-cashflow-id')?.value || '';
     const type = document.getElementById('investor-cashflow-type')?.value || '';
     const amount = Number(document.getElementById('investor-cashflow-amount')?.value || 0);
-    const effectiveDate = document.getElementById('investor-cashflow-date')?.value || '';
+    const effectiveDateInput = document.getElementById('investor-cashflow-date');
+    const effectiveDate = normalizeIsoDateString(effectiveDateInput?.value || '') || '';
     const reference = document.getElementById('investor-cashflow-reference')?.value || '';
+    if (effectiveDateInput && effectiveDate) effectiveDateInput.value = effectiveDate;
     const btn = document.getElementById('investor-cashflow-btn');
     if (btn) { btn.dataset.loading = 'true'; btn.textContent = 'Saving...'; }
     setDisabled(cashflowIds, true);

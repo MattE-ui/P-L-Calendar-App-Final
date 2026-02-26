@@ -579,10 +579,20 @@ function hashInviteToken(token) {
 function normalizeIsoDateInput(input) {
   if (typeof input !== 'string') return null;
   const trimmed = input.trim();
-  if (!trimmed) return null;
-  const date = new Date(trimmed);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utcDate.getUTCFullYear() !== year
+    || utcDate.getUTCMonth() !== month - 1
+    || utcDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
 function parseInvestorShareBps(rawValue) {
@@ -5154,7 +5164,7 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
   const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
   if (!['deposit','withdrawal','fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
-  if (!effectiveDate) return res.status(400).json({ error: 'effective_date must be YYYY-MM-DD.' });
+  if (!effectiveDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
   const navRecord = findNavForDate(db, req.username, effectiveDate);
   if (!navRecord) return res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' });
   const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, navReferenceDate: navRecord.valuationDate, reference: reference || null, createdAt: new Date().toISOString() };
@@ -5175,7 +5185,7 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
   const valuationDate = normalizeIsoDateInput(req.body?.valuation_date);
   const nav = Number(req.body?.nav);
   const today = currentDateKey();
-  if (!valuationDate) return res.status(400).json({ error: 'valuation_date must be YYYY-MM-DD.' });
+  if (!valuationDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
   if (valuationDate > today) return res.status(400).json({ error: 'Valuation date cannot be in the future.' });
   if (!Number.isFinite(nav) || nav <= 0) return res.status(400).json({ error: 'NAV must be a number greater than 0.' });
   const db = loadDB();
