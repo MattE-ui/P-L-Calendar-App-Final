@@ -311,6 +311,39 @@ test('profit split validation enforces integer bps and forbidden ownership', asy
   assert.equal(data.error, 'Forbidden');
 });
 
+
+
+test('master valuation endpoint allows dates after latest stored date but blocks real future dates', async () => {
+  const today = new Date();
+  const toIso = (d) => d.toISOString().slice(0, 10);
+  const date1 = new Date(today.getTime() - (3 * 24 * 60 * 60 * 1000));
+  const date2 = new Date(today.getTime() - (2 * 24 * 60 * 60 * 1000));
+  const tomorrow = new Date(today.getTime() + (24 * 60 * 60 * 1000));
+
+  let res = await fetch(`${baseUrl}/api/master/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: toIso(date1), nav: 111 })
+  });
+  assert.equal(res.status, 201);
+
+  // date2 is after date1 and should be accepted when it is not after today.
+  res = await fetch(`${baseUrl}/api/master/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: toIso(date2), nav: 222 })
+  });
+  assert.equal(res.status, 201);
+
+  res = await fetch(`${baseUrl}/api/master/valuations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ valuation_date: toIso(tomorrow), nav: 333 })
+  });
+  const data = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(data.error, 'Valuation date cannot be in the future.');
+});
 test('master valuation endpoint enforces unique date and nav validation', async () => {
   let res = await fetch(`${baseUrl}/api/master/valuations`, {
     method: 'POST',
