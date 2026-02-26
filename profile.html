@@ -147,44 +147,86 @@
         <h2>Investors</h2>
         <p class="helper">Manage view-only investor accounts and preview their portal.</p>
       </header>
-      <div class="profile-field">
+      <div class="profile-field investor-create-grid">
         <label for="investor-display-name">New investor display name</label>
         <input id="investor-display-name" type="text" placeholder="Investor name">
         <input id="investor-email" type="email" placeholder="Investor login email (required)">
         <button id="investor-create-btn" class="primary" type="button">Create investor</button>
         <div id="investor-create-error" class="error"></div>
       </div>
-      <div class="profile-field">
-        <label for="investor-valuation-date">Record master NAV valuation</label>
-        <input id="investor-valuation-date" type="date">
-        <input id="investor-valuation-nav" type="number" step="0.01" min="0.01" placeholder="NAV">
-        <p class="helper">NAV = investor account value for that date (e.g., 1000.00)</p>
-        <button id="investor-valuation-btn" class="ghost" type="button">Record valuation</button>
-        <div id="investor-valuation-error" class="error"></div>
-      </div>
-      <div class="profile-field">
-        <label>Profit split (investor share bps)</label>
-        <select id="investor-split-id"></select>
-        <input id="investor-split-bps" type="number" min="0" max="10000" step="1" value="8000">
-        <button id="investor-split-btn" class="ghost" type="button">Save profit split</button>
-        <div id="investor-split-error" class="error"></div>
-      </div>
-      <div class="profile-field">
-        <label>Investor cashflow</label>
-        <select id="investor-cashflow-id"></select>
-        <select id="investor-cashflow-type"><option value="deposit">deposit</option><option value="withdrawal">withdrawal</option><option value="fee">fee</option></select>
-        <input id="investor-cashflow-amount" type="number" step="0.01" min="0.01" placeholder="Amount">
-        <input id="investor-cashflow-date" type="date">
-        <input id="investor-cashflow-reference" type="text" placeholder="Reference (optional)">
-        <button id="investor-cashflow-btn" class="ghost" type="button">Add cashflow</button>
-        <div id="investor-cashflow-error" class="error"></div>
-      </div>
-      <div id="investor-list"></div>
+      <section class="investor-summary-row" id="investor-summary"></section>
+      <section class="investor-layout-grid">
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Master NAV</h3></div>
+          <div class="investor-nav-stats">
+            <p>Latest NAV <strong id="investor-nav-latest">£0.00</strong></p>
+            <p>Last updated <strong id="investor-nav-last-date">—</strong></p>
+            <p>Total valuations <strong id="investor-nav-count">0</strong></p>
+          </div>
+          <button id="investor-open-valuation-modal" class="ghost" type="button">Record New NAV</button>
+          <div id="investor-valuation-error" class="error"></div>
+          <div class="investor-mini-list" id="investor-valuation-history"></div>
+        </div>
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Profit Split</h3></div>
+          <select id="investor-split-id"></select>
+          <div class="split-controls">
+            <input id="investor-split-slider" type="range" min="0" max="100" step="1" value="80">
+            <div class="inline-field">
+              <input id="investor-split-percent" type="number" min="0" max="100" step="1" value="80">
+              <span class="helper">%</span>
+            </div>
+          </div>
+          <p class="helper" id="investor-split-text">Investor receives 80% of profits · You receive 20%</p>
+          <button id="investor-split-btn" class="ghost" type="button">Save profit split</button>
+          <div id="investor-split-error" class="error"></div>
+        </div>
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Add Cashflow</h3></div>
+          <input id="investor-cashflow-search" type="text" placeholder="Search investor">
+          <select id="investor-cashflow-id"></select>
+          <select id="investor-cashflow-type"><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option><option value="fee">Fee</option></select>
+          <input id="investor-cashflow-amount" type="number" step="0.01" min="0.01" placeholder="Amount (£)">
+          <input id="investor-cashflow-date" type="date">
+          <input id="investor-cashflow-reference" type="text" placeholder="Reference (optional)">
+          <button id="investor-cashflow-btn" class="ghost" type="button">Add cashflow</button>
+          <div id="investor-cashflow-error" class="error"></div>
+          <div class="investor-mini-list" id="investor-cashflow-ledger"></div>
+        </div>
+      </section>
+      <div class="investor-table-wrap" id="investor-list"></div>
       <div id="investor-preview-error" class="error"></div>
       <div id="investor-status" class="helper"></div>
-      <div class="helper">Last action: <span id="investor-last-action">—</span></div>
       <div id="investor-error" class="error"></div>
     </section>
+
+    <div id="investor-valuation-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Record New NAV</h3>
+          <button id="investor-valuation-close" class="ghost" type="button">Close</button>
+        </div>
+        <div class="modal-field">
+          <label for="investor-valuation-date">Date</label>
+          <input id="investor-valuation-date" type="date">
+        </div>
+        <div class="modal-field">
+          <label for="investor-valuation-nav">NAV (£)</label>
+          <input id="investor-valuation-nav" type="number" step="0.01" min="0.01" placeholder="NAV">
+        </div>
+        <button id="investor-valuation-btn" class="primary" type="button">Save NAV</button>
+      </div>
+    </div>
+
+    <div id="investor-delete-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Delete cashflow</h3>
+          <button id="investor-delete-close" class="ghost" type="button">Close</button>
+        </div>
+        <p class="helper">Deleting cashflows is not yet available via API.</p>
+      </div>
+    </div>
 
     <section class="card profile-card automation-card" id="automation-card">
       <header class="profile-automation-header">
