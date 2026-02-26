@@ -39,7 +39,8 @@ test.beforeEach(async () => {
       { id: 'inv-foreign', masterUserId: 'other-master', displayName: 'Mallory', status: 'active', createdAt: now }
     ],
     investorLogins: [
-      { id: 'login-1', investorProfileId: 'inv-1', email: 'alice@example.com', passwordHash: investorHash, lastLoginAt: null, createdAt: now }
+      { id: 'login-1', investorProfileId: 'inv-1', email: 'alice@example.com', passwordHash: investorHash, lastLoginAt: null, createdAt: now },
+      { id: 'login-2', investorProfileId: 'inv-2', email: 'bob@example.com', passwordHash: '', lastLoginAt: null, createdAt: now }
     ],
     investorPermissions: [
       { investorProfileId: 'inv-1', canViewPositions: false, canViewTradeLog: false, canViewNotes: true, createdAt: now },
@@ -406,7 +407,7 @@ test('master invite + investor activate + login flow works end-to-end', async ()
   assert.equal(summaryRes.status, 200);
 });
 
-test('suspended investor login is blocked with generic error', async () => {
+test('suspended investor login returns suspended error', async () => {
   const now = new Date().toISOString();
   const investorHash = await bcrypt.hash('InvestorPass123!', 10);
   saveDB({
@@ -437,6 +438,70 @@ test('suspended investor login is blocked with generic error', async () => {
     body: JSON.stringify({ email: 'suspended@example.com', password: 'InvestorPass123!' })
   });
   const data = await res.json();
-  assert.equal(res.status, 401);
-  assert.equal(data.error, 'Invalid credentials.');
+  assert.equal(res.status, 403);
+  assert.equal(data.error, 'Investor account is suspended.');
+});
+
+
+test('master can generate invite, investor activates account, logs in, and last login is reflected', async () => {
+  const inviteRes = await fetch(`${baseUrl}/api/master/investors/inv-2/invite`, {
+    method: 'POST',
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  assert.equal(inviteRes.status, 200);
+  const inviteData = await inviteRes.json();
+  assert.match(inviteData.inviteUrl, /\/investor\/activate\?token=/);
+  const token = new URL(inviteData.inviteUrl).searchParams.get('token');
+  assert.ok(token);
+
+  const activateRes = await fetch(`${baseUrl}/api/investor/auth/activate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, password: 'NewInvestorPass123!' })
+  });
+  assert.equal(activateRes.status, 200);
+
+  const reuseRes = await fetch(`${baseUrl}/api/investor/auth/activate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token, password: 'AnotherPass123!' })
+  });
+  assert.equal(reuseRes.status, 400);
+
+  const loginRes = await fetch(`${baseUrl}/api/investor/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'bob@example.com', password: 'NewInvestorPass123!' })
+  });
+  assert.equal(loginRes.status, 200);
+  const investorCookie = loginRes.headers.get('set-cookie') || '';
+  assert.match(investorCookie, /investor_session=/);
+  assert.doesNotMatch(investorCookie, /auth_token=/);
+
+  const investorsRes = await fetch(`${baseUrl}/api/master/investors`, {
+    headers: { cookie: 'auth_token=mastertoken' }
+  });
+  assert.equal(investorsRes.status, 200);
+  const investorsData = await investorsRes.json();
+  const bob = investorsData.investors.find((item) => item.id === 'inv-2');
+  assert.ok(bob);
+  assert.equal(typeof bob.lastLoginAt, 'string');
+  assert.ok(Date.parse(bob.lastLoginAt) > 0);
+});
+
+test('suspended investor login is rejected', async () => {
+  await fetch(`${baseUrl}/api/master/investors/inv-1`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', cookie: 'auth_token=mastertoken' },
+    body: JSON.stringify({ status: 'suspended' })
+  });
+
+  const loginRes = await fetch(`${baseUrl}/api/investor/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'alice@example.com', password: 'InvestorPass123!' })
+  });
+  assert.equal(loginRes.status, 403);
+  const body = await loginRes.json();
+  assert.equal(body.error, 'Investor account is suspended.');
 });
