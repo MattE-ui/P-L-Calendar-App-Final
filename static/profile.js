@@ -403,9 +403,9 @@ function renderSecurityState() {
     investorToggle.checked = !!profileState.investorAccountsEnabled;
     investorToggle.disabled = profileState.isGuest;
   }
-  const investorSection = document.getElementById('investor-section');
-  if (investorSection) {
-    investorSection.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
+  const investorManagedContent = document.getElementById('investor-managed-content');
+  if (investorManagedContent) {
+    investorManagedContent.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   }
   const currentPasswordInput = document.getElementById('account-password-current');
   if (currentPasswordInput) {
@@ -1452,8 +1452,8 @@ function applyInvestorOptions() {
 }
 
 async function loadInvestors() {
-  const section = document.getElementById('investor-section');
-  if (section) section.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
+  const investorManagedContent = document.getElementById('investor-managed-content');
+  if (investorManagedContent) investorManagedContent.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   if (!(investorPortalEnabled() && profileState.investorAccountsEnabled)) return;
   const [data, perf, valuations] = await Promise.all([
     api('/api/master/investors'),
