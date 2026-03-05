@@ -66,6 +66,7 @@ const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WIND
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
 const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
+const DASHBOARD_DEBUG = ['1', 'true', 'yes', 'on'].includes(String(process.env.DEBUG_DASHBOARD || '').toLowerCase());
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -1224,7 +1225,10 @@ function ensureTrading212Config(user) {
       apiSecret: typeof account.apiSecret === 'string' ? account.apiSecret.trim() : '',
       mode: typeof account.mode === 'string' && ['live', 'practice'].includes(account.mode) ? account.mode : undefined,
       baseUrl: typeof account.baseUrl === 'string' ? account.baseUrl.trim() : '',
-      tradingAccountId: typeof account.tradingAccountId === 'string' ? account.tradingAccountId.trim() : ''
+      tradingAccountId: typeof account.tradingAccountId === 'string' ? account.tradingAccountId.trim() : '',
+      syncStatus: typeof account.syncStatus === 'string' ? account.syncStatus : undefined,
+      syncError: typeof account.syncError === 'string' ? account.syncError : undefined,
+      lastSyncAt: typeof account.lastSyncAt === 'string' ? account.lastSyncAt : undefined
     }))
     .filter(account => account.apiKey || account.apiSecret || account.label);
   if (normalizedAccounts.length !== accounts.length) {
@@ -4343,6 +4347,30 @@ async function fetchTrading212Snapshot(config) {
 const trading212Jobs = new Map();
 const ibkrJobs = new Map();
 
+function getAccountSyncState(account = {}) {
+  const status = account?.syncStatus === 'sync_error' ? 'sync_error' : 'ok';
+  return {
+    status,
+    error: status === 'sync_error' ? (account?.syncError || 'Sync failed') : null,
+    lastSyncAt: typeof account?.lastSyncAt === 'string' ? account.lastSyncAt : null
+  };
+}
+
+function setAccountSyncState(account, status, errorMessage = '') {
+  if (!account || typeof account !== 'object') return;
+  account.syncStatus = status === 'sync_error' ? 'sync_error' : 'ok';
+  account.syncError = account.syncStatus === 'sync_error'
+    ? (typeof errorMessage === 'string' && errorMessage.trim() ? errorMessage.trim() : 'Sync failed')
+    : '';
+  account.lastSyncAt = new Date().toISOString();
+}
+
+function logDashboardDebug(message) {
+  if (!DASHBOARD_DEBUG) return;
+  console.info(`[Dashboard] ${message}`);
+}
+
+
 async function syncTrading212ForUser(username, runDate = new Date()) {
   const db = loadDB();
   const user = db.users[username];
@@ -4378,14 +4406,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         mode: account.mode || cfg.mode,
         baseUrl: account.baseUrl || cfg.baseUrl
       };
-      const snapshot = await fetchTrading212Snapshot(accountConfig);
-      const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
-      return {
-        accountId,
-        accountConfig,
-        snapshot,
-        ordersPayload
-      };
+      try {
+        const snapshot = await fetchTrading212Snapshot(accountConfig);
+        const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+        setAccountSyncState(account, 'ok');
+        return {
+          accountId,
+          accountConfig,
+          snapshot,
+          ordersPayload
+        };
+      } catch (error) {
+        setAccountSyncState(account, 'sync_error', error?.message || 'Unable to sync account');
+        throw error;
+      }
     }));
     const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
     const rejected = accountResults.filter(result => result.status === 'rejected').map(result => result.reason);
@@ -7010,7 +7044,10 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
           id,
           label: typeof account.label === 'string' ? account.label.trim() : (previous?.label || ''),
           apiKey: previous?.apiKey || '',
-          apiSecret: previous?.apiSecret || ''
+          apiSecret: previous?.apiSecret || '',
+          syncStatus: previous?.syncStatus || 'ok',
+          syncError: previous?.syncError || '',
+          lastSyncAt: previous?.lastSyncAt || null
         };
         if (account.apiKey !== undefined) {
           next.apiKey = typeof account.apiKey === 'string' ? account.apiKey.trim() : '';
@@ -7106,7 +7143,10 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
         label: account.label || '',
         hasApiKey: !!account.apiKey,
         hasApiSecret: !!account.apiSecret,
-        mode: account.mode || responseCfg.mode || 'live'
+        mode: account.mode || responseCfg.mode || 'live',
+        syncStatus: getAccountSyncState(account).status,
+        syncError: getAccountSyncState(account).error,
+        accountLastSyncAt: getAccountSyncState(account).lastSyncAt
       }))
       : [],
     baseUrl: responseCfg.baseUrl || '',
@@ -8526,11 +8566,34 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
-  const tradingCfg = user.trading212;
-  const tradingAccounts = getTrading212Accounts(tradingCfg);
-  if (tradingCfg?.enabled && tradingAccounts.length) {
-    try {
-      let totalUpdates = 0;
+  const defaultPayload = {
+    trades: [],
+    activeTrades: [],
+    metrics: {
+      liveOpenPnl: 0,
+      openLossPotential: 0,
+      liveOpenPnlMode: 'stale',
+      liveOpenPnlCurrency: 'GBP',
+      canCombineTotals: true,
+      accountSummaries: []
+    },
+    liveOpenPnl: 0,
+    openLossPotential: 0,
+    liveOpenPnlMode: 'stale',
+    liveOpenPnlCurrency: 'GBP',
+    canCombineTotals: true,
+    accountSummaries: []
+  };
+  try {
+    const tradingCfg = user.trading212;
+    const tradingAccounts = getTrading212Accounts(tradingCfg);
+    logDashboardDebug(`request user=${req.username} accounts=${tradingAccounts.length}`);
+    const rates = await fetchRates().catch((error) => {
+      console.warn('Failed to load FX rates for active trades endpoint', error);
+      return {};
+    });
+    let hasMutations = false;
+    if (tradingCfg?.enabled && tradingAccounts.length) {
       for (const account of tradingAccounts) {
         const accountId = account.id || '';
         const accountConfig = {
@@ -8540,69 +8603,134 @@ app.get('/api/trades/active', auth, async (req, res) => {
           mode: account.mode || tradingCfg.mode,
           baseUrl: account.baseUrl || tradingCfg.baseUrl
         };
-        const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
-        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
-        totalUpdates += stopUpdates;
+        let positionsCount = 0;
+        let transactionsCount = 0;
+        let ordersStatus = 'skipped';
+        try {
+          const snapshot = await fetchTrading212Snapshot(accountConfig);
+          const snapshotPositions = Array.isArray(snapshot?.positions)
+            ? snapshot.positions
+            : Array.isArray(snapshot?.positionsRaw?.items)
+              ? snapshot.positionsRaw.items
+              : Array.isArray(snapshot?.positionsRaw)
+                ? snapshot.positionsRaw
+                : [];
+          const snapshotTransactions = Array.isArray(snapshot?.transactions)
+            ? snapshot.transactions
+            : Array.isArray(snapshot?.transactionsRaw?.items)
+              ? snapshot.transactionsRaw.items
+              : Array.isArray(snapshot?.transactionsRaw)
+                ? snapshot.transactionsRaw
+                : [];
+          positionsCount = snapshotPositions.length;
+          transactionsCount = snapshotTransactions.length;
+        } catch (snapshotError) {
+          if (snapshotError instanceof Trading212AuthError) {
+            setAccountSyncState(account, 'sync_error', snapshotError.message || 'Trading 212 auth error');
+            hasMutations = true;
+          }
+          logDashboardDebug(`account=${accountId || 'unknown'} snapshot error=${snapshotError?.message || 'unknown'}`);
+        }
+        try {
+          const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
+          const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
+          if (stopUpdates > 0) {
+            hasMutations = true;
+          }
+          ordersStatus = `ok:${ordersPayload?.filteredCount ?? 0}`;
+          setAccountSyncState(account, 'ok');
+          hasMutations = true;
+        } catch (ordersError) {
+          ordersStatus = `error:${ordersError?.status || 'unknown'}`;
+          if (ordersError instanceof Trading212AuthError || Number(ordersError?.status) === 403 || Number(ordersError?.status) === 401) {
+            setAccountSyncState(account, 'sync_error', ordersError.message || 'Trading 212 orders auth error');
+            hasMutations = true;
+          }
+          console.warn(`Trading 212 stop refresh failed for account ${accountId || 'unknown'} during active trades poll`, ordersError);
+        }
+        logDashboardDebug(`account=${accountId || 'unknown'} positions=${positionsCount} transactions=${transactionsCount} orders=${ordersStatus}`);
       }
-      if (totalUpdates > 0) {
-        saveDB(db);
-        console.info(`[T212] refreshed ${totalUpdates} trade stop(s) during active trades poll`);
-      }
-    } catch (e) {
-      console.warn('Trading 212 stop refresh failed during active trades poll', e);
     }
-  }
-  const ibkrCfg = user.ibkr;
-  if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
-    const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
-    if (snapshot) {
-      const derived = snapshot.derivedStopByTicker || computeIbkrDerivedStops(snapshot.positions || [], snapshot.orders || []);
-      const { updated: stopUpdates } = applyIbkrDerivedStopsToLivePositions(user, derived);
-      if (stopUpdates > 0) {
-        saveDB(db);
-        console.info(`[IBKR] refreshed ${stopUpdates} live position stop(s) during active trades poll`);
+    if (hasMutations) {
+      saveDB(db);
+    }
+
+    const ibkrCfg = user.ibkr;
+    if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
+      const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
+      if (snapshot) {
+        const derived = snapshot.derivedStopByTicker || computeIbkrDerivedStops(snapshot.positions || [], snapshot.orders || []);
+        const { updated: stopUpdates } = applyIbkrDerivedStopsToLivePositions(user, derived);
+        if (stopUpdates > 0) {
+          saveDB(db);
+          console.info(`[IBKR] refreshed ${stopUpdates} live position stop(s) during active trades poll`);
+        }
       }
     }
-  }
-  const rates = await fetchRates();
-  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
-  const accountFilter = typeof req.query?.tradingAccountId === 'string' ? req.query.tradingAccountId.trim() : 'all';
-  const filteredTrades = accountFilter && accountFilter !== 'all'
-    ? trades.filter(trade => trade.tradingAccountId === accountFilter)
-    : trades;
-  const mappedTrades = filteredTrades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
-  const accountSummaries = {};
-  for (const t of mappedTrades) {
-    const account = findTradingAccount(user, t.tradingAccountId) || getDefaultTradingAccount(user);
-    const key = account?.id || 'unknown';
-    if (!accountSummaries[key]) {
-      accountSummaries[key] = {
-        tradingAccountId: key,
-        accountName: account?.name || 'Unknown',
-        broker: account?.broker || 'MANUAL',
-        baseCurrency: account?.baseCurrency || 'GBP',
-        realized: 0,
-        unrealized: 0,
-        openRisk: 0,
-        tradeCount: 0
+    const activeTradeResult = await buildActiveTrades(user, rates).catch((error) => {
+      console.error('Failed to build active trades payload', error);
+      return {
+        trades: [],
+        liveOpenPnlGBP: 0,
+        openLossPotentialGBP: 0,
+        liveOpenPnlMode: 'stale',
+        liveOpenPnlCurrency: 'GBP'
       };
+    });
+    const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = activeTradeResult;
+    const accountFilter = typeof req.query?.tradingAccountId === 'string' ? req.query.tradingAccountId.trim() : 'all';
+    const safeTrades = Array.isArray(trades) ? trades : [];
+    const filteredTrades = accountFilter && accountFilter !== 'all'
+      ? safeTrades.filter(trade => trade.tradingAccountId === accountFilter)
+      : safeTrades;
+    const mappedTrades = filteredTrades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+    const accountSummaries = {};
+    for (const t of mappedTrades) {
+      const account = findTradingAccount(user, t.tradingAccountId) || getDefaultTradingAccount(user);
+      const key = account?.id || 'unknown';
+      if (!accountSummaries[key]) {
+        accountSummaries[key] = {
+          tradingAccountId: key,
+          accountName: account?.name || 'Unknown',
+          broker: account?.broker || 'MANUAL',
+          baseCurrency: account?.baseCurrency || 'GBP',
+          realized: 0,
+          unrealized: 0,
+          openRisk: 0,
+          tradeCount: 0
+        };
+      }
+      accountSummaries[key].tradeCount += 1;
+      accountSummaries[key].unrealized += Number(t.unrealizedGBP) || 0;
+      accountSummaries[key].openRisk += Number(t.guaranteedPnlGBP) || 0;
     }
-    accountSummaries[key].tradeCount += 1;
-    accountSummaries[key].unrealized += Number(t.unrealizedGBP) || 0;
-    accountSummaries[key].openRisk += Number(t.guaranteedPnlGBP) || 0;
+    const summaryList = Object.values(accountSummaries);
+    const currencies = new Set(summaryList.map(s => s.baseCurrency));
+    const canCombineTotals = currencies.size <= 1;
+    const payload = {
+      trades: mappedTrades,
+      activeTrades: mappedTrades,
+      metrics: {
+        liveOpenPnl: canCombineTotals ? (Number(liveOpenPnlGBP) || 0) : 0,
+        openLossPotential: canCombineTotals ? (Number(openLossPotentialGBP) || 0) : 0,
+        liveOpenPnlMode: liveOpenPnlMode || 'stale',
+        liveOpenPnlCurrency: canCombineTotals ? (liveOpenPnlCurrency || 'GBP') : null,
+        canCombineTotals,
+        accountSummaries: summaryList
+      },
+      liveOpenPnl: canCombineTotals ? (Number(liveOpenPnlGBP) || 0) : 0,
+      openLossPotential: canCombineTotals ? (Number(openLossPotentialGBP) || 0) : 0,
+      liveOpenPnlMode: liveOpenPnlMode || 'stale',
+      liveOpenPnlCurrency: canCombineTotals ? (liveOpenPnlCurrency || 'GBP') : null,
+      canCombineTotals,
+      accountSummaries: summaryList
+    };
+    logDashboardDebug(`final activeTrades=${mappedTrades.length}`);
+    return res.json(payload);
+  } catch (error) {
+    console.error('Active trades endpoint failed; returning stable fallback payload.', error);
+    return res.json(defaultPayload);
   }
-  const summaryList = Object.values(accountSummaries);
-  const currencies = new Set(summaryList.map(s => s.baseCurrency));
-  const canCombineTotals = currencies.size <= 1;
-  res.json({
-    trades: mappedTrades,
-    liveOpenPnl: canCombineTotals ? liveOpenPnlGBP : null,
-    openLossPotential: canCombineTotals ? openLossPotentialGBP : null,
-    liveOpenPnlMode,
-    liveOpenPnlCurrency: canCombineTotals ? liveOpenPnlCurrency : null,
-    canCombineTotals,
-    accountSummaries: summaryList
-  });
 });
 
 app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
