@@ -1399,6 +1399,26 @@ select {
 #active-trades-card #active-trade-empty {
   margin: 12px 0 0;
 }
+#active-trades-card .active-trade-section {
+  margin-top: 8px;
+}
+#active-trades-card .active-trade-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#active-trades-card .active-trade-section .tool-overline {
+  margin-bottom: 6px;
+}
+#active-trades-card .active-trade-section .tool-note {
+  margin: 6px 0 10px;
+}
+#active-trades-card .trade-pill-broker .trade-row-grid {
+  padding: 0 14px 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
 #active-trades-card .active-trades-footer {
   margin-top: auto;
   flex: 0 0 auto;
