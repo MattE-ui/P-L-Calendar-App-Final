@@ -13,8 +13,8 @@ const state = {
   instrumentType: 'EQUITY',
   defaultRiskCurrency: 'GBP',
   rates: { GBP: 1 },
-  liveOpenPnlGBP: 0,
-  openLossPotentialGBP: 0,
+  liveOpenPnlGBP: null,
+  openLossPotentialGBP: null,
   livePortfolioGBP: 0,
   activeTrades: [],
   expandedActiveTradeId: null,
@@ -23,6 +23,7 @@ const state = {
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
   canCombineTotals: true,
+  mixedCurrencies: false,
   accountSummaries: [],
   isGuest: false,
   isAdmin: false,
@@ -883,10 +884,12 @@ function renderActiveTrades() {
   const openLossCard = $('#open-loss-potential-card');
   if (!list) return;
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
-  const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
-  const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
-  if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (state.canCombineTotals ? formatLiveOpenPnl(livePnl) : 'Grouped');
-  if (openLossEl) openLossEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (state.canCombineTotals ? formatLiveOpenPnl(openLossPotential) : 'Grouped');
+  const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : null;
+  const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : null;
+  const livePnlLabel = state.mixedCurrencies ? '— Mixed currencies' : (livePnl === null ? '—' : formatLiveOpenPnl(livePnl));
+  const openLossLabel = openLossPotential === null ? '—' : formatLiveOpenPnl(openLossPotential);
+  if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : livePnlLabel;
+  if (openLossEl) openLossEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : openLossLabel;
   if (pnlCard && !state.safeScreenshot) {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
@@ -894,7 +897,7 @@ function renderActiveTrades() {
     pnlCard.classList.remove('positive', 'negative');
   }
   if (openLossCard && !state.safeScreenshot) {
-    openLossCard.classList.toggle('negative', openLossPotential < 0);
+    openLossCard.classList.toggle('negative', Number.isFinite(openLossPotential) && openLossPotential < 0);
   } else if (openLossCard) {
     openLossCard.classList.remove('negative');
   }
@@ -2739,6 +2742,29 @@ async function saveUiPrefs() {
   }
 }
 
+
+function applyActiveTradesMetrics(activeRes) {
+  const metrics = activeRes?.metrics && typeof activeRes.metrics === 'object' ? activeRes.metrics : {};
+  const liveOpenPnl = Number.isFinite(activeRes?.liveOpenPnl)
+    ? activeRes.liveOpenPnl
+    : (Number.isFinite(metrics?.liveOpenPnl) ? metrics.liveOpenPnl : null);
+  const openLossPotential = Number.isFinite(activeRes?.openLossPotential)
+    ? activeRes.openLossPotential
+    : (Number.isFinite(metrics?.openLossPotential) ? metrics.openLossPotential : null);
+  state.liveOpenPnlGBP = liveOpenPnl;
+  if (liveOpenPnl !== null) {
+    state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+  }
+  state.openLossPotentialGBP = openLossPotential;
+  state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || metrics?.liveOpenPnlMode || 'computed';
+  state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || metrics?.liveOpenPnlCurrency || 'GBP';
+  state.canCombineTotals = (activeRes?.canCombineTotals ?? metrics?.canCombineTotals) !== false;
+  state.mixedCurrencies = activeRes?.mixedCurrencies === true || metrics?.mixedCurrencies === true;
+  state.accountSummaries = Array.isArray(activeRes?.accountSummaries)
+    ? activeRes.accountSummaries
+    : (Array.isArray(metrics?.accountSummaries) ? metrics.accountSummaries : []);
+}
+
 async function loadData() {
   try {
     state.data = await api('/api/pl');
@@ -2775,21 +2801,11 @@ async function loadData() {
   try {
     const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
-    if (Number.isFinite(activeRes?.liveOpenPnl)) {
-      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
-    }
-    state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
-      ? activeRes.openLossPotential
-      : 0;
-    state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
-    state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
-    state.canCombineTotals = activeRes?.canCombineTotals !== false;
-    state.accountSummaries = Array.isArray(activeRes?.accountSummaries) ? activeRes.accountSummaries : [];
+    applyActiveTradesMetrics(activeRes);
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
-    state.openLossPotentialGBP = 0;
+    state.openLossPotentialGBP = null;
   }
 }
 
@@ -2797,23 +2813,13 @@ async function refreshActiveTrades() {
   try {
     const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
-    if (Number.isFinite(activeRes?.liveOpenPnl)) {
-      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
-    }
-    state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
-      ? activeRes.openLossPotential
-      : 0;
-    state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
-    state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
-    state.canCombineTotals = activeRes?.canCombineTotals !== false;
-    state.accountSummaries = Array.isArray(activeRes?.accountSummaries) ? activeRes.accountSummaries : [];
+    applyActiveTradesMetrics(activeRes);
     renderActiveTrades();
     updatePortfolioPill();
     renderMetrics();
   } catch (e) {
     console.warn('Failed to refresh active trades', e);
-    state.openLossPotentialGBP = 0;
+    state.openLossPotentialGBP = null;
   }
 }
 
