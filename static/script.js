@@ -17,7 +17,6 @@ const state = {
   openLossPotentialGBP: null,
   livePortfolioGBP: 0,
   activeTrades: [],
-  activeBrokerPositions: [],
   expandedActiveTradeId: null,
   activeTradeSort: 'newest',
   openPriceInfoByTradeId: {},
@@ -878,10 +877,6 @@ async function updateAutoStop(symbol, stopInput, markAuto) {
 function renderActiveTrades() {
   const list = $('#active-trade-list');
   const empty = $('#active-trade-empty');
-  const brokerList = $('#active-trade-broker-list');
-  const brokerEmpty = $('#active-trade-broker-empty');
-  const loggedEmpty = $('#active-trade-logged-empty');
-  const debugCounts = $('#active-trade-debug-counts');
   const showAll = $('#active-trade-show-all');
   const pnlEl = $('#live-pnl-display');
   const pnlCard = pnlEl?.closest('.tool-portfolio');
@@ -889,7 +884,6 @@ function renderActiveTrades() {
   const openLossCard = $('#open-loss-potential-card');
   if (!list) return;
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
-  const positions = Array.isArray(state.activeBrokerPositions) ? state.activeBrokerPositions : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : null;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : null;
   const livePnlLabel = state.mixedCurrencies ? '— Mixed currencies' : (livePnl === null ? '—' : formatLiveOpenPnl(livePnl));
@@ -933,77 +927,12 @@ function renderActiveTrades() {
   });
 
   list.innerHTML = '';
-  if (brokerList) brokerList.innerHTML = '';
-
-  if (debugCounts) {
-    const isDevHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    const isDevMode = isDevHost || window.location.port === '3000' || window.location.port === '5173';
-    debugCounts.classList.toggle('is-hidden', !isDevMode);
-    if (isDevMode) debugCounts.textContent = `Positions: ${positions.length}, Trades: ${trades.length}`;
-  }
-
-  if (positions.length && brokerList) {
-    positions.forEach(position => {
-      const card = document.createElement('div');
-      card.className = 'trade-pill trade-pill-broker';
-
-      const topRow = document.createElement('div');
-      topRow.className = 'trade-compact-row';
-      const left = document.createElement('div');
-      left.className = 'trade-compact-left';
-      const tickerRow = document.createElement('div');
-      tickerRow.className = 'trade-ticker-row';
-      const title = document.createElement('strong');
-      title.className = 'trade-compact-title';
-      title.textContent = `${position.ticker || '—'} · ${formatShares(Number(position.qty))}`;
-      tickerRow.appendChild(title);
-      const meta = document.createElement('span');
-      meta.className = 'trade-compact-direction mixed';
-      meta.textContent = position.accountName || 'Trading212';
-      left.append(tickerRow, meta);
-
-      const right = document.createElement('div');
-      right.className = 'trade-compact-right';
-      const chevron = document.createElement('span');
-      chevron.className = 'trade-compact-chevron';
-      chevron.textContent = '›';
-      right.appendChild(chevron);
-      topRow.append(left, right);
-
-      const metricsRow = document.createElement('div');
-      metricsRow.className = 'trade-row-grid';
-      const avgEl = document.createElement('span');
-      avgEl.className = 'trade-middle-cell';
-      avgEl.textContent = `Avg ${formatPrice(Number(position.avgPrice), position.currency || 'GBP', 2)}`;
-      const currentEl = document.createElement('span');
-      currentEl.className = 'trade-middle-cell';
-      currentEl.textContent = `Now ${formatPrice(Number(position.currentPrice), position.currency || 'GBP', 2)}`;
-      const pnlElLocal = document.createElement('span');
-      const pnlVal = Number(position.unrealizedPnl);
-      pnlElLocal.className = 'trade-middle-cell trade-compact-pnl';
-      if (pnlVal > 0) pnlElLocal.classList.add('positive');
-      if (pnlVal < 0) pnlElLocal.classList.add('negative');
-      const pctVal = Number(position.unrealizedPnlPct);
-      const pctSuffix = Number.isFinite(pctVal) ? ` (${pctVal > 0 ? '+' : ''}${pctVal.toFixed(2)}%)` : '';
-      pnlElLocal.textContent = `${formatSignedRaw(pnlVal, position.currency || 'GBP')}${pctSuffix}`;
-      metricsRow.append(avgEl, currentEl, pnlElLocal);
-
-      card.append(topRow, metricsRow);
-      brokerList.appendChild(card);
-    });
-    brokerEmpty?.classList.add('is-hidden');
-  } else {
-    brokerEmpty?.classList.remove('is-hidden');
-  }
-
   if (!trades.length) {
     state.expandedActiveTradeId = null;
-    loggedEmpty?.classList.remove('is-hidden');
+    if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.disabled = true;
-    if (empty) empty.classList.toggle('is-hidden', positions.length > 0);
     return;
   }
-  loggedEmpty?.classList.add('is-hidden');
   if (empty) empty.classList.add('is-hidden');
   if (showAll) showAll.disabled = false;
 
@@ -2871,17 +2800,13 @@ async function loadData() {
   computeLifetimeMetrics();
   try {
     const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
-    state.activeTrades = Array.isArray(activeRes?.activeTrades?.trades)
-      ? activeRes.activeTrades.trades
+    state.activeTrades = Array.isArray(activeRes?.activeTrades)
+      ? activeRes.activeTrades
       : (Array.isArray(activeRes?.trades) ? activeRes.trades : []);
-    state.activeBrokerPositions = Array.isArray(activeRes?.activeTrades?.positions)
-      ? activeRes.activeTrades.positions
-      : [];
     applyActiveTradesMetrics(activeRes);
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
-    state.activeBrokerPositions = [];
     state.openLossPotentialGBP = null;
   }
 }
@@ -2889,12 +2814,9 @@ async function loadData() {
 async function refreshActiveTrades() {
   try {
     const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
-    state.activeTrades = Array.isArray(activeRes?.activeTrades?.trades)
-      ? activeRes.activeTrades.trades
+    state.activeTrades = Array.isArray(activeRes?.activeTrades)
+      ? activeRes.activeTrades
       : (Array.isArray(activeRes?.trades) ? activeRes.trades : []);
-    state.activeBrokerPositions = Array.isArray(activeRes?.activeTrades?.positions)
-      ? activeRes.activeTrades.positions
-      : [];
     applyActiveTradesMetrics(activeRes);
     renderActiveTrades();
     updatePortfolioPill();

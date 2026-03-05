@@ -7992,11 +7992,16 @@ function mapTrading212PositionForUi(position, account = {}) {
     ?? position.size
     ?? position?.position?.quantity
   );
+  const qtyAbs = Math.abs(qty || 0);
   const avgPrice = parseTradingNumber(
-    position.averagePrice
+    position.averagePricePaid
+    ?? position.averagePrice
     ?? position.avgPrice
     ?? position.averageOpenPrice
     ?? position.openPrice
+    ?? (qtyAbs > 0
+      ? ((parseTradingNumber(position.walletImpact?.totalCost) ?? parseTradingNumber(position.walletImpact?.investedAmount) ?? parseTradingNumber(position.walletImpact?.costBasis)) / qtyAbs)
+      : null)
     ?? position.price
   );
   const currentPrice = parseTradingNumber(
@@ -8702,12 +8707,10 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+
   const defaultPayload = {
     trades: [],
-    activeTrades: {
-      positions: [],
-      trades: []
-    },
+    activeTrades: [],
     metrics: {
       liveOpenPnl: null,
       openLossPotential: null,
@@ -8725,14 +8728,15 @@ app.get('/api/trades/active', auth, async (req, res) => {
     canCombineTotals: true,
     accountSummaries: []
   };
+
   try {
-    const tradingCfg = user.trading212;
-    const tradingAccounts = getTrading212Accounts(tradingCfg);
-    logDashboardDebug(`request user=${req.username} accounts=${tradingAccounts.length}`);
     const rates = await fetchRates().catch((error) => {
       console.warn('Failed to load FX rates for active trades endpoint', error);
       return {};
     });
+
+    const tradingCfg = user.trading212;
+    const tradingAccounts = getTrading212Accounts(tradingCfg);
     let hasMutations = false;
     if (tradingCfg?.enabled && tradingAccounts.length) {
       for (const account of tradingAccounts) {
@@ -8744,57 +8748,21 @@ app.get('/api/trades/active', auth, async (req, res) => {
           mode: account.mode || tradingCfg.mode,
           baseUrl: account.baseUrl || tradingCfg.baseUrl
         };
-        let positionsCount = 0;
-        let transactionsCount = 0;
-        let ordersStatus = 'skipped';
-        try {
-          const snapshot = await fetchTrading212Snapshot(accountConfig);
-          const snapshotPositions = Array.isArray(snapshot?.positions)
-            ? snapshot.positions
-            : Array.isArray(snapshot?.positionsRaw?.items)
-              ? snapshot.positionsRaw.items
-              : Array.isArray(snapshot?.positionsRaw)
-                ? snapshot.positionsRaw
-                : [];
-          const snapshotTransactions = Array.isArray(snapshot?.transactions)
-            ? snapshot.transactions
-            : Array.isArray(snapshot?.transactionsRaw?.items)
-              ? snapshot.transactionsRaw.items
-              : Array.isArray(snapshot?.transactionsRaw)
-                ? snapshot.transactionsRaw
-                : [];
-          positionsCount = snapshotPositions.length;
-          transactionsCount = snapshotTransactions.length;
-        } catch (snapshotError) {
-          if (snapshotError instanceof Trading212AuthError) {
-            setAccountSyncState(account, 'sync_error', snapshotError.message || 'Trading 212 auth error');
-            hasMutations = true;
-          }
-          logDashboardDebug(`account=${accountId || 'unknown'} snapshot error=${snapshotError?.message || 'unknown'}`);
-        }
         try {
           const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
           const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
-          if (stopUpdates > 0) {
-            hasMutations = true;
-          }
-          ordersStatus = `ok:${ordersPayload?.filteredCount ?? 0}`;
+          if (stopUpdates > 0) hasMutations = true;
           setAccountSyncState(account, 'ok');
-          hasMutations = true;
         } catch (ordersError) {
-          ordersStatus = `error:${ordersError?.status || 'unknown'}`;
           if (ordersError instanceof Trading212AuthError || Number(ordersError?.status) === 403 || Number(ordersError?.status) === 401) {
             setAccountSyncState(account, 'sync_error', ordersError.message || 'Trading 212 orders auth error');
             hasMutations = true;
           }
           console.warn(`Trading 212 stop refresh failed for account ${accountId || 'unknown'} during active trades poll`, ordersError);
         }
-        logDashboardDebug(`account=${accountId || 'unknown'} positions=${positionsCount} transactions=${transactionsCount} orders=${ordersStatus}`);
       }
     }
-    if (hasMutations) {
-      saveDB(db);
-    }
+    if (hasMutations) saveDB(db);
 
     const ibkrCfg = user.ibkr;
     if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
@@ -8808,30 +8776,102 @@ app.get('/api/trades/active', auth, async (req, res) => {
         }
       }
     }
+
+    const accountFilter = typeof req.query?.tradingAccountId === 'string' ? req.query.tradingAccountId.trim() : 'all';
+    const selectedAccountId = accountFilter && accountFilter !== 'all' ? accountFilter : 'all';
+
     const activeTradeResult = await buildActiveTrades(user, rates).catch((error) => {
       console.error('Failed to build active trades payload', error);
       return {
         trades: [],
-        activeTrades: {
-          positions: [],
-          trades: []
-        },
         liveOpenPnlGBP: 0,
         openLossPotentialGBP: 0,
         liveOpenPnlMode: 'stale',
         liveOpenPnlCurrency: 'GBP'
       };
     });
-    const accountFilter = typeof req.query?.tradingAccountId === 'string' ? req.query.tradingAccountId.trim() : 'all';
-    const selectedAccountId = accountFilter && accountFilter !== 'all' ? accountFilter : 'all';
-    const { trades, liveOpenPnlGBP, liveOpenPnlMode, liveOpenPnlCurrency } = activeTradeResult;
-    const safeTrades = Array.isArray(trades) ? trades : [];
-    const filteredTrades = accountFilter && accountFilter !== 'all'
-      ? safeTrades.filter(trade => trade.tradingAccountId === accountFilter)
-      : safeTrades;
-    const mappedTrades = filteredTrades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+
+    const baseTrades = Array.isArray(activeTradeResult?.trades) ? activeTradeResult.trades : [];
+    const filteredBaseTrades = accountFilter && accountFilter !== 'all'
+      ? baseTrades.filter(trade => trade.tradingAccountId === accountFilter)
+      : baseTrades;
+    const mappedBaseTrades = filteredBaseTrades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+
+    const tradingRaw = user?.trading212?.lastRaw;
+    const allRawAccounts = Array.isArray(tradingRaw?.accounts) ? tradingRaw.accounts : [];
+    const selectedRawAccounts = selectedAccountId === 'all'
+      ? allRawAccounts
+      : allRawAccounts.filter(account => String(account?.accountId || '') === selectedAccountId);
+
+    const existingProviderKeys = new Set(
+      mappedBaseTrades
+        .filter(trade => trade?.source === 'trading212' || trade?.trading212Id)
+        .map(trade => `${String(trade.tradingAccountId || '')}:${String(trade.trading212Id || trade.trading212Ticker || trade.symbol || '').toUpperCase()}`)
+    );
+
+    const mappedProviderTrades = selectedRawAccounts.flatMap(account => {
+      const rawPositions = Array.isArray(account?.positions?.items)
+        ? account.positions.items
+        : Array.isArray(account?.positions)
+          ? account.positions
+          : Array.isArray(account?.portfolio?.positions)
+            ? account.portfolio.positions
+            : [];
+      return rawPositions
+        .map(position => mapTrading212PositionForUi(position, account))
+        .filter(Boolean)
+        .map(position => {
+          const sourceKey = `${String(position.accountId || '')}:${String(position.id || position.ticker || '').toUpperCase()}`;
+          if (existingProviderKeys.has(sourceKey)) return null;
+          existingProviderKeys.add(sourceKey);
+
+          const quantity = Number(position.qty) || 0;
+          const avg = Number(position.avgPrice);
+          const current = Number(position.currentPrice);
+          const currency = position.currency || 'GBP';
+          const positionValue = Number.isFinite(avg) ? Math.abs(quantity) * avg : null;
+          const positionGBP = Number.isFinite(positionValue) ? convertToGBP(positionValue, currency, rates) : null;
+          const pnlRaw = Number(position.unrealizedPnl);
+          const unrealizedGBP = Number.isFinite(pnlRaw) ? convertToGBP(pnlRaw, currency, rates) : null;
+          return {
+            id: `t212-position-${position.id}`,
+            symbol: position.ticker,
+            displaySymbol: position.ticker,
+            trading212Ticker: position.ticker,
+            trading212Id: position.id,
+            tradingAccountId: position.accountId || '',
+            tradingAccount: {
+              id: position.accountId || '',
+              name: position.accountName || 'Trading Account',
+              broker: 'TRADING212',
+              baseCurrency: currency
+            },
+            entry: Number.isFinite(avg) ? avg : undefined,
+            livePrice: Number.isFinite(current) ? current : undefined,
+            currency,
+            sizeUnits: Math.abs(quantity),
+            direction: quantity < 0 ? 'short' : 'long',
+            unrealizedGBP: Number.isFinite(unrealizedGBP) ? unrealizedGBP : 0,
+            positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
+            riskPct: 0,
+            fees: 0,
+            slippage: 0,
+            source: 'trading212',
+            sourceBadge: 'T212',
+            createdAt: new Date().toISOString(),
+            date: new Date().toISOString().slice(0, 10)
+          };
+        })
+        .filter(Boolean);
+    });
+
+    const mergedTrades = [...mappedBaseTrades, ...mappedProviderTrades].map(trade => ({
+      ...trade,
+      sourceBadge: trade.sourceBadge || (trade.source === 'trading212' ? 'T212' : 'Manual')
+    }));
+
     const accountSummaries = {};
-    for (const t of mappedTrades) {
+    for (const t of mergedTrades) {
       const account = findTradingAccount(user, t.tradingAccountId) || getDefaultTradingAccount(user);
       const key = account?.id || 'unknown';
       if (!accountSummaries[key]) {
@@ -8854,110 +8894,37 @@ app.get('/api/trades/active', auth, async (req, res) => {
     const currencies = new Set(summaryList.map(s => s.baseCurrency));
     const canCombineTotals = currencies.size <= 1;
 
-    const tradingRaw = user?.trading212?.lastRaw;
-    const allRawAccounts = Array.isArray(tradingRaw?.accounts)
-      ? tradingRaw.accounts
-      : [];
-    const selectedRawAccounts = selectedAccountId === 'all'
-      ? allRawAccounts
-      : allRawAccounts.filter(account => String(account?.accountId || '') === selectedAccountId);
-    const providerPositionRows = selectedRawAccounts.flatMap(account => {
-      const rawPositions = Array.isArray(account?.positions?.items)
-        ? account.positions.items
-        : Array.isArray(account?.positions)
-          ? account.positions
-          : Array.isArray(account?.portfolio?.positions)
-            ? account.portfolio.positions
-            : [];
-      return rawPositions.map(position => ({
-        accountId: String(account?.accountId || ''),
-        parsed: parseTrading212PositionUnrealized(position)
-      }));
-    }).filter(entry => Number.isFinite(entry.parsed?.pnl));
-    const providerCurrencies = new Set(providerPositionRows.map(entry => entry.parsed.currency || 'UNKNOWN'));
-    const positionsUnrealizedSum = providerPositionRows.reduce((sum, entry) => sum + Number(entry.parsed.pnl || 0), 0);
-    const openTradesUnrealizedSum = filteredTrades.reduce((sum, trade) => sum + (Number(trade?.unrealizedGBP) || 0), 0);
+    const liveOpenPnl = canCombineTotals
+      ? (Number.isFinite(activeTradeResult?.liveOpenPnlGBP)
+        ? activeTradeResult.liveOpenPnlGBP
+        : mergedTrades.reduce((sum, trade) => sum + (Number(trade?.unrealizedGBP) || 0), 0))
+      : null;
+    const openLossPotential = canCombineTotals
+      ? (Number.isFinite(activeTradeResult?.openLossPotentialGBP)
+        ? activeTradeResult.openLossPotentialGBP
+        : computeOpenLossPotentialFromTrades(mergedTrades, rates).value)
+      : null;
 
-    let computedLiveOpenPnl = null;
-    let computedLiveOpenPnlCurrency = null;
-    let computedLiveOpenPnlMode = liveOpenPnlMode || 'computed';
-    let mixedCurrencies = false;
-
-    if (providerPositionRows.length) {
-      if (providerCurrencies.size > 1) {
-        mixedCurrencies = true;
-        computedLiveOpenPnl = null;
-        computedLiveOpenPnlCurrency = null;
-        computedLiveOpenPnlMode = 'provider-mixed';
-      } else {
-        computedLiveOpenPnl = positionsUnrealizedSum;
-        computedLiveOpenPnlCurrency = Array.from(providerCurrencies)[0] || liveOpenPnlCurrency || null;
-        computedLiveOpenPnlMode = 'provider';
-      }
-    } else {
-      computedLiveOpenPnl = Number.isFinite(openTradesUnrealizedSum)
-        ? openTradesUnrealizedSum
-        : (Number(liveOpenPnlGBP) || 0);
-      computedLiveOpenPnlCurrency = 'GBP';
-      computedLiveOpenPnlMode = 'computed';
-    }
-
-    const openLossFromStops = computeOpenLossPotentialFromTrades(filteredTrades, rates);
-    const computedOpenLossPotential = openLossFromStops.value;
-
-    const normalizedLiveOpenPnl = canCombineTotals ? computedLiveOpenPnl : null;
-    const normalizedOpenLossPotential = canCombineTotals ? computedOpenLossPotential : null;
-    const normalizedCurrency = canCombineTotals ? computedLiveOpenPnlCurrency : null;
-    const effectiveMixedCurrencies = mixedCurrencies || !canCombineTotals;
-    const mappedPositions = selectedRawAccounts.flatMap(account => {
-      const rawPositions = Array.isArray(account?.positions?.items)
-        ? account.positions.items
-        : Array.isArray(account?.positions)
-          ? account.positions
-          : Array.isArray(account?.portfolio?.positions)
-            ? account.portfolio.positions
-            : [];
-      return rawPositions
-        .map(position => mapTrading212PositionForUi(position, account))
-        .filter(Boolean);
-    });
-
-    const payload = {
-      trades: mappedTrades,
-      activeTrades: {
-        positions: mappedPositions,
-        trades: mappedTrades
-      },
+    return res.json({
+      trades: mergedTrades,
+      activeTrades: mergedTrades,
       metrics: {
-        liveOpenPnl: normalizedLiveOpenPnl,
-        openLossPotential: normalizedOpenLossPotential,
-        liveOpenPnlMode: computedLiveOpenPnlMode,
-        liveOpenPnlCurrency: normalizedCurrency,
-        mixedCurrencies: effectiveMixedCurrencies,
+        liveOpenPnl,
+        openLossPotential,
+        liveOpenPnlMode: activeTradeResult?.liveOpenPnlMode || 'computed',
+        liveOpenPnlCurrency: canCombineTotals ? (activeTradeResult?.liveOpenPnlCurrency || 'GBP') : null,
+        mixedCurrencies: !canCombineTotals,
         canCombineTotals,
         accountSummaries: summaryList
       },
-      liveOpenPnl: normalizedLiveOpenPnl,
-      openLossPotential: normalizedOpenLossPotential,
-      liveOpenPnlMode: computedLiveOpenPnlMode,
-      liveOpenPnlCurrency: normalizedCurrency,
-      mixedCurrencies: effectiveMixedCurrencies,
+      liveOpenPnl,
+      openLossPotential,
+      liveOpenPnlMode: activeTradeResult?.liveOpenPnlMode || 'computed',
+      liveOpenPnlCurrency: canCombineTotals ? (activeTradeResult?.liveOpenPnlCurrency || 'GBP') : null,
+      mixedCurrencies: !canCombineTotals,
       canCombineTotals,
       accountSummaries: summaryList
-    };
-    if (DASHBOARD_DEBUG) {
-      payload.debug = {
-        selectedAccountId,
-        positionsCount: providerPositionRows.length,
-        positionsUnrealizedSum: providerPositionRows.length ? positionsUnrealizedSum : null,
-        openTradesCount: filteredTrades.length,
-        openTradesUnrealizedSum,
-        liveOpenPnl: normalizedLiveOpenPnl,
-        openLossPotential: normalizedOpenLossPotential
-      };
-    }
-    logDashboardDebug(`final activeTrades=${mappedTrades.length} providerPositions=${mappedPositions.length}`);
-    return res.json(payload);
+    });
   } catch (error) {
     console.error('Active trades endpoint failed; returning stable fallback payload.', error);
     return res.json(defaultPayload);
