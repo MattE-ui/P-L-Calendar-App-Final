@@ -430,7 +430,18 @@
       <p id="ibkr-connector-banner" class="status-line"></p>
       <p id="ibkr-status" class="status-line"></p>
     </section>
-      <section class="card profile-card danger-zone" id="profile-reset-card">
+      
+      <section class="panel interactive">
+        <div class="tool-header"><h3>Trading Accounts</h3></div>
+        <div class="compact-inline">
+          <input id="trading-account-name" type="text" placeholder="Account name">
+          <select id="trading-account-broker"><option>TRADING212</option><option>IBKR</option><option>MANUAL</option></select>
+          <select id="trading-account-currency"><option>GBP</option><option>USD</option><option>EUR</option></select>
+          <button id="trading-account-create" class="primary outline" type="button">Add</button>
+        </div>
+        <div id="trading-accounts-list" class="trade-list"></div>
+      </section>
+<section class="card profile-card danger-zone" id="profile-reset-card">
       <header class="profile-automation-header">
         <h2>Reset your data</h2>
         <p class="helper">Remove your account, portfolio history, deposits, and integration settings from this server.</p>

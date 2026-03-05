@@ -1925,6 +1925,14 @@ function bindInvestorActions() {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindNav();
+  document.getElementById('trading-account-create')?.addEventListener('click', async () => {
+    const name = document.getElementById('trading-account-name')?.value || '';
+    const broker = document.getElementById('trading-account-broker')?.value || 'MANUAL';
+    const baseCurrency = document.getElementById('trading-account-currency')?.value || 'GBP';
+    await api('/api/trading-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, broker, baseCurrency }) });
+    document.getElementById('trading-account-name').value = '';
+    await loadTradingAccounts();
+  });
   loadProfile();
   loadIntegration();
   loadIbkrIntegration();
@@ -2010,3 +2018,22 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+
+async function loadTradingAccounts() {
+  const list = document.getElementById('trading-accounts-list');
+  if (!list) return;
+  try {
+    const res = await api('/api/trading-accounts');
+    const accounts = Array.isArray(res.accounts) ? res.accounts : [];
+    list.innerHTML = accounts.map(account => `<div class="trade-row"><strong>${account.name}</strong> <span>${account.broker}</span> <span>${account.baseCurrency}</span> ${account.isDefault ? '<span class="mapping-badge">Default</span>' : `<button data-make-default="${account.id}" class="ghost">Make default</button>`}</div>`).join('') || '<p class="tool-note">No trading accounts yet.</p>';
+    list.querySelectorAll('[data-make-default]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await api(`/api/trading-accounts/${btn.dataset.makeDefault}/make-default`, { method: 'POST' });
+        await loadTradingAccounts();
+      });
+    });
+  } catch (e) {
+    list.innerHTML = '<p class="tool-note">Failed to load trading accounts.</p>';
+  }
+}

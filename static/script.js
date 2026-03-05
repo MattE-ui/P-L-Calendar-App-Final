@@ -8,6 +8,9 @@ const state = {
   firstEntryKey: null,
   currency: 'GBP',
   riskCurrency: 'GBP',
+  tradingAccounts: [],
+  selectedTradingAccountId: 'all',
+  instrumentType: 'EQUITY',
   defaultRiskCurrency: 'GBP',
   rates: { GBP: 1 },
   liveOpenPnlGBP: 0,
@@ -1500,7 +1503,25 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
       refreshNoteIndicator();
       if (nextNote === (trade.note || '')) return;
       noteStatus.textContent = 'Saving...';
-      try {
+      if (state.instrumentType === 'OPTION') {
+      const premium = Number($('#risk-option-premium')?.value);
+      const contracts = Number($('#risk-option-contracts')?.value);
+      payload.entry = premium;
+      payload.stop = Math.max(premium - 0.01, 0.0001);
+      payload.sizeUnits = contracts;
+      payload.leg = {
+        asset_type: 'OPTION',
+        symbol: symbolInput?.value,
+        quantity: contracts,
+        entry_price: premium,
+        option_type: $('#risk-option-type')?.value || 'CALL',
+        strike: Number($('#risk-option-strike')?.value),
+        expiry: $('#risk-option-expiry')?.value,
+        multiplier: Number($('#risk-option-multiplier')?.value) || 100,
+        fees: 0
+      };
+    }
+    try {
         await api(`/api/trades/${trade.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -2734,7 +2755,7 @@ async function loadData() {
   }
   computeLifetimeMetrics();
   try {
-    const activeRes = await api('/api/trades/active');
+    const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
@@ -2754,7 +2775,7 @@ async function loadData() {
 
 async function refreshActiveTrades() {
   try {
-    const activeRes = await api('/api/trades/active');
+    const activeRes = await api(`/api/trades/active?tradingAccountId=${encodeURIComponent(state.selectedTradingAccountId || 'all')}`);
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
@@ -3542,6 +3563,19 @@ function bindControls() {
       renderRiskCalculator();
     });
   });
+  $('#global-account-selector')?.addEventListener('change', (e) => {
+    state.selectedTradingAccountId = e.target.value || 'all';
+    localStorage.setItem('plc-selected-account', state.selectedTradingAccountId);
+    loadData().then(render);
+  });
+  $$('#risk-instrument-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const instrument = btn.dataset.instrument === 'OPTION' ? 'OPTION' : 'EQUITY';
+      state.instrumentType = instrument;
+      $$('#risk-instrument-toggle button').forEach(el => el.classList.toggle('active', el === btn));
+      $('#risk-option-fields')?.classList.toggle('is-hidden', instrument !== 'OPTION');
+    });
+  });
   $('#risk-log-btn')?.addEventListener('click', async () => {
     calculateRiskPosition(true);
     const errorText = $('#risk-error')?.textContent?.trim();
@@ -3582,7 +3616,8 @@ function bindControls() {
       marketCondition: marketConditionInput?.value,
       setupTags: getSelectedTags('setup-tag'),
       emotionTags: getSelectedTags('emotion-tag'),
-      screenshotUrl: screenshotInput?.value || undefined
+      screenshotUrl: screenshotInput?.value || undefined,
+      tradingAccountId: state.selectedTradingAccountId === 'all' ? (state.profile?.defaultTradingAccountId || undefined) : state.selectedTradingAccountId
     };
     try {
       await api('/api/trades', {
@@ -3641,6 +3676,9 @@ async function loadProfile() {
     const profile = await api('/api/profile');
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
+    state.tradingAccounts = Array.isArray(profile?.tradingAccounts) ? profile.tradingAccounts : [];
+    state.selectedTradingAccountId = localStorage.getItem('plc-selected-account') || profile?.defaultTradingAccountId || 'all';
+    renderGlobalAccountSelector();
   } catch (e) {
     state.isAdmin = false;
     state.profile = null;
