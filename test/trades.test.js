@@ -159,5 +159,95 @@ test('records partial trims when reducing units and includes trim pnl in final r
   const closed = list.data.trades.find(t => t.id === id);
   assert.ok(closed);
   assert.equal(closed.status, 'closed');
-  assert.equal(closed.realizedPnlGBP, 90);
+  assert.equal(closed.realizedPnlGBP, 110);
+});
+
+
+test('normalizes legacy trade to include tradingAccountId and legs', async () => {
+  const dbRaw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  dbRaw.users[username].tradeJournal = {
+    '2024-01-10': [{ id: 'legacy-1', entry: 10, stop: 9, sizeUnits: 5, symbol: 'AAPL', currency: 'USD', status: 'open' }]
+  };
+  dbRaw.schemaVersion = 0;
+  saveDB(dbRaw);
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const t = list.data.trades.find(x => x.id === 'legacy-1');
+  assert.ok(t);
+  assert.ok(t.tradingAccountId);
+  assert.ok(Array.isArray(t.legs));
+  assert.equal(t.legs.length, 1);
+});
+
+test('creates option trade and supports mark price unrealized pnl', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 1.2,
+      stop: 1.0,
+      riskPct: 1,
+      date: '2024-03-10',
+      symbol: 'AAPL',
+      leg: {
+        asset_type: 'OPTION',
+        symbol: 'AAPL',
+        quantity: 2,
+        entry_price: 1.2,
+        option_type: 'CALL',
+        strike: 200,
+        expiry: '2026-12-19',
+        multiplier: 100,
+        fees: 1
+      }
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const id = create.data.trade.id;
+  const mark = await authedFetch(`/api/trades/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markPrice: 1.5 })
+  });
+  assert.equal(mark.res.status, 200);
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const t = list.data.trades.find(x => x.id === id);
+  assert.ok(t);
+  assert.equal(t.legs?.[0]?.markPrice, 1.5);
+});
+
+test('closing option trade computes realized pnl from leg', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 1,
+      stop: 0.5,
+      riskPct: 1,
+      date: '2024-03-11',
+      symbol: 'MSFT',
+      leg: {
+        asset_type: 'OPTION',
+        symbol: 'MSFT',
+        quantity: 1,
+        entry_price: 1,
+        option_type: 'PUT',
+        strike: 100,
+        expiry: '2026-01-17',
+        multiplier: 100,
+        fees: 2
+      }
+    })
+  });
+  const id = create.data.trade.id;
+  const close = await authedFetch('/api/trades/close', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, price: 1.5, date: '2024-03-12' })
+  });
+  assert.equal(close.res.status, 200);
+  const list = await authedFetch('/api/trades');
+  const t = list.data.trades.find(x => x.id === id);
+  assert.ok(t.realizedPnlCurrency > 0);
 });

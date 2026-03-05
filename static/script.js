@@ -22,6 +22,8 @@ const state = {
   openPriceInfoByTradeId: {},
   liveOpenPnlMode: 'computed',
   liveOpenPnlCurrency: 'GBP',
+  canCombineTotals: true,
+  accountSummaries: [],
   isGuest: false,
   isAdmin: false,
   profile: null,
@@ -212,6 +214,25 @@ function computeRiskPlan({
     unusedRisk,
     fees
   };
+}
+
+
+function formatDateShort(value) {
+  if (!value) return '—';
+  const d = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
+}
+
+function formatOptionIdentifier(symbol, expiry, strike, callPut, contracts, entry) {
+  const sym = String(symbol || '').toUpperCase();
+  if (!sym) return '—';
+  const expiryShort = formatDateShort(expiry);
+  const cp = String(callPut || '').toUpperCase() === 'PUT' ? 'P' : 'C';
+  const qty = Number(contracts);
+  const e = Number(entry);
+  if (!expiry || !Number.isFinite(Number(strike))) return sym;
+  return `${sym} ${expiryShort} ${Number(strike)}${cp} x${Number.isFinite(qty) ? qty : 0} @ ${Number.isFinite(e) ? e.toFixed(2) : '0.00'}`;
 }
 
 function formatPrice(value, currency = state.currency, decimals = 4) {
@@ -864,8 +885,8 @@ function renderActiveTrades() {
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
-  if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
-  if (openLossEl) openLossEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(openLossPotential);
+  if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (state.canCombineTotals ? formatLiveOpenPnl(livePnl) : 'Grouped');
+  if (openLossEl) openLossEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (state.canCombineTotals ? formatLiveOpenPnl(openLossPotential) : 'Grouped');
   if (pnlCard && !state.safeScreenshot) {
     pnlCard.classList.toggle('positive', livePnl > 0);
     pnlCard.classList.toggle('negative', livePnl < 0);
@@ -1439,7 +1460,8 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     const badgeItems = [
       { label: `Units ${formatShares(trade.sizeUnits)}` },
       { label: `Risk ${Number.isFinite(trade.riskPct) ? trade.riskPct.toFixed(2) : '—'}%` },
-      { label: riskMultipleLabel }
+      { label: riskMultipleLabel },
+      ...(trade.assetType === 'OPTION' ? [{ label: `Mark ${Number.isFinite(trade.markPrice) ? formatPrice(trade.markPrice, trade.currency, 2) : '—'}` }, { label: `DTE ${Number.isFinite(trade.daysToExpiry) ? trade.daysToExpiry : '—'}` }] : [])
     ];
     badgeItems.forEach(item => {
       const badge = document.createElement('span');
@@ -1503,24 +1525,6 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
       refreshNoteIndicator();
       if (nextNote === (trade.note || '')) return;
       noteStatus.textContent = 'Saving...';
-      if (state.instrumentType === 'OPTION') {
-      const premium = Number($('#risk-option-premium')?.value);
-      const contracts = Number($('#risk-option-contracts')?.value);
-      payload.entry = premium;
-      payload.stop = Math.max(premium - 0.01, 0.0001);
-      payload.sizeUnits = contracts;
-      payload.leg = {
-        asset_type: 'OPTION',
-        symbol: symbolInput?.value,
-        quantity: contracts,
-        entry_price: premium,
-        option_type: $('#risk-option-type')?.value || 'CALL',
-        strike: Number($('#risk-option-strike')?.value),
-        expiry: $('#risk-option-expiry')?.value,
-        multiplier: Number($('#risk-option-multiplier')?.value) || 100,
-        fees: 0
-      };
-    }
     try {
         await api(`/api/trades/${trade.id}`, {
           method: 'PUT',
@@ -1560,7 +1564,21 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     shareBtn.className = 'ghost trade-share-btn';
     shareBtn.textContent = 'Share card';
     shareBtn.addEventListener('click', () => openShareCardModal(trade));
-    actionRow.append(editToggle, closeBtn, shareBtn);
+    const markBtn = document.createElement('button');
+    markBtn.className = 'ghost trade-share-btn';
+    markBtn.textContent = 'Mark';
+    markBtn.style.display = trade.assetType === 'OPTION' ? '' : 'none';
+    markBtn.addEventListener('click', async () => {
+      const raw = window.prompt('Set option mark price', Number.isFinite(trade.markPrice) ? String(trade.markPrice) : '');
+      if (raw === null) return;
+      try {
+        await api(`/api/trades/${trade.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markPrice: raw.trim() === '' ? null : Number(raw) }) });
+        await refreshActiveTrades();
+      } catch (e) {
+        window.alert(e?.message || 'Failed to update mark price');
+      }
+    });
+    actionRow.append(editToggle, closeBtn, markBtn, shareBtn);
     expandedWrap.appendChild(actionRow);
 
   return expandedWrap;
@@ -2766,6 +2784,8 @@ async function loadData() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    state.canCombineTotals = activeRes?.canCombineTotals !== false;
+    state.accountSummaries = Array.isArray(activeRes?.accountSummaries) ? activeRes.accountSummaries : [];
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
@@ -2786,6 +2806,8 @@ async function refreshActiveTrades() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    state.canCombineTotals = activeRes?.canCombineTotals !== false;
+    state.accountSummaries = Array.isArray(activeRes?.accountSummaries) ? activeRes.accountSummaries : [];
     renderActiveTrades();
     updatePortfolioPill();
     renderMetrics();

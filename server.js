@@ -26,6 +26,7 @@ const DIRECTIONS = ['long', 'short'];
 const TRADING_ACCOUNT_BROKERS = ['TRADING212', 'IBKR', 'MANUAL'];
 const LEG_ASSET_TYPES = ['EQUITY', 'OPTION'];
 const OPTION_TYPES = ['CALL', 'PUT'];
+const DATA_SCHEMA_VERSION = 2;
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('UnhandledRejection:', reason, { promise });
@@ -380,12 +381,25 @@ function loadDB() {
       db.investorInvites = [];
     }
     db.investorSessions ||= {};
-    const mutated = reconcileIbkrTokenSecret(db);
+    if (!Number.isFinite(Number(db.schemaVersion))) db.schemaVersion = 0;
+    let mutated = reconcileIbkrTokenSecret(db);
+    if (!Number.isFinite(Number(db.schemaVersion))) {
+      db.schemaVersion = 0;
+      mutated = true;
+    }
+    for (const [username, user] of Object.entries(db.users || {})) {
+      const result = normalizeUserData(user, username);
+      if (result?.mutated) mutated = true;
+    }
+    if (Number(db.schemaVersion) < DATA_SCHEMA_VERSION) {
+      db.schemaVersion = DATA_SCHEMA_VERSION;
+      mutated = true;
+    }
     if (mutated) {
       try {
         saveDB(db);
       } catch (error) {
-        console.warn('Unable to persist IBKR connector secret migration:', error);
+        console.warn('Unable to persist database migrations:', error);
       }
     }
     return db;
@@ -932,7 +946,9 @@ function ensureTradeLeg(trade) {
       optionType: null,
       strike: null,
       expiry: null,
-      multiplier: 100
+      multiplier: 100,
+      markPrice: null,
+      updatedAt: new Date().toISOString()
     };
     trade.legs = [leg];
   }
@@ -943,6 +959,8 @@ function ensureTradeLeg(trade) {
   leg.entryPrice = Number(leg.entryPrice ?? trade.entry);
   leg.exitPrice = Number.isFinite(Number(leg.exitPrice)) ? Number(leg.exitPrice) : (Number.isFinite(Number(trade.closePrice)) ? Number(trade.closePrice) : null);
   leg.fees = Number.isFinite(Number(leg.fees)) ? Number(leg.fees) : (Number.isFinite(Number(trade.fees)) ? Number(trade.fees) : 0);
+  leg.markPrice = Number.isFinite(Number(leg.markPrice)) && Number(leg.markPrice) >= 0 ? Number(leg.markPrice) : null;
+  leg.updatedAt = typeof leg.updatedAt === 'string' ? leg.updatedAt : new Date().toISOString();
   if (leg.assetType === 'OPTION') {
     const optTypeRaw = typeof leg.optionType === 'string' ? leg.optionType.toUpperCase() : '';
     leg.optionType = OPTION_TYPES.includes(optTypeRaw) ? optTypeRaw : 'CALL';
@@ -958,6 +976,144 @@ function ensureTradeLeg(trade) {
   if (!leg.id) leg.id = crypto.randomUUID();
   if (!leg.tradeId && trade.id) leg.tradeId = trade.id;
   return leg;
+}
+
+
+function normalizeTrade(trade, user, options = {}) {
+  const defaultAccountId = options.defaultAccountId || getDefaultTradingAccount(user)?.id || '';
+  if (!trade || typeof trade !== 'object') return null;
+  const normalized = { ...trade };
+  if (!normalized.id) normalized.id = crypto.randomBytes(8).toString('hex');
+  if (!normalized.createdAt || typeof normalized.createdAt !== 'string') normalized.createdAt = new Date().toISOString();
+  normalized.updatedAt = new Date().toISOString();
+  if (!normalized.tradingAccountId || !findTradingAccount(user, normalized.tradingAccountId)) {
+    normalized.tradingAccountId = defaultAccountId;
+  }
+  const leg = ensureTradeLeg(normalized);
+  if (leg) {
+    if (!leg.updatedAt || typeof leg.updatedAt !== 'string') leg.updatedAt = normalized.updatedAt;
+    normalized.legs = [leg];
+    normalized.assetType = leg.assetType;
+    normalized.symbol = leg.symbol || normalized.symbol;
+    normalized.sizeUnits = Number(leg.quantity);
+    normalized.entry = Number(leg.entryPrice);
+    normalized.closePrice = Number.isFinite(Number(leg.exitPrice)) ? Number(leg.exitPrice) : normalized.closePrice;
+    normalized.fees = Number.isFinite(Number(leg.fees)) ? Number(leg.fees) : (Number(normalized.fees) || 0);
+    leg.markPrice = Number.isFinite(Number(leg.markPrice)) && Number(leg.markPrice) >= 0 ? Number(leg.markPrice) : null;
+  leg.updatedAt = typeof leg.updatedAt === 'string' ? leg.updatedAt : new Date().toISOString();
+  if (leg.assetType === 'OPTION') {
+      normalized.assetClass = 'options';
+      normalized.optionType = leg.optionType;
+      normalized.strike = leg.strike;
+      normalized.expiry = leg.expiry;
+      normalized.multiplier = leg.multiplier;
+      const identifier = formatOptionIdentifier(leg);
+      if (identifier) normalized.displaySymbol = identifier;
+    }
+  }
+  return normalizeTradeMeta(normalized);
+}
+
+function normalizeUserData(userData, username = '') {
+  if (!userData || typeof userData !== 'object') return { userData, mutated: false };
+  let mutated = ensureUserShape(userData, username);
+  const journal = ensureTradeJournal(userData);
+  const defaultAccount = getDefaultTradingAccount(userData);
+  for (const [dateKey, trades] of Object.entries(journal)) {
+    if (!Array.isArray(trades)) continue;
+    const normalized = trades
+      .map(t => normalizeTrade(t, userData, { defaultAccountId: defaultAccount?.id || '' }))
+      .filter(Boolean)
+      .slice(0, 50);
+    if (normalized.length !== trades.length || normalized.some((t, i) => t !== trades[i])) {
+      journal[dateKey] = normalized;
+      mutated = true;
+    }
+  }
+  return { userData, mutated };
+}
+
+function calcLegMetrics(leg, tradeCurrency = 'GBP', rates = {}, status = 'open') {
+  if (!leg || typeof leg !== 'object') return null;
+  const fees = Number(leg.fees) || 0;
+  const entry = Number(leg.entryPrice);
+  const qty = Number(leg.quantity);
+  if (!Number.isFinite(entry) || !Number.isFinite(qty) || qty <= 0) return null;
+  leg.markPrice = Number.isFinite(Number(leg.markPrice)) && Number(leg.markPrice) >= 0 ? Number(leg.markPrice) : null;
+  leg.updatedAt = typeof leg.updatedAt === 'string' ? leg.updatedAt : new Date().toISOString();
+  if (leg.assetType === 'OPTION') {
+    const multiplier = Number(leg.multiplier) || 100;
+    const initialCost = (entry * qty * multiplier) + fees;
+    const initialRisk = initialCost;
+    const exit = Number(leg.exitPrice);
+    const mark = Number(leg.markPrice);
+    const pnlRealizedCurrency = status === 'closed' && Number.isFinite(exit)
+      ? ((exit - entry) * qty * multiplier) - fees
+      : 0;
+    const pnlUnrealizedCurrency = status !== 'closed' && Number.isFinite(mark)
+      ? ((mark - entry) * qty * multiplier) - fees
+      : null;
+    const pnlRealizedGBP = convertToGBP(pnlRealizedCurrency, tradeCurrency, rates);
+    const pnlUnrealizedGBP = pnlUnrealizedCurrency === null ? null : convertToGBP(pnlUnrealizedCurrency, tradeCurrency, rates);
+    const riskGBP = convertToGBP(initialRisk, tradeCurrency, rates);
+    const pct = initialCost > 0
+      ? ((status === 'closed' ? pnlRealizedCurrency : (pnlUnrealizedCurrency ?? 0)) / initialCost) * 100
+      : null;
+    const rMultiple = Number.isFinite(riskGBP) && riskGBP !== 0
+      ? ((status === 'closed' ? (Number.isFinite(pnlRealizedGBP) ? pnlRealizedGBP : pnlRealizedCurrency) : (Number.isFinite(pnlUnrealizedGBP) ? pnlUnrealizedGBP : (pnlUnrealizedCurrency ?? 0))) / riskGBP)
+      : null;
+    return {
+      initialCost,
+      risk: initialRisk,
+      pnlRealized: Number.isFinite(pnlRealizedGBP) ? pnlRealizedGBP : pnlRealizedCurrency,
+      pnlUnrealized: pnlUnrealizedCurrency === null ? null : (Number.isFinite(pnlUnrealizedGBP) ? pnlUnrealizedGBP : pnlUnrealizedCurrency),
+      pct,
+      rMultiple
+    };
+  }
+  return null;
+}
+
+function calcTradeMetrics(trade, rates = {}) {
+  const leg = ensureTradeLeg(trade);
+  if (!leg) return null;
+  return calcLegMetrics(leg, trade.currency || 'GBP', rates, trade.status || 'open');
+}
+
+
+function validateTradeLegInput(legInput = {}, { requireOptionFields = false } = {}) {
+  const symbol = String(legInput.symbol || '').trim().toUpperCase();
+  const quantity = Number(legInput.quantity);
+  const entryPrice = Number(legInput.entry_price ?? legInput.entryPrice);
+  const exitPriceRaw = legInput.exit_price ?? legInput.exitPrice;
+  const exitPrice = exitPriceRaw === undefined || exitPriceRaw === null || exitPriceRaw === '' ? null : Number(exitPriceRaw);
+  const assetTypeRaw = String(legInput.asset_type ?? legInput.assetType ?? 'EQUITY').trim().toUpperCase();
+  const assetType = LEG_ASSET_TYPES.includes(assetTypeRaw) ? assetTypeRaw : 'EQUITY';
+  if (!symbol) return { error: 'Trade symbol is required.' };
+  if (!Number.isFinite(quantity) || quantity <= 0) return { error: 'Quantity must be greater than 0.' };
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) return { error: 'Entry price must be greater than 0.' };
+  if (exitPrice !== null && (!Number.isFinite(exitPrice) || exitPrice < 0)) return { error: 'Exit price cannot be negative.' };
+  const fees = Number(legInput.fees);
+  if (!Number.isFinite(fees) || fees < 0) return { error: 'Fees cannot be negative.' };
+  const markPriceRaw = legInput.markPrice ?? legInput.mark_price;
+  const markPrice = markPriceRaw === undefined || markPriceRaw === null || markPriceRaw === '' ? null : Number(markPriceRaw);
+  if (markPrice !== null && (!Number.isFinite(markPrice) || markPrice < 0)) return { error: 'Mark price cannot be negative.' };
+  const normalized = { assetType, symbol, quantity, entryPrice, exitPrice, fees, markPrice, optionType: null, strike: null, expiry: null, multiplier: 100 };
+  if (assetType === 'OPTION' || requireOptionFields) {
+    const optionTypeRaw = String(legInput.option_type ?? legInput.optionType ?? '').trim().toUpperCase();
+    const strike = Number(legInput.strike);
+    const expiry = typeof legInput.expiry === 'string' ? legInput.expiry.trim() : '';
+    const multiplier = Number(legInput.multiplier);
+    if (!OPTION_TYPES.includes(optionTypeRaw)) return { error: 'Option type must be CALL or PUT.' };
+    if (!Number.isFinite(strike) || strike <= 0) return { error: 'Option strike must be greater than 0.' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry)) return { error: 'Option expiry must be YYYY-MM-DD.' };
+    if (!Number.isFinite(multiplier) || multiplier <= 0) return { error: 'Option multiplier must be greater than 0.' };
+    normalized.optionType = optionTypeRaw;
+    normalized.strike = strike;
+    normalized.expiry = expiry;
+    normalized.multiplier = multiplier;
+  }
+  return { leg: normalized };
 }
 
 function formatOptionIdentifier(leg) {
@@ -1680,7 +1836,9 @@ function normalizeTradeJournal(user) {
       if (leg) {
         normalizedTrade.legs = [leg];
         normalizedTrade.assetType = leg.assetType;
-        if (leg.assetType === 'OPTION') {
+        leg.markPrice = Number.isFinite(Number(leg.markPrice)) && Number(leg.markPrice) >= 0 ? Number(leg.markPrice) : null;
+  leg.updatedAt = typeof leg.updatedAt === 'string' ? leg.updatedAt : new Date().toISOString();
+  if (leg.assetType === 'OPTION') {
           normalizedTrade.optionType = leg.optionType;
           normalizedTrade.strike = leg.strike;
           normalizedTrade.expiry = leg.expiry;
@@ -1751,6 +1909,8 @@ function computeRealizedPnl(trade, rates = {}) {
   let finalPnlCurrency = 0;
   if (trade.status === 'closed') {
     const closePrice = Number(trade.closePrice);
+    const leg = ensureTradeLeg(trade);
+    const optionMetrics = leg?.assetType === 'OPTION' ? calcLegMetrics(leg, tradeCurrency, rates, 'open') : null;
     const sizeUnits = Number(trade.sizeUnits);
     if (!Number.isFinite(closePrice) || !Number.isFinite(sizeUnits)) return null;
     finalPnlCurrency = computePartialClosePnlCurrency(trade, sizeUnits, closePrice);
@@ -1809,7 +1969,9 @@ function flattenTrades(user, rates = {}) {
       if (leg) {
         base.legs = [leg];
         base.assetType = leg.assetType;
-        if (leg.assetType === 'OPTION') {
+        leg.markPrice = Number.isFinite(Number(leg.markPrice)) && Number(leg.markPrice) >= 0 ? Number(leg.markPrice) : null;
+  leg.updatedAt = typeof leg.updatedAt === 'string' ? leg.updatedAt : new Date().toISOString();
+  if (leg.assetType === 'OPTION') {
           base.optionType = leg.optionType;
           base.strike = leg.strike;
           base.expiry = leg.expiry;
@@ -1826,12 +1988,23 @@ function flattenTrades(user, rates = {}) {
       if (!base.createdAt) {
         base.createdAt = new Date().toISOString();
       }
+      const metrics = calcTradeMetrics(base, rates);
       const pnl = computeRealizedPnl(base, rates);
       if (pnl) {
         base.realizedPnlGBP = pnl.realizedPnlGBP;
         base.realizedPnlCurrency = pnl.realizedPnlCurrency;
         base.rMultiple = pnl.rMultiple;
       }
+      if (metrics) {
+        base.initialCost = metrics.initialCost;
+        base.initialRisk = metrics.risk;
+        base.pnlRealized = metrics.pnlRealized;
+        base.pnlUnrealized = metrics.pnlUnrealized;
+        base.pct = metrics.pct;
+        if (metrics.rMultiple !== null) base.rMultiple = metrics.rMultiple;
+      }
+      base.displayName = base.displayTicker || base.displaySymbol || base.symbol || '—';
+      base.instrumentSummary = base.assetType === 'OPTION' ? (formatOptionIdentifier(base.legs?.[0]) || base.displayName) : `${base.displayName} x${Number(base.sizeUnits) || 0}`;
       const guaranteedPnlGBP = computeGuaranteedPnl(base, rates);
       if (guaranteedPnlGBP !== null) {
         base.guaranteedPnlGBP = guaranteedPnlGBP;
@@ -1968,7 +2141,10 @@ function addTradeTrim(user, trade, units, price, closeDate, rates, defaultDate) 
     ? closeDate
     : (defaultDate || currentDateKey());
   const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
-  const pnlCurrency = computePartialClosePnlCurrency(trade, units, price);
+  const leg = ensureTradeLeg(trade);
+  const pnlCurrency = leg?.assetType === 'OPTION'
+    ? (Number(price) - Number(leg.entryPrice)) * Number(units) * (Number(leg.multiplier) || 100)
+    : computePartialClosePnlCurrency(trade, units, price);
   const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
   const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
   trade.partialCloses ||= [];
@@ -1993,8 +2169,15 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
     ? closeDate
     : (defaultDate || currentDateKey());
   const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
-  const pnlCurrency = computePartialClosePnlCurrency(trade, Number(trade.sizeUnits), closePrice);
-  const feesCurrency = Number(trade.fees) || 0;
+  const leg = ensureTradeLeg(trade);
+  if (leg) {
+    leg.exitPrice = closePrice;
+    leg.updatedAt = new Date().toISOString();
+  }
+  const pnlCurrency = leg?.assetType === 'OPTION'
+    ? (Number(closePrice) - Number(leg.entryPrice)) * Number(leg.quantity) * (Number(leg.multiplier) || 100)
+    : computePartialClosePnlCurrency(trade, Number(trade.sizeUnits), closePrice);
+  const feesCurrency = Number(leg?.fees ?? trade.fees) || 0;
   const netPnlCurrency = pnlCurrency - feesCurrency;
   const pnlGBP = convertToGBP(netPnlCurrency, trade.currency || 'GBP', rates);
   const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : netPnlCurrency;
@@ -2002,6 +2185,7 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   trade.closePrice = closePrice;
   trade.closeDate = targetDate;
   trade.closedAt = trade.closedAt || new Date().toISOString();
+  trade.updatedAt = new Date().toISOString();
   trade.realizedPnlGBP = pnlSafe;
   trade.realizedPnlCurrency = netPnlCurrency;
   const risk = Number(trade.riskAmountGBP);
@@ -5348,7 +5532,8 @@ app.put('/api/master/investors/:id/profit-split', requireMasterAuth, requireMast
   if (error) return res.status(error.status).json({ error: error.message });
   let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
   if (!split) {
-    split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0,10) };
+    split = { investorProfileId: profile.id, createdAt: nowIso,
+    updatedAt: nowIso, effectiveFrom: new Date().toISOString().slice(0,10) };
     db.investorProfitSplits.push(split);
   }
   split.investorShareBps = investorShare;
@@ -7526,6 +7711,7 @@ async function buildActiveTrades(user, rates = {}) {
     let liveCurrency = trade.currency || 'GBP';
     const tradeCurrency = trade.currency || 'GBP';
     const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+    const account = findTradingAccount(user, trade.tradingAccountId) || getDefaultTradingAccount(user);
     const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
     const isProvider = isTrading212 || isIbkr;
     try {
@@ -7603,9 +7789,20 @@ async function buildActiveTrades(user, rates = {}) {
         currentStopStale: trade.currentStopStale === true,
         originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
-        note: trade.note
+        note: trade.note,
+      tradingAccountId: trade.tradingAccountId || account?.id || '',
+      tradingAccount: account ? { id: account.id, name: account.name, broker: account.broker, baseCurrency: account.baseCurrency } : undefined,
+        tradingAccountId: trade.tradingAccountId || account?.id || '',
+        tradingAccount: account ? { id: account.id, name: account.name, broker: account.broker, baseCurrency: account.baseCurrency } : undefined,
+        markPrice: Number.isFinite(Number(leg?.markPrice)) ? Number(leg.markPrice) : undefined,
+        daysToExpiry: leg?.expiry ? Math.ceil((new Date(`${leg.expiry}T00:00:00`).getTime() - Date.now()) / 86400000) : undefined
       });
       continue;
+    }
+    const optionLivePrice = leg?.assetType === 'OPTION' && Number.isFinite(Number(leg.markPrice)) ? Number(leg.markPrice) : null;
+    if (optionLivePrice !== null) {
+      livePrice = optionLivePrice;
+      liveCurrency = tradeCurrency;
     }
     const positionCurrency = Number.isFinite(livePrice) ? livePrice * sizeUnits : null;
     const positionGBP = Number.isFinite(positionCurrency)
@@ -7625,11 +7822,13 @@ async function buildActiveTrades(user, rates = {}) {
     if (isIbkr && Number.isFinite(syncPpl)) {
       pnlCurrency = syncPpl;
     }
-    let pnlGBP = null;
-    if (isIbkr && Number.isFinite(syncPpl)) {
-      pnlGBP = syncPpl;
-    } else if (pnlCurrency !== null) {
-      pnlGBP = convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates);
+    let pnlGBP = optionMetrics && optionMetrics.pnlUnrealized !== null ? optionMetrics.pnlUnrealized : null;
+    if (pnlGBP === null) {
+      if (isIbkr && Number.isFinite(syncPpl)) {
+        pnlGBP = syncPpl;
+      } else if (pnlCurrency !== null) {
+        pnlGBP = convertToGBP(pnlCurrency, tradeCurrency || liveCurrency || 'GBP', rates);
+      }
     }
     let feesGBP = null;
     let fxFeeGBP = null;
@@ -7701,7 +7900,13 @@ async function buildActiveTrades(user, rates = {}) {
       currentStopStale: trade.currentStopStale === true,
       originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
-        note: trade.note
+        note: trade.note,
+      tradingAccountId: trade.tradingAccountId || account?.id || '',
+      tradingAccount: account ? { id: account.id, name: account.name, broker: account.broker, baseCurrency: account.baseCurrency } : undefined,
+        tradingAccountId: trade.tradingAccountId || account?.id || '',
+        tradingAccount: account ? { id: account.id, name: account.name, broker: account.broker, baseCurrency: account.baseCurrency } : undefined,
+        markPrice: Number.isFinite(Number(leg?.markPrice)) ? Number(leg.markPrice) : undefined,
+        daysToExpiry: leg?.expiry ? Math.ceil((new Date(`${leg.expiry}T00:00:00`).getTime() - Date.now()) / 86400000) : undefined
       });
   }
   return {
@@ -7907,26 +8112,29 @@ app.post('/api/trades', auth, async (req, res) => {
     : currentDateKey();
   const fxFeeRate = Number(process.env.FX_FEE_RATE ?? 0.005);
   const fxFeeEligible = tradeCurrency !== tradeBaseCurrency;
-  const legPayload = leg && typeof leg === 'object' ? leg : null;
-  const assetTypeRaw = typeof legPayload?.asset_type === 'string' ? legPayload.asset_type.toUpperCase() : 'EQUITY';
-  const optionMode = assetTypeRaw === 'OPTION';
-  let legsPayload = undefined;
-  if (legPayload) {
-    legsPayload = [{
-      id: crypto.randomUUID(),
-      tradeId: '',
-      assetType: optionMode ? 'OPTION' : 'EQUITY',
-      symbol: String(legPayload.symbol || symbolClean || '').trim().toUpperCase(),
-      quantity: Number(legPayload.quantity ?? sizeUnits),
-      entryPrice: Number(legPayload.entry_price ?? entryNum),
-      exitPrice: Number.isFinite(Number(legPayload.exit_price)) ? Number(legPayload.exit_price) : null,
-      fees: Number.isFinite(Number(legPayload.fees)) ? Number(legPayload.fees) : fees,
-      optionType: optionMode ? String(legPayload.option_type || 'CALL').toUpperCase() : null,
-      strike: optionMode && Number.isFinite(Number(legPayload.strike)) ? Number(legPayload.strike) : null,
-      expiry: optionMode && /^\d{4}-\d{2}-\d{2}$/.test(String(legPayload.expiry || '')) ? String(legPayload.expiry) : null,
-      multiplier: optionMode && Number.isFinite(Number(legPayload.multiplier)) ? Number(legPayload.multiplier) : 100
-    }];
-  }
+  const legPayload = leg && typeof leg === 'object'
+    ? leg
+    : { asset_type: 'EQUITY', symbol: symbolClean, quantity: sizeUnits, entry_price: entryNum, fees };
+  const legValidation = validateTradeLegInput(legPayload, { requireOptionFields: String(legPayload?.asset_type || '').toUpperCase() === 'OPTION' });
+  if (legValidation.error) return res.status(400).json({ error: legValidation.error });
+  const validatedLeg = legValidation.leg;
+  const nowIso = new Date().toISOString();
+  const legsPayload = [{
+    id: crypto.randomUUID(),
+    tradeId: '',
+    assetType: validatedLeg.assetType,
+    symbol: validatedLeg.symbol,
+    quantity: validatedLeg.quantity,
+    entryPrice: validatedLeg.entryPrice,
+    exitPrice: validatedLeg.exitPrice,
+    fees: validatedLeg.fees,
+    optionType: validatedLeg.optionType,
+    strike: validatedLeg.strike,
+    expiry: validatedLeg.expiry,
+    multiplier: validatedLeg.multiplier,
+    markPrice: validatedLeg.markPrice,
+    updatedAt: nowIso
+  }];
   const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
@@ -7945,7 +8153,8 @@ app.post('/api/trades', auth, async (req, res) => {
     positionGBP,
     portfolioGBPAtCalc: portfolioGBP,
     portfolioCurrencyAtCalc: portfolioInCurrency,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
+    updatedAt: nowIso,
     direction: directionClean,
     fees,
     slippage,
@@ -7964,20 +8173,22 @@ app.post('/api/trades', auth, async (req, res) => {
       source: 'manual',
       legs: legsPayload
     });
+  const normalizedTrade = normalizeTrade(trade, user, { defaultAccountId: selectedAccount.id });
   journal[targetDate] ||= [];
-  journal[targetDate].push(trade);
+  journal[targetDate].push(normalizedTrade);
   if (journal[targetDate].length > 50) {
     journal[targetDate] = journal[targetDate].slice(-50);
   }
-  if (trade.status === 'closed' || Number.isFinite(Number(closePrice))) {
+  const tradeToPersist = normalizedTrade;
+  if (tradeToPersist.status === 'closed' || Number.isFinite(Number(closePrice))) {
     const closeNum = Number(closePrice);
     if (!Number.isFinite(closeNum) || closeNum <= 0) {
       return res.status(400).json({ error: 'Enter a valid closing price to log a closed trade' });
     }
-    applyTradeClose(user, trade, closeNum, closeDate, rates, targetDate);
+    applyTradeClose(user, tradeToPersist, closeNum, closeDate, rates, targetDate);
   }
   saveDB(db);
-  res.json({ ok: true, trade, date: targetDate });
+  res.json({ ok: true, trade: tradeToPersist, date: targetDate });
 });
 
 app.put('/api/trades/:id', auth, async (req, res) => {
@@ -7990,6 +8201,9 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (!found) return res.status(404).json({ error: 'Trade not found' });
   const trade = found.trade;
   const updates = req.body || {};
+  const tradeLeg = ensureTradeLeg(trade);
+  trade.updatedAt = new Date().toISOString();
+  if (tradeLeg) tradeLeg.updatedAt = trade.updatedAt;
   const { config: tradingCfg } = ensureTrading212Config(user);
   const rates = await fetchRates();
   const tradeCurrency = trade.currency || 'GBP';
@@ -8156,6 +8370,46 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   trade.emotionTags = meta.emotionTags;
   trade.screenshotUrl = meta.screenshotUrl;
   trade.note = meta.note;
+  if (updates.leg && typeof updates.leg === 'object') {
+    const legValidation = validateTradeLegInput({ ...tradeLeg, ...updates.leg }, {
+      requireOptionFields: (tradeLeg?.assetType || '').toUpperCase() === 'OPTION' || String(updates.leg.asset_type || updates.leg.assetType || '').toUpperCase() === 'OPTION'
+    });
+    if (legValidation.error) return res.status(400).json({ error: legValidation.error });
+    const validated = legValidation.leg;
+    tradeLeg.assetType = validated.assetType;
+    tradeLeg.symbol = validated.symbol;
+    tradeLeg.quantity = validated.quantity;
+    tradeLeg.entryPrice = validated.entryPrice;
+    tradeLeg.exitPrice = validated.exitPrice;
+    tradeLeg.fees = validated.fees;
+    tradeLeg.optionType = validated.optionType;
+    tradeLeg.strike = validated.strike;
+    tradeLeg.expiry = validated.expiry;
+    tradeLeg.multiplier = validated.multiplier;
+    tradeLeg.markPrice = validated.markPrice;
+    trade.entry = validated.entryPrice;
+    trade.sizeUnits = validated.quantity;
+    trade.symbol = validated.symbol;
+    if (validated.assetType === 'OPTION') {
+      trade.assetClass = 'options';
+      trade.optionType = validated.optionType;
+      trade.strike = validated.strike;
+      trade.expiry = validated.expiry;
+      trade.multiplier = validated.multiplier;
+      trade.displaySymbol = formatOptionIdentifier(tradeLeg);
+    }
+  }
+  if (updates.markPrice !== undefined) {
+    if (!tradeLeg || tradeLeg.assetType !== 'OPTION') return res.status(400).json({ error: 'Mark price is only available for option trades.' });
+    if (updates.markPrice === null || updates.markPrice === '') {
+      tradeLeg.markPrice = null;
+    } else {
+      const markPrice = Number(updates.markPrice);
+      if (!Number.isFinite(markPrice) || markPrice < 0) return res.status(400).json({ error: 'Mark price cannot be negative.' });
+      tradeLeg.markPrice = markPrice;
+    }
+    tradeLeg.updatedAt = trade.updatedAt;
+  }
   const shouldClose = (updates.status && updates.status === 'closed') || Number.isFinite(Number(updates.closePrice));
   if (shouldClose) {
     if (trade.status === 'closed') {
@@ -8167,6 +8421,8 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }
     applyTradeClose(user, trade, closeNum, updates.closeDate, rates, found.dateKey);
   }
+  const normalizedTrade = normalizeTrade(trade, user);
+  Object.assign(trade, normalizedTrade);
   saveDB(db);
   res.json({ ok: true, trade });
 });
@@ -8315,12 +8571,37 @@ app.get('/api/trades/active', auth, async (req, res) => {
     ? trades.filter(trade => trade.tradingAccountId === accountFilter)
     : trades;
   const mappedTrades = filteredTrades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+  const accountSummaries = {};
+  for (const t of mappedTrades) {
+    const account = findTradingAccount(user, t.tradingAccountId) || getDefaultTradingAccount(user);
+    const key = account?.id || 'unknown';
+    if (!accountSummaries[key]) {
+      accountSummaries[key] = {
+        tradingAccountId: key,
+        accountName: account?.name || 'Unknown',
+        broker: account?.broker || 'MANUAL',
+        baseCurrency: account?.baseCurrency || 'GBP',
+        realized: 0,
+        unrealized: 0,
+        openRisk: 0,
+        tradeCount: 0
+      };
+    }
+    accountSummaries[key].tradeCount += 1;
+    accountSummaries[key].unrealized += Number(t.unrealizedGBP) || 0;
+    accountSummaries[key].openRisk += Number(t.guaranteedPnlGBP) || 0;
+  }
+  const summaryList = Object.values(accountSummaries);
+  const currencies = new Set(summaryList.map(s => s.baseCurrency));
+  const canCombineTotals = currencies.size <= 1;
   res.json({
     trades: mappedTrades,
-    liveOpenPnl: liveOpenPnlGBP,
-    openLossPotential: openLossPotentialGBP,
+    liveOpenPnl: canCombineTotals ? liveOpenPnlGBP : null,
+    openLossPotential: canCombineTotals ? openLossPotentialGBP : null,
     liveOpenPnlMode,
-    liveOpenPnlCurrency
+    liveOpenPnlCurrency: canCombineTotals ? liveOpenPnlCurrency : null,
+    canCombineTotals,
+    accountSummaries: summaryList
   });
 });
 
