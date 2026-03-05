@@ -7981,6 +7981,88 @@ function parseTrading212PositionUnrealized(position) {
   };
 }
 
+function mapTrading212PositionForUi(position, account = {}) {
+  if (!position || typeof position !== 'object') return null;
+  const instrument = position.instrument && typeof position.instrument === 'object' ? position.instrument : {};
+  const qty = parseTradingNumber(
+    position.quantity
+    ?? position.qty
+    ?? position.units
+    ?? position.shares
+    ?? position.size
+    ?? position?.position?.quantity
+  );
+  const avgPrice = parseTradingNumber(
+    position.averagePrice
+    ?? position.avgPrice
+    ?? position.averageOpenPrice
+    ?? position.openPrice
+    ?? position.price
+  );
+  const currentPrice = parseTradingNumber(
+    position.currentPrice
+    ?? position.lastPrice
+    ?? position.price
+    ?? instrument.lastPrice
+    ?? instrument.price
+  );
+  const unrealizedPnl = parseTradingNumber(
+    position.ppl
+    ?? position.profitLoss
+    ?? position.unrealizedPnl
+    ?? position.unrealizedPnL
+    ?? position.pnl
+    ?? position.openPnl
+    ?? position.walletImpact?.unrealizedProfitLoss
+  );
+  const unrealizedPnlPct = parseTradingNumber(
+    position.pplPerc
+    ?? position.profitLossPercentage
+    ?? position.unrealizedPnlPct
+    ?? position.pnlPct
+    ?? position.returnPercent
+  );
+  const fxImpact = parseTradingNumber(
+    position.fxImpact
+    ?? position.walletImpact?.fxImpact
+    ?? position.walletImpact?.fx
+  );
+  const ticker = String(
+    position.ticker
+    ?? instrument.ticker
+    ?? instrument.symbol
+    ?? instrument.epic
+    ?? ''
+  ).trim().toUpperCase();
+  const name = String(position.name ?? instrument.name ?? instrument.shortName ?? '').trim();
+  const isin = String(position.isin ?? instrument.isin ?? '').trim().toUpperCase();
+  const currency = String(
+    position.currency
+    ?? instrument.currency
+    ?? position.walletImpact?.currency
+    ?? ''
+  ).trim().toUpperCase();
+  const accountId = String(account?.accountId || account?.id || '').trim();
+  const accountName = String(account?.accountName || account?.name || '').trim();
+  const id = String(position.id || position.positionId || isin || ticker || accountId || '').trim();
+
+  if (!id && !ticker && !isin) return null;
+  return {
+    id: id || `${accountId || 'account'}:${ticker || isin}`,
+    ticker: ticker || isin || '—',
+    name: name || ticker || isin || 'Unknown instrument',
+    qty: Number.isFinite(qty) ? qty : 0,
+    avgPrice: Number.isFinite(avgPrice) ? avgPrice : null,
+    currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+    currency: currency || 'GBP',
+    unrealizedPnl: Number.isFinite(unrealizedPnl) ? unrealizedPnl : 0,
+    unrealizedPnlPct: Number.isFinite(unrealizedPnlPct) ? unrealizedPnlPct : null,
+    fxImpact: Number.isFinite(fxImpact) ? fxImpact : null,
+    accountId,
+    accountName: accountName || 'Trading Account'
+  };
+}
+
 function computeOpenLossPotentialFromTrades(trades = [], rates = {}) {
   let total = 0;
   let withStopCount = 0;
@@ -8622,7 +8704,10 @@ app.get('/api/trades/active', auth, async (req, res) => {
   ensureUserShape(user, req.username);
   const defaultPayload = {
     trades: [],
-    activeTrades: [],
+    activeTrades: {
+      positions: [],
+      trades: []
+    },
     metrics: {
       liveOpenPnl: null,
       openLossPotential: null,
@@ -8727,6 +8812,10 @@ app.get('/api/trades/active', auth, async (req, res) => {
       console.error('Failed to build active trades payload', error);
       return {
         trades: [],
+        activeTrades: {
+          positions: [],
+          trades: []
+        },
         liveOpenPnlGBP: 0,
         openLossPotentialGBP: 0,
         liveOpenPnlMode: 'stale',
@@ -8820,9 +8909,25 @@ app.get('/api/trades/active', auth, async (req, res) => {
     const normalizedOpenLossPotential = canCombineTotals ? computedOpenLossPotential : null;
     const normalizedCurrency = canCombineTotals ? computedLiveOpenPnlCurrency : null;
     const effectiveMixedCurrencies = mixedCurrencies || !canCombineTotals;
+    const mappedPositions = selectedRawAccounts.flatMap(account => {
+      const rawPositions = Array.isArray(account?.positions?.items)
+        ? account.positions.items
+        : Array.isArray(account?.positions)
+          ? account.positions
+          : Array.isArray(account?.portfolio?.positions)
+            ? account.portfolio.positions
+            : [];
+      return rawPositions
+        .map(position => mapTrading212PositionForUi(position, account))
+        .filter(Boolean);
+    });
+
     const payload = {
       trades: mappedTrades,
-      activeTrades: mappedTrades,
+      activeTrades: {
+        positions: mappedPositions,
+        trades: mappedTrades
+      },
       metrics: {
         liveOpenPnl: normalizedLiveOpenPnl,
         openLossPotential: normalizedOpenLossPotential,
@@ -8851,7 +8956,7 @@ app.get('/api/trades/active', auth, async (req, res) => {
         openLossPotential: normalizedOpenLossPotential
       };
     }
-    logDashboardDebug(`final activeTrades=${mappedTrades.length}`);
+    logDashboardDebug(`final activeTrades=${mappedTrades.length} providerPositions=${mappedPositions.length}`);
     return res.json(payload);
   } catch (error) {
     console.error('Active trades endpoint failed; returning stable fallback payload.', error);
