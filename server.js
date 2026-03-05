@@ -7958,6 +7958,60 @@ async function buildActiveTrades(user, rates = {}) {
   };
 }
 
+function parseTrading212PositionUnrealized(position) {
+  if (!position || typeof position !== 'object') return { pnl: null, currency: null };
+  const instrument = position.instrument || {};
+  const walletImpact = position.walletImpact || {};
+  const pnl = parseTradingNumber(
+    position.ppl
+    ?? position.profitLoss
+    ?? position.unrealizedPnl
+    ?? position.unrealizedPnL
+    ?? position.pnl
+    ?? position.openPnl
+    ?? walletImpact.unrealizedProfitLoss
+    ?? walletImpact.unrealizedPnl
+    ?? walletImpact.profitLoss
+    ?? walletImpact.pnl
+  );
+  const currency = String(instrument.currency ?? position.currency ?? walletImpact.currency ?? '').trim().toUpperCase() || null;
+  return {
+    pnl: Number.isFinite(pnl) ? pnl : null,
+    currency
+  };
+}
+
+function computeOpenLossPotentialFromTrades(trades = [], rates = {}) {
+  let total = 0;
+  let withStopCount = 0;
+  for (const trade of trades) {
+    const entry = Number(trade?.entry);
+    const stop = Number.isFinite(Number(trade?.currentStop)) ? Number(trade.currentStop) : Number(trade?.stop);
+    const sizeUnits = Number(trade?.sizeUnits);
+    if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(sizeUnits) || sizeUnits <= 0) continue;
+    const direction = String(trade?.direction || 'long').toLowerCase() === 'short' ? 'short' : 'long';
+    const multiplier = Number.isFinite(Number(trade?.multiplier)) ? Number(trade.multiplier) : 1;
+    const isOption = String(trade?.assetType || '').toUpperCase() === 'OPTION';
+    let riskPerUnit = 0;
+    if (direction === 'short') {
+      riskPerUnit = stop - entry;
+    } else {
+      riskPerUnit = entry - stop;
+    }
+    if (!(riskPerUnit > 0)) continue;
+    const grossRisk = riskPerUnit * sizeUnits * (isOption ? multiplier : 1);
+    const currency = String(trade?.currency || 'GBP').toUpperCase();
+    const riskGBP = convertToGBP(grossRisk, currency, rates);
+    if (!Number.isFinite(riskGBP) || riskGBP <= 0) continue;
+    withStopCount += 1;
+    total -= riskGBP;
+  }
+  return {
+    withStopCount,
+    value: withStopCount > 0 ? total : null
+  };
+}
+
 app.get('/api/trades', auth, async (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
@@ -8570,17 +8624,19 @@ app.get('/api/trades/active', auth, async (req, res) => {
     trades: [],
     activeTrades: [],
     metrics: {
-      liveOpenPnl: 0,
-      openLossPotential: 0,
+      liveOpenPnl: null,
+      openLossPotential: null,
       liveOpenPnlMode: 'stale',
-      liveOpenPnlCurrency: 'GBP',
+      liveOpenPnlCurrency: null,
+      mixedCurrencies: false,
       canCombineTotals: true,
       accountSummaries: []
     },
-    liveOpenPnl: 0,
-    openLossPotential: 0,
+    liveOpenPnl: null,
+    openLossPotential: null,
     liveOpenPnlMode: 'stale',
-    liveOpenPnlCurrency: 'GBP',
+    liveOpenPnlCurrency: null,
+    mixedCurrencies: false,
     canCombineTotals: true,
     accountSummaries: []
   };
@@ -8677,8 +8733,9 @@ app.get('/api/trades/active', auth, async (req, res) => {
         liveOpenPnlCurrency: 'GBP'
       };
     });
-    const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = activeTradeResult;
     const accountFilter = typeof req.query?.tradingAccountId === 'string' ? req.query.tradingAccountId.trim() : 'all';
+    const selectedAccountId = accountFilter && accountFilter !== 'all' ? accountFilter : 'all';
+    const { trades, liveOpenPnlGBP, liveOpenPnlMode, liveOpenPnlCurrency } = activeTradeResult;
     const safeTrades = Array.isArray(trades) ? trades : [];
     const filteredTrades = accountFilter && accountFilter !== 'all'
       ? safeTrades.filter(trade => trade.tradingAccountId === accountFilter)
@@ -8707,24 +8764,93 @@ app.get('/api/trades/active', auth, async (req, res) => {
     const summaryList = Object.values(accountSummaries);
     const currencies = new Set(summaryList.map(s => s.baseCurrency));
     const canCombineTotals = currencies.size <= 1;
+
+    const tradingRaw = user?.trading212?.lastRaw;
+    const allRawAccounts = Array.isArray(tradingRaw?.accounts)
+      ? tradingRaw.accounts
+      : [];
+    const selectedRawAccounts = selectedAccountId === 'all'
+      ? allRawAccounts
+      : allRawAccounts.filter(account => String(account?.accountId || '') === selectedAccountId);
+    const providerPositionRows = selectedRawAccounts.flatMap(account => {
+      const rawPositions = Array.isArray(account?.positions?.items)
+        ? account.positions.items
+        : Array.isArray(account?.positions)
+          ? account.positions
+          : Array.isArray(account?.portfolio?.positions)
+            ? account.portfolio.positions
+            : [];
+      return rawPositions.map(position => ({
+        accountId: String(account?.accountId || ''),
+        parsed: parseTrading212PositionUnrealized(position)
+      }));
+    }).filter(entry => Number.isFinite(entry.parsed?.pnl));
+    const providerCurrencies = new Set(providerPositionRows.map(entry => entry.parsed.currency || 'UNKNOWN'));
+    const positionsUnrealizedSum = providerPositionRows.reduce((sum, entry) => sum + Number(entry.parsed.pnl || 0), 0);
+    const openTradesUnrealizedSum = filteredTrades.reduce((sum, trade) => sum + (Number(trade?.unrealizedGBP) || 0), 0);
+
+    let computedLiveOpenPnl = null;
+    let computedLiveOpenPnlCurrency = null;
+    let computedLiveOpenPnlMode = liveOpenPnlMode || 'computed';
+    let mixedCurrencies = false;
+
+    if (providerPositionRows.length) {
+      if (providerCurrencies.size > 1) {
+        mixedCurrencies = true;
+        computedLiveOpenPnl = null;
+        computedLiveOpenPnlCurrency = null;
+        computedLiveOpenPnlMode = 'provider-mixed';
+      } else {
+        computedLiveOpenPnl = positionsUnrealizedSum;
+        computedLiveOpenPnlCurrency = Array.from(providerCurrencies)[0] || liveOpenPnlCurrency || null;
+        computedLiveOpenPnlMode = 'provider';
+      }
+    } else {
+      computedLiveOpenPnl = Number.isFinite(openTradesUnrealizedSum)
+        ? openTradesUnrealizedSum
+        : (Number(liveOpenPnlGBP) || 0);
+      computedLiveOpenPnlCurrency = 'GBP';
+      computedLiveOpenPnlMode = 'computed';
+    }
+
+    const openLossFromStops = computeOpenLossPotentialFromTrades(filteredTrades, rates);
+    const computedOpenLossPotential = openLossFromStops.value;
+
+    const normalizedLiveOpenPnl = canCombineTotals ? computedLiveOpenPnl : null;
+    const normalizedOpenLossPotential = canCombineTotals ? computedOpenLossPotential : null;
+    const normalizedCurrency = canCombineTotals ? computedLiveOpenPnlCurrency : null;
+    const effectiveMixedCurrencies = mixedCurrencies || !canCombineTotals;
     const payload = {
       trades: mappedTrades,
       activeTrades: mappedTrades,
       metrics: {
-        liveOpenPnl: canCombineTotals ? (Number(liveOpenPnlGBP) || 0) : 0,
-        openLossPotential: canCombineTotals ? (Number(openLossPotentialGBP) || 0) : 0,
-        liveOpenPnlMode: liveOpenPnlMode || 'stale',
-        liveOpenPnlCurrency: canCombineTotals ? (liveOpenPnlCurrency || 'GBP') : null,
+        liveOpenPnl: normalizedLiveOpenPnl,
+        openLossPotential: normalizedOpenLossPotential,
+        liveOpenPnlMode: computedLiveOpenPnlMode,
+        liveOpenPnlCurrency: normalizedCurrency,
+        mixedCurrencies: effectiveMixedCurrencies,
         canCombineTotals,
         accountSummaries: summaryList
       },
-      liveOpenPnl: canCombineTotals ? (Number(liveOpenPnlGBP) || 0) : 0,
-      openLossPotential: canCombineTotals ? (Number(openLossPotentialGBP) || 0) : 0,
-      liveOpenPnlMode: liveOpenPnlMode || 'stale',
-      liveOpenPnlCurrency: canCombineTotals ? (liveOpenPnlCurrency || 'GBP') : null,
+      liveOpenPnl: normalizedLiveOpenPnl,
+      openLossPotential: normalizedOpenLossPotential,
+      liveOpenPnlMode: computedLiveOpenPnlMode,
+      liveOpenPnlCurrency: normalizedCurrency,
+      mixedCurrencies: effectiveMixedCurrencies,
       canCombineTotals,
       accountSummaries: summaryList
     };
+    if (DASHBOARD_DEBUG) {
+      payload.debug = {
+        selectedAccountId,
+        positionsCount: providerPositionRows.length,
+        positionsUnrealizedSum: providerPositionRows.length ? positionsUnrealizedSum : null,
+        openTradesCount: filteredTrades.length,
+        openTradesUnrealizedSum,
+        liveOpenPnl: normalizedLiveOpenPnl,
+        openLossPotential: normalizedOpenLossPotential
+      };
+    }
     logDashboardDebug(`final activeTrades=${mappedTrades.length}`);
     return res.json(payload);
   } catch (error) {
