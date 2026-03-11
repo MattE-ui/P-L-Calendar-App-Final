@@ -46,7 +46,7 @@ const profileState = {
   currency: 'GBP',
   rates: { GBP: 1 },
   multiTradingAccountsEnabled: false,
-  tradingAccounts: [{ id: 'primary', label: 'Primary account' }],
+  tradingAccounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }],
   investorAccountsEnabled: false,
   investorPortalAvailable: false
 };
@@ -247,8 +247,13 @@ async function loadProfile() {
     profileState.isGuest = !!data.isGuest;
     profileState.multiTradingAccountsEnabled = !!data.multiTradingAccountsEnabled;
     profileState.tradingAccounts = Array.isArray(data.tradingAccounts) && data.tradingAccounts.length
-      ? data.tradingAccounts
-      : [{ id: 'primary', label: 'Primary account' }];
+      ? data.tradingAccounts.map(account => ({
+        id: account.id,
+        label: account.label || '',
+        currentValue: Number(account.currentValue) || 0,
+        currentNetDeposits: Number(account.currentNetDeposits) || 0
+      }))
+      : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
     profileState.investorPortalAvailable = !!data.investorPortalAvailable;
     await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
@@ -462,10 +467,50 @@ function renderTradingAccounts() {
     row.className = 'profile-field';
     row.innerHTML = `
       <label>${index === 0 ? 'Primary account label' : `Account ${index + 1} label`}</label>
-      <input type="text" data-account-id="${account.id}" value="${account.label || ''}" maxlength="40" ${index === 0 ? '' : ''}>
+      <input type="text" data-account-id="${account.id}" data-account-field="label" value="${account.label || ''}" maxlength="40">
+      <div class="profile-field two-col">
+        <div>
+          <label>Current value (£)</label>
+          <input type="number" min="0" step="0.01" data-account-id="${account.id}" data-account-field="currentValue" value="${Number(account.currentValue || 0).toFixed(2)}">
+        </div>
+        <div>
+          <label>Net deposits (£)</label>
+          <input type="number" step="0.01" data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
+        </div>
+      </div>
     `;
     list.appendChild(row);
   });
+  const combinedPortfolio = accounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+  const combinedNet = accounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
+  const portfolioInput = document.getElementById('profile-portfolio');
+  const netInput = document.getElementById('profile-net-deposits');
+  const deltaInput = document.getElementById('profile-net-deposits-delta');
+  const multiEnabled = !!profileState.multiTradingAccountsEnabled;
+  if (portfolioInput) {
+    if (multiEnabled) {
+      portfolioInput.value = combinedPortfolio.toFixed(2);
+      portfolioInput.readOnly = true;
+      portfolioInput.classList.add('readonly');
+    } else {
+      portfolioInput.readOnly = false;
+      portfolioInput.classList.remove('readonly');
+    }
+  }
+  if (netInput) {
+    if (multiEnabled) {
+      netInput.value = combinedNet.toFixed(2);
+      netInput.readOnly = true;
+      netInput.classList.add('readonly');
+    } else {
+      netInput.readOnly = false;
+      netInput.classList.remove('readonly');
+    }
+  }
+  if (deltaInput) {
+    deltaInput.disabled = multiEnabled;
+    if (multiEnabled) deltaInput.value = '';
+  }
 }
 
 async function handlePasswordChange() {
@@ -1178,10 +1223,22 @@ async function saveProfile() {
   const nicknameError = document.getElementById('account-nickname-error');
   const portfolioRaw = portfolioInput?.value.trim() ?? '';
   const netRaw = netInput?.value.trim() ?? '';
-  const portfolio = Number(portfolioRaw);
+  let portfolio = Number(portfolioRaw);
   const nicknameRaw = nicknameInput?.value.trim() ?? '';
   if (nicknameError) nicknameError.textContent = '';
-  if (!portfolioRaw || Number.isNaN(portfolio) || portfolio < 0) {
+  const multiEnabled = !!profileState.multiTradingAccountsEnabled;
+  const accountPayload = multiEnabled
+    ? profileState.tradingAccounts.map((account, index) => ({
+      id: account.id,
+      label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      currentValue: Number(account.currentValue) || 0,
+      currentNetDeposits: Number(account.currentNetDeposits) || 0
+    }))
+    : null;
+  if (multiEnabled && accountPayload?.length) {
+    portfolio = accountPayload.reduce((sum, account) => sum + account.currentValue, 0);
+  }
+  if ((!multiEnabled && !portfolioRaw) || Number.isNaN(portfolio) || portfolio < 0) {
     if (errEl) errEl.textContent = 'Enter a non-negative portfolio value to continue.';
     return;
   }
@@ -1194,6 +1251,9 @@ async function saveProfile() {
     return;
   }
   let netDepositsTotal = Number(netRaw);
+  if (multiEnabled && accountPayload?.length) {
+    netDepositsTotal = accountPayload.reduce((sum, account) => sum + account.currentNetDeposits, 0);
+  }
   if (!profileState.complete) {
     if (!netRaw || Number.isNaN(netDepositsTotal)) {
       if (errEl) errEl.textContent = 'Enter your cumulative net deposits (can be negative).';
@@ -1225,6 +1285,7 @@ async function saveProfile() {
       body: JSON.stringify({
         portfolio,
         netDeposits: netDepositsTotal,
+        tradingAccounts: accountPayload || undefined,
         nickname: nicknameInput ? nicknameRaw : undefined
       })
     });
@@ -2038,12 +2099,44 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
   document.getElementById('trading-account-add')?.addEventListener('click', () => {
     const id = `account-${Date.now()}`;
-    profileState.tradingAccounts.push({ id, label: `Account ${profileState.tradingAccounts.length + 1}` });
+    profileState.tradingAccounts.push({
+      id,
+      label: `Account ${profileState.tradingAccounts.length + 1}`,
+      currentValue: 0,
+      currentNetDeposits: 0
+    });
     profileState.multiTradingAccountsEnabled = true;
     renderTradingAccounts();
   });
   document.getElementById('trading-accounts-enabled')?.addEventListener('change', event => {
     profileState.multiTradingAccountsEnabled = !!event.target?.checked;
+    renderTradingAccounts();
+  });
+  document.getElementById('trading-accounts-list')?.addEventListener('input', event => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const accountId = input.dataset.accountId;
+    const field = input.dataset.accountField;
+    if (!accountId || !field) return;
+    const account = profileState.tradingAccounts.find(item => item.id === accountId);
+    if (!account) return;
+    if (field === 'label') {
+      account.label = input.value;
+    } else if (field === 'currentValue') {
+      const value = Number(input.value);
+      account.currentValue = Number.isFinite(value) && value >= 0 ? value : 0;
+    } else if (field === 'currentNetDeposits') {
+      const value = Number(input.value);
+      account.currentNetDeposits = Number.isFinite(value) ? value : 0;
+    }
+    if (profileState.multiTradingAccountsEnabled) {
+      const combinedPortfolio = profileState.tradingAccounts.reduce((sum, item) => sum + (Number(item.currentValue) || 0), 0);
+      const combinedNet = profileState.tradingAccounts.reduce((sum, item) => sum + (Number(item.currentNetDeposits) || 0), 0);
+      const portfolioInput = document.getElementById('profile-portfolio');
+      const netInput = document.getElementById('profile-net-deposits');
+      if (portfolioInput) portfolioInput.value = combinedPortfolio.toFixed(2);
+      if (netInput) netInput.value = combinedNet.toFixed(2);
+    }
   });
   document.getElementById('trading-accounts-save')?.addEventListener('click', async () => {
     const status = document.getElementById('trading-accounts-status');
@@ -2053,10 +2146,11 @@ window.addEventListener('DOMContentLoaded', () => {
       status.classList.add('is-hidden');
     }
     if (error) error.textContent = '';
-    const rows = Array.from(document.querySelectorAll('#trading-accounts-list input[data-account-id]'));
-    const accounts = rows.map((row, index) => ({
-      id: row.dataset.accountId,
-      label: (row.value || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`)
+    const accounts = profileState.tradingAccounts.map((account, index) => ({
+      id: account.id,
+      label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      currentValue: Number(account.currentValue) || 0,
+      currentNetDeposits: Number(account.currentNetDeposits) || 0
     }));
     try {
       const payload = await api('/api/account/trading-accounts', {
@@ -2069,8 +2163,13 @@ window.addEventListener('DOMContentLoaded', () => {
       });
       profileState.multiTradingAccountsEnabled = !!payload.enabled;
       profileState.tradingAccounts = Array.isArray(payload.accounts) && payload.accounts.length
-        ? payload.accounts
-        : [{ id: 'primary', label: 'Primary account' }];
+        ? payload.accounts.map(account => ({
+          id: account.id,
+          label: account.label || '',
+          currentValue: Number(account.currentValue) || 0,
+          currentNetDeposits: Number(account.currentNetDeposits) || 0
+        }))
+        : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
       renderTradingAccounts();
       if (status) {
         status.textContent = 'Trading accounts saved.';
