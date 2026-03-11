@@ -45,6 +45,8 @@ const profileState = {
   isGuest: false,
   currency: 'GBP',
   rates: { GBP: 1 },
+  multiTradingAccountsEnabled: false,
+  tradingAccounts: [{ id: 'primary', label: 'Primary account' }],
   investorAccountsEnabled: false,
   investorPortalAvailable: false
 };
@@ -243,6 +245,10 @@ async function loadProfile() {
     profileState.username = data.username || '';
     profileState.nickname = data.nickname || '';
     profileState.isGuest = !!data.isGuest;
+    profileState.multiTradingAccountsEnabled = !!data.multiTradingAccountsEnabled;
+    profileState.tradingAccounts = Array.isArray(data.tradingAccounts) && data.tradingAccounts.length
+      ? data.tradingAccounts
+      : [{ id: 'primary', label: 'Primary account' }];
     profileState.investorPortalAvailable = !!data.investorPortalAvailable;
     await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
@@ -337,6 +343,7 @@ async function loadProfile() {
     }
     applyGuestRestrictions();
     renderSecurityState();
+    renderTradingAccounts();
     if (profileState.investorAccountsEnabled) {
       await loadInvestors();
     }
@@ -365,6 +372,9 @@ function applyGuestRestrictions() {
     't212-run-now',
     'investor-accounts-enabled',
     'investor-accounts-save',
+    'trading-accounts-enabled',
+    'trading-account-add',
+    'trading-accounts-save',
     'investor-create-btn',
     'investor-valuation-btn'
   ];
@@ -433,6 +443,29 @@ function renderSecurityState() {
   if (nicknameError) {
     nicknameError.textContent = '';
   }
+}
+
+function renderTradingAccounts() {
+  const toggle = document.getElementById('trading-accounts-enabled');
+  const list = document.getElementById('trading-accounts-list');
+  if (toggle) {
+    toggle.checked = !!profileState.multiTradingAccountsEnabled;
+    toggle.disabled = profileState.isGuest;
+  }
+  if (!list) return;
+  const accounts = Array.isArray(profileState.tradingAccounts) && profileState.tradingAccounts.length
+    ? profileState.tradingAccounts
+    : [{ id: 'primary', label: 'Primary account' }];
+  list.innerHTML = '';
+  accounts.forEach((account, index) => {
+    const row = document.createElement('div');
+    row.className = 'profile-field';
+    row.innerHTML = `
+      <label>${index === 0 ? 'Primary account label' : `Account ${index + 1} label`}</label>
+      <input type="text" data-account-id="${account.id}" value="${account.label || ''}" maxlength="40" ${index === 0 ? '' : ''}>
+    `;
+    list.appendChild(row);
+  });
 }
 
 async function handlePasswordChange() {
@@ -2003,6 +2036,50 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
   document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
+  document.getElementById('trading-account-add')?.addEventListener('click', () => {
+    const id = `account-${Date.now()}`;
+    profileState.tradingAccounts.push({ id, label: `Account ${profileState.tradingAccounts.length + 1}` });
+    profileState.multiTradingAccountsEnabled = true;
+    renderTradingAccounts();
+  });
+  document.getElementById('trading-accounts-enabled')?.addEventListener('change', event => {
+    profileState.multiTradingAccountsEnabled = !!event.target?.checked;
+  });
+  document.getElementById('trading-accounts-save')?.addEventListener('click', async () => {
+    const status = document.getElementById('trading-accounts-status');
+    const error = document.getElementById('trading-accounts-error');
+    if (status) {
+      status.textContent = '';
+      status.classList.add('is-hidden');
+    }
+    if (error) error.textContent = '';
+    const rows = Array.from(document.querySelectorAll('#trading-accounts-list input[data-account-id]'));
+    const accounts = rows.map((row, index) => ({
+      id: row.dataset.accountId,
+      label: (row.value || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`)
+    }));
+    try {
+      const payload = await api('/api/account/trading-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: !!profileState.multiTradingAccountsEnabled,
+          accounts
+        })
+      });
+      profileState.multiTradingAccountsEnabled = !!payload.enabled;
+      profileState.tradingAccounts = Array.isArray(payload.accounts) && payload.accounts.length
+        ? payload.accounts
+        : [{ id: 'primary', label: 'Primary account' }];
+      renderTradingAccounts();
+      if (status) {
+        status.textContent = 'Trading accounts saved.';
+        status.classList.remove('is-hidden');
+      }
+    } catch (e) {
+      if (error) error.textContent = e?.data?.error || 'Unable to save trading accounts right now.';
+    }
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       helpModal?.classList.add('hidden');

@@ -22,6 +22,8 @@ const state = {
   isGuest: false,
   isAdmin: false,
   profile: null,
+  tradingAccounts: [{ id: 'primary', label: 'Primary account' }],
+  multiTradingAccountsEnabled: false,
   metrics: {
     baselineGBP: 0,
     latestGBP: 0,
@@ -422,6 +424,7 @@ function getDailyEntry(date) {
   const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
+  const accounts = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
   if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
   let change = null;
@@ -447,6 +450,7 @@ function getDailyEntry(date) {
     cashFlow: netCash,
     preBaseline: record.preBaseline === true,
     note,
+    accounts,
     trades,
     tradesCount: trades.length
   };
@@ -2897,10 +2901,36 @@ function openEntryModal(dateStr, existingEntry = null) {
     });
   }
   const entry = existingEntry ?? getDailyEntry(new Date(dateStr));
-  const currentValGBP = entry?.closing ?? null;
-  const depositGBP = entry?.cashIn ?? 0;
-  const withdrawalGBP = entry?.cashOut ?? 0;
-  const noteText = entry?.note ?? '';
+  const accountField = $('#profit-account-field');
+  const accountSelect = $('#profit-account-select');
+  const useAccountSplit = state.multiTradingAccountsEnabled || (state.tradingAccounts || []).length > 1;
+  const selectedAccountId = accountSelect?.value || 'primary';
+  const accountEntries = entry?.accounts && typeof entry.accounts === 'object' ? entry.accounts : {};
+  const selectedAccount = accountEntries[selectedAccountId] || {};
+  const currentValGBP = useAccountSplit
+    ? (Number.isFinite(Number(selectedAccount?.end)) ? Number(selectedAccount.end) : null)
+    : (entry?.closing ?? null);
+  const depositGBP = useAccountSplit
+    ? (Number(selectedAccount?.cashIn) || 0)
+    : (entry?.cashIn ?? 0);
+  const withdrawalGBP = useAccountSplit
+    ? (Number(selectedAccount?.cashOut) || 0)
+    : (entry?.cashOut ?? 0);
+  const noteText = useAccountSplit
+    ? (selectedAccount?.note ?? '')
+    : (entry?.note ?? '');
+  if (accountField && accountSelect) {
+    const accounts = Array.isArray(state.tradingAccounts) && state.tradingAccounts.length
+      ? state.tradingAccounts
+      : [{ id: 'primary', label: 'Primary account' }];
+    accountField.classList.toggle('hidden', !useAccountSplit);
+    accountSelect.innerHTML = accounts
+      .map(account => `<option value="${account.id}">${account.label || account.id}</option>`)
+      .join('');
+    if (accounts.some(account => account.id === selectedAccountId)) {
+      accountSelect.value = selectedAccountId;
+    }
+  }
   const label = $('#profit-modal-label');
   if (label) label.textContent = `Closing portfolio value (${state.currency})`;
   const depositLabel = $('#cash-in-label');
@@ -2974,7 +3004,8 @@ function openEntryModal(dateStr, existingEntry = null) {
             value: valuePayload,
             cashIn: toGBP(depositVal),
             cashOut: toGBP(withdrawalVal),
-            note: noteVal
+            note: noteVal,
+            accountId: accountSelect ? accountSelect.value : 'primary'
           })
         });
         modal.classList.add('hidden');
@@ -2992,7 +3023,11 @@ function openEntryModal(dateStr, existingEntry = null) {
         await api('/api/pl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date: dateStr, value: null })
+          body: JSON.stringify({
+            date: dateStr,
+            value: null,
+            accountId: accountSelect ? accountSelect.value : 'primary'
+          })
         });
         modal.classList.add('hidden');
         await loadData();
@@ -3008,6 +3043,9 @@ function openEntryModal(dateStr, existingEntry = null) {
       modal.classList.add('hidden');
     };
     closeBtn.focus();
+  }
+  if (accountSelect) {
+    accountSelect.onchange = () => openEntryModal(dateStr, existingEntry);
   }
 }
 
@@ -3641,9 +3679,16 @@ async function loadProfile() {
     const profile = await api('/api/profile');
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
+    const accounts = Array.isArray(profile?.tradingAccounts) && profile.tradingAccounts.length
+      ? profile.tradingAccounts
+      : [{ id: 'primary', label: 'Primary account' }];
+    state.tradingAccounts = accounts;
+    state.multiTradingAccountsEnabled = !!profile?.multiTradingAccountsEnabled;
   } catch (e) {
     state.isAdmin = false;
     state.profile = null;
+    state.tradingAccounts = [{ id: 'primary', label: 'Primary account' }];
+    state.multiTradingAccountsEnabled = false;
   }
 }
 
