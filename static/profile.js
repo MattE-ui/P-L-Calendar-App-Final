@@ -2170,9 +2170,9 @@ window.addEventListener('DOMContentLoaded', () => {
           currentNetDeposits: Number(account.currentNetDeposits) || 0
         }))
         : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
-      renderTradingAccounts();
+      await loadProfile();
       if (status) {
-        status.textContent = 'Trading accounts saved.';
+        status.textContent = 'Trading accounts saved and combined totals updated.';
         status.classList.remove('is-hidden');
       }
     } catch (e) {

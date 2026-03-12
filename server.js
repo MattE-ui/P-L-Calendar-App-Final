@@ -2032,6 +2032,12 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
 }
 
 function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
+  if (multiEnabled && accountList.length) {
+    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentNetDeposits) || 0), 0);
+    return { baseline: combined, total: combined };
+  }
   const baseline = Number.isFinite(Number(user?.initialNetDeposits))
     ? Number(user.initialNetDeposits)
     : 0;
@@ -3178,6 +3184,17 @@ function isFreshTimestamp(value, windowMs) {
 }
 
 function getCurrentPortfolioValue(user) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
+  if (multiEnabled && accountList.length) {
+    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentValue) || 0), 0);
+    return {
+      value: combined,
+      currency: 'GBP',
+      source: 'manual',
+      lastUpdatedAt: typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null
+    };
+  }
   const portfolioValue = Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : 0;
   const portfolioCurrency = typeof user?.portfolioCurrency === 'string' && user.portfolioCurrency
     ? user.portfolioCurrency
@@ -6135,6 +6152,35 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;
+  }
+  if (user.multiTradingAccountsEnabled && Array.isArray(user.tradingAccounts) && user.tradingAccounts.length) {
+    const combinedPortfolio = user.tradingAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    const combinedNetDeposits = user.tradingAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
+    user.portfolio = combinedPortfolio;
+    user.portfolioCurrency = 'GBP';
+    user.portfolioSource = 'manual';
+    user.lastPortfolioSyncAt = new Date().toISOString();
+    user.initialNetDeposits = combinedNetDeposits;
+    const dateKey = currentDateKey();
+    user.netDepositsAnchor = dateKey;
+    const history = ensurePortfolioHistory(user);
+    const ym = dateKey.slice(0, 7);
+    history[ym] ||= {};
+    const accountsPayload = {};
+    user.tradingAccounts.forEach(account => {
+      accountsPayload[account.id] = {
+        end: Number(account.currentValue) || 0,
+        cashIn: 0,
+        cashOut: 0
+      };
+    });
+    history[ym][dateKey] = {
+      end: combinedPortfolio,
+      cashIn: 0,
+      cashOut: 0,
+      accounts: accountsPayload
+    };
+    user.profileComplete = true;
   }
   saveDB(db);
   res.json({
