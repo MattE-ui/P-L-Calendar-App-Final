@@ -832,7 +832,7 @@ function normalizeTradingAccountLabel(value, fallback = '') {
 
 function ensureTradingAccounts(user) {
   if (!user || typeof user !== 'object') {
-    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }] };
+    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }] };
   }
   let mutated = false;
   if (typeof user.multiTradingAccountsEnabled !== 'boolean') {
@@ -850,18 +850,25 @@ function ensureTradingAccounts(user) {
     seen.add(id);
     const currentValueRaw = Number(account.currentValue);
     const currentNetDepositsRaw = Number(account.currentNetDeposits);
+    const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
+    const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
+      ? integrationProviderRaw
+      : null;
+    const integrationEnabled = !!integrationProvider && account.integrationEnabled !== false;
     normalized.push({
       id,
       label: normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`),
       currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
-      currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0
+      currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0,
+      integrationProvider,
+      integrationEnabled
     });
   });
   if (!normalized.length) {
-    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
   }
   if (!normalized.some(account => account.id === 'primary')) {
-    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
   }
   if (!Array.isArray(user.tradingAccounts) || JSON.stringify(existing) !== JSON.stringify(normalized)) {
     user.tradingAccounts = normalized;
@@ -5593,7 +5600,7 @@ app.get('/api/profile', auth, (req,res)=>{
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username),
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
-    tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]).map(account => ({
+    tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]).map(account => ({
       id: account.id,
       label: account.label || '',
       currentValue: Number(account.currentValue) || 0,
@@ -6103,7 +6110,7 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   if (mutated) saveDB(db);
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
-    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]
   });
 });
 
@@ -6126,6 +6133,13 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const existing = existingById.get(id) || {};
         const currentValueRaw = Number(account.currentValue);
         const currentNetDepositsRaw = Number(account.currentNetDeposits);
+        const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
+        const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
+          ? integrationProviderRaw
+          : (existing.integrationProvider || null);
+        const integrationEnabled = integrationProvider
+          ? account.integrationEnabled !== false && existing.integrationEnabled !== false
+          : false;
         return {
           id,
           label,
@@ -6134,7 +6148,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
             : (Number(existing.currentValue) || 0),
           currentNetDeposits: Number.isFinite(currentNetDepositsRaw)
             ? currentNetDepositsRaw
-            : (Number(existing.currentNetDeposits) || 0)
+            : (Number(existing.currentNetDeposits) || 0),
+          integrationProvider,
+          integrationEnabled
         };
       })
       .filter(account => account && account.id);
@@ -6146,9 +6162,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
       deduped.push(account);
     });
     if (!deduped.some(account => account.id === 'primary')) {
-      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
     }
-    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
+    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;
@@ -6186,9 +6202,95 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
   res.json({
     ok: true,
     enabled: !!user.multiTradingAccountsEnabled,
-    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]
   });
 });
+
+app.post('/api/account/trading-accounts/integration-toggle', auth, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const accountId = typeof req.body?.accountId === 'string' ? req.body.accountId.trim() : '';
+  const provider = typeof req.body?.provider === 'string' ? req.body.provider.trim().toLowerCase() : '';
+  const enabled = req.body?.enabled !== false;
+  if (!accountId) return res.status(400).json({ error: 'Missing account id.' });
+  if (provider !== 'trading212' && provider !== 'ibkr') {
+    return res.status(400).json({ error: 'Provider must be trading212 or ibkr.' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const accounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  const target = accounts.find(account => account.id === accountId);
+  if (!target) return res.status(404).json({ error: 'Trading account not found.' });
+  if (enabled) {
+    const usedElsewhere = accounts.some(account => account.id !== accountId && account.integrationEnabled && account.integrationProvider === provider);
+    if (usedElsewhere) {
+      return res.status(409).json({ error: `${provider === 'ibkr' ? 'IBKR' : 'Trading 212'} is already linked to another trading account.` });
+    }
+    if (provider === 'trading212') {
+      const cfg = user.trading212;
+      const t212Accounts = getTrading212Accounts(cfg);
+      if (!cfg?.enabled || !t212Accounts.length) {
+        return res.status(400).json({ error: 'Enable Trading 212 integration and save credentials first.' });
+      }
+      const matched = t212Accounts.find(item => item.id === accountId) || t212Accounts[0];
+      const accountConfig = {
+        ...cfg,
+        apiKey: matched.apiKey,
+        apiSecret: matched.apiSecret,
+        mode: matched.mode || cfg.mode,
+        baseUrl: matched.baseUrl || cfg.baseUrl
+      };
+      const snapshot = await fetchTrading212Snapshot(accountConfig);
+      const value = Number(snapshot?.portfolioValue);
+      if (!Number.isFinite(value)) {
+        return res.status(502).json({ error: 'Trading 212 did not return a valid portfolio value.' });
+      }
+      target.currentValue = value;
+      target.integrationProvider = 'trading212';
+      target.integrationEnabled = true;
+      user.portfolioSource = 'trading212';
+      user.lastPortfolioSyncAt = new Date().toISOString();
+    } else {
+      const ibkrCfg = user.ibkr;
+      if (!ibkrCfg?.enabled) {
+        return res.status(400).json({ error: 'Enable IBKR integration first.' });
+      }
+      await syncIbkrForUser(req.username);
+      const refreshedDb = loadDB();
+      const refreshedUser = refreshedDb.users[req.username];
+      ensureUserShape(refreshedUser, req.username);
+      const refreshedAccounts = refreshedUser.tradingAccounts || [];
+      const refreshedTarget = refreshedAccounts.find(account => account.id === accountId);
+      const syncedValue = Number(refreshedUser.portfolio);
+      if (!refreshedTarget || !Number.isFinite(syncedValue)) {
+        return res.status(502).json({ error: 'IBKR sync did not return a valid portfolio value.' });
+      }
+      refreshedTarget.currentValue = syncedValue;
+      refreshedTarget.integrationProvider = 'ibkr';
+      refreshedTarget.integrationEnabled = true;
+      refreshedUser.portfolioSource = 'ibkr';
+      refreshedUser.lastPortfolioSyncAt = new Date().toISOString();
+      saveDB(refreshedDb);
+      return res.json({ ok: true, accounts: refreshedUser.tradingAccounts, message: 'IBKR integration enabled for this account and values refreshed.' });
+    }
+  } else {
+    if (target.integrationProvider === provider) {
+      target.integrationProvider = null;
+      target.integrationEnabled = false;
+      user.portfolioSource = 'manual';
+    }
+  }
+  saveDB(db);
+  res.json({
+    ok: true,
+    accounts: user.tradingAccounts,
+    message: enabled
+      ? `${provider === 'ibkr' ? 'IBKR' : 'Trading 212'} integration enabled for this account and values refreshed.`
+      : `${provider === 'ibkr' ? 'IBKR' : 'Trading 212'} integration disabled for this account.`
+  });
+}));
+
 
 
 app.delete('/api/profile', auth, (req, res) => {
