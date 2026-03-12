@@ -825,6 +825,95 @@ function ensurePortfolioHistory(user) {
   return user.portfolioHistory;
 }
 
+function normalizeTradingAccountLabel(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  return value.trim().slice(0, 40);
+}
+
+function ensureTradingAccounts(user) {
+  if (!user || typeof user !== 'object') {
+    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }] };
+  }
+  let mutated = false;
+  if (typeof user.multiTradingAccountsEnabled !== 'boolean') {
+    user.multiTradingAccountsEnabled = false;
+    mutated = true;
+  }
+  const existing = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  const normalized = [];
+  const seen = new Set();
+  existing.forEach((account, index) => {
+    if (!account || typeof account !== 'object') return;
+    const rawId = typeof account.id === 'string' ? account.id.trim() : '';
+    const id = rawId || (index === 0 ? 'primary' : crypto.randomBytes(6).toString('hex'));
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const currentValueRaw = Number(account.currentValue);
+    const currentNetDepositsRaw = Number(account.currentNetDeposits);
+    normalized.push({
+      id,
+      label: normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
+      currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0
+    });
+  });
+  if (!normalized.length) {
+    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+  }
+  if (!normalized.some(account => account.id === 'primary')) {
+    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+  }
+  if (!Array.isArray(user.tradingAccounts) || JSON.stringify(existing) !== JSON.stringify(normalized)) {
+    user.tradingAccounts = normalized;
+    mutated = true;
+  }
+  if (!user.multiTradingAccountsEnabled && normalized.length > 1) {
+    user.multiTradingAccountsEnabled = true;
+    mutated = true;
+  }
+  return { mutated, accounts: normalized };
+}
+
+function resolveTradingAccountId(user, accountId) {
+  const { accounts } = ensureTradingAccounts(user);
+  const candidate = typeof accountId === 'string' ? accountId.trim() : '';
+  if (candidate && accounts.some(account => account.id === candidate)) return candidate;
+  return 'primary';
+}
+
+function buildAccountAggregates(accounts = {}) {
+  const aggregates = [];
+  let end = null;
+  let cashIn = 0;
+  let cashOut = 0;
+  for (const [accountId, raw] of Object.entries(accounts || {})) {
+    if (!raw || typeof raw !== 'object') continue;
+    const accountEnd = Number(raw.end);
+    const accountCashIn = Number(raw.cashIn ?? 0);
+    const accountCashOut = Number(raw.cashOut ?? 0);
+    const note = typeof raw.note === 'string' ? raw.note.trim() : '';
+    const payload = {
+      accountId,
+      end: Number.isFinite(accountEnd) && accountEnd >= 0 ? accountEnd : null,
+      cashIn: Number.isFinite(accountCashIn) && accountCashIn >= 0 ? accountCashIn : 0,
+      cashOut: Number.isFinite(accountCashOut) && accountCashOut >= 0 ? accountCashOut : 0,
+      note: note || undefined
+    };
+    if (payload.end !== null || payload.cashIn > 0 || payload.cashOut > 0 || payload.note) {
+      aggregates.push(payload);
+      if (payload.end !== null) end = (end ?? 0) + payload.end;
+      cashIn += payload.cashIn;
+      cashOut += payload.cashOut;
+    }
+  }
+  return {
+    accounts: aggregates,
+    end,
+    cashIn,
+    cashOut
+  };
+}
+
 function ensureTradeJournal(user) {
   if (!user) return {};
   if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
@@ -1128,6 +1217,8 @@ function ensureUserShape(user, identifier) {
     mutated = true;
   }
   ensurePortfolioHistory(user);
+  const { mutated: accountsMutated } = ensureTradingAccounts(user);
+  if (accountsMutated) mutated = true;
   const { mutated: tradingMutated } = ensureTrading212Config(user);
   if (tradingMutated) mutated = true;
   const { mutated: ibkrMutated } = ensureIbkrConfig(user);
@@ -1233,6 +1324,28 @@ function normalizePortfolioHistory(user) {
         continue;
       }
       if (typeof record === 'object') {
+        let accountMap = null;
+        if (record.accounts && typeof record.accounts === 'object' && !Array.isArray(record.accounts)) {
+          accountMap = {};
+          for (const [accountId, accountRecord] of Object.entries(record.accounts)) {
+            if (!accountRecord || typeof accountRecord !== 'object') continue;
+            const endRaw = Number(accountRecord.end);
+            const cashInRaw = Number(accountRecord.cashIn ?? 0);
+            const cashOutRaw = Number(accountRecord.cashOut ?? 0);
+            const accountNoteRaw = typeof accountRecord.note === 'string' ? accountRecord.note : '';
+            const accountNote = accountNoteRaw.trim();
+            const payload = {};
+            if (Number.isFinite(endRaw) && endRaw >= 0) payload.end = endRaw;
+            const accountCashIn = Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0;
+            const accountCashOut = Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0;
+            if (accountCashIn || accountCashOut || payload.end !== undefined || accountNote) {
+              payload.cashIn = accountCashIn;
+              payload.cashOut = accountCashOut;
+              if (accountNote) payload.note = accountNote;
+              accountMap[accountId] = payload;
+            }
+          }
+        }
         if (record.end === undefined && typeof record.value === 'number') {
           const preBaseline = anchor && dateKey < anchor;
           days[dateKey] = preBaseline
@@ -1250,10 +1363,17 @@ function normalizePortfolioHistory(user) {
         const preBaseline = anchor && dateKey < anchor;
         const end = Number(record.end);
         if (!Number.isFinite(end) || end < 0) {
-          if (cashIn > 0 || cashOut > 0 || note) {
+          if (cashIn > 0 || cashOut > 0 || note || (accountMap && Object.keys(accountMap).length)) {
             const cashPayload = preBaseline
               ? { cashIn, cashOut, preBaseline: true }
               : { cashIn, cashOut };
+            if (accountMap && Object.keys(accountMap).length) {
+              const aggregate = buildAccountAggregates(accountMap);
+              if (aggregate.end !== null) cashPayload.end = aggregate.end;
+              cashPayload.cashIn = aggregate.cashIn;
+              cashPayload.cashOut = aggregate.cashOut;
+              cashPayload.accounts = accountMap;
+            }
             if (note) {
               cashPayload.note = note;
             }
@@ -1285,6 +1405,17 @@ function normalizePortfolioHistory(user) {
         const payload = preBaseline
           ? { end, cashIn, cashOut, preBaseline: true }
           : { end, cashIn, cashOut };
+        if (accountMap && Object.keys(accountMap).length) {
+          const aggregate = buildAccountAggregates(accountMap);
+          if (aggregate.end !== null) {
+            payload.end = aggregate.end;
+          } else {
+            delete payload.end;
+          }
+          payload.cashIn = aggregate.cashIn;
+          payload.cashOut = aggregate.cashOut;
+          payload.accounts = accountMap;
+        }
         if (note) {
           payload.note = note;
         }
@@ -1819,7 +1950,8 @@ function buildSnapshots(history, initial, tradeJournal = {}) {
         cashIn,
         cashOut,
         preBaseline: record.preBaseline === true,
-        note
+        note,
+        accounts: record.accounts && typeof record.accounts === 'object' ? record.accounts : null
       });
     }
   }
@@ -1849,6 +1981,9 @@ function buildSnapshots(history, initial, tradeJournal = {}) {
     }
     if (record.note) {
       payload.note = record.note;
+    }
+    if (record.accounts && typeof record.accounts === 'object') {
+      payload.accounts = record.accounts;
     }
     snapshots[record.monthKey][record.date] = payload;
   });
@@ -1897,6 +2032,12 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
 }
 
 function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
+  if (multiEnabled && accountList.length) {
+    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentNetDeposits) || 0), 0);
+    return { baseline: combined, total: combined };
+  }
   const baseline = Number.isFinite(Number(user?.initialNetDeposits))
     ? Number(user.initialNetDeposits)
     : 0;
@@ -3043,6 +3184,17 @@ function isFreshTimestamp(value, windowMs) {
 }
 
 function getCurrentPortfolioValue(user) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
+  if (multiEnabled && accountList.length) {
+    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentValue) || 0), 0);
+    return {
+      value: combined,
+      currency: 'GBP',
+      source: 'manual',
+      lastUpdatedAt: typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null
+    };
+  }
   const portfolioValue = Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : 0;
   const portfolioCurrency = typeof user?.portfolioCurrency === 'string' && user.portfolioCurrency
     ? user.portfolioCurrency
@@ -5173,7 +5325,7 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
   res.status(201).json({ cashflow: row });
 });
 
-app.patch('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureInvestorTables(db);
@@ -5394,6 +5546,17 @@ app.post('/api/portfolio', auth, (req,res)=>{
     ...existing,
     end: portfolio
   };
+  const accounts = existing.accounts && typeof existing.accounts === 'object' ? existing.accounts : {};
+  const primary = accounts.primary && typeof accounts.primary === 'object' ? accounts.primary : {};
+  history[ym][dateKey].accounts = {
+    ...accounts,
+    primary: {
+      ...primary,
+      end: portfolio,
+      cashIn: Number(primary.cashIn) || 0,
+      cashOut: Number(primary.cashOut) || 0
+    }
+  };
   refreshAnchors(user, history);
   saveDB(db);
   res.json({ ok: true, portfolio });
@@ -5429,6 +5592,13 @@ app.get('/api/profile', auth, (req,res)=>{
     nickname: user.nickname || user.displayName || user.username || req.username,
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username),
+    multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
+    tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]).map(account => ({
+      id: account.id,
+      label: account.label || '',
+      currentValue: Number(account.currentValue) || 0,
+      currentNetDeposits: Number(account.currentNetDeposits) || 0
+    })),
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true
   });
@@ -5668,11 +5838,11 @@ app.post('/api/transactions/profiles', auth, (req, res) => {
 });
 
 app.post('/api/profile', auth, (req,res)=>{
-  const { portfolio, netDeposits, date, nickname } = req.body || {};
+  const { portfolio, netDeposits, date, nickname, tradingAccounts } = req.body || {};
   if (portfolio === '' || portfolio === null || portfolio === undefined) {
     return res.status(400).json({ error: 'Portfolio value is required' });
   }
-  const portfolioNumber = Number(portfolio);
+  let portfolioNumber = Number(portfolio);
   if (!Number.isFinite(portfolioNumber) || portfolioNumber < 0) {
     return res.status(400).json({ error: 'Invalid portfolio value' });
   }
@@ -5696,13 +5866,18 @@ app.post('/api/profile', auth, (req,res)=>{
   const { baseline: previousBaseline, total: previousTotal } = computeNetDepositsTotals(user, history);
   let netDepositsNumber;
   const netDepositsProvided = !(netDeposits === '' || netDeposits === null || netDeposits === undefined);
+  const tradingAccountsProvided = Array.isArray(tradingAccounts);
   if (!wasComplete) {
-    if (!netDepositsProvided) {
+    if (!netDepositsProvided && !tradingAccountsProvided) {
       return res.status(400).json({ error: 'Net deposits value is required' });
     }
-    netDepositsNumber = Number(netDeposits);
-    if (!Number.isFinite(netDepositsNumber)) {
-      return res.status(400).json({ error: 'Invalid net deposits value' });
+    if (netDepositsProvided) {
+      netDepositsNumber = Number(netDeposits);
+      if (!Number.isFinite(netDepositsNumber)) {
+        return res.status(400).json({ error: 'Invalid net deposits value' });
+      }
+    } else {
+      netDepositsNumber = 0;
     }
   } else if (!netDepositsProvided) {
     netDepositsNumber = previousTotal;
@@ -5711,6 +5886,45 @@ app.post('/api/profile', auth, (req,res)=>{
     if (!Number.isFinite(netDepositsNumber)) {
       return res.status(400).json({ error: 'Invalid net deposits value' });
     }
+  }
+  if (Array.isArray(tradingAccounts)) {
+    const existingById = new Map((user.tradingAccounts || []).map(account => [account.id, account]));
+    const nextAccounts = [];
+    for (const [index, account] of tradingAccounts.entries()) {
+      if (!account || typeof account !== 'object') continue;
+      const id = typeof account.id === 'string' ? account.id.trim() : '';
+      if (!id) continue;
+      const label = normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`);
+      const currentValue = Number(account.currentValue);
+      const currentNetDeposits = Number(account.currentNetDeposits);
+      if (!Number.isFinite(currentValue) || currentValue < 0) {
+        return res.status(400).json({ error: `Invalid current portfolio value for account ${label || id}.` });
+      }
+      if (!Number.isFinite(currentNetDeposits)) {
+        return res.status(400).json({ error: `Invalid net deposits for account ${label || id}.` });
+      }
+      nextAccounts.push({
+        ...(existingById.get(id) || {}),
+        id,
+        label,
+        currentValue,
+        currentNetDeposits
+      });
+    }
+    if (!nextAccounts.some(account => account.id === 'primary')) {
+      const primaryExisting = existingById.get('primary') || {};
+      nextAccounts.unshift({
+        id: 'primary',
+        label: 'Primary account',
+        currentValue: Number(primaryExisting.currentValue) || 0,
+        currentNetDeposits: Number(primaryExisting.currentNetDeposits) || 0
+      });
+    }
+    user.tradingAccounts = nextAccounts;
+    const combinedPortfolio = nextAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    const combinedNetDeposits = nextAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
+    portfolioNumber = combinedPortfolio;
+    netDepositsNumber = combinedNetDeposits;
   }
   const resetNetDeposits = wasComplete && netDepositsProvided && netDepositsNumber !== previousTotal;
   const netDelta = resetNetDeposits
@@ -5748,6 +5962,32 @@ app.post('/api/profile', auth, (req,res)=>{
     cashIn,
     cashOut
   };
+  const accountRecords = {};
+  const normalizedAccounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  if (normalizedAccounts.length && (user.multiTradingAccountsEnabled || normalizedAccounts.length > 1)) {
+    const combinedPortfolio = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    const combinedNetDeposits = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
+    portfolioNumber = combinedPortfolio;
+    netDepositsNumber = combinedNetDeposits;
+    const netScale = combinedNetDeposits !== 0 ? (cashIn - cashOut) / combinedNetDeposits : 0;
+    normalizedAccounts.forEach(account => {
+      const accountNet = Number(account.currentNetDeposits) || 0;
+      const accountDelta = accountNet * netScale;
+      accountRecords[account.id] = {
+        end: Number(account.currentValue) || 0,
+        cashIn: accountDelta > 0 ? accountDelta : 0,
+        cashOut: accountDelta < 0 ? Math.abs(accountDelta) : 0
+      };
+    });
+  } else {
+    accountRecords.primary = {
+      end: portfolioNumber,
+      cashIn,
+      cashOut
+    };
+  }
+  history[ym][targetDate].end = portfolioNumber;
+  history[ym][targetDate].accounts = accountRecords;
   if (!wasComplete) {
     user.initialNetDeposits = 0;
   } else if (resetNetDeposits) {
@@ -5853,6 +6093,101 @@ app.post('/api/account/investor-accounts', auth, (req, res) => {
   user.investorPortalEnabledAt = enabled ? new Date().toISOString() : null;
   saveDB(db);
   res.json({ ok: true, investorAccountsEnabled: !!user.investorAccountsEnabled, investorPortalEnabledAt: user.investorPortalEnabledAt });
+});
+
+app.get('/api/account/trading-accounts', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const mutated = ensureUserShape(user, req.username);
+  if (mutated) saveDB(db);
+  res.json({
+    enabled: !!user.multiTradingAccountsEnabled,
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]
+  });
+});
+
+app.post('/api/account/trading-accounts', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (typeof req.body?.enabled === 'boolean') {
+    user.multiTradingAccountsEnabled = req.body.enabled;
+  }
+  if (Array.isArray(req.body?.accounts)) {
+    const existingById = new Map((user.tradingAccounts || []).map(account => [account.id, account]));
+    const submitted = req.body.accounts
+      .map((account, index) => {
+        if (!account || typeof account !== 'object') return null;
+        const id = typeof account.id === 'string' ? account.id.trim() : '';
+        const label = normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`);
+        const existing = existingById.get(id) || {};
+        const currentValueRaw = Number(account.currentValue);
+        const currentNetDepositsRaw = Number(account.currentNetDeposits);
+        return {
+          id,
+          label,
+          currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0
+            ? currentValueRaw
+            : (Number(existing.currentValue) || 0),
+          currentNetDeposits: Number.isFinite(currentNetDepositsRaw)
+            ? currentNetDepositsRaw
+            : (Number(existing.currentNetDeposits) || 0)
+        };
+      })
+      .filter(account => account && account.id);
+    const deduped = [];
+    const seen = new Set();
+    submitted.forEach(account => {
+      if (seen.has(account.id)) return;
+      seen.add(account.id);
+      deduped.push(account);
+    });
+    if (!deduped.some(account => account.id === 'primary')) {
+      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 });
+    }
+    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
+  }
+  if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
+    user.multiTradingAccountsEnabled = true;
+  }
+  if (user.multiTradingAccountsEnabled && Array.isArray(user.tradingAccounts) && user.tradingAccounts.length) {
+    const combinedPortfolio = user.tradingAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    const combinedNetDeposits = user.tradingAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
+    user.portfolio = combinedPortfolio;
+    user.portfolioCurrency = 'GBP';
+    user.portfolioSource = 'manual';
+    user.lastPortfolioSyncAt = new Date().toISOString();
+    user.initialNetDeposits = combinedNetDeposits;
+    const dateKey = currentDateKey();
+    user.netDepositsAnchor = dateKey;
+    const history = ensurePortfolioHistory(user);
+    const ym = dateKey.slice(0, 7);
+    history[ym] ||= {};
+    const accountsPayload = {};
+    user.tradingAccounts.forEach(account => {
+      accountsPayload[account.id] = {
+        end: Number(account.currentValue) || 0,
+        cashIn: 0,
+        cashOut: 0
+      };
+    });
+    history[ym][dateKey] = {
+      end: combinedPortfolio,
+      cashIn: 0,
+      cashOut: 0,
+      accounts: accountsPayload
+    };
+    user.profileComplete = true;
+  }
+  saveDB(db);
+  res.json({
+    ok: true,
+    enabled: !!user.multiTradingAccountsEnabled,
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }]
+  });
 });
 
 
@@ -6678,11 +7013,12 @@ app.get('/api/pl', auth, (req,res)=>{
 });
 
 app.post('/api/pl', auth, (req,res)=>{
-  const { date, value, cashIn, cashOut, note } = req.body || {};
+  const { date, value, cashIn, cashOut, note, accountId } = req.body || {};
   if (!date) return res.status(400).json({ error: 'Missing date' });
   const db = loadDB();
   const user = db.users[req.username];
   ensureUserShape(user, req.username);
+  const selectedAccountId = resolveTradingAccountId(user, accountId);
   if (!user.profileComplete) {
     return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
   }
@@ -6693,7 +7029,13 @@ app.post('/api/pl', auth, (req,res)=>{
   }
   const ym = date.slice(0,7);
   history[ym] ||= {};
-  const existingRecord = history[ym][date];
+  const existingRecord = history[ym][date] || {};
+  const existingAccounts = existingRecord.accounts && typeof existingRecord.accounts === 'object'
+    ? { ...existingRecord.accounts }
+    : {};
+  const existingAccountRecord = existingAccounts[selectedAccountId] && typeof existingAccounts[selectedAccountId] === 'object'
+    ? existingAccounts[selectedAccountId]
+    : {};
   let anchorDate = user.netDepositsAnchor || null;
   if (anchorDate && date < anchorDate) {
     user.netDepositsAnchor = date;
@@ -6720,48 +7062,62 @@ app.post('/api/pl', auth, (req,res)=>{
   }
   if (value === null || value === '') {
     const hasCash = deposit > 0 || withdrawal > 0;
-    const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existingRecord?.note;
+    const hasNote = normalizedNote !== undefined ? !!normalizedNote : !!existingAccountRecord?.note;
     if (hasCash || hasNote) {
-      const entryPayload = {
+      const accountPayload = {
         cashIn: deposit,
         cashOut: withdrawal
       };
       if (normalizedNote !== undefined) {
         if (normalizedNote) {
-          entryPayload.note = normalizedNote;
+          accountPayload.note = normalizedNote;
         }
-      } else if (existingRecord && typeof existingRecord.note === 'string') {
-        const carryNote = existingRecord.note.trim();
+      } else if (existingAccountRecord && typeof existingAccountRecord.note === 'string') {
+        const carryNote = existingAccountRecord.note.trim();
         if (carryNote) {
-          entryPayload.note = carryNote;
+          accountPayload.note = carryNote;
         }
       }
-      history[ym][date] = entryPayload;
+      existingAccounts[selectedAccountId] = accountPayload;
     } else {
-      delete history[ym][date];
-      if (!Object.keys(history[ym]).length) {
-        delete history[ym];
-      }
+      delete existingAccounts[selectedAccountId];
     }
   } else {
     const num = Number(value);
     if (!Number.isFinite(num) || num < 0) {
       return res.status(400).json({ error: 'Invalid portfolio value' });
     }
-    const entryPayload = {
+    const accountPayload = {
       end: num,
       cashIn: deposit,
       cashOut: withdrawal
     };
     if (normalizedNote !== undefined) {
       if (normalizedNote) {
-        entryPayload.note = normalizedNote;
+        accountPayload.note = normalizedNote;
       }
-    } else if (existingRecord && typeof existingRecord.note === 'string') {
-      const carryNote = existingRecord.note.trim();
+    } else if (existingAccountRecord && typeof existingAccountRecord.note === 'string') {
+      const carryNote = existingAccountRecord.note.trim();
       if (carryNote) {
-        entryPayload.note = carryNote;
+        accountPayload.note = carryNote;
       }
+    }
+    existingAccounts[selectedAccountId] = accountPayload;
+  }
+  const aggregate = buildAccountAggregates(existingAccounts);
+  if (!aggregate.accounts.length) {
+    delete history[ym][date];
+    if (!Object.keys(history[ym]).length) {
+      delete history[ym];
+    }
+  } else {
+    const entryPayload = {
+      cashIn: aggregate.cashIn,
+      cashOut: aggregate.cashOut,
+      accounts: existingAccounts
+    };
+    if (aggregate.end !== null) {
+      entryPayload.end = aggregate.end;
     }
     history[ym][date] = entryPayload;
   }
