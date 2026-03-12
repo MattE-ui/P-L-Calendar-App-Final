@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const bcrypt = require('bcrypt');
 
 const { upsertTrading212StopOrders } = require('../server');
 
@@ -82,4 +83,89 @@ test('upsertTrading212StopOrders preserves manual stop override while updating c
   const trade = user.tradeJournal['2026-02-20'][0];
   assert.equal(trade.currentStop, 590.1);
   assert.equal(trade.stop, 596);
+});
+
+
+test('saving trading accounts preserves assigned integration flags when not explicitly toggled', async () => {
+  const { app, loadDB, saveDB } = require('../server');
+  const { once } = require('node:events');
+  const http = require('node:http');
+
+  const username = `integration-persist-${Date.now()}`;
+  const password = 'Passw0rd!';
+
+  const db = loadDB();
+  db.users[username] = {
+    username,
+    passwordHash: await bcrypt.hash(password, 10),
+    security: {},
+    guest: false,
+    profileComplete: true,
+    portfolio: 1000,
+    initialPortfolio: 1000,
+    initialNetDeposits: 500,
+    portfolioHistory: {},
+    multiTradingAccountsEnabled: true,
+    tradingAccounts: [
+      {
+        id: 'primary',
+        label: 'Primary account',
+        currentValue: 800,
+        currentNetDeposits: 400,
+        integrationProvider: 'trading212',
+        integrationEnabled: true
+      },
+      {
+        id: 'acc-2',
+        label: 'Account 2',
+        currentValue: 200,
+        currentNetDeposits: 100,
+        integrationProvider: null,
+        integrationEnabled: false
+      }
+    ],
+    uiPrefs: {},
+    trading212: { enabled: false, accounts: [] },
+    ibkr: { enabled: false }
+  };
+  saveDB(db);
+
+  const server = http.createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const loginRes = await fetch(`${base}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    assert.equal(loginRes.status, 200);
+    const cookie = loginRes.headers.get('set-cookie');
+    assert.ok(cookie);
+
+    const saveRes = await fetch(`${base}/api/account/trading-accounts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        cookie
+      },
+      body: JSON.stringify({
+        enabled: true,
+        accounts: [
+          { id: 'primary', label: 'Primary account', currentValue: 900, currentNetDeposits: 450 },
+          { id: 'acc-2', label: 'Account 2', currentValue: 250, currentNetDeposits: 120 }
+        ]
+      })
+    });
+    assert.equal(saveRes.status, 200);
+    const payload = await saveRes.json();
+    const primary = payload.accounts.find(account => account.id === 'primary');
+    assert.equal(primary.integrationProvider, 'trading212');
+    assert.equal(primary.integrationEnabled, true);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });

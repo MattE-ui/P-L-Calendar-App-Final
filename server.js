@@ -6198,11 +6198,13 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const currentValueRaw = Number(account.currentValue);
         const currentNetDepositsRaw = Number(account.currentNetDeposits);
         const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
-        const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
+        const submittedProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
           ? integrationProviderRaw
-          : (existing.integrationProvider || null);
+          : null;
+        const integrationProvider = submittedProvider || existing.integrationProvider || null;
+        const hasExplicitEnabled = typeof account.integrationEnabled === 'boolean';
         const integrationEnabled = integrationProvider
-          ? account.integrationEnabled !== false && existing.integrationEnabled !== false
+          ? (hasExplicitEnabled ? account.integrationEnabled : existing.integrationEnabled !== false)
           : false;
         return {
           id,
