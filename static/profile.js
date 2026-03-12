@@ -46,7 +46,14 @@ const profileState = {
   currency: 'GBP',
   rates: { GBP: 1 },
   multiTradingAccountsEnabled: false,
-  tradingAccounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }],
+  tradingAccounts: [{
+    id: 'primary',
+    label: 'Primary account',
+    currentValue: 0,
+    currentNetDeposits: 0,
+    integrationProvider: null,
+    integrationEnabled: false
+  }],
   investorAccountsEnabled: false,
   investorPortalAvailable: false
 };
@@ -251,9 +258,11 @@ async function loadProfile() {
         id: account.id,
         label: account.label || '',
         currentValue: Number(account.currentValue) || 0,
-        currentNetDeposits: Number(account.currentNetDeposits) || 0
+        currentNetDeposits: Number(account.currentNetDeposits) || 0,
+        integrationProvider: account.integrationProvider || null,
+        integrationEnabled: !!account.integrationEnabled
       }))
-      : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
+      : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
     profileState.investorPortalAvailable = !!data.investorPortalAvailable;
     await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
@@ -463,6 +472,9 @@ function renderTradingAccounts() {
     : [{ id: 'primary', label: 'Primary account' }];
   list.innerHTML = '';
   accounts.forEach((account, index) => {
+    const provider = account.integrationEnabled ? account.integrationProvider : null;
+    const useT212 = provider === 'trading212';
+    const useIbkr = provider === 'ibkr';
     const row = document.createElement('div');
     row.className = 'profile-field';
     row.innerHTML = `
@@ -471,14 +483,30 @@ function renderTradingAccounts() {
       <div class="profile-field two-col trading-account-metrics-row">
         <div class="trading-account-metric-field">
           <label>Current value (£)</label>
-          <input type="number" min="0" step="0.01" data-account-id="${account.id}" data-account-field="currentValue" value="${Number(account.currentValue || 0).toFixed(2)}">
+          <input type="number" min="0" step="0.01" ${provider ? 'disabled' : ''} data-account-id="${account.id}" data-account-field="currentValue" value="${Number(account.currentValue || 0).toFixed(2)}">
         </div>
         <div class="trading-account-metric-field">
           <label>Net deposits (£)</label>
-          <input type="number" step="0.01" data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
+          <input type="number" step="0.01" ${provider ? 'disabled' : ''} data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
         </div>
       </div>
+      <div class="profile-actions trading-account-integration-actions">
+        <button type="button" class="ghost small" data-account-id="${account.id}" data-account-action="integration-toggle" data-provider="trading212">${useT212 ? 'Turn off Trading 212 integration' : 'Use Trading 212 integration'}</button>
+        <button type="button" class="ghost small" data-account-id="${account.id}" data-account-action="integration-toggle" data-provider="ibkr">${useIbkr ? 'Turn off IBKR integration' : 'Use IBKR integration'}</button>
+      </div>
+      <p class="helper trading-account-integration-note">${provider
+    ? 'Integration active: manual portfolio and net deposit edits are disabled for this account.'
+    : 'Enable an integration to auto-populate this account. Only one account can use Trading 212 and only one can use IBKR at a time.'}</p>
     `;
+    row.querySelectorAll('[data-account-action="integration-toggle"]').forEach(btn => {
+      if (!(btn instanceof HTMLButtonElement)) return;
+      const btnProvider = btn.dataset.provider;
+      const usedElsewhere = accounts.some(item => item.id !== account.id && item.integrationEnabled && item.integrationProvider === btnProvider);
+      if (usedElsewhere && btnProvider !== provider) {
+        btn.disabled = true;
+        btn.title = 'This integration is already assigned to another account.';
+      }
+    });
     list.appendChild(row);
   });
   const combinedPortfolio = accounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
@@ -510,6 +538,63 @@ function renderTradingAccounts() {
   if (deltaInput) {
     deltaInput.disabled = multiEnabled;
     if (multiEnabled) deltaInput.value = '';
+  }
+}
+
+function getAssignedIntegrationProviders() {
+  return new Map(
+    profileState.tradingAccounts
+      .filter(account => account.integrationEnabled && account.integrationProvider)
+      .map(account => [account.integrationProvider, account.id])
+  );
+}
+
+async function handleTradingAccountIntegrationToggle(accountId, provider) {
+  const account = profileState.tradingAccounts.find(item => item.id === accountId);
+  const status = document.getElementById('trading-accounts-status');
+  const error = document.getElementById('trading-accounts-error');
+  if (!account) return;
+  if (status) {
+    status.textContent = '';
+    status.classList.add('is-hidden');
+  }
+  if (error) error.textContent = '';
+  const turningOff = account.integrationEnabled && account.integrationProvider === provider;
+  const integrationLabel = provider === 'ibkr' ? 'IBKR' : 'Trading 212';
+  const assigned = getAssignedIntegrationProviders().get(provider);
+  if (!turningOff && assigned && assigned !== account.id) {
+    if (error) error.textContent = `${integrationLabel} is already assigned to another account. Remove it there first.`;
+    return;
+  }
+  const confirmed = window.confirm(turningOff
+    ? `Turn off ${integrationLabel} for this account and re-enable manual edits?`
+    : `Use ${integrationLabel} to override this account values now? Manual portfolio/deposit edits for this account will be disabled until you turn integration off.`);
+  if (!confirmed) return;
+  try {
+    const payload = await api('/api/account/trading-accounts/integration-toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId, provider, enabled: !turningOff })
+    });
+    profileState.tradingAccounts = Array.isArray(payload.accounts) && payload.accounts.length
+      ? payload.accounts.map((item, index) => ({
+        id: item.id,
+        label: item.label || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+        currentValue: Number(item.currentValue) || 0,
+        currentNetDeposits: Number(item.currentNetDeposits) || 0,
+        integrationProvider: item.integrationProvider || null,
+        integrationEnabled: !!item.integrationEnabled
+      }))
+      : profileState.tradingAccounts;
+    renderTradingAccounts();
+    if (status) {
+      status.textContent = payload.message || (turningOff
+        ? `${integrationLabel} integration turned off for this account.`
+        : `${integrationLabel} integration applied to this account.`);
+      status.classList.remove('is-hidden');
+    }
+  } catch (e) {
+    if (error) error.textContent = e?.data?.error || `Unable to toggle ${integrationLabel} for this account right now.`;
   }
 }
 
@@ -1232,7 +1317,9 @@ async function saveProfile() {
       id: account.id,
       label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
       currentValue: Number(account.currentValue) || 0,
-      currentNetDeposits: Number(account.currentNetDeposits) || 0
+      currentNetDeposits: Number(account.currentNetDeposits) || 0,
+      integrationProvider: account.integrationProvider || null,
+      integrationEnabled: !!account.integrationEnabled
     }))
     : null;
   if (multiEnabled && accountPayload?.length) {
@@ -2103,7 +2190,9 @@ window.addEventListener('DOMContentLoaded', () => {
       id,
       label: `Account ${profileState.tradingAccounts.length + 1}`,
       currentValue: 0,
-      currentNetDeposits: 0
+      currentNetDeposits: 0,
+      integrationProvider: null,
+      integrationEnabled: false
     });
     profileState.multiTradingAccountsEnabled = true;
     renderTradingAccounts();
@@ -2111,6 +2200,15 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('trading-accounts-enabled')?.addEventListener('change', event => {
     profileState.multiTradingAccountsEnabled = !!event.target?.checked;
     renderTradingAccounts();
+  });
+  document.getElementById('trading-accounts-list')?.addEventListener('click', event => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    if (target.dataset.accountAction !== 'integration-toggle') return;
+    const accountId = target.dataset.accountId;
+    const provider = target.dataset.provider;
+    if (!accountId || !provider) return;
+    handleTradingAccountIntegrationToggle(accountId, provider);
   });
   document.getElementById('trading-accounts-list')?.addEventListener('input', event => {
     const input = event.target;
@@ -2150,7 +2248,9 @@ window.addEventListener('DOMContentLoaded', () => {
       id: account.id,
       label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
       currentValue: Number(account.currentValue) || 0,
-      currentNetDeposits: Number(account.currentNetDeposits) || 0
+      currentNetDeposits: Number(account.currentNetDeposits) || 0,
+      integrationProvider: account.integrationProvider || null,
+      integrationEnabled: !!account.integrationEnabled
     }));
     try {
       const payload = await api('/api/account/trading-accounts', {
@@ -2167,9 +2267,11 @@ window.addEventListener('DOMContentLoaded', () => {
           id: account.id,
           label: account.label || '',
           currentValue: Number(account.currentValue) || 0,
-          currentNetDeposits: Number(account.currentNetDeposits) || 0
+          currentNetDeposits: Number(account.currentNetDeposits) || 0,
+          integrationProvider: account.integrationProvider || null,
+          integrationEnabled: !!account.integrationEnabled
         }))
-        : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0 }];
+        : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
       await loadProfile();
       if (status) {
         status.textContent = 'Trading accounts saved and combined totals updated.';
