@@ -2040,11 +2040,17 @@ function setMetricTrend(el, value) {
 
 function renderMetrics() {
   const metrics = state.metrics || {};
-  const latestGBP = Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : state.portfolioGBP;
+  const latestGBP = Number.isFinite(state.portfolioGBP)
+    ? state.portfolioGBP
+    : (Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : 0);
   const liveGBP = Number.isFinite(state.livePortfolioGBP) ? state.livePortfolioGBP : latestGBP;
-  const netDepositsGBP = Number.isFinite(metrics.netDepositsGBP) ? metrics.netDepositsGBP : 0;
-  const netPerformanceGBP = Number.isFinite(metrics.netPerformanceGBP) ? metrics.netPerformanceGBP : 0;
-  const netPerformancePct = Number.isFinite(metrics.netPerformancePct) ? metrics.netPerformancePct : null;
+  const netDepositsGBP = Number.isFinite(state.netDepositsTotalGBP)
+    ? state.netDepositsTotalGBP
+    : (Number.isFinite(metrics.netDepositsGBP) ? metrics.netDepositsGBP : 0);
+  const netPerformanceGBP = latestGBP - netDepositsGBP;
+  const netPerformancePct = netDepositsGBP !== 0
+    ? (netPerformanceGBP / Math.abs(netDepositsGBP)) * 100
+    : null;
   const altCurrency = state.currency === 'GBP'
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
@@ -2157,9 +2163,9 @@ function updatePortfolioPill() {
   const heroSub = $('#header-portfolio-sub');
   const latestGBP = Number.isFinite(state.livePortfolioGBP)
     ? state.livePortfolioGBP
-    : (Number.isFinite(state.metrics?.latestGBP)
-      ? state.metrics.latestGBP
-      : state.portfolioGBP);
+    : (Number.isFinite(state.portfolioGBP)
+      ? state.portfolioGBP
+      : (Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : 0));
   const base = formatCurrency(latestGBP);
   const alt = state.currency === 'USD'
     ? formatCurrency(latestGBP, 'GBP')
