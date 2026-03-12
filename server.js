@@ -2137,6 +2137,26 @@ function parseTradingNumber(value) {
   return null;
 }
 
+function parseTransactionTimestamp(transaction = {}) {
+  if (!transaction || typeof transaction !== 'object') return Number.NaN;
+  const timestampCandidates = [
+    transaction.dateTime,
+    transaction.processedAt,
+    transaction.executedAt,
+    transaction.timestamp,
+    transaction.time,
+    transaction.date,
+    transaction.createdAt
+  ];
+  for (const candidate of timestampCandidates) {
+    const timestamp = Date.parse(candidate || '');
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+  return Number.NaN;
+}
+
 function normalizeIbkrTicker(raw) {
   return String(raw || '').trim().toUpperCase();
 }
@@ -4231,10 +4251,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         ? effectivePortfolioValue * 0.00015
         : 0;
       const txs = combinedTransactions
-        .map(item => {
-          const ts = Date.parse(item.tx?.timestamp || item.tx?.time || item.tx?.date || item.tx?.dateTime || item.tx?.processedAt || '');
-          return { ...item, ts };
-        })
+        .map(item => ({ ...item, ts: parseTransactionTimestamp(item.tx) }))
         .filter(item => Number.isFinite(item.ts))
         .sort((a, b) => a.ts - b.ts);
       let newest = lastTxAt;
