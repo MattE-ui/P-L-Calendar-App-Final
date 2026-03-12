@@ -130,6 +130,17 @@ function formatDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function getCurrentDateKey() {
+  return formatDate(new Date());
+}
+
+function getCurrentPortfolioForDisplay() {
+  const live = Number(state.portfolioGBP);
+  if (Number.isFinite(live) && live >= 0) return live;
+  const metric = Number(state.metrics?.latestGBP);
+  return Number.isFinite(metric) && metric >= 0 ? metric : null;
+}
+
 function currencyAmount(valueGBP, currency = state.currency) {
   const base = Number(valueGBP);
   if (Number.isNaN(base)) return null;
@@ -299,6 +310,14 @@ function summarizeWeek(entries = []) {
     .filter(e => e.change !== null && e.change !== undefined)
     .reduce((sum, e) => sum + e.change, 0);
   return { totalChange, totalCashFlow, totalTrades, realized };
+}
+
+function getLatestClosingFromEntries(entries = []) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const closing = Number(entries[i]?.closing);
+    if (Number.isFinite(closing) && closing >= 0) return closing;
+  }
+  return null;
 }
 
 function getSelectedTags(name) {
@@ -502,6 +521,9 @@ function getWeeksInMonth(date) {
       recordedDays: days.length,
       entries: days,
       trades,
+      latestClosing: getLatestClosingFromEntries(days),
+      weekStartDate: weekStart,
+      weekEndDate: weekEnd,
       displayStart: displayStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
       displayEnd: displayEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     });
@@ -529,6 +551,7 @@ function getYearMonths(date) {
       totalChange,
       pct,
       totalCashFlow,
+      latestClosing: getLatestClosingFromEntries(days),
       recordedDays: days.length,
       hasChange: changeEntries.length > 0
     });
@@ -2307,10 +2330,14 @@ function renderDay() {
   if (!grid) return;
   grid.innerHTML = '';
   const days = getDaysInMonth(state.selected);
+  const todayKey = getCurrentDateKey();
+  const livePortfolio = getCurrentPortfolioForDisplay();
   days.forEach(date => {
     const key = formatDate(date);
     const entry = getDailyEntry(date);
-    const closing = entry?.closing ?? null;
+    const closing = key === todayKey && livePortfolio !== null
+      ? livePortfolio
+      : (entry?.closing ?? null);
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const cashFlow = entry?.cashFlow ?? 0;
@@ -2360,6 +2387,9 @@ function renderWeek() {
   if (!grid) return;
   grid.innerHTML = '';
   const weeks = getWeeksInMonth(state.selected);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const livePortfolio = getCurrentPortfolioForDisplay();
   weeks.forEach(week => {
     const row = document.createElement('div');
     row.className = 'list-row week-row';
@@ -2396,8 +2426,13 @@ function renderWeek() {
     `;
     const value = document.createElement('div');
     value.className = 'row-value';
+    const isCurrentWeek = week.weekStartDate <= today && today <= week.weekEndDate;
+    const closingForWeek = isCurrentWeek && livePortfolio !== null
+      ? livePortfolio
+      : week.latestClosing;
     value.innerHTML = `
-      <strong>${changeText}</strong>
+      <strong>${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closingForWeek === null ? '—' : formatCurrency(closingForWeek))}</strong>
+      <span>${changeText}</span>
       <span>${pctText}</span>
       ${cashHtml}
       ${tradesHtml}
@@ -2449,6 +2484,8 @@ function renderMonthGrid(targetDate, grid) {
   const startDay = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   const firstEntryKey = state.firstEntryKey;
+  const todayKey = getCurrentDateKey();
+  const livePortfolio = getCurrentPortfolioForDisplay();
 
   for (let i = 0; i < startDay; i++) {
     const placeholder = document.createElement('div');
@@ -2461,7 +2498,9 @@ function renderMonthGrid(targetDate, grid) {
     const date = new Date(first.getFullYear(), first.getMonth(), day);
     const key = formatDate(date);
     const entry = getDailyEntry(date);
-    const closing = entry?.closing ?? null;
+    const closing = key === todayKey && livePortfolio !== null
+      ? livePortfolio
+      : (entry?.closing ?? null);
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const tradeCount = entry?.tradesCount ?? 0;
@@ -2503,6 +2542,10 @@ function renderYearGrid(targetDate, grid) {
   if (!grid) return;
   grid.innerHTML = '';
   const months = getYearMonths(targetDate);
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  const livePortfolio = getCurrentPortfolioForDisplay();
   months.forEach(item => {
     const cell = document.createElement('div');
     cell.className = 'cell';
@@ -2521,9 +2564,14 @@ function renderYearGrid(targetDate, grid) {
     const changeText = state.safeScreenshot
       ? (hasChange ? `Δ ${formatPercent(item.pct)}` : 'Δ —')
       : (hasChange ? `Δ ${formatSignedCurrency(item.totalChange)}` : 'Δ —');
+    const isCurrentMonth = item.monthDate.getFullYear() === currentYear && item.monthDate.getMonth() === currentMonth;
+    const closingForMonth = isCurrentMonth && livePortfolio !== null
+      ? livePortfolio
+      : item.latestClosing;
     cell.innerHTML = `
       <div class="date">${item.monthDate.toLocaleDateString('en-GB', { month: 'short' })}</div>
-      <div class="val">${changeText}</div>
+      <div class="val">${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closingForMonth === null ? '—' : formatCurrency(closingForMonth))}</div>
+      <div class="pct">${changeText}</div>
       <div class="pct">${pctText}</div>
       ${cashHtml}
       <div class="meta">${metaText}</div>
@@ -2543,11 +2591,18 @@ function renderYear() {
   if (!grid) return;
   grid.innerHTML = '';
   const entries = getAllEntries();
+  const currentYear = new Date().getFullYear();
+  const livePortfolio = getCurrentPortfolioForDisplay();
   const firstYear = entries.length ? entries[0].date.getFullYear() : state.selected.getFullYear();
   const lastYear = entries.length ? entries[entries.length - 1].date.getFullYear() : state.selected.getFullYear();
   for (let year = firstYear; year <= lastYear; year++) {
     const yearDate = new Date(year, 0, 1);
     const months = getYearMonths(yearDate);
+    const yearEntries = entries.filter(entry => entry.date.getFullYear() === year);
+    const yearLatestClosing = getLatestClosingFromEntries(yearEntries);
+    const closingForYear = year === currentYear && livePortfolio !== null
+      ? livePortfolio
+      : yearLatestClosing;
     const totalChange = months.reduce((sum, item) => sum + (item.hasChange ? item.totalChange : 0), 0);
     const totalCashFlow = months.reduce((sum, item) => sum + (item.totalCashFlow ?? 0), 0);
     const hasChange = months.some(item => item.hasChange);
@@ -2572,7 +2627,8 @@ function renderYear() {
         <div class="row-sub">${recordedDays ? `${recordedDays} recorded day${recordedDays === 1 ? '' : 's'}` : 'No entries recorded'}</div>
       </div>
       <div class="row-value">
-        <strong>${changeText}</strong>
+        <strong>${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (closingForYear === null ? '—' : formatCurrency(closingForYear))}</strong>
+        <span>${changeText}</span>
         <span>${pctText}</span>
         ${cashHtml}
       </div>
