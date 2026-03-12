@@ -468,12 +468,12 @@ function renderTradingAccounts() {
     row.innerHTML = `
       <label>${index === 0 ? 'Primary account label' : `Account ${index + 1} label`}</label>
       <input type="text" data-account-id="${account.id}" data-account-field="label" value="${account.label || ''}" maxlength="40">
-      <div class="profile-field two-col">
-        <div>
+      <div class="profile-field two-col trading-account-metrics-row">
+        <div class="trading-account-metric-field">
           <label>Current value (£)</label>
           <input type="number" min="0" step="0.01" data-account-id="${account.id}" data-account-field="currentValue" value="${Number(account.currentValue || 0).toFixed(2)}">
         </div>
-        <div>
+        <div class="trading-account-metric-field">
           <label>Net deposits (£)</label>
           <input type="number" step="0.01" data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
         </div>
