@@ -4251,59 +4251,79 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         ? effectivePortfolioValue * 0.00015
         : 0;
       const txs = combinedTransactions
-        .map(item => ({ ...item, ts: parseTransactionTimestamp(item.tx) }))
-        .filter(item => Number.isFinite(item.ts))
+        .map(item => {
+          const ts = parseTransactionTimestamp(item.tx);
+          if (!Number.isFinite(ts)) return null;
+          const tx = item.tx || {};
+          const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
+          const isDepositType = type.includes('deposit');
+          const isWithdrawalType = type.includes('withdraw');
+          if (!isDepositType && !isWithdrawalType) return null;
+          const amount = parseTradingNumber(
+            tx.amount?.value ??
+            tx.amount?.amount ??
+            tx.amount ??
+            tx.cash ??
+            tx.value ??
+            tx.money
+          );
+          if (!Number.isFinite(amount) || amount === 0) return null;
+          const txCurrency = tx.currency || tx.amount?.currency || tx.money?.currency || 'GBP';
+          const amountGBP = txCurrency && txCurrency !== 'GBP'
+            ? convertToGBP(Math.abs(amount), txCurrency, rates)
+            : Math.abs(amount);
+          if (!Number.isFinite(amountGBP) || amountGBP === 0) return null;
+          if (isDepositType && minDeposit > 0 && amountGBP < minDeposit) {
+            return null;
+          }
+          const date = dateKeyInTimezone(timezone, new Date(ts));
+          const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
+          const referenceKey = reference && item.accountId ? `${item.accountId}:${reference}` : reference;
+          return {
+            ...item,
+            tx,
+            ts,
+            date,
+            amountGBP,
+            isDepositType,
+            isWithdrawalType,
+            referenceKey
+          };
+        })
+        .filter(Boolean)
         .sort((a, b) => a.ts - b.ts);
+      const todaysTotals = txs.reduce((totals, item) => {
+        if (item.date !== dateKey) return totals;
+        if (enabledAtTs && item.ts < enabledAtTs) return totals;
+        if (item.isDepositType) {
+          totals.cashIn += item.amountGBP;
+        } else if (item.isWithdrawalType) {
+          totals.cashOut += item.amountGBP;
+        }
+        return totals;
+      }, { cashIn: 0, cashOut: 0 });
+      cashIn = todaysTotals.cashIn;
+      cashOut = todaysTotals.cashOut;
       let newest = lastTxAt;
       for (const item of txs) {
         if (lastTxAt && item.ts <= lastTxAt) continue;
         if (enabledAtTs && item.ts < enabledAtTs) continue;
-        const tx = item.tx || {};
-        const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-        const referenceKey = reference && item.accountId ? `${item.accountId}:${reference}` : reference;
-        if (referenceKey && cfg.processedReferences.includes(referenceKey)) {
+        if (item.referenceKey && cfg.processedReferences.includes(item.referenceKey)) {
           continue;
         }
-        const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
-        if (type && !type.includes('deposit') && !type.includes('withdraw') && !type.includes('cash') && !type.includes('transfer')) {
-          continue;
-        }
-        const amount = parseTradingNumber(
-          tx.amount?.value ??
-          tx.amount?.amount ??
-          tx.amount ??
-          tx.cash ??
-          tx.value ??
-          tx.money
-        );
-        if (!Number.isFinite(amount) || amount === 0) continue;
-        const txCurrency = tx.currency || tx.amount?.currency || tx.money?.currency || 'GBP';
-        const amountGBP = txCurrency && txCurrency !== 'GBP'
-          ? convertToGBP(amount, txCurrency, rates)
-          : amount;
-        if (amountGBP > 0 && minDeposit > 0 && amountGBP < minDeposit) {
-          continue;
-        }
-        const date = dateKeyInTimezone(timezone, new Date(item.ts));
-        const monthKey = date.slice(0, 7);
+        const monthKey = item.date.slice(0, 7);
         history[monthKey] ||= {};
-        const entry = history[monthKey][date] || {};
+        const entry = history[monthKey][item.date] || {};
         const entryCashIn = Number(entry.cashIn ?? 0);
         const entryCashOut = Number(entry.cashOut ?? 0);
-        if (amountGBP > 0) {
-          entry.cashIn = entryCashIn + amountGBP;
-          if (date === dateKey) {
-            cashIn += amountGBP;
-          }
-        } else {
-          entry.cashOut = entryCashOut + Math.abs(amountGBP);
-          if (date === dateKey) {
-            cashOut += Math.abs(amountGBP);
-          }
+        if (item.isDepositType) {
+          entry.cashIn = entryCashIn + item.amountGBP;
+        } else if (item.isWithdrawalType) {
+          entry.cashOut = entryCashOut + item.amountGBP;
         }
-        history[monthKey][date] = entry;
-        if (referenceKey) {
-          cfg.processedReferences.push(referenceKey);
+        history[monthKey][item.date] = entry;
+        if (item.referenceKey) {
+          cfg.processedReferences.push(item.referenceKey);
           if (cfg.processedReferences.length > 500) {
             cfg.processedReferences = cfg.processedReferences.slice(-500);
           }
