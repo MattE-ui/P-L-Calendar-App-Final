@@ -921,6 +921,26 @@ function buildAccountAggregates(accounts = {}) {
   };
 }
 
+function getIntegratedTradingAccount(user, provider) {
+  const { accounts } = ensureTradingAccounts(user);
+  const normalizedProvider = provider === 'trading212' || provider === 'ibkr' ? provider : null;
+  if (!normalizedProvider) return null;
+  return accounts.find(account => account.integrationEnabled && account.integrationProvider === normalizedProvider) || null;
+}
+
+function applyAccountAggregatesToHistoryEntry(entry = {}) {
+  const nextEntry = entry && typeof entry === 'object' ? entry : {};
+  const accountMap = nextEntry.accounts && typeof nextEntry.accounts === 'object' ? nextEntry.accounts : null;
+  if (!accountMap) return nextEntry;
+  const aggregate = buildAccountAggregates(accountMap);
+  if (aggregate.end !== null) {
+    nextEntry.end = aggregate.end;
+  }
+  nextEntry.cashIn = aggregate.cashIn;
+  nextEntry.cashOut = aggregate.cashOut;
+  return nextEntry;
+}
+
 function ensureTradeJournal(user) {
   if (!user) return {};
   if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
@@ -4269,15 +4289,36 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
+    const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
       const value = Number(result.snapshot?.portfolioValue);
       return Number.isFinite(value) ? sum + value : sum;
     }, 0);
     const payload = {
+      ...existing,
       end: Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : user.portfolio,
       cashIn,
       cashOut
     };
+    if (integratedAccount?.id) {
+      const existingAccounts = payload.accounts && typeof payload.accounts === 'object' ? payload.accounts : {};
+      const selectedAccountRecord = existingAccounts[integratedAccount.id] && typeof existingAccounts[integratedAccount.id] === 'object'
+        ? existingAccounts[integratedAccount.id]
+        : {};
+      payload.accounts = {
+        ...existingAccounts,
+        [integratedAccount.id]: {
+          ...selectedAccountRecord,
+          end: Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : Number(selectedAccountRecord.end) || 0,
+          cashIn,
+          cashOut
+        }
+      };
+      applyAccountAggregatesToHistoryEntry(payload);
+      integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
+      const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
+      integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
+    }
     if (existing.preBaseline) {
       payload.preBaseline = true;
     }
@@ -4742,12 +4783,33 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
       cfg.lastNetDeposits = netDepositsGBP;
     }
   }
-  history[ym][dateKey] = {
+  const integratedAccount = getIntegratedTradingAccount(user, 'ibkr');
+  const payload = {
     ...existing,
     end: Number.isFinite(nextPortfolio) ? nextPortfolio : existing.end,
     cashIn,
     cashOut
   };
+  if (integratedAccount?.id) {
+    const existingAccounts = payload.accounts && typeof payload.accounts === 'object' ? payload.accounts : {};
+    const selectedAccountRecord = existingAccounts[integratedAccount.id] && typeof existingAccounts[integratedAccount.id] === 'object'
+      ? existingAccounts[integratedAccount.id]
+      : {};
+    payload.accounts = {
+      ...existingAccounts,
+      [integratedAccount.id]: {
+        ...selectedAccountRecord,
+        end: Number.isFinite(nextPortfolio) ? nextPortfolio : Number(selectedAccountRecord.end) || 0,
+        cashIn,
+        cashOut
+      }
+    };
+    applyAccountAggregatesToHistoryEntry(payload);
+    integratedAccount.currentValue = Number.isFinite(nextPortfolio) ? nextPortfolio : (Number(integratedAccount.currentValue) || 0);
+    const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
+    integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
+  }
+  history[ym][dateKey] = payload;
   if (existing.preBaseline) {
     history[ym][dateKey].preBaseline = true;
   }
@@ -5604,7 +5666,9 @@ app.get('/api/profile', auth, (req,res)=>{
       id: account.id,
       label: account.label || '',
       currentValue: Number(account.currentValue) || 0,
-      currentNetDeposits: Number(account.currentNetDeposits) || 0
+      currentNetDeposits: Number(account.currentNetDeposits) || 0,
+      integrationProvider: account.integrationProvider || null,
+      integrationEnabled: !!account.integrationEnabled
     })),
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true
