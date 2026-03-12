@@ -2840,6 +2840,24 @@ async function refreshActiveTrades() {
   }
 }
 
+
+function hasEnabledAutomationIntegration() {
+  return Array.isArray(state.tradingAccounts)
+    && state.tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider);
+}
+
+async function refreshAutomatedCalendarData() {
+  if (document.visibilityState === 'hidden') return;
+  if (!hasEnabledAutomationIntegration()) return;
+  try {
+    await loadProfile();
+    await loadData();
+    render();
+  } catch (e) {
+    console.warn('Failed to refresh automated calendar data', e);
+  }
+}
+
 function renderTradeList(trades = [], dateStr = null) {
   const list = $('#trade-list');
   const sub = $('#trade-count-sub');
@@ -3833,6 +3851,9 @@ async function init() {
     if (document.visibilityState === 'hidden') return;
     refreshActiveTrades();
   }, 15000);
+  setInterval(() => {
+    refreshAutomatedCalendarData();
+  }, 30000);
 }
 
 if (typeof window !== 'undefined') {
