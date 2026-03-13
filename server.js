@@ -3572,10 +3572,15 @@ function matchStopOrderForTrade(trade, orders, context = {}) {
     if (found) return found;
   }
   const tradeTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '');
+  const tradeSymbol = normalizeTrading212Symbol(
+    trade.trading212Ticker || trade.symbol || trade.displaySymbol || ''
+  );
   const tradeIsin = String(trade.trading212Isin || '').trim().toUpperCase();
   const filtered = orders.filter(order => {
     const orderTicker = normalizeTrading212TickerValue(order.instrumentTicker || '');
+    const orderSymbol = normalizeTrading212Symbol(order.instrumentTicker || '');
     if (tradeTicker && orderTicker && orderTicker === tradeTicker) return true;
+    if (tradeSymbol && orderSymbol && orderSymbol === tradeSymbol) return true;
     if (tradeIsin && String(order.instrumentIsin || '').trim().toUpperCase() === tradeIsin) return true;
     return false;
   });
