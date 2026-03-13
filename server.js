@@ -950,6 +950,44 @@ function applyAccountAggregatesToHistoryEntry(entry = {}) {
   return nextEntry;
 }
 
+function syncIntegratedTradingAccountValuesFromHistory(user, history = ensurePortfolioHistory(user)) {
+  if (!user || typeof user !== 'object') return false;
+  ensureTradingAccounts(user);
+  const accountList = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  const integratedAccounts = accountList.filter(account => account.integrationEnabled && account.integrationProvider);
+  if (!integratedAccounts.length) return false;
+
+  const latestEndByAccount = new Map();
+  for (const days of Object.values(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      integratedAccounts.forEach(account => {
+        const accountRecord = accountMap[account.id];
+        if (!accountRecord || typeof accountRecord !== 'object') return;
+        const endRaw = Number(accountRecord.end);
+        if (!Number.isFinite(endRaw) || endRaw < 0) return;
+        const existing = latestEndByAccount.get(account.id);
+        if (!existing || dateKey > existing.dateKey) {
+          latestEndByAccount.set(account.id, { dateKey, end: endRaw });
+        }
+      });
+    }
+  }
+
+  let mutated = false;
+  integratedAccounts.forEach(account => {
+    const latest = latestEndByAccount.get(account.id);
+    if (!latest) return;
+    if (Number(account.currentValue) !== latest.end) {
+      account.currentValue = latest.end;
+      mutated = true;
+    }
+  });
+  return mutated;
+}
+
 function ensureTradeJournal(user) {
   if (!user) return {};
   if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
@@ -5716,6 +5754,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
+  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   const { baseline, total } = computeNetDepositsTotals(user, history);
   const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
@@ -6248,7 +6287,10 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const mutated = ensureUserShape(user, req.username);
+  let mutated = ensureUserShape(user, req.username);
+  const history = ensurePortfolioHistory(user);
+  if (normalizePortfolioHistory(user)) mutated = true;
+  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   if (mutated) saveDB(db);
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,

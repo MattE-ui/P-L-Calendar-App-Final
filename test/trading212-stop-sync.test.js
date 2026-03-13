@@ -169,3 +169,89 @@ test('saving trading accounts preserves assigned integration flags when not expl
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('profile endpoint backfills integration-linked trading account current value from latest portfolio history account snapshot', async () => {
+  const { app, loadDB, saveDB } = require('../server');
+  const { once } = require('node:events');
+  const http = require('node:http');
+
+  const username = `integration-history-backfill-${Date.now()}`;
+  const password = 'Passw0rd!';
+
+  const db = loadDB();
+  db.users[username] = {
+    username,
+    passwordHash: await bcrypt.hash(password, 10),
+    security: {},
+    guest: false,
+    profileComplete: true,
+    portfolio: 1000,
+    initialPortfolio: 1000,
+    initialNetDeposits: 500,
+    portfolioHistory: {
+      '2026-03': {
+        '2026-03-01': {
+          end: 1000,
+          cashIn: 0,
+          cashOut: 0,
+          accounts: {
+            primary: { end: 1000, cashIn: 0, cashOut: 0 }
+          }
+        },
+        '2026-03-02': {
+          end: 1250,
+          cashIn: 0,
+          cashOut: 0,
+          accounts: {
+            primary: { end: 1250, cashIn: 0, cashOut: 0 }
+          }
+        }
+      }
+    },
+    multiTradingAccountsEnabled: true,
+    tradingAccounts: [
+      {
+        id: 'primary',
+        label: 'Primary account',
+        currentValue: 900,
+        currentNetDeposits: 400,
+        integrationProvider: 'trading212',
+        integrationEnabled: true
+      }
+    ],
+    uiPrefs: {},
+    trading212: { enabled: false, accounts: [] },
+    ibkr: { enabled: false }
+  };
+  saveDB(db);
+
+  const server = http.createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const loginRes = await fetch(`${base}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    assert.equal(loginRes.status, 200);
+    const cookie = loginRes.headers.get('set-cookie');
+    assert.ok(cookie);
+
+    const profileRes = await fetch(`${base}/api/profile`, {
+      headers: { cookie }
+    });
+    assert.equal(profileRes.status, 200);
+    const profile = await profileRes.json();
+    const primary = profile.tradingAccounts.find(account => account.id === 'primary');
+    assert.equal(primary.currentValue, 1250);
+
+    const reloaded = loadDB().users[username];
+    assert.equal(reloaded.tradingAccounts[0].currentValue, 1250);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
