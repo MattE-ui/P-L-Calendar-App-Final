@@ -2090,6 +2090,28 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
   return { baseline, total };
 }
 
+function findLatestAccountClosingValue(history, accountId) {
+  if (!accountId) return null;
+  let latestDate = '';
+  let latestValue = null;
+  for (const [monthKey, days] of Object.entries(history || {})) {
+    if (!days || typeof days !== 'object') continue;
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap || !accountMap[accountId] || typeof accountMap[accountId] !== 'object') continue;
+      const endRaw = Number(accountMap[accountId].end);
+      if (!Number.isFinite(endRaw) || endRaw < 0) continue;
+      const normalizedDate = typeof dateKey === 'string' && dateKey ? dateKey : monthKey;
+      if (normalizedDate > latestDate) {
+        latestDate = normalizedDate;
+        latestValue = endRaw;
+      }
+    }
+  }
+  return Number.isFinite(latestValue) ? latestValue : null;
+}
+
 function dateKeyInTimezone(timezone, date = new Date()) {
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -7344,6 +7366,19 @@ app.post('/api/pl', auth, (req,res)=>{
       entryPayload.end = aggregate.end;
     }
     history[ym][date] = entryPayload;
+  }
+  const tradingAccountsState = ensureTradingAccounts(user);
+  user.tradingAccounts = tradingAccountsState.accounts;
+  const selectedTradingAccount = tradingAccountsState.accounts.find(account => account.id === selectedAccountId);
+  if (selectedTradingAccount) {
+    const latestAccountClose = findLatestAccountClosingValue(history, selectedAccountId);
+    selectedTradingAccount.currentValue = Number.isFinite(latestAccountClose) ? latestAccountClose : 0;
+  }
+  const multiEnabled = user.multiTradingAccountsEnabled || tradingAccountsState.accounts.length > 1;
+  if (multiEnabled && tradingAccountsState.accounts.length) {
+    user.portfolio = tradingAccountsState.accounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    user.portfolioCurrency = 'GBP';
+    user.portfolioSource = 'manual';
   }
   normalizePortfolioHistory(user);
   refreshAnchors(user, history);
