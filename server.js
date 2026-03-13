@@ -4937,6 +4937,20 @@ function scheduleIbkrJob(username, user) {
   ibkrJobs.set(username, { type: 'interval', handle });
 }
 
+async function refreshIntegratedTradingAccountsNow(username, user) {
+  const tradingAccounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const hasTrading212Integration = tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider === 'trading212');
+  const hasIbkrIntegration = tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider === 'ibkr');
+
+  if (hasTrading212Integration && user?.trading212?.enabled && getTrading212Accounts(user.trading212).length) {
+    await syncTrading212ForUser(username, new Date());
+  }
+
+  if (hasIbkrIntegration && user?.ibkr?.enabled && user?.ibkr?.mode === 'connector') {
+    await syncIbkrForUser(username, new Date());
+  }
+}
+
 function bootstrapIbkrSchedules() {
   const db = loadDB();
   for (const [username, user] of Object.entries(db.users || {})) {
@@ -5666,10 +5680,17 @@ app.post('/api/portfolio', auth, (req,res)=>{
   res.json({ ok: true, portfolio });
 });
 
-app.get('/api/profile', auth, (req,res)=>{
-  const db = loadDB();
-  const user = db.users[req.username];
+app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
+  let db = loadDB();
+  let user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
+  const refreshIntegrations = ['1', 'true', 'yes'].includes(String(req.query?.refreshIntegrations || '').toLowerCase());
+  if (refreshIntegrations) {
+    await refreshIntegratedTradingAccountsNow(req.username, user);
+    db = loadDB();
+    user = db.users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+  }
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
@@ -5708,7 +5729,7 @@ app.get('/api/profile', auth, (req,res)=>{
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true
   });
-});
+}));
 
 app.get('/api/prefs', auth, (req, res) => {
   const db = loadDB();
