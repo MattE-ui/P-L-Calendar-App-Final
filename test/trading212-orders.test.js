@@ -188,3 +188,36 @@ test('matchStopOrderForTrade matches by symbol when trade ticker suffix is missi
   const matched = matchStopOrderForTrade(trade, orders);
   assert.equal(matched?.id, 'aaoi-stop');
 });
+
+
+test('matchStopOrderForTrade falls back to closest quantity when layered context is unavailable', () => {
+  const trade = {
+    id: 'trade-aaoi-layer',
+    sizeUnits: 1.4,
+    symbol: 'AAOI'
+  };
+  const orders = [
+    {
+      id: 'aaoi-stop-1',
+      instrumentTicker: 'AAOI_US_EQ',
+      stopPrice: 86.05,
+      type: 'STOP',
+      status: 'NEW',
+      side: 'SELL',
+      quantity: -5.42089608,
+      createdAt: '2026-03-12T15:40:58.675+02:00'
+    },
+    {
+      id: 'aaoi-stop-2',
+      instrumentTicker: 'AAOI_US_EQ',
+      stopPrice: 80.15,
+      type: 'STOP',
+      status: 'NEW',
+      side: 'SELL',
+      quantity: -100,
+      createdAt: '2026-03-12T15:41:58.675+02:00'
+    }
+  ];
+  const matched = matchStopOrderForTrade(trade, orders);
+  assert.equal(matched?.id, 'aaoi-stop-1');
+});

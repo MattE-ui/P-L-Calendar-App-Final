@@ -3565,6 +3565,20 @@ function quantitiesMatch(a, b) {
   return Math.abs(left - right) <= 1e-8;
 }
 
+function findRelatedTrading212Trades(openTrades, trade, accountId = '') {
+  const allTrades = Array.isArray(openTrades) ? openTrades : [];
+  return allTrades.filter(candidate => {
+    if (!candidate || candidate.id === trade.id) return false;
+    if (accountId && candidate.trading212AccountId && candidate.trading212AccountId !== accountId) return false;
+    const samePositionKey = trade.trading212PositionKey && candidate.trading212PositionKey && trade.trading212PositionKey === candidate.trading212PositionKey;
+    const sameTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '')
+      && normalizeTrading212TickerValue(trade.trading212Ticker || '') === normalizeTrading212TickerValue(candidate.trading212Ticker || '');
+    const sameIsin = trade.trading212Isin && candidate.trading212Isin && String(trade.trading212Isin).toUpperCase() === String(candidate.trading212Isin).toUpperCase();
+    const sameSymbol = trade.symbol && candidate.symbol && String(trade.symbol).toUpperCase() === String(candidate.symbol).toUpperCase();
+    return samePositionKey || sameTicker || sameIsin || sameSymbol;
+  });
+}
+
 function matchStopOrderForTrade(trade, orders, context = {}) {
   if (!trade || !orders.length) return null;
   if (trade.t212StopOrderId) {
@@ -3605,7 +3619,7 @@ function matchStopOrderForTrade(trade, orders, context = {}) {
       return pickBestStopOrder(combinedQtyOrders, { ...trade, sizeUnits: combinedQty });
     }
   }
-  return null;
+  return pickBestStopOrder(filtered, trade);
 }
 
 async function fetchTrading212Orders(config, username, { bypassCache = false, accountId = '' } = {}) {
@@ -4053,16 +4067,7 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
   }
   let updated = 0;
   for (const trade of openTrades) {
-    const relatedTrades = openTrades.filter(candidate => {
-      if (!candidate || candidate.id === trade.id) return false;
-      if (accountId && candidate.trading212AccountId && candidate.trading212AccountId !== accountId) return false;
-      const samePositionKey = trade.trading212PositionKey && candidate.trading212PositionKey && trade.trading212PositionKey === candidate.trading212PositionKey;
-      const sameTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '')
-        && normalizeTrading212TickerValue(trade.trading212Ticker || '') === normalizeTrading212TickerValue(candidate.trading212Ticker || '');
-      const sameIsin = trade.trading212Isin && candidate.trading212Isin && String(trade.trading212Isin).toUpperCase() === String(candidate.trading212Isin).toUpperCase();
-      const sameSymbol = trade.symbol && candidate.symbol && String(trade.symbol).toUpperCase() === String(candidate.symbol).toUpperCase();
-      return samePositionKey || sameTicker || sameIsin || sameSymbol;
-    });
+    const relatedTrades = findRelatedTrading212Trades(openTrades, trade, accountId);
     const matched = matchStopOrderForTrade(trade, orders, { relatedTrades: [trade, ...relatedTrades] });
     const shouldAutoSync = trade.currentStopSource !== 'manual';
     if (!matched || !Number.isFinite(matched.stopPrice)) {
@@ -8763,7 +8768,11 @@ app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
     const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId: account.id || '' });
     console.info(`[T212] stop sync trade=${trade.id} display=${trade.displaySymbol || trade.symbol || ''} t212Ticker=${trade.trading212Ticker || ''} isin=${trade.trading212Isin || ''}`);
     console.info(`[T212] orders rawCount=${ordersPayload.rawCount} filteredCount=${ordersPayload.filteredCount}`);
-    const matched = matchStopOrderForTrade(trade, ordersPayload.orders);
+    const openTrades = flattenTrades(user).filter(candidate => (
+      candidate && candidate.status !== 'closed' && (candidate.source === 'trading212' || candidate.trading212Id)
+    ));
+    const relatedTrades = findRelatedTrading212Trades(openTrades, trade, account.id || '');
+    const matched = matchStopOrderForTrade(trade, ordersPayload.orders, { relatedTrades: [trade, ...relatedTrades] });
     const syncedAt = new Date().toISOString();
     if (matched) {
       trade.currentStop = matched.stopPrice;
