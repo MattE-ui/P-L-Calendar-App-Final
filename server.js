@@ -6,7 +6,6 @@ const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const cron = require('node-cron');
 const { z } = require('zod');
 let nodemailer = null;
 try {
@@ -50,6 +49,16 @@ const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
 const IBKR_RATE_LIMIT_WINDOW_MS = Number(process.env.IBKR_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
 const PORTFOLIO_SOURCE_T212_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_T212_STALE_MS) || 36 * 60 * 60 * 1000;
 const PORTFOLIO_SOURCE_IBKR_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_IBKR_STALE_MS) || 5 * 60 * 1000;
+const T212_SYNC_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.T212_SYNC_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
+  return Math.min(parsed, 29 * 1000);
+})();
+const IBKR_SYNC_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.IBKR_SYNC_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
+  return Math.min(parsed, 29 * 1000);
+})();
 const IBKR_CONNECTOR_WINDOWS_URL = process.env.IBKR_CONNECTOR_WINDOWS_URL || '';
 const IBKR_CONNECTOR_WINDOWS_FILE = process.env.IBKR_CONNECTOR_WINDOWS_FILE || '';
 const IBKR_CONNECTOR_WINDOWS_META_PATH = process.env.IBKR_CONNECTOR_WINDOWS_META_PATH || '';
@@ -939,6 +948,44 @@ function applyAccountAggregatesToHistoryEntry(entry = {}) {
   nextEntry.cashIn = aggregate.cashIn;
   nextEntry.cashOut = aggregate.cashOut;
   return nextEntry;
+}
+
+function syncIntegratedTradingAccountValuesFromHistory(user, history = ensurePortfolioHistory(user)) {
+  if (!user || typeof user !== 'object') return false;
+  ensureTradingAccounts(user);
+  const accountList = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  const integratedAccounts = accountList.filter(account => account.integrationEnabled && account.integrationProvider);
+  if (!integratedAccounts.length) return false;
+
+  const latestEndByAccount = new Map();
+  for (const days of Object.values(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      integratedAccounts.forEach(account => {
+        const accountRecord = accountMap[account.id];
+        if (!accountRecord || typeof accountRecord !== 'object') return;
+        const endRaw = Number(accountRecord.end);
+        if (!Number.isFinite(endRaw) || endRaw < 0) return;
+        const existing = latestEndByAccount.get(account.id);
+        if (!existing || dateKey > existing.dateKey) {
+          latestEndByAccount.set(account.id, { dateKey, end: endRaw });
+        }
+      });
+    }
+  }
+
+  let mutated = false;
+  integratedAccounts.forEach(account => {
+    const latest = latestEndByAccount.get(account.id);
+    if (!latest) return;
+    if (Number(account.currentValue) !== latest.end) {
+      account.currentValue = latest.end;
+      mutated = true;
+    }
+  });
+  return mutated;
 }
 
 function ensureTradeJournal(user) {
@@ -4713,21 +4760,10 @@ function scheduleTrading212Job(username, user) {
   stopTrading212Job(username);
   const cfg = user?.trading212;
   if (!cfg || !cfg.enabled || !getTrading212Accounts(cfg).length) return;
-  const parsed = parseSnapshotTime(cfg.snapshotTime);
-  const timezone = cfg.timezone || 'Europe/London';
-  if (cfg.lastSyncAt) {
-    const handle = setInterval(() => {
-      syncTrading212ForUser(username, new Date());
-    }, 30 * 1000);
-    trading212Jobs.set(username, { type: 'interval', handle });
-    return;
-  }
-  if (!parsed) return;
-  const expression = `${parsed.minute} ${parsed.hour} * * *`;
-  const handle = cron.schedule(expression, async () => {
-    await syncTrading212ForUser(username, new Date());
-  }, { timezone });
-  trading212Jobs.set(username, { type: 'cron', handle });
+  const handle = setInterval(() => {
+    syncTrading212ForUser(username, new Date());
+  }, T212_SYNC_INTERVAL_MS);
+  trading212Jobs.set(username, { type: 'interval', handle });
 }
 
 async function fetchIbkrAuthStatus() {
@@ -4898,8 +4934,22 @@ function scheduleIbkrJob(username, user) {
   if (!cfg || !cfg.enabled || cfg.mode !== 'connector') return;
   const handle = setInterval(() => {
     syncIbkrForUser(username, new Date());
-  }, 30 * 1000);
+  }, IBKR_SYNC_INTERVAL_MS);
   ibkrJobs.set(username, { type: 'interval', handle });
+}
+
+async function refreshIntegratedTradingAccountsNow(username, user) {
+  const tradingAccounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const hasTrading212Integration = tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider === 'trading212');
+  const hasIbkrIntegration = tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider === 'ibkr');
+
+  if (hasTrading212Integration && user?.trading212?.enabled && getTrading212Accounts(user.trading212).length) {
+    await syncTrading212ForUser(username, new Date());
+  }
+
+  if (hasIbkrIntegration && user?.ibkr?.enabled && user?.ibkr?.mode === 'connector') {
+    await syncIbkrForUser(username, new Date());
+  }
 }
 
 function bootstrapIbkrSchedules() {
@@ -5631,13 +5681,21 @@ app.post('/api/portfolio', auth, (req,res)=>{
   res.json({ ok: true, portfolio });
 });
 
-app.get('/api/profile', auth, (req,res)=>{
-  const db = loadDB();
-  const user = db.users[req.username];
+app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
+  let db = loadDB();
+  let user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
+  const refreshIntegrations = ['1', 'true', 'yes'].includes(String(req.query?.refreshIntegrations || '').toLowerCase());
+  if (refreshIntegrations) {
+    await refreshIntegratedTradingAccountsNow(req.username, user);
+    db = loadDB();
+    user = db.users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+  }
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
+  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   const { baseline, total } = computeNetDepositsTotals(user, history);
   const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
@@ -5673,7 +5731,7 @@ app.get('/api/profile', auth, (req,res)=>{
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true
   });
-});
+}));
 
 app.get('/api/prefs', auth, (req, res) => {
   const db = loadDB();
@@ -6170,7 +6228,10 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const mutated = ensureUserShape(user, req.username);
+  let mutated = ensureUserShape(user, req.username);
+  const history = ensurePortfolioHistory(user);
+  if (normalizePortfolioHistory(user)) mutated = true;
+  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   if (mutated) saveDB(db);
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
