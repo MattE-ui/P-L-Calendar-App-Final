@@ -58,6 +58,10 @@ const profileState = {
   investorPortalAvailable: false
 };
 
+const PROFILE_AUTO_REFRESH_MS = 5 * 1000;
+let profileRefreshTimer = null;
+let profileLoadInFlight = false;
+
 const currencySymbols = { GBP: '£', USD: '$' };
 
 function currencyAmount(valueGBP, currency = profileState.currency) {
@@ -238,9 +242,12 @@ async function loadMasterSettings() {
   }
 }
 
-async function loadProfile() {
+async function loadProfile({ refreshIntegrations = false } = {}) {
+  if (profileLoadInFlight) return;
+  profileLoadInFlight = true;
   try {
-    const data = await api('/api/profile');
+    const query = refreshIntegrations ? '?refreshIntegrations=1' : '';
+    const data = await api(`/api/profile${query}`);
     const portfolio = Number(data.portfolio);
     const netDepositsBaseline = Number(data.initialNetDeposits);
     const netDepositsTotal = Number(data.netDepositsTotal);
@@ -363,6 +370,8 @@ async function loadProfile() {
     }
   } catch (e) {
     console.error('Unable to load profile details', e);
+  } finally {
+    profileLoadInFlight = false;
   }
 }
 
@@ -2106,12 +2115,19 @@ function bindInvestorActions() {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindNav();
-  loadProfile();
+  loadProfile({ refreshIntegrations: true });
   loadIntegration();
   loadIbkrIntegration();
   loadIbkrDownloadMeta();
+  if (profileRefreshTimer) clearInterval(profileRefreshTimer);
+  profileRefreshTimer = setInterval(() => {
+    loadProfile({ refreshIntegrations: true });
+  }, PROFILE_AUTO_REFRESH_MS);
   bindInvestorAccountToggle();
   bindInvestorActions();
+  window.addEventListener('focus', () => {
+    loadProfile({ refreshIntegrations: true });
+  });
   const rawModal = document.getElementById('t212-raw-modal');
   const rawContent = document.getElementById('t212-raw-content');
   document.getElementById('t212-raw-btn')?.addEventListener('click', () => {
