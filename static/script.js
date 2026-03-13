@@ -39,7 +39,10 @@ const state = {
   rounding: 'fractional',
   autoStopSymbol: '',
   autoStopValue: null,
-  manualStopOverride: false
+  manualStopOverride: false,
+  lastUserInteractionAt: 0,
+  hasPendingBackgroundRender: false,
+  backgroundRefreshInFlight: false
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -66,6 +69,21 @@ const clearGuestMode = () => {
   sessionStorage.removeItem('guestMode');
   localStorage.removeItem('guestMode');
 };
+
+function markUserInteraction() {
+  state.lastUserInteractionAt = Date.now();
+}
+
+function isInteractionSensitiveElement(el) {
+  if (!el || !el.matches) return false;
+  return el.matches('input, textarea, select, [contenteditable="true"]');
+}
+
+function userIsActivelyInteracting() {
+  const active = document.activeElement;
+  if (isInteractionSensitiveElement(active)) return true;
+  return (Date.now() - (state.lastUserInteractionAt || 0)) < 2000;
+}
 
 async function api(path, opts = {}) {
   const isGuest = isGuestSession();
@@ -2831,9 +2849,14 @@ async function refreshActiveTrades() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
-    renderActiveTrades();
-    updatePortfolioPill();
-    renderMetrics();
+    if (!userIsActivelyInteracting()) {
+      renderActiveTrades();
+      updatePortfolioPill();
+      renderMetrics();
+      state.hasPendingBackgroundRender = false;
+    } else {
+      state.hasPendingBackgroundRender = true;
+    }
   } catch (e) {
     console.warn('Failed to refresh active trades', e);
     state.openLossPotentialGBP = 0;
@@ -2847,15 +2870,30 @@ function hasEnabledAutomationIntegration() {
 }
 
 async function refreshAutomatedCalendarData() {
-  if (document.visibilityState === 'hidden') return;
+  if (state.backgroundRefreshInFlight) return;
   if (!hasEnabledAutomationIntegration()) return;
+  state.backgroundRefreshInFlight = true;
   try {
-    await loadProfile();
+    await loadProfile({ refreshIntegrations: true });
     await loadData();
-    render();
+    if (!userIsActivelyInteracting()) {
+      render();
+      state.hasPendingBackgroundRender = false;
+    } else {
+      state.hasPendingBackgroundRender = true;
+    }
   } catch (e) {
     console.warn('Failed to refresh automated calendar data', e);
+  } finally {
+    state.backgroundRefreshInFlight = false;
   }
+}
+
+function flushPendingBackgroundRender() {
+  if (!state.hasPendingBackgroundRender) return;
+  if (userIsActivelyInteracting()) return;
+  render();
+  state.hasPendingBackgroundRender = false;
 }
 
 function renderTradeList(trades = [], dateStr = null) {
@@ -3130,6 +3168,10 @@ function openEntryModal(dateStr, existingEntry = null) {
 }
 
 function bindControls() {
+  document.addEventListener('input', markUserInteraction, true);
+  document.addEventListener('keydown', markUserInteraction, true);
+  document.addEventListener('pointerdown', markUserInteraction, true);
+
   const periodSelect = $('#period-select');
   if (periodSelect) {
     periodSelect.addEventListener('change', () => {
@@ -3754,9 +3796,10 @@ if (typeof module !== 'undefined') {
   module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
-async function loadProfile() {
+async function loadProfile({ refreshIntegrations = false } = {}) {
   try {
-    const profile = await api('/api/profile');
+    const profileUrl = refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+    const profile = await api(profileUrl);
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
     const accounts = Array.isArray(profile?.tradingAccounts) && profile.tradingAccounts.length
@@ -3848,12 +3891,14 @@ async function init() {
   updateDevtoolsNav();
   render();
   setInterval(() => {
-    if (document.visibilityState === 'hidden') return;
     refreshActiveTrades();
   }, 15000);
   setInterval(() => {
     refreshAutomatedCalendarData();
   }, 30000);
+  setInterval(() => {
+    flushPendingBackgroundRender();
+  }, 1000);
 }
 
 if (typeof window !== 'undefined') {
