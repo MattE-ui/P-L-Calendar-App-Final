@@ -21,6 +21,7 @@ const state = {
     emotionTags: []
   },
   currency: 'GBP',
+  portfolioGBP: 0,
   isAdmin: false,
   rates: { GBP: 1 }
 };
@@ -159,6 +160,7 @@ async function loadHeroMetrics() {
     const portfolio = Number(res?.portfolio);
     const netDeposits = Number(res?.netDepositsTotal);
     const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
+    state.portfolioGBP = portfolioValue;
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
@@ -203,6 +205,7 @@ async function loadHeroMetrics() {
     }
   } catch (e) {
     console.warn('Failed to load hero metrics', e);
+    state.portfolioGBP = 0;
   }
 }
 
@@ -230,28 +233,51 @@ function setCheckboxes(name, values = []) {
 
 
 function updateRiskMetrics() {
+  const assetClass = (document.querySelector('#form-asset-class')?.value || '').toLowerCase();
   const entry = Number(document.querySelector('#form-entry')?.value);
   const stop = Number(document.querySelector('#form-stop')?.value);
-  const units = Number(document.querySelector('#form-units')?.value);
-  const riskAmount = Number(document.querySelector('#form-risk-amount')?.value);
+  const contracts = Number(document.querySelector('#form-option-contracts')?.value);
+  const unitsInput = Number(document.querySelector('#form-units')?.value);
+  const units = assetClass === 'options'
+    ? (Number.isFinite(contracts) && contracts > 0 ? contracts * 100 : NaN)
+    : unitsInput;
   const currency = document.querySelector('#form-currency')?.value || 'GBP';
   const symbol = currencySymbols[currency] || '';
+  const hasStop = Number.isFinite(stop) && stop > 0;
+  const perUnitRisk = Number.isFinite(entry) && hasStop ? Math.abs(entry - stop) : NaN;
+  const totalRisk = Number.isFinite(perUnitRisk) && perUnitRisk > 0 && Number.isFinite(units) && units > 0
+    ? perUnitRisk * units
+    : NaN;
+  const positionValue = Number.isFinite(entry) && entry > 0 && Number.isFinite(units) && units > 0
+    ? entry * units
+    : NaN;
+  const portfolioCurrency = currencyAmount(state.portfolioGBP, currency);
+  const riskPct = Number.isFinite(totalRisk) && totalRisk > 0 && Number.isFinite(portfolioCurrency) && portfolioCurrency > 0
+    ? (totalRisk / portfolioCurrency) * 100
+    : NaN;
+  const riskPerContract = assetClass === 'options' && Number.isFinite(perUnitRisk)
+    ? perUnitRisk * 100
+    : perUnitRisk;
 
-  const perUnit = Number.isFinite(entry) && Number.isFinite(stop) ? Math.abs(entry - stop) : NaN;
-  const totalRisk = Number.isFinite(perUnit) && perUnit > 0 && Number.isFinite(units) ? perUnit * units : NaN;
-  const impliedUnits = Number.isFinite(perUnit) && perUnit > 0 && Number.isFinite(riskAmount) ? riskAmount / perUnit : NaN;
-
-  const perUnitEl = document.querySelector('#risk-metric-per-unit');
+  const positionValueEl = document.querySelector('#risk-metric-position-value');
+  const perUnitEl = document.querySelector('#risk-metric-per-contract');
   const totalRiskEl = document.querySelector('#risk-metric-total');
-  const impliedUnitsEl = document.querySelector('#risk-metric-units');
+  const riskPctEl = document.querySelector('#risk-metric-pct');
 
-  if (perUnitEl) perUnitEl.textContent = Number.isFinite(perUnit) ? `${symbol}${perUnit.toFixed(4)}` : '—';
+  if (positionValueEl) positionValueEl.textContent = Number.isFinite(positionValue) ? `${symbol}${positionValue.toFixed(2)}` : '—';
+  if (perUnitEl) {
+    if (!hasStop) {
+      perUnitEl.textContent = 'Add stop to calculate';
+    } else {
+      perUnitEl.textContent = Number.isFinite(riskPerContract) ? `${symbol}${riskPerContract.toFixed(2)}` : '—';
+    }
+  }
   if (totalRiskEl) totalRiskEl.textContent = Number.isFinite(totalRisk) ? `${symbol}${totalRisk.toFixed(2)}` : '—';
-  if (impliedUnitsEl) impliedUnitsEl.textContent = Number.isFinite(impliedUnits) ? impliedUnits.toFixed(2) : '—';
+  if (riskPctEl) riskPctEl.textContent = Number.isFinite(riskPct) ? `${riskPct.toFixed(2)}%` : (hasStop ? '—' : 'Add stop to calculate');
 }
 
 function bindRiskMetrics() {
-  ['#form-entry', '#form-stop', '#form-units', '#form-risk-amount', '#form-currency'].forEach((selector) => {
+  ['#form-entry', '#form-stop', '#form-units', '#form-option-contracts', '#form-currency', '#form-asset-class'].forEach((selector) => {
     document.querySelector(selector)?.addEventListener('input', updateRiskMetrics);
     document.querySelector(selector)?.addEventListener('change', updateRiskMetrics);
   });
@@ -288,8 +314,20 @@ function optionSummary(trade) {
 function toggleOptionsFields() {
   const assetClass = document.querySelector('#form-asset-class')?.value || '';
   const optionsFields = document.querySelector('#options-fields');
-  if (!optionsFields) return;
-  optionsFields.classList.toggle('is-hidden', assetClass !== 'options');
+  const unitsField = document.querySelector('#stock-units-field');
+  const unitsInput = document.querySelector('#form-units');
+  const contractsInput = document.querySelector('#form-option-contracts');
+  const optionTypeInput = document.querySelector('#form-option-type');
+  const optionStrikeInput = document.querySelector('#form-option-strike');
+  const optionExpirationInput = document.querySelector('#form-option-expiration');
+  if (optionsFields) optionsFields.classList.toggle('is-hidden', assetClass !== 'options');
+  if (unitsField) unitsField.classList.toggle('is-hidden', assetClass === 'options');
+  if (unitsInput) unitsInput.required = assetClass !== 'options';
+  if (contractsInput) contractsInput.required = assetClass === 'options';
+  if (optionTypeInput) optionTypeInput.required = assetClass === 'options';
+  if (optionStrikeInput) optionStrikeInput.required = assetClass === 'options';
+  if (optionExpirationInput) optionExpirationInput.required = assetClass === 'options';
+  updateRiskMetrics();
 }
 
 async function loadTrades() {
@@ -431,8 +469,6 @@ function populateForm(trade) {
   document.querySelector('#form-stop').value = trade.stop ?? '';
   const currentStopInput = document.querySelector('#form-current-stop');
   if (currentStopInput) currentStopInput.value = trade.currentStop ?? '';
-  document.querySelector('#form-risk-pct').value = trade.riskPct ?? '';
-  document.querySelector('#form-risk-amount').value = trade.riskAmountCurrency ?? '';
   document.querySelector('#form-units').value = trade.sizeUnits ?? '';
   document.querySelector('#form-open-date').value = trade.openDate || '';
   document.querySelector('#form-close-date').value = trade.closeDate || '';
@@ -535,24 +571,36 @@ function collectFormData() {
     const num = Number(raw);
     return Number.isNaN(num) ? undefined : num;
   };
+  const nullableNumber = (id) => {
+    const raw = document.querySelector(id)?.value;
+    if (raw === undefined) return undefined;
+    if (raw === null || raw === '') return null;
+    const num = Number(raw);
+    return Number.isNaN(num) ? undefined : num;
+  };
+  const assetClass = document.querySelector('#form-asset-class')?.value;
+  const optionContracts = numberOrUndefined('#form-option-contracts');
+  const explicitUnits = numberOrUndefined('#form-units');
+  const derivedUnits = assetClass === 'options' && Number.isFinite(optionContracts) && optionContracts > 0
+    ? optionContracts * 100
+    : explicitUnits;
+
   return {
     displaySymbol: document.querySelector('#form-symbol')?.value,
     currency: document.querySelector('#form-currency')?.value || 'GBP',
     entry: numberOrUndefined('#form-entry'),
-    stop: numberOrUndefined('#form-stop'),
-    currentStop: numberOrUndefined('#form-current-stop'),
-    riskPct: numberOrUndefined('#form-risk-pct'),
-    riskAmount: numberOrUndefined('#form-risk-amount'),
-    sizeUnits: numberOrUndefined('#form-units'),
+    stop: nullableNumber('#form-stop'),
+    currentStop: nullableNumber('#form-current-stop'),
+    sizeUnits: derivedUnits,
     date: document.querySelector('#form-open-date')?.value,
     closeDate: document.querySelector('#form-close-date')?.value,
     closePrice: numberOrUndefined('#form-close-price'),
     tradeType: document.querySelector('#form-trade-type')?.value,
-    assetClass: document.querySelector('#form-asset-class')?.value,
+    assetClass,
     optionType: document.querySelector('#form-option-type')?.value,
     optionStrike: numberOrUndefined('#form-option-strike'),
     optionExpiration: document.querySelector('#form-option-expiration')?.value,
-    optionContracts: numberOrUndefined('#form-option-contracts'),
+    optionContracts,
     strategyTag: document.querySelector('#form-strategy')?.value,
     marketCondition: document.querySelector('#form-market-condition')?.value,
     setupTags: selectedTags('form-setup'),
