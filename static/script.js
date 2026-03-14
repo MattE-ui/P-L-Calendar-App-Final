@@ -3041,30 +3041,50 @@ function renderTradeList(trades = [], dateStr = null) {
       ? formatCurrency(trade.positionGBP, currency)
       : formatPrice(trade.positionCurrency, currency);
     const perShareDisplay = formatPrice(trade.perUnitRisk, currency);
-    const metaLine = document.createElement('div');
-    metaLine.className = 'trade-line';
     const sym = getTradeDisplaySymbol(trade);
     const status = trade.status === 'closed' ? 'Closed' : 'Open';
-    const metaText = document.createElement('span');
-    metaText.textContent = `${sym} • ${status} • Entry ${formatPrice(trade.entry, currency)} • Stop ${formatPrice(trade.stop, currency)}`;
-    metaLine.appendChild(metaText);
-    if (shouldShowMappingBadge(trade)) {
-      metaLine.appendChild(createMappingBadge());
-    }
-    pill.appendChild(metaLine);
 
-    const badges = document.createElement('div');
-    badges.className = 'trade-meta';
-    badges.innerHTML = `
-      <span class="trade-badge">Risk ${trade.riskPct.toFixed(2)}%</span>
-      <span class="trade-badge">Units ${formatShares(trade.sizeUnits)}</span>
-      <span class="trade-badge">Risk ${riskAmountDisplay}</span>
-      <span class="trade-badge">Position ${positionDisplay}</span>
-      <span class="trade-badge">Risk/share ${perShareDisplay}</span>
+    const topRow = document.createElement('div');
+    topRow.className = 'trade-compact-row trade-compact-top';
+    const topLeft = document.createElement('div');
+    topLeft.className = 'trade-identity';
+    const symbolEl = document.createElement('strong');
+    symbolEl.className = 'trade-ticker';
+    symbolEl.textContent = sym;
+    const statusEl = document.createElement('span');
+    statusEl.className = `trade-status ${trade.status === 'closed' ? 'is-closed' : 'is-open'}`;
+    statusEl.textContent = status;
+    topLeft.append(symbolEl, statusEl);
+
+    const topRight = document.createElement('div');
+    topRight.className = 'trade-primary-risk';
+    topRight.textContent = `Risk ${riskAmountDisplay}`;
+
+    topRow.append(topLeft, topRight);
+    if (shouldShowMappingBadge(trade)) {
+      topLeft.appendChild(createMappingBadge());
+    }
+
+    const row2 = document.createElement('div');
+    row2.className = 'trade-compact-row trade-compact-metrics';
+    row2.innerHTML = `
+      <span class="trade-inline-metric"><span class="k">Entry</span><span class="v">${formatPrice(trade.entry, currency)}</span></span>
+      <span class="trade-inline-metric"><span class="k">Stop</span><span class="v">${formatPrice(trade.stop, currency)}</span></span>
+      <span class="trade-inline-metric"><span class="k">R/share</span><span class="v">${perShareDisplay}</span></span>
     `;
-    pill.appendChild(badges);
+
+    const row3 = document.createElement('div');
+    row3.className = 'trade-compact-row trade-compact-metrics';
+    row3.innerHTML = `
+      <span class="trade-inline-metric"><span class="k">Units</span><span class="v">${formatShares(trade.sizeUnits)}</span></span>
+      <span class="trade-inline-metric"><span class="k">Position</span><span class="v">${positionDisplay}</span></span>
+      <span class="trade-inline-metric"><span class="k">Risk %</span><span class="v">${trade.riskPct.toFixed(2)}%</span></span>
+    `;
+
+    pill.append(topRow, row2, row3);
+
     const tags = document.createElement('div');
-    tags.className = 'tag-chips';
+    tags.className = 'tag-chips trade-tags-inline';
     const addChip = (label, tone = '') => {
       const chip = document.createElement('span');
       chip.className = `tag-chip ${tone}`;
@@ -3077,14 +3097,14 @@ function renderTradeList(trades = [], dateStr = null) {
     if (trade.marketCondition) addChip(trade.marketCondition);
     (trade.setupTags || []).forEach(tag => addChip(tag));
     (trade.emotionTags || []).forEach(tag => addChip(tag));
-    if (tags.childElementCount) {
-      pill.appendChild(tags);
-    }
+    const metaRow = document.createElement('div');
+    metaRow.className = 'trade-compact-row trade-compact-meta-row';
+    const metaLeft = document.createElement('div');
+    metaLeft.className = 'trade-compact-meta';
     if (trade.status === 'closed' && Number.isFinite(trade.closePrice)) {
-      const closed = document.createElement('div');
-      closed.className = 'trade-meta';
-      closed.textContent = `Closed at ${formatPrice(trade.closePrice, currency)}${trade.closeDate ? ` on ${trade.closeDate}` : ''}`;
-      pill.appendChild(closed);
+      const closed = document.createElement('span');
+      closed.textContent = `Closed ${formatPrice(trade.closePrice, currency)}${trade.closeDate ? ` on ${trade.closeDate}` : ''}`;
+      metaLeft.appendChild(closed);
     }
     if (trade.note) {
       const note = document.createElement('p');
@@ -3093,19 +3113,25 @@ function renderTradeList(trades = [], dateStr = null) {
       pill.appendChild(note);
     }
     if (trade.createdAt) {
-      const meta = document.createElement('div');
-      meta.className = 'trade-meta';
       const dt = new Date(trade.createdAt);
       if (!Number.isNaN(dt.getTime())) {
-        meta.textContent = `Logged ${dt.toLocaleString()}`;
+        const logged = document.createElement('span');
+        logged.textContent = `Logged ${dt.toLocaleString()}`;
+        metaLeft.appendChild(logged);
       }
-      pill.appendChild(meta);
     }
+    if (tags.childElementCount) {
+      metaLeft.appendChild(tags);
+    }
+    if (metaLeft.childElementCount) {
+      metaRow.appendChild(metaLeft);
+    }
+
     if (trade.id) {
       const actionRow = document.createElement('div');
-      actionRow.className = 'close-row';
+      actionRow.className = 'close-row trade-compact-actions';
       const deleteBtn = document.createElement('button');
-      deleteBtn.className = 'danger outline';
+      deleteBtn.className = 'danger outline compact';
       deleteBtn.textContent = 'Delete trade';
       deleteBtn.addEventListener('click', async () => {
         if (!window.confirm('Delete this trade? This cannot be undone.')) {
@@ -3124,7 +3150,10 @@ function renderTradeList(trades = [], dateStr = null) {
         }
       });
       actionRow.appendChild(deleteBtn);
-      pill.appendChild(actionRow);
+      metaRow.appendChild(actionRow);
+    }
+    if (metaRow.childElementCount) {
+      pill.appendChild(metaRow);
     }
     list.appendChild(pill);
   });
