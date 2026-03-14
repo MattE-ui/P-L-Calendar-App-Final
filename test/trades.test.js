@@ -126,6 +126,26 @@ test('updates and closes a trade then filters winners', async () => {
   const byType = await authedFetch('/api/trades?tradeType=day');
   assert.equal(byType.res.status, 200);
   assert.ok(byType.data.trades.length >= 1);
+
+  const byEntryDate = await authedFetch('/api/trades?from=2024-02-01&to=2024-02-01');
+  assert.equal(byEntryDate.res.status, 200);
+  assert.ok(byEntryDate.data.trades.some(t => t.id === id));
+
+  const byExitDate = await authedFetch('/api/trades?from=2024-02-02&to=2024-02-02');
+  assert.equal(byExitDate.res.status, 200);
+  assert.ok(!byExitDate.data.trades.some(t => t.id === id));
+
+  const editClosed = await authedFetch(`/api/trades/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 21,
+      stop: 19,
+      note: 'Edited after close'
+    })
+  });
+  assert.equal(editClosed.res.status, 200);
+  assert.equal(editClosed.data.trade.entry, 21);
 });
 
 
@@ -196,5 +216,31 @@ test('records partial trims when reducing units and includes trim pnl in final r
   const closed = list.data.trades.find(t => t.id === id);
   assert.ok(closed);
   assert.equal(closed.status, 'closed');
-  assert.equal(closed.realizedPnlGBP, 90);
+  assert.equal(closed.realizedPnlGBP, 70);
+});
+
+test('persists and lists fully closed execution-leg trades', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: 'AAPL',
+      assetClass: 'stocks',
+      currency: 'GBP',
+      executions: [
+        { side: 'entry', quantity: 3, price: 10, date: '2024-05-01' },
+        { side: 'exit', quantity: 3, price: 11, date: '2024-05-02' }
+      ]
+    })
+  });
+  assert.equal(create.res.status, 200);
+
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const trade = list.data.trades.find(t => t.id === create.data.trade.id);
+  assert.ok(trade);
+  assert.equal(trade.status, 'closed');
+  assert.equal(trade.totalEnteredQuantity, 3);
+  assert.equal(trade.totalExitedQuantity, 3);
+  assert.equal(trade.openQuantity, 0);
 });

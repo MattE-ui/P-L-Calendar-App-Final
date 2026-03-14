@@ -1612,7 +1612,11 @@ function normalizeTradeJournal(user) {
       const stop = Number(trade.stop);
       const riskPct = Number(trade.riskPct);
       const currency = ['GBP', 'USD', 'EUR'].includes(trade.currency) ? trade.currency : 'GBP';
-      const status = trade.status === 'closed' ? 'closed' : 'open';
+      const executionSummary = summarizeExecutionLegs(trade, {});
+      const hasExecutions = Array.isArray(trade.executions) && trade.executions.length > 0;
+      const status = hasExecutions
+        ? executionSummary.status
+        : (trade.status === 'closed' ? 'closed' : 'open');
       const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
       const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol.trim().toUpperCase() : '';
       const trading212Name = typeof trade.trading212Name === 'string' ? trade.trading212Name : '';
@@ -1649,7 +1653,13 @@ function normalizeTradeJournal(user) {
       const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
       const fxFeeEligible = trade.fxFeeEligible === true;
       const fxFeeRate = Number(trade.fxFeeRate);
-      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sizeUnits) || sizeUnits <= 0) {
+      const validEntry = hasExecutions ? executionSummary.avgEntry : entry;
+      const validSizeUnits = hasExecutions ? executionSummary.totalEntered : sizeUnits;
+      if (
+        !Number.isFinite(validEntry) || validEntry <= 0
+        || !Number.isFinite(validSizeUnits) || validSizeUnits <= 0
+        || (hasExecutions && !executionSummary.isValid)
+      ) {
         mutated = true;
         continue;
       }
@@ -1677,7 +1687,7 @@ function normalizeTradeJournal(user) {
       const partialCloses = normalizePartialCloses(trade.partialCloses, cleanDate);
       const normalizedTrade = {
         id,
-        entry,
+        entry: validEntry,
         stop: stopValue,
         symbol: symbol || undefined,
         displaySymbol: displaySymbol || undefined,
@@ -1686,7 +1696,7 @@ function normalizeTradeJournal(user) {
           ? riskPct
           : (Number.isFinite(derivedRiskPct) && derivedRiskPct > 0 ? derivedRiskPct : 0),
         perUnitRisk,
-        sizeUnits,
+        sizeUnits: hasExecutions ? executionSummary.openQuantity : sizeUnits,
         status,
         tradeType: TRADE_TYPES.includes(typeRaw) ? typeRaw : 'day',
         assetClass: ASSET_CLASSES.includes(assetRaw) ? assetRaw : 'stocks',
@@ -1781,7 +1791,15 @@ function normalizeTradeJournal(user) {
         normalizedTrade.riskAmountCurrency = derivedRiskAmountCurrency;
       }
       if (Number.isFinite(trade.positionCurrency)) normalizedTrade.positionCurrency = trade.positionCurrency;
-      if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
+      if (hasExecutions) {
+        normalizedTrade.executions = executionSummary.executions;
+        if (Number.isFinite(executionSummary.avgExit) && executionSummary.avgExit > 0) {
+          normalizedTrade.closePrice = executionSummary.avgExit;
+        }
+        if (executionSummary.lastExitDate && cleanDate.test(executionSummary.lastExitDate)) {
+          normalizedTrade.closeDate = executionSummary.lastExitDate;
+        }
+      } else if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
         normalizedTrade.closePrice = closePrice;
         if (closeDate && cleanDate.test(closeDate)) {
           normalizedTrade.closeDate = closeDate;
@@ -1806,38 +1824,15 @@ function normalizeTradeJournal(user) {
 
 function computeRealizedPnl(trade, rates = {}) {
   if (!trade) return null;
-  const entry = Number(trade.entry);
-  if (!Number.isFinite(entry)) {
-    return null;
-  }
-  const partialCloses = Array.isArray(trade.partialCloses) ? trade.partialCloses : [];
-  const partialPnlCurrency = partialCloses.reduce((sum, close) => {
-    const units = Number(close?.units);
-    const price = Number(close?.price);
-    if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(price) || price <= 0) {
-      return sum;
-    }
-    return sum + computePartialClosePnlCurrency(trade, units, price);
-  }, 0);
-  let finalPnlCurrency = 0;
-  if (trade.status === 'closed') {
-    const closePrice = Number(trade.closePrice);
-    const sizeUnits = Number(trade.sizeUnits);
-    if (!Number.isFinite(closePrice) || !Number.isFinite(sizeUnits)) {
-      return null;
-    }
-    finalPnlCurrency = computePartialClosePnlCurrency(trade, sizeUnits, closePrice);
-  }
-  const grossPnlCurrency = partialPnlCurrency + finalPnlCurrency;
-  const pnlGBP = convertToGBP(grossPnlCurrency, trade.currency || 'GBP', rates);
-  const feesCurrency = Number(trade.fees) || 0;
-  const netPnlCurrency = grossPnlCurrency - feesCurrency;
-  const realizedPnlGBP = Number.isFinite(Number(trade.realizedPnlGBP))
-    ? Number(trade.realizedPnlGBP)
-    : (Number.isFinite(pnlGBP) ? pnlGBP - convertToGBP(feesCurrency, trade.currency || 'GBP', rates) : netPnlCurrency);
+  const summary = summarizeExecutionLegs(trade, rates);
+  if (!summary.isValid) return null;
   const riskGBP = Number(trade.riskAmountGBP);
-  const rMultiple = Number.isFinite(riskGBP) && riskGBP !== 0 ? realizedPnlGBP / riskGBP : null;
-  return { realizedPnlGBP, realizedPnlCurrency: netPnlCurrency, rMultiple };
+  const rMultiple = Number.isFinite(riskGBP) && riskGBP !== 0 ? summary.realizedPnlGBP / riskGBP : null;
+  return {
+    realizedPnlGBP: summary.realizedPnlGBP,
+    realizedPnlCurrency: summary.realizedPnlCurrency,
+    rMultiple
+  };
 }
 
 function computeGuaranteedPnl(trade, rates = {}) {
@@ -1879,10 +1874,31 @@ function flattenTrades(user, rates = {}) {
       if (!trade || typeof trade !== 'object') continue;
       const normalized = normalizeTradeMeta(trade);
       const base = { ...normalized, openDate: dateKey };
-      base.status = base.status === 'closed' ? 'closed' : 'open';
       base.currency = base.currency || 'GBP';
       if (!base.createdAt) {
         base.createdAt = new Date().toISOString();
+      }
+      const executionSummary = summarizeExecutionLegs(base, rates);
+      base.executions = executionSummary.executions;
+      base.entryExecutions = executionSummary.entries;
+      base.exitExecutions = executionSummary.exits;
+      base.totalEnteredQuantity = executionSummary.totalEntered;
+      base.totalExitedQuantity = executionSummary.totalExited;
+      base.openQuantity = executionSummary.openQuantity;
+      base.avgEntryPrice = executionSummary.avgEntry;
+      base.avgExitPrice = executionSummary.avgExit;
+      base.status = executionSummary.status;
+      if (Number.isFinite(executionSummary.avgEntry) && executionSummary.avgEntry > 0) {
+        base.entry = executionSummary.avgEntry;
+      }
+      if (Number.isFinite(executionSummary.openQuantity) && executionSummary.openQuantity >= 0) {
+        base.sizeUnits = executionSummary.openQuantity;
+      }
+      if (executionSummary.status !== 'open' && Number.isFinite(executionSummary.avgExit)) {
+        base.closePrice = executionSummary.avgExit;
+      }
+      if (executionSummary.lastExitDate) {
+        base.closeDate = executionSummary.lastExitDate;
       }
       const pnl = computeRealizedPnl(base, rates);
       if (pnl) {
@@ -1915,7 +1931,7 @@ function filterTrades(trades = [], filters = {}) {
   const status = typeof filters.status === 'string' ? filters.status.trim().toLowerCase() : null;
 
   return trades.filter(trade => {
-    const dateKey = trade.status === 'closed' ? trade.closeDate : trade.openDate;
+    const dateKey = trade.openDate;
     if (from && dateKey < from) return false;
     if (to && dateKey > to) return false;
     if (symbol) {
@@ -2001,6 +2017,100 @@ function normalizePartialCloses(partialCloses, cleanDate) {
     normalized.push(payload);
   }
   return normalized;
+}
+
+function normalizeExecutionLegs(trade, defaultOpenDate) {
+  const cleanDate = /^\d{4}-\d{2}-\d{2}$/;
+  const normalized = [];
+  const pushLeg = (raw, fallbackSide) => {
+    if (!raw || typeof raw !== 'object') return;
+    const sideRaw = String(raw.side || fallbackSide || '').toLowerCase();
+    const side = sideRaw === 'exit' ? 'exit' : (sideRaw === 'entry' ? 'entry' : '');
+    const quantity = Number(raw.quantity ?? raw.units ?? raw.contracts);
+    const price = Number(raw.price);
+    if (!side || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) return;
+    const feeNum = Number(raw.fee);
+    const note = typeof raw.note === 'string' ? raw.note.trim() : '';
+    const dateCandidate = typeof raw.date === 'string' && cleanDate.test(raw.date)
+      ? raw.date
+      : (typeof raw.executionDate === 'string' && cleanDate.test(raw.executionDate) ? raw.executionDate : null);
+    normalized.push({
+      id: typeof raw.id === 'string' && raw.id ? raw.id : crypto.randomBytes(8).toString('hex'),
+      side,
+      quantity,
+      price,
+      date: dateCandidate || defaultOpenDate || currentDateKey(),
+      fee: Number.isFinite(feeNum) && feeNum >= 0 ? feeNum : 0,
+      ...(note ? { note } : {})
+    });
+  };
+
+  if (Array.isArray(trade?.executions) && trade.executions.length) {
+    trade.executions.forEach((leg) => pushLeg(leg));
+  } else {
+    const entry = Number(trade?.entry);
+    const entryQty = Number(trade?.enteredUnits ?? trade?.initialSizeUnits ?? trade?.sizeUnits);
+    if (Number.isFinite(entry) && entry > 0 && Number.isFinite(entryQty) && entryQty > 0) {
+      pushLeg({ side: 'entry', quantity: entryQty, price: entry, date: trade?.openDate || defaultOpenDate });
+    }
+    const partials = Array.isArray(trade?.partialCloses) ? trade.partialCloses : [];
+    partials.forEach((close) => pushLeg({ side: 'exit', quantity: close?.units, price: close?.price, date: close?.date }, 'exit'));
+    if (trade?.status === 'closed' && Number.isFinite(Number(trade?.closePrice))) {
+      const totalEntryQty = Number.isFinite(entryQty) ? entryQty : 0;
+      const partialQty = partials.reduce((sum, close) => sum + (Number(close?.units) || 0), 0);
+      const remaining = totalEntryQty - partialQty;
+      if (remaining > 0) {
+        pushLeg({ side: 'exit', quantity: remaining, price: Number(trade.closePrice), date: trade.closeDate }, 'exit');
+      }
+    }
+  }
+
+  normalized.sort((a, b) => Date.parse(a.date || '') - Date.parse(b.date || ''));
+  return normalized;
+}
+
+function summarizeExecutionLegs(trade, rates = {}) {
+  const executions = normalizeExecutionLegs(trade, trade?.openDate);
+  const entries = executions.filter((leg) => leg.side === 'entry');
+  const exits = executions.filter((leg) => leg.side === 'exit');
+  const totalEntered = entries.reduce((sum, leg) => sum + leg.quantity, 0);
+  const totalExited = exits.reduce((sum, leg) => sum + leg.quantity, 0);
+  const weightedEntryValue = entries.reduce((sum, leg) => sum + (leg.quantity * leg.price), 0);
+  const weightedExitValue = exits.reduce((sum, leg) => sum + (leg.quantity * leg.price), 0);
+  const avgEntry = totalEntered > 0 ? weightedEntryValue / totalEntered : null;
+  const avgExit = totalExited > 0 ? weightedExitValue / totalExited : null;
+  const openQuantity = totalEntered - totalExited;
+  const status = totalExited <= 0
+    ? 'open'
+    : (openQuantity <= 0 ? 'closed' : 'partial');
+  const direction = trade?.direction === 'short' ? 'short' : 'long';
+  const entryFeeTotal = entries.reduce((sum, leg) => sum + (Number(leg.fee) || 0), 0);
+  const exitFeeTotal = exits.reduce((sum, leg) => sum + (Number(leg.fee) || 0), 0);
+  const grossPnlCurrency = Number.isFinite(avgEntry) && totalExited > 0
+    ? (direction === 'long' ? (weightedExitValue - (avgEntry * totalExited)) : ((avgEntry * totalExited) - weightedExitValue))
+    : 0;
+  const feesCurrency = entryFeeTotal + exitFeeTotal;
+  const netRealizedCurrency = grossPnlCurrency - feesCurrency;
+  const realizedPnlGBP = convertToGBP(netRealizedCurrency, trade?.currency || 'GBP', rates);
+  return {
+    executions,
+    entries,
+    exits,
+    totalEntered,
+    totalExited,
+    openQuantity,
+    avgEntry,
+    avgExit,
+    status,
+    entryFeeTotal,
+    exitFeeTotal,
+    feesCurrency,
+    realizedPnlCurrency: netRealizedCurrency,
+    realizedPnlGBP: Number.isFinite(realizedPnlGBP) ? realizedPnlGBP : netRealizedCurrency,
+    lastExitDate: exits.length ? exits[exits.length - 1].date : null,
+    firstEntryDate: entries.length ? entries[0].date : null,
+    isValid: totalEntered > 0 && totalExited <= totalEntered
+  };
 }
 
 function computePartialClosePnlCurrency(trade, units, price) {
@@ -8175,8 +8285,8 @@ app.get('/api/trades', auth, async (req, res) => {
   const trades = flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
   const filtered = filterTrades(trades, req.query || {})
     .sort((a, b) => {
-      const aDate = a.closeDate || a.openDate || '';
-      const bDate = b.closeDate || b.openDate || '';
+      const aDate = a.openDate || '';
+      const bDate = b.openDate || '';
       return bDate.localeCompare(aDate);
     });
   res.json({ trades: filtered });
@@ -8274,7 +8384,8 @@ app.post('/api/trades', auth, async (req, res) => {
     screenshotUrl,
     status,
     closePrice,
-    closeDate
+    closeDate,
+    executions: executionInput
   } = req.body || {};
   const supportedCurrencies = ['GBP', 'USD', 'EUR'];
   const tradeCurrency = supportedCurrencies.includes(currency) ? currency : 'GBP';
@@ -8288,18 +8399,22 @@ app.post('/api/trades', auth, async (req, res) => {
   const symbolInput = typeof displaySymbol === 'string' ? displaySymbol : symbol;
   const symbolClean = typeof symbolInput === 'string' ? symbolInput.trim().toUpperCase() : '';
   const directionClean = DIRECTIONS.includes((direction || '').toLowerCase()) ? direction.toLowerCase() : 'long';
-  if (!Number.isFinite(entryNum) || entryNum <= 0) {
+  const normalizedExecutionInput = normalizeExecutionLegs({ executions: executionInput }, date);
+  const executionSummaryInput = summarizeExecutionLegs({ executions: normalizedExecutionInput, currency: tradeCurrency, direction: directionClean }, {});
+  const hasExecutionInput = normalizedExecutionInput.length > 0;
+  const entryForValidation = hasExecutionInput ? executionSummaryInput.avgEntry : entryNum;
+  if (!Number.isFinite(entryForValidation) || entryForValidation <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
   }
   const hasStop = Number.isFinite(stopNum) && stopNum > 0;
-  if (hasStop && directionClean === 'long' && stopNum >= entryNum) {
+  if (hasStop && directionClean === 'long' && stopNum >= entryForValidation) {
     return res.status(400).json({ error: 'For long trades, stop-loss must be below entry.' });
   }
-  if (hasStop && directionClean === 'short' && stopNum <= entryNum) {
+  if (hasStop && directionClean === 'short' && stopNum <= entryForValidation) {
     return res.status(400).json({ error: 'For short trades, stop-loss must be above entry.' });
   }
   const perUnitRisk = hasStop
-    ? (directionClean === 'long' ? (entryNum - stopNum) : (stopNum - entryNum))
+    ? (directionClean === 'long' ? (entryForValidation - stopNum) : (stopNum - entryForValidation))
     : null;
   if (hasStop && perUnitRisk === 0) {
     return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
@@ -8324,7 +8439,7 @@ app.post('/api/trades', auth, async (req, res) => {
   if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
     return res.status(400).json({ error: 'Add your portfolio value first' });
   }
-  let unitsToUse = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
+  let unitsToUse = hasExecutionInput ? executionSummaryInput.totalEntered : (Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null);
   if (!unitsToUse && String(assetClass || '').toLowerCase() === 'options') {
     const contractsNum = Number(optionContracts);
     if (Number.isFinite(contractsNum) && contractsNum > 0) {
@@ -8356,7 +8471,7 @@ app.post('/api/trades', auth, async (req, res) => {
     riskAmountCurrency = perUnitRisk * sizeUnits;
     pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
   }
-  const positionCurrency = sizeUnits * entryNum;
+  const positionCurrency = sizeUnits * entryForValidation;
   const riskAmountGBP = Number.isFinite(riskAmountCurrency)
     ? convertToGBP(riskAmountCurrency, tradeCurrency, rates)
     : 0;
@@ -8372,7 +8487,7 @@ app.post('/api/trades', auth, async (req, res) => {
   const fxFeeEligible = tradeCurrency !== tradeBaseCurrency;
   const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
-    entry: entryNum,
+    entry: entryForValidation,
     stop: hasStop ? stopNum : undefined,
     originalStopPrice: hasStop ? stopNum : undefined,
     currentStop: Number.isFinite(currentStopNum) && currentStopNum > 0 ? currentStopNum : undefined,
@@ -8407,14 +8522,27 @@ app.post('/api/trades', auth, async (req, res) => {
       note,
       fxFeeEligible,
       fxFeeRate: Number.isFinite(fxFeeRate) && fxFeeRate > 0 ? fxFeeRate : undefined,
-      source: 'manual'
+      source: 'manual',
+    executions: hasExecutionInput ? normalizedExecutionInput : undefined
     });
   journal[targetDate] ||= [];
   journal[targetDate].push(trade);
   if (journal[targetDate].length > 50) {
     journal[targetDate] = journal[targetDate].slice(-50);
   }
-  if (trade.status === 'closed' || Number.isFinite(Number(closePrice))) {
+  if (hasExecutionInput) {
+    const executionSummary = summarizeExecutionLegs(trade, rates);
+    if (!executionSummary.isValid) {
+      return res.status(400).json({ error: 'Exit quantity total cannot exceed entered quantity total' });
+    }
+    trade.status = executionSummary.status;
+    trade.entry = executionSummary.avgEntry;
+    trade.sizeUnits = executionSummary.openQuantity;
+    trade.closePrice = executionSummary.avgExit;
+    trade.closeDate = executionSummary.lastExitDate || undefined;
+    trade.realizedPnlGBP = executionSummary.realizedPnlGBP;
+    trade.realizedPnlCurrency = executionSummary.realizedPnlCurrency;
+  } else if (trade.status === 'closed' || Number.isFinite(Number(closePrice))) {
     const closeNum = Number(closePrice);
     if (!Number.isFinite(closeNum) || closeNum <= 0) {
       return res.status(400).json({ error: 'Enter a valid closing price to log a closed trade' });
@@ -8435,6 +8563,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if (!found) return res.status(404).json({ error: 'Trade not found' });
   const trade = found.trade;
   const updates = req.body || {};
+  const hasExecutionUpdate = Array.isArray(updates.executions);
   const { config: tradingCfg } = ensureTrading212Config(user);
   const rates = await fetchRates();
   const tradeCurrency = trade.currency || 'GBP';
@@ -8442,7 +8571,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     return res.status(400).json({ error: `Missing FX rate for ${tradeCurrency}` });
   }
   const requestedUnitsNum = updates.sizeUnits !== undefined ? Number(updates.sizeUnits) : null;
-  const isTrimRequest = (
+  const isTrimRequest = (!hasExecutionUpdate &&
     trade.status !== 'closed'
     && Number.isFinite(requestedUnitsNum)
     && requestedUnitsNum > 0
@@ -8473,9 +8602,6 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     updates.riskAmount !== undefined ||
     updates.sizeUnits !== undefined
   );
-  if (trade.status === 'closed' && wantsRiskUpdate) {
-    return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
-  }
   const incomingSymbol = typeof updates.displaySymbol === 'string'
     ? updates.displaySymbol
     : (typeof updates.symbol === 'string' ? updates.symbol : null);
@@ -8516,7 +8642,23 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   if ((trade.source === 'trading212' || trade.trading212Id) && (updates.stop !== undefined || updates.currentStop !== undefined || incomingStopSource === 'manual')) {
     trade.stopManualOverride = true;
   }
-  if (wantsRiskUpdate && trade.status !== 'closed') {
+  if (hasExecutionUpdate) {
+    const normalizedExecutions = normalizeExecutionLegs({ executions: updates.executions }, found.dateKey);
+    const summary = summarizeExecutionLegs({ ...trade, executions: normalizedExecutions }, rates);
+    if (!summary.isValid) {
+      return res.status(400).json({ error: 'Exit quantity total cannot exceed entered quantity total' });
+    }
+    trade.executions = normalizedExecutions;
+    trade.status = summary.status;
+    trade.entry = summary.avgEntry;
+    trade.sizeUnits = summary.openQuantity;
+    trade.closePrice = summary.avgExit || undefined;
+    trade.closeDate = summary.lastExitDate || undefined;
+    trade.realizedPnlGBP = summary.realizedPnlGBP;
+    trade.realizedPnlCurrency = summary.realizedPnlCurrency;
+    trade.partialCloses = [];
+  }
+  if (wantsRiskUpdate) {
     const entryNum = Number(updates.entry ?? trade.entry);
     const incomingStop = updates.stop;
     const clearsStop = incomingStop === '' || incomingStop === null;
@@ -8617,7 +8759,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   trade.emotionTags = meta.emotionTags;
   trade.screenshotUrl = meta.screenshotUrl;
   trade.note = meta.note;
-  const shouldClose = (updates.status && updates.status === 'closed') || Number.isFinite(Number(updates.closePrice));
+  const shouldClose = !hasExecutionUpdate && ((updates.status && updates.status === 'closed') || Number.isFinite(Number(updates.closePrice)));
   if (shouldClose) {
     if (trade.status === 'closed') {
       return res.status(400).json({ error: 'Trade already closed' });
@@ -8710,6 +8852,35 @@ app.post('/api/trades/close', auth, (req, res) => {
   const defaultDate = found.dateKey;
   fetchRates()
     .then((rates) => {
+      if (Array.isArray(trade.executions) && trade.executions.length) {
+        const summaryBefore = summarizeExecutionLegs(trade, rates);
+        if (!summaryBefore.isValid || summaryBefore.openQuantity <= 0) {
+          return res.status(400).json({ error: 'Trade not found' });
+        }
+        const closeDateKey = (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date))
+          ? date
+          : (defaultDate || currentDateKey());
+        trade.executions.push({
+          id: crypto.randomBytes(8).toString('hex'),
+          side: 'exit',
+          quantity: summaryBefore.openQuantity,
+          price: closePrice,
+          date: closeDateKey,
+          fee: 0
+        });
+        const summaryAfter = summarizeExecutionLegs(trade, rates);
+        if (!summaryAfter.isValid) {
+          return res.status(400).json({ error: 'Exit quantity total cannot exceed entered quantity total' });
+        }
+        trade.status = summaryAfter.status;
+        trade.sizeUnits = summaryAfter.openQuantity;
+        trade.closePrice = summaryAfter.avgExit;
+        trade.closeDate = summaryAfter.lastExitDate || closeDateKey;
+        trade.realizedPnlGBP = summaryAfter.realizedPnlGBP;
+        trade.realizedPnlCurrency = summaryAfter.realizedPnlCurrency;
+        saveDB(db);
+        return res.json({ ok: true, pnlGBP: summaryAfter.realizedPnlGBP });
+      }
       const result = applyTradeClose(user, trade, closePrice, date, rates, defaultDate);
       saveDB(db);
       res.json({ ok: true, pnlGBP: result.pnlGBP });

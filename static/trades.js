@@ -224,6 +224,53 @@ function parseTagList(value) {
   return value.split(',').map(tag => tag.trim()).filter(Boolean);
 }
 
+
+function createExecutionLegRow(side, leg = {}) {
+  const row = document.createElement('div');
+  row.className = 'execution-leg-row';
+  row.dataset.side = side;
+  row.innerHTML = `
+    <div class="tool-field"><label>Date</label><input type="date" data-field="date" value="${leg.date || ''}"></div>
+    <div class="tool-field"><label>Qty</label><input type="number" min="0" step="0.0001" data-field="quantity" value="${Number.isFinite(Number(leg.quantity)) ? Number(leg.quantity) : ''}"></div>
+    <div class="tool-field"><label>Price</label><input type="number" min="0" step="0.0001" data-field="price" value="${Number.isFinite(Number(leg.price)) ? Number(leg.price) : ''}"></div>
+    <div class="tool-field"><label>Fee</label><input type="number" min="0" step="0.0001" data-field="fee" value="${Number.isFinite(Number(leg.fee)) ? Number(leg.fee) : ''}"></div>
+    <div class="tool-field"><label>Note</label><input type="text" data-field="note" value="${leg.note || ''}"></div>
+    <button type="button" class="ghost small" data-action="remove-leg">Remove</button>
+  `;
+  row.querySelectorAll('input').forEach((input) => {
+    input.addEventListener('input', updateRiskMetrics);
+    input.addEventListener('change', updateRiskMetrics);
+  });
+  row.querySelector('[data-action="remove-leg"]')?.addEventListener('click', () => {
+    row.remove();
+    updateRiskMetrics();
+  });
+  return row;
+}
+
+function renderExecutionLegs(trade = null) {
+  const entriesWrap = document.querySelector('#entry-legs');
+  const exitsWrap = document.querySelector('#exit-legs');
+  if (!entriesWrap || !exitsWrap) return;
+  entriesWrap.classList.add('leg-list');
+  exitsWrap.classList.add('leg-list');
+  entriesWrap.innerHTML = '';
+  exitsWrap.innerHTML = '';
+  const sourceLegs = Array.isArray(trade?.executions) ? trade.executions : [];
+  const legacyEntry = (!sourceLegs.length && trade && Number.isFinite(Number(trade.entry)) && Number.isFinite(Number(trade.totalEnteredQuantity || trade.sizeUnits || trade.optionContracts)))
+    ? [{ side: 'entry', quantity: Number(trade.totalEnteredQuantity || trade.initialSizeUnits || trade.sizeUnits || ((Number(trade.optionContracts) || 0) * 100)), price: Number(trade.entry), date: trade.openDate }]
+    : [];
+  const legacyExit = (!sourceLegs.length && trade && Number.isFinite(Number(trade.closePrice)) && Number.isFinite(Number(trade.totalExitedQuantity || trade.sizeUnits || 0)) && Number(trade.totalExitedQuantity || trade.sizeUnits || 0) > 0)
+    ? [{ side: 'exit', quantity: Number(trade.totalExitedQuantity), price: Number(trade.closePrice), date: trade.closeDate }]
+    : [];
+  const legs = sourceLegs.length ? sourceLegs : [...legacyEntry, ...legacyExit];
+  const entries = legs.filter((leg) => leg.side === 'entry');
+  const exits = legs.filter((leg) => leg.side === 'exit');
+  (entries.length ? entries : [{}]).forEach((leg) => entriesWrap.appendChild(createExecutionLegRow('entry', leg)));
+  (exits.length ? exits : []).forEach((leg) => exitsWrap.appendChild(createExecutionLegRow('exit', leg)));
+  updateRiskMetrics();
+}
+
 function setCheckboxes(name, values = []) {
   const set = new Set(values);
   document.querySelectorAll(`input[name="${name}"]`).forEach(el => {
@@ -232,52 +279,54 @@ function setCheckboxes(name, values = []) {
 }
 
 
+function readExecutionLegs(side) {
+  return Array.from(document.querySelectorAll(`.execution-leg-row[data-side="${side}"]`)).map((row) => {
+    const date = row.querySelector('[data-field="date"]')?.value || '';
+    const quantity = Number(row.querySelector('[data-field="quantity"]')?.value);
+    const price = Number(row.querySelector('[data-field="price"]')?.value);
+    const feeRaw = row.querySelector('[data-field="fee"]')?.value;
+    const fee = feeRaw === '' ? 0 : Number(feeRaw);
+    const note = row.querySelector('[data-field="note"]')?.value || '';
+    return { date, quantity, price, fee, note, side };
+  }).filter((leg) => Number.isFinite(leg.quantity) && leg.quantity > 0 && Number.isFinite(leg.price) && leg.price >= 0);
+}
+
+function computeExecutionSummary(entries, exits) {
+  const totalEntered = entries.reduce((sum, leg) => sum + leg.quantity, 0);
+  const totalExited = exits.reduce((sum, leg) => sum + leg.quantity, 0);
+  const entryValue = entries.reduce((sum, leg) => sum + (leg.quantity * leg.price), 0);
+  const exitValue = exits.reduce((sum, leg) => sum + (leg.quantity * leg.price), 0);
+  const avgEntry = totalEntered > 0 ? entryValue / totalEntered : NaN;
+  const avgExit = totalExited > 0 ? exitValue / totalExited : NaN;
+  const openQuantity = totalEntered - totalExited;
+  const feeTotal = [...entries, ...exits].reduce((sum, leg) => sum + (Number.isFinite(leg.fee) ? leg.fee : 0), 0);
+  const realized = totalExited > 0 && Number.isFinite(avgEntry) ? (exitValue - (avgEntry * totalExited)) - feeTotal : 0;
+  const status = totalExited <= 0 ? 'Open' : (openQuantity <= 0 ? 'Closed' : 'Partially Closed');
+  return { totalEntered, totalExited, avgEntry, avgExit, openQuantity, realized, status };
+}
+
 function updateRiskMetrics() {
-  const assetClass = (document.querySelector('#form-asset-class')?.value || '').toLowerCase();
-  const entry = Number(document.querySelector('#form-entry')?.value);
-  const stop = Number(document.querySelector('#form-stop')?.value);
-  const contracts = Number(document.querySelector('#form-option-contracts')?.value);
-  const unitsInput = Number(document.querySelector('#form-units')?.value);
-  const units = assetClass === 'options'
-    ? (Number.isFinite(contracts) && contracts > 0 ? contracts * 100 : NaN)
-    : unitsInput;
+  const entries = readExecutionLegs('entry');
+  const exits = readExecutionLegs('exit');
+  const summary = computeExecutionSummary(entries, exits);
   const currency = document.querySelector('#form-currency')?.value || 'GBP';
   const symbol = currencySymbols[currency] || '';
-  const hasStop = Number.isFinite(stop) && stop > 0;
-  const perUnitRisk = Number.isFinite(entry) && hasStop ? Math.abs(entry - stop) : NaN;
-  const totalRisk = Number.isFinite(perUnitRisk) && perUnitRisk > 0 && Number.isFinite(units) && units > 0
-    ? perUnitRisk * units
+  const positionValue = Number.isFinite(summary.avgEntry) && summary.openQuantity > 0
+    ? summary.avgEntry * summary.openQuantity
     : NaN;
-  const positionValue = Number.isFinite(entry) && entry > 0 && Number.isFinite(units) && units > 0
-    ? entry * units
-    : NaN;
-  const portfolioCurrency = currencyAmount(state.portfolioGBP, currency);
-  const riskPct = Number.isFinite(totalRisk) && totalRisk > 0 && Number.isFinite(portfolioCurrency) && portfolioCurrency > 0
-    ? (totalRisk / portfolioCurrency) * 100
-    : NaN;
-  const riskPerContract = assetClass === 'options' && Number.isFinite(perUnitRisk)
-    ? perUnitRisk * 100
-    : perUnitRisk;
-
-  const positionValueEl = document.querySelector('#risk-metric-position-value');
-  const perUnitEl = document.querySelector('#risk-metric-per-contract');
-  const totalRiskEl = document.querySelector('#risk-metric-total');
-  const riskPctEl = document.querySelector('#risk-metric-pct');
-
-  if (positionValueEl) positionValueEl.textContent = Number.isFinite(positionValue) ? `${symbol}${positionValue.toFixed(2)}` : '—';
-  if (perUnitEl) {
-    if (!hasStop) {
-      perUnitEl.textContent = 'Add stop to calculate';
-    } else {
-      perUnitEl.textContent = Number.isFinite(riskPerContract) ? `${symbol}${riskPerContract.toFixed(2)}` : '—';
-    }
-  }
-  if (totalRiskEl) totalRiskEl.textContent = Number.isFinite(totalRisk) ? `${symbol}${totalRisk.toFixed(2)}` : '—';
-  if (riskPctEl) riskPctEl.textContent = Number.isFinite(riskPct) ? `${riskPct.toFixed(2)}%` : (hasStop ? '—' : 'Add stop to calculate');
+  const setText = (id, val) => { const el = document.querySelector(id); if (el) el.textContent = val; };
+  setText('#risk-metric-entered', Number.isFinite(summary.totalEntered) ? summary.totalEntered.toFixed(4).replace(/\.?0+$/, '') : '—');
+  setText('#risk-metric-exited', Number.isFinite(summary.totalExited) ? summary.totalExited.toFixed(4).replace(/\.?0+$/, '') : '—');
+  setText('#risk-metric-open-qty', Number.isFinite(summary.openQuantity) ? summary.openQuantity.toFixed(4).replace(/\.?0+$/, '') : '—');
+  setText('#risk-metric-avg-entry', Number.isFinite(summary.avgEntry) ? `${symbol}${summary.avgEntry.toFixed(4)}` : '—');
+  setText('#risk-metric-avg-exit', Number.isFinite(summary.avgExit) ? `${symbol}${summary.avgExit.toFixed(4)}` : '—');
+  setText('#risk-metric-realised', `${symbol}${(Number(summary.realized) || 0).toFixed(2)}`);
+  setText('#risk-metric-position-value', Number.isFinite(positionValue) ? `${symbol}${positionValue.toFixed(2)}` : '—');
+  setText('#risk-metric-status', summary.status);
 }
 
 function bindRiskMetrics() {
-  ['#form-entry', '#form-stop', '#form-units', '#form-option-contracts', '#form-currency', '#form-asset-class'].forEach((selector) => {
+  ['#form-stop', '#form-current-stop', '#form-currency', '#form-asset-class'].forEach((selector) => {
     document.querySelector(selector)?.addEventListener('input', updateRiskMetrics);
     document.querySelector(selector)?.addEventListener('change', updateRiskMetrics);
   });
@@ -352,14 +401,14 @@ function renderTrades() {
   if (empty) empty.classList.add('is-hidden');
   if (pill) pill.textContent = `${state.trades.length} trades`;
   const sortedTrades = [...state.trades].sort((a, b) => {
-    const aDate = Date.parse(a.closeDate || a.openDate || '') || 0;
-    const bDate = Date.parse(b.closeDate || b.openDate || '') || 0;
+    const aDate = Date.parse(a.openDate || '') || 0;
+    const bDate = Date.parse(b.openDate || '') || 0;
     return bDate - aDate;
   });
   sortedTrades.forEach(trade => {
     const tr = document.createElement('tr');
     const dateCell = document.createElement('td');
-    dateCell.textContent = trade.closeDate || trade.openDate || '—';
+    dateCell.textContent = trade.openDate || '—';
     tr.appendChild(dateCell);
 
     const symCell = document.createElement('td');
@@ -465,14 +514,9 @@ function populateForm(trade) {
   document.querySelector('#trade-id').value = trade.id;
   document.querySelector('#form-symbol').value = getTradeDisplaySymbol(trade);
   document.querySelector('#form-currency').value = trade.currency || 'GBP';
-  document.querySelector('#form-entry').value = trade.entry ?? '';
   document.querySelector('#form-stop').value = trade.stop ?? '';
   const currentStopInput = document.querySelector('#form-current-stop');
   if (currentStopInput) currentStopInput.value = trade.currentStop ?? '';
-  document.querySelector('#form-units').value = trade.sizeUnits ?? '';
-  document.querySelector('#form-open-date').value = trade.openDate || '';
-  document.querySelector('#form-close-date').value = trade.closeDate || '';
-  document.querySelector('#form-close-price').value = trade.closePrice ?? '';
   document.querySelector('#form-trade-type').value = trade.tradeType || 'day';
   document.querySelector('#form-asset-class').value = trade.assetClass || 'stocks';
   document.querySelector('#form-option-type').value = trade.optionType || '';
@@ -480,6 +524,7 @@ function populateForm(trade) {
   document.querySelector('#form-option-expiration').value = trade.optionExpiration || '';
   document.querySelector('#form-option-contracts').value = trade.optionContracts ?? '';
   toggleOptionsFields();
+  renderExecutionLegs(trade);
   document.querySelector('#form-strategy').value = trade.strategyTag || '';
   document.querySelector('#form-market-condition').value = trade.marketCondition || '';
   document.querySelector('#form-screenshot').value = trade.screenshotUrl || '';
@@ -544,6 +589,7 @@ function applyDefaultsToForm() {
     setCheckboxes('form-emotion', state.defaults.emotionTags);
   }
   toggleOptionsFields();
+  renderExecutionLegs();
   updateRiskMetrics();
 }
 
@@ -580,21 +626,22 @@ function collectFormData() {
   };
   const assetClass = document.querySelector('#form-asset-class')?.value;
   const optionContracts = numberOrUndefined('#form-option-contracts');
-  const explicitUnits = numberOrUndefined('#form-units');
-  const derivedUnits = assetClass === 'options' && Number.isFinite(optionContracts) && optionContracts > 0
-    ? optionContracts * 100
-    : explicitUnits;
+  const executions = [...readExecutionLegs('entry'), ...readExecutionLegs('exit')]
+    .map((leg) => ({
+      side: leg.side,
+      quantity: leg.quantity,
+      price: leg.price,
+      date: leg.date,
+      fee: Number.isFinite(leg.fee) ? leg.fee : 0,
+      note: leg.note || ''
+    }));
 
   return {
     displaySymbol: document.querySelector('#form-symbol')?.value,
     currency: document.querySelector('#form-currency')?.value || 'GBP',
-    entry: numberOrUndefined('#form-entry'),
     stop: nullableNumber('#form-stop'),
     currentStop: nullableNumber('#form-current-stop'),
-    sizeUnits: derivedUnits,
-    date: document.querySelector('#form-open-date')?.value,
-    closeDate: document.querySelector('#form-close-date')?.value,
-    closePrice: numberOrUndefined('#form-close-price'),
+    date: executions.find((leg) => leg.side === 'entry')?.date,
     tradeType: document.querySelector('#form-trade-type')?.value,
     assetClass,
     optionType: document.querySelector('#form-option-type')?.value,
@@ -606,7 +653,8 @@ function collectFormData() {
     setupTags: selectedTags('form-setup'),
     emotionTags: selectedTags('form-emotion'),
     screenshotUrl: document.querySelector('#form-screenshot')?.value,
-    note: document.querySelector('#form-notes')?.value
+    note: document.querySelector('#form-notes')?.value,
+    executions
   };
 }
 
@@ -615,22 +663,12 @@ async function saveTrade(event) {
   const payload = collectFormData();
   const status = document.querySelector('#form-status');
   try {
-    if (state.editingId && state.editingTrade?.status !== 'closed') {
-      const existingUnits = Number(state.editingTrade.sizeUnits);
-      const updatedUnits = Number(payload.sizeUnits);
-      if (Number.isFinite(existingUnits) && Number.isFinite(updatedUnits) && updatedUnits > 0 && updatedUnits < existingUnits) {
-        const trimUnits = existingUnits - updatedUnits;
-        const trimPriceRaw = window.prompt(`You reduced this position by ${trimUnits}. Enter trim fill price:`, payload.closePrice || state.editingTrade.entry || '');
-        if (trimPriceRaw === null) return;
-        const trimPrice = Number(trimPriceRaw);
-        if (!Number.isFinite(trimPrice) || trimPrice <= 0) {
-          throw new Error('Enter a valid trim fill price');
-        }
-        const trimDateRaw = window.prompt('Enter trim date (YYYY-MM-DD) or leave blank', '');
-        if (trimDateRaw === null) return;
-        payload.trimPrice = trimPrice;
-        if (trimDateRaw) payload.trimDate = trimDateRaw;
-      }
+    const summary = computeExecutionSummary(readExecutionLegs('entry'), readExecutionLegs('exit'));
+    if (summary.totalEntered <= 0) {
+      throw new Error('Add at least one valid entry execution');
+    }
+    if (summary.totalExited > summary.totalEntered) {
+      throw new Error('Exit quantity total cannot exceed entered quantity total');
     }
     const isTrading212 = state.editingTrade?.source === 'trading212' || state.editingTrade?.trading212Id;
     if (state.editingId && isTrading212 && typeof window.computeSourceKey === 'function') {
@@ -766,6 +804,14 @@ function bindNav() {
 
 function bindForm() {
   document.querySelector('#trade-form')?.addEventListener('submit', saveTrade);
+  document.querySelector('#add-entry-leg-btn')?.addEventListener('click', () => {
+    document.querySelector('#entry-legs')?.appendChild(createExecutionLegRow('entry'));
+    updateRiskMetrics();
+  });
+  document.querySelector('#add-exit-leg-btn')?.addEventListener('click', () => {
+    document.querySelector('#exit-legs')?.appendChild(createExecutionLegRow('exit'));
+    updateRiskMetrics();
+  });
   document.querySelector('#reset-form-btn')?.addEventListener('click', resetForm);
   document.querySelector('#apply-filters-btn')?.addEventListener('click', applyFilters);
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
