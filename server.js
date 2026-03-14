@@ -8283,7 +8283,7 @@ app.post('/api/trades', auth, async (req, res) => {
   const stopNum = Number(stop);
   const currentStopNum = Number(currentStop);
   const pctNum = Number(riskPct);
-    const riskAmountNum = Number(riskAmount);
+  const riskAmountNum = Number(riskAmount);
   const sizeUnitsNum = Number(sizeUnitsInput);
   const symbolInput = typeof displaySymbol === 'string' ? displaySymbol : symbol;
   const symbolClean = typeof symbolInput === 'string' ? symbolInput.trim().toUpperCase() : '';
@@ -8291,25 +8291,17 @@ app.post('/api/trades', auth, async (req, res) => {
   if (!Number.isFinite(entryNum) || entryNum <= 0) {
     return res.status(400).json({ error: 'Enter a valid entry price' });
   }
-  if (!Number.isFinite(stopNum) || stopNum <= 0) {
-    return res.status(400).json({ error: 'Enter a valid stop-loss price' });
-  }
-  if (directionClean === 'long' && stopNum >= entryNum) {
+  const hasStop = Number.isFinite(stopNum) && stopNum > 0;
+  if (hasStop && directionClean === 'long' && stopNum >= entryNum) {
     return res.status(400).json({ error: 'For long trades, stop-loss must be below entry.' });
   }
-  if (directionClean === 'short' && stopNum <= entryNum) {
+  if (hasStop && directionClean === 'short' && stopNum <= entryNum) {
     return res.status(400).json({ error: 'For short trades, stop-loss must be above entry.' });
   }
-  if (!Number.isFinite(entryNum) || entryNum <= 0) {
-    return res.status(400).json({ error: 'Enter a valid entry price' });
-  }
-  if (!Number.isFinite(stopNum) || stopNum <= 0) {
-    return res.status(400).json({ error: 'Enter a valid stop-loss price' });
-  }
-  const perUnitRisk = directionClean === 'long'
-    ? entryNum - stopNum
-    : stopNum - entryNum;
-  if (perUnitRisk === 0) {
+  const perUnitRisk = hasStop
+    ? (directionClean === 'long' ? (entryNum - stopNum) : (stopNum - entryNum))
+    : null;
+  if (hasStop && perUnitRisk === 0) {
     return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
   }
   const db = loadDB();
@@ -8332,25 +8324,42 @@ app.post('/api/trades', auth, async (req, res) => {
   if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
     return res.status(400).json({ error: 'Add your portfolio value first' });
   }
+  let unitsToUse = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
+  if (!unitsToUse && String(assetClass || '').toLowerCase() === 'options') {
+    const contractsNum = Number(optionContracts);
+    if (Number.isFinite(contractsNum) && contractsNum > 0) {
+      unitsToUse = contractsNum * 100;
+    }
+  }
+  if (!Number.isFinite(unitsToUse) || unitsToUse <= 0) {
+    if (!hasStop || !Number.isFinite(perUnitRisk) || perUnitRisk <= 0) {
+      return res.status(400).json({ error: 'Enter a valid position size (units or contracts).' });
+    }
+  }
   let pctToUse = Number.isFinite(pctNum) && pctNum > 0 ? pctNum : null;
   let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0
     ? riskAmountNum
     : null;
-  let unitsToUse = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
-  if (unitsToUse) {
-    riskAmountCurrency = perUnitRisk * unitsToUse;
-    pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
-  } else if (!riskAmountCurrency && pctToUse) {
-    riskAmountCurrency = portfolioInCurrency * (pctToUse / 100);
-  } else if (riskAmountCurrency && !pctToUse) {
+  if (!unitsToUse && hasStop && Number.isFinite(perUnitRisk) && perUnitRisk > 0) {
+    if (!riskAmountCurrency && pctToUse && Number.isFinite(portfolioInCurrency) && portfolioInCurrency > 0) {
+      riskAmountCurrency = portfolioInCurrency * (pctToUse / 100);
+    }
+    if (Number.isFinite(riskAmountCurrency) && riskAmountCurrency > 0) {
+      unitsToUse = riskAmountCurrency / perUnitRisk;
+    }
+  }
+  if (!Number.isFinite(unitsToUse) || unitsToUse <= 0) {
+    return res.status(400).json({ error: 'Enter a valid position size (units or contracts).' });
+  }
+  const sizeUnits = unitsToUse;
+  if (hasStop && Number.isFinite(perUnitRisk) && perUnitRisk > 0) {
+    riskAmountCurrency = perUnitRisk * sizeUnits;
     pctToUse = portfolioInCurrency > 0 ? (riskAmountCurrency / portfolioInCurrency) * 100 : null;
   }
-  if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
-    return res.status(400).json({ error: 'Enter a valid risk percentage, amount, or units' });
-  }
-  const sizeUnits = unitsToUse || (riskAmountCurrency / perUnitRisk);
   const positionCurrency = sizeUnits * entryNum;
-  const riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
+  const riskAmountGBP = Number.isFinite(riskAmountCurrency)
+    ? convertToGBP(riskAmountCurrency, tradeCurrency, rates)
+    : 0;
   const positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
   const feesNum = Number(req.body?.fees);
   const slippageNum = Number(req.body?.slippage);
@@ -8364,15 +8373,15 @@ app.post('/api/trades', auth, async (req, res) => {
   const trade = normalizeTradeMeta({
     id: crypto.randomBytes(8).toString('hex'),
     entry: entryNum,
-    stop: stopNum,
-    originalStopPrice: stopNum,
+    stop: hasStop ? stopNum : undefined,
+    originalStopPrice: hasStop ? stopNum : undefined,
     currentStop: Number.isFinite(currentStopNum) && currentStopNum > 0 ? currentStopNum : undefined,
     symbol: symbolClean || undefined,
     currency: tradeCurrency,
     riskPct: pctToUse || pctNum || 0,
-    perUnitRisk,
+    perUnitRisk: Number.isFinite(perUnitRisk) ? perUnitRisk : 0,
     sizeUnits,
-    riskAmountCurrency,
+    riskAmountCurrency: Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : 0,
     positionCurrency,
     riskAmountGBP,
     positionGBP,
@@ -8509,28 +8518,38 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   }
   if (wantsRiskUpdate && trade.status !== 'closed') {
     const entryNum = Number(updates.entry ?? trade.entry);
-    const stopNum = Number(updates.stop ?? trade.stop);
+    const incomingStop = updates.stop;
+    const clearsStop = incomingStop === '' || incomingStop === null;
+    const stopCandidate = clearsStop ? undefined : (incomingStop ?? trade.stop);
+    const stopNum = Number(stopCandidate);
+    const hasStop = Number.isFinite(stopNum) && stopNum > 0;
     const pctNum = Number(updates.riskPct ?? trade.riskPct);
     const riskAmountNum = Number(updates.riskAmount);
-    const sizeUnitsNum = Number(updates.sizeUnits);
+    const sizeUnitsNum = Number(updates.sizeUnits ?? trade.sizeUnits);
+    const optionContractsNum = Number(updates.optionContracts ?? trade.optionContracts);
     const dir = DIRECTIONS.includes((updates.direction || trade.direction || '').toLowerCase())
       ? (updates.direction || trade.direction).toLowerCase()
       : 'long';
     if (!Number.isFinite(entryNum) || entryNum <= 0) {
       return res.status(400).json({ error: 'Enter a valid entry price' });
     }
-    if (!Number.isFinite(stopNum) || stopNum <= 0) {
-      return res.status(400).json({ error: 'Enter a valid stop-loss price' });
-    }
-    if (dir === 'long' && stopNum >= entryNum) {
+    if (hasStop && dir === 'long' && stopNum >= entryNum) {
       return res.status(400).json({ error: 'For long trades, stop-loss must be below entry.' });
     }
-    if (dir === 'short' && stopNum <= entryNum) {
+    if (hasStop && dir === 'short' && stopNum <= entryNum) {
       return res.status(400).json({ error: 'For short trades, stop-loss must be above entry.' });
     }
-    const perUnitRisk = dir === 'long' ? (entryNum - stopNum) : (stopNum - entryNum);
-    if (perUnitRisk === 0) {
+    const perUnitRisk = hasStop ? (dir === 'long' ? (entryNum - stopNum) : (stopNum - entryNum)) : null;
+    if (hasStop && perUnitRisk === 0) {
       return res.status(400).json({ error: 'Entry and stop-loss cannot match' });
+    }
+    let sizeUnits = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
+    const effectiveAssetClass = String((updates.assetClass ?? trade.assetClass) || '').toLowerCase();
+    if (!sizeUnits && effectiveAssetClass === 'options' && Number.isFinite(optionContractsNum) && optionContractsNum > 0) {
+      sizeUnits = optionContractsNum * 100;
+    }
+    if (!Number.isFinite(sizeUnits) || sizeUnits <= 0) {
+      return res.status(400).json({ error: 'Enter a valid position size (units or contracts).' });
     }
     const portfolioGBP = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
     const portfolioCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
@@ -8539,31 +8558,29 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }
     let pctToUse = Number.isFinite(pctNum) && pctNum > 0 ? pctNum : null;
     let riskAmountCurrency = Number.isFinite(riskAmountNum) && riskAmountNum > 0 ? riskAmountNum : null;
-    let sizeUnits = Number.isFinite(sizeUnitsNum) && sizeUnitsNum > 0 ? sizeUnitsNum : null;
-    if (sizeUnits) {
+    if (hasStop && Number.isFinite(perUnitRisk) && perUnitRisk > 0) {
       riskAmountCurrency = perUnitRisk * sizeUnits;
       pctToUse = portfolioCurrency > 0 ? (riskAmountCurrency / portfolioCurrency) * 100 : null;
-    } else if (!riskAmountCurrency && pctToUse) {
-      riskAmountCurrency = portfolioCurrency * (pctToUse / 100);
-    } else if (riskAmountCurrency && !pctToUse) {
-      pctToUse = portfolioCurrency > 0 ? (riskAmountCurrency / portfolioCurrency) * 100 : null;
     }
-    if (!Number.isFinite(riskAmountCurrency) || riskAmountCurrency <= 0) {
-      return res.status(400).json({ error: 'Enter a valid risk percentage, amount, or units' });
-    }
-    sizeUnits = sizeUnits || (riskAmountCurrency / perUnitRisk);
     const positionCurrency = sizeUnits * entryNum;
     trade.entry = entryNum;
-    trade.stop = stopNum;
-    trade.perUnitRisk = perUnitRisk;
-    if (!Number.isFinite(Number(trade.originalStopPrice))) {
+    if (hasStop) {
+      trade.stop = stopNum;
+      trade.perUnitRisk = perUnitRisk;
+    } else {
+      delete trade.stop;
+      trade.perUnitRisk = 0;
+    }
+    if (hasStop && !Number.isFinite(Number(trade.originalStopPrice))) {
       trade.originalStopPrice = stopNum;
     }
-    trade.riskPct = pctToUse || pctNum || 0;
+    trade.riskPct = hasStop ? (pctToUse || pctNum || 0) : 0;
     trade.sizeUnits = sizeUnits;
-    trade.riskAmountCurrency = riskAmountCurrency;
+    trade.riskAmountCurrency = hasStop && Number.isFinite(riskAmountCurrency) ? riskAmountCurrency : 0;
     trade.positionCurrency = positionCurrency;
-    trade.riskAmountGBP = convertToGBP(riskAmountCurrency, tradeCurrency, rates);
+    trade.riskAmountGBP = hasStop && Number.isFinite(riskAmountCurrency)
+      ? convertToGBP(riskAmountCurrency, tradeCurrency, rates)
+      : 0;
     trade.positionGBP = convertToGBP(positionCurrency, tradeCurrency, rates);
     trade.portfolioGBPAtCalc = portfolioGBP;
     trade.portfolioCurrencyAtCalc = portfolioCurrency;

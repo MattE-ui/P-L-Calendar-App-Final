@@ -175,7 +175,7 @@
       <div class="modal-header">
         <div>
           <h3 id="form-title">Log a trade</h3>
-          <p class="modal-subtitle">Capture execution, risk, context, and psychology in one structured workflow.</p>
+          <p class="modal-subtitle">Log quickly with only essential trade inputs. Risk metrics are auto-derived when possible.</p>
         </div>
         <button id="close-trade-form-btn" class="ghost close-btn" type="button">✕</button>
       </div>
@@ -217,6 +217,7 @@
             <div class="tool-field">
               <label for="form-trade-type">Trade type</label>
               <select id="form-trade-type">
+                <option value="">Select</option>
                 <option value="day">Day</option>
                 <option value="scalp">Scalp</option>
                 <option value="swing">Swing</option>
@@ -263,38 +264,35 @@
 
         <section class="trade-form-section trade-form-section-prominent">
           <div class="trade-form-section-header">
-            <h4>2. Position &amp; Risk</h4>
+            <h4>2. Position</h4>
           </div>
           <div class="grid three-col trade-risk-grid">
             <div class="tool-field">
               <label for="form-entry">Entry</label>
               <input type="number" id="form-entry" step="0.0001" min="0" required>
             </div>
-            <div class="tool-field">
-              <label for="form-stop">Stop</label>
-              <input type="number" id="form-stop" step="0.0001" min="0" required>
+            <div class="tool-field" id="stock-units-field">
+              <label for="form-units">Units / Shares</label>
+              <input type="number" id="form-units" step="0.0001" min="0" required>
             </div>
             <div class="tool-field">
-              <label for="form-current-stop">Current stop</label>
+              <label for="form-stop">Stop (optional)</label>
+              <input type="number" id="form-stop" step="0.0001" min="0">
+            </div>
+            <div class="tool-field">
+              <label for="form-current-stop">Current stop (optional)</label>
               <input type="number" id="form-current-stop" step="0.0001" min="0">
             </div>
-            <div class="tool-field">
-              <label for="form-units">Units</label>
-              <input type="number" id="form-units" step="0.0001" min="0">
-            </div>
-            <div class="tool-field">
-              <label for="form-risk-pct">Risk % of portfolio</label>
-              <input type="number" id="form-risk-pct" step="0.01" min="0">
-            </div>
-            <div class="tool-field">
-              <label for="form-risk-amount">Risk amount (in trade currency)</label>
-              <input type="number" id="form-risk-amount" step="0.01" min="0">
-            </div>
+          </div>
+
+          <div class="trade-form-section-header" style="margin-top: 4px;">
+            <h4>Calculated Summary</h4>
           </div>
           <div class="trade-metrics" aria-live="polite">
-            <div class="trade-metric"><span>Risk / unit</span><strong id="risk-metric-per-unit">—</strong></div>
-            <div class="trade-metric"><span>Total risk</span><strong id="risk-metric-total">—</strong></div>
-            <div class="trade-metric"><span>Implied units</span><strong id="risk-metric-units">—</strong></div>
+            <div class="trade-metric"><span>Position Value</span><strong id="risk-metric-position-value">—</strong></div>
+            <div class="trade-metric"><span>Risk / Contract</span><strong id="risk-metric-per-contract">—</strong></div>
+            <div class="trade-metric"><span>Total Risk</span><strong id="risk-metric-total">—</strong></div>
+            <div class="trade-metric"><span>Risk % of Portfolio</span><strong id="risk-metric-pct">—</strong></div>
           </div>
         </section>
 
@@ -305,7 +303,7 @@
           <div class="grid three-col compact-grid">
             <div class="tool-field">
               <label for="form-open-date">Open date</label>
-              <input type="date" id="form-open-date">
+              <input type="date" id="form-open-date" required>
             </div>
             <div class="tool-field">
               <label for="form-close-date">Close date (optional)</label>
@@ -320,7 +318,7 @@
 
         <section class="trade-form-section">
           <div class="trade-form-section-header">
-            <h4>4. Strategy &amp; Context</h4>
+            <h4>4. Optional Strategy &amp; Context</h4>
           </div>
           <div class="grid two-col compact-grid">
             <div class="tool-field">
@@ -347,7 +345,7 @@
 
         <section class="trade-form-section">
           <div class="trade-form-section-header">
-            <h4>5. Psychology &amp; Notes</h4>
+            <h4>5. Optional Psychology &amp; Notes</h4>
           </div>
           <div class="tool-field">
             <label>Emotion tags</label>
