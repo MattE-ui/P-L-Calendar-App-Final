@@ -126,6 +126,18 @@ test('updates and closes a trade then filters winners', async () => {
   const byType = await authedFetch('/api/trades?tradeType=day');
   assert.equal(byType.res.status, 200);
   assert.ok(byType.data.trades.length >= 1);
+
+  const editClosed = await authedFetch(`/api/trades/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 21,
+      stop: 19,
+      note: 'Edited after close'
+    })
+  });
+  assert.equal(editClosed.res.status, 200);
+  assert.equal(editClosed.data.trade.entry, 21);
 });
 
 

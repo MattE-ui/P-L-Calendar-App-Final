@@ -8584,9 +8584,6 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     updates.riskAmount !== undefined ||
     updates.sizeUnits !== undefined
   );
-  if (trade.status === 'closed' && wantsRiskUpdate) {
-    return res.status(400).json({ error: 'Closed trades cannot change entry, stop, or risk.' });
-  }
   const incomingSymbol = typeof updates.displaySymbol === 'string'
     ? updates.displaySymbol
     : (typeof updates.symbol === 'string' ? updates.symbol : null);
@@ -8643,7 +8640,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     trade.realizedPnlCurrency = summary.realizedPnlCurrency;
     trade.partialCloses = [];
   }
-  if (wantsRiskUpdate && trade.status !== 'closed') {
+  if (wantsRiskUpdate) {
     const entryNum = Number(updates.entry ?? trade.entry);
     const incomingStop = updates.stop;
     const clearsStop = incomingStop === '' || incomingStop === null;
