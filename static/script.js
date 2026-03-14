@@ -1828,7 +1828,7 @@ function renderPortfolioTrend() {
   overlay.setAttribute('width', String(width));
   overlay.setAttribute('height', String(height));
   overlay.setAttribute('fill', 'transparent');
-  overlay.style.cursor = 'grab';
+  overlay.style.cursor = 'crosshair';
 
   const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -1858,7 +1858,6 @@ function renderPortfolioTrend() {
     dot.setAttribute('cx', lastPoint.x);
     dot.setAttribute('cy', lastPoint.y);
     hoverGuide.style.opacity = '0';
-    overlay.style.cursor = 'grab';
   };
 
   const indexFromClientX = (clientX) => {
@@ -1869,29 +1868,13 @@ function renderPortfolioTrend() {
     return Math.round(ratio * (points.length - 1));
   };
 
-  let isDragging = false;
-  overlay.addEventListener('pointerdown', (event) => {
-    isDragging = true;
-    overlay.style.cursor = 'grabbing';
-    overlay.setPointerCapture(event.pointerId);
+  overlay.addEventListener('pointerenter', (event) => {
     updateSelection(indexFromClientX(event.clientX));
   });
   overlay.addEventListener('pointermove', (event) => {
-    if (!isDragging) return;
     updateSelection(indexFromClientX(event.clientX));
   });
-  const endDrag = (event) => {
-    if (!isDragging) return;
-    isDragging = false;
-    overlay.style.cursor = 'grab';
-    if (event && overlay.hasPointerCapture?.(event.pointerId)) {
-      overlay.releasePointerCapture(event.pointerId);
-    }
-  };
-  overlay.addEventListener('pointerup', endDrag);
-  overlay.addEventListener('pointercancel', endDrag);
-  overlay.addEventListener('mouseleave', () => {
-    if (isDragging) return;
+  overlay.addEventListener('pointerleave', () => {
     resetSelection();
   });
 
