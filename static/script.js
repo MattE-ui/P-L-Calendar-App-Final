@@ -1684,7 +1684,17 @@ function renderPortfolioTrend() {
     el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
     return;
   }
-  const values = last.map(entry => entry.closing ?? entry.opening ?? 0);
+  const startIndex = Math.max(entries.length - last.length, 0);
+  let cumulativeCashFlow = entries
+    .slice(0, startIndex)
+    .reduce((sum, entry) => sum + (Number.isFinite(entry?.cashFlow) ? entry.cashFlow : 0), 0);
+  const values = last.map(entry => {
+    cumulativeCashFlow += Number.isFinite(entry?.cashFlow) ? entry.cashFlow : 0;
+    const closing = Number.isFinite(entry?.closing)
+      ? entry.closing
+      : (Number.isFinite(entry?.opening) ? entry.opening : 0);
+    return closing - cumulativeCashFlow;
+  });
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = Math.max(max - min, 1);
