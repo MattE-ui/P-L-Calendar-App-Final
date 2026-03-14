@@ -964,6 +964,142 @@ select {
 }
 .trade-badge.positive { border-color: rgba(29,185,84,.5); color: var(--positive); }
 .trade-badge.negative { border-color: rgba(255,59,92,.5); color: var(--negative); }
+#trade-list .trade-pill {
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  gap: 8px;
+  box-shadow: var(--shadow-soft);
+}
+#trade-list .trade-pill:hover {
+  transform: translateY(-1px);
+}
+#trade-list .trade-pill .trade-compact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+#trade-list .trade-pill .trade-compact-top {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-bottom: 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+#trade-list .trade-pill .trade-identity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+#trade-list .trade-pill .trade-ticker {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+#trade-list .trade-pill .trade-status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  padding: 2px 8px;
+}
+#trade-list .trade-pill .trade-status.is-closed {
+  color: color-mix(in srgb, var(--positive) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--positive) 45%, var(--border) 55%);
+  background: color-mix(in srgb, var(--positive) 14%, transparent);
+}
+#trade-list .trade-pill .trade-status.is-open {
+  color: color-mix(in srgb, var(--warning) 75%, var(--text) 25%);
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border) 60%);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+#trade-list .trade-pill .trade-primary-risk {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  white-space: nowrap;
+}
+#trade-list .trade-pill .trade-compact-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+#trade-list .trade-pill .trade-inline-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+#trade-list .trade-pill .trade-inline-metric .k {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+#trade-list .trade-pill .trade-inline-metric .v {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+#trade-list .trade-pill .trade-compact-meta-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+}
+#trade-list .trade-pill .trade-compact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+#trade-list .trade-pill .trade-tags-inline {
+  margin-top: 0;
+  gap: 4px;
+}
+#trade-list .trade-pill .trade-tags-inline .tag-chip {
+  padding: 2px 7px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+}
+#trade-list .trade-pill .trade-note {
+  margin-top: -1px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+#trade-list .trade-pill .trade-compact-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+#trade-list .trade-pill .trade-compact-actions .danger.outline.compact {
+  padding: 4px 9px;
+  min-height: 28px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+@media (max-width: 760px) {
+  #trade-list .trade-pill .trade-compact-metrics {
+    grid-template-columns: 1fr;
+  }
+  #trade-list .trade-pill .trade-compact-meta-row {
+    grid-template-columns: 1fr;
+  }
+  #trade-list .trade-pill .trade-compact-actions {
+    justify-content: flex-start;
+  }
+}
 .trade-count {
   display: inline-flex;
   align-items: center;
