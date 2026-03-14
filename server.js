@@ -1931,7 +1931,7 @@ function filterTrades(trades = [], filters = {}) {
   const status = typeof filters.status === 'string' ? filters.status.trim().toLowerCase() : null;
 
   return trades.filter(trade => {
-    const dateKey = trade.status === 'closed' ? trade.closeDate : trade.openDate;
+    const dateKey = trade.openDate;
     if (from && dateKey < from) return false;
     if (to && dateKey > to) return false;
     if (symbol) {
@@ -8285,8 +8285,8 @@ app.get('/api/trades', auth, async (req, res) => {
   const trades = flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
   const filtered = filterTrades(trades, req.query || {})
     .sort((a, b) => {
-      const aDate = a.closeDate || a.openDate || '';
-      const bDate = b.closeDate || b.openDate || '';
+      const aDate = a.openDate || '';
+      const bDate = b.openDate || '';
       return bDate.localeCompare(aDate);
     });
   res.json({ trades: filtered });

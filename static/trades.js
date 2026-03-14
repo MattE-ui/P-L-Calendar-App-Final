@@ -401,14 +401,14 @@ function renderTrades() {
   if (empty) empty.classList.add('is-hidden');
   if (pill) pill.textContent = `${state.trades.length} trades`;
   const sortedTrades = [...state.trades].sort((a, b) => {
-    const aDate = Date.parse(a.closeDate || a.openDate || '') || 0;
-    const bDate = Date.parse(b.closeDate || b.openDate || '') || 0;
+    const aDate = Date.parse(a.openDate || '') || 0;
+    const bDate = Date.parse(b.openDate || '') || 0;
     return bDate - aDate;
   });
   sortedTrades.forEach(trade => {
     const tr = document.createElement('tr');
     const dateCell = document.createElement('td');
-    dateCell.textContent = trade.closeDate || trade.openDate || '—';
+    dateCell.textContent = trade.openDate || '—';
     tr.appendChild(dateCell);
 
     const symCell = document.createElement('td');

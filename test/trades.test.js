@@ -127,6 +127,14 @@ test('updates and closes a trade then filters winners', async () => {
   assert.equal(byType.res.status, 200);
   assert.ok(byType.data.trades.length >= 1);
 
+  const byEntryDate = await authedFetch('/api/trades?from=2024-02-01&to=2024-02-01');
+  assert.equal(byEntryDate.res.status, 200);
+  assert.ok(byEntryDate.data.trades.some(t => t.id === id));
+
+  const byExitDate = await authedFetch('/api/trades?from=2024-02-02&to=2024-02-02');
+  assert.equal(byExitDate.res.status, 200);
+  assert.ok(!byExitDate.data.trades.some(t => t.id === id));
+
   const editClosed = await authedFetch(`/api/trades/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
