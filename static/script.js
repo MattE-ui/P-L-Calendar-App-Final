@@ -577,6 +577,51 @@ function getYearMonths(date) {
   return months;
 }
 
+function getPortfolioTrendPeriods() {
+  if (state.view === 'month') {
+    return getYearMonths(state.selected).map(item => ({
+      pct: item.hasChange ? item.pct : null,
+      label: item.monthDate.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+    }));
+  }
+  if (state.view === 'year') {
+    const entries = getAllEntries();
+    if (!entries.length) return [];
+    const years = entries.reduce((acc, entry) => {
+      const year = entry.date.getFullYear();
+      if (!acc[year]) acc[year] = [];
+      acc[year].push(entry);
+      return acc;
+    }, {});
+    return Object.keys(years)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(year => {
+        const yearEntries = years[year] || [];
+        const totalChange = yearEntries.reduce((sum, entry) => sum + (entry.change ?? 0), 0);
+        const baseline = yearEntries[0]?.opening ?? yearEntries[0]?.closing ?? null;
+        const pct = baseline ? (totalChange / baseline) * 100 : null;
+        return { pct, label: String(year) };
+      });
+  }
+  if (state.view === 'week') {
+    return getWeeksInMonth(state.selected).map(item => ({
+      pct: item.hasChange ? item.pct : null,
+      label: `${item.displayStart} – ${item.displayEnd}`
+    }));
+  }
+  return getDaysInMonth(state.selected)
+    .map(date => {
+      const entry = getDailyEntry(date);
+      if (!entry) return null;
+      return {
+        pct: entry.pct,
+        label: entry.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      };
+    })
+    .filter(Boolean);
+}
+
 function getValuesForSummary() {
   if (state.view === 'month') {
     return getYearMonths(state.selected).map(item => ({
@@ -1678,13 +1723,26 @@ function renderPortfolioTrend() {
   const el = $('#portfolio-trend');
   if (!el) return;
   el.innerHTML = '';
-  const entries = getAllEntries();
-  const last = entries.slice(-12);
-  if (!last.length) {
+
+  const periods = getPortfolioTrendPeriods();
+  const hasPerformanceData = periods.some(item => Number.isFinite(item?.pct));
+  const noteEl = document.querySelector('#portfolio-trend-card .mini-chart-note');
+  const defaultNote = 'Drag to inspect';
+  if (noteEl) noteEl.textContent = defaultNote;
+
+  if (!periods.length || !hasPerformanceData) {
     el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
     return;
   }
-  const values = last.map(entry => entry.closing ?? entry.opening ?? 0);
+
+  // Plot pure performance trend using selected time-period percentage returns only.
+  let performanceIndex = 100;
+  const values = periods.map(item => {
+    const safePct = Number.isFinite(item?.pct) ? item.pct : 0;
+    performanceIndex *= (1 + (safePct / 100));
+    return performanceIndex;
+  });
+
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = Math.max(max - min, 1);
@@ -1697,7 +1755,7 @@ function renderPortfolioTrend() {
     const x = pointCount === 1 ? width / 2 : (index / (pointCount - 1)) * width;
     const normalized = (val - min) / range;
     const y = height - padding - normalized * plotHeight;
-    return { x, y, value: val, date: last[index].date };
+    return { x, y, value: val, label: periods[index]?.label || '—' };
   });
   const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
   const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
@@ -1706,6 +1764,7 @@ function renderPortfolioTrend() {
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.setAttribute('width', '100%');
   svg.setAttribute('height', String(height));
+  svg.style.touchAction = 'none';
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   const lineGradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
   const gradientId = `trendGrad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1745,6 +1804,15 @@ function renderPortfolioTrend() {
   line.setAttribute('class', 'line-path');
   line.setAttribute('stroke-width', '2.04');
   line.style.stroke = `url(#${gradientId})`;
+
+  const hoverGuide = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  hoverGuide.setAttribute('y1', String(padding));
+  hoverGuide.setAttribute('y2', String(height - padding));
+  hoverGuide.setAttribute('stroke', 'rgba(212,175,55,0.45)');
+  hoverGuide.setAttribute('stroke-width', '0.7');
+  hoverGuide.setAttribute('stroke-dasharray', '1.5 1.5');
+  hoverGuide.style.opacity = '0';
+
   const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
   const lastPoint = points[points.length - 1];
   dot.setAttribute('cx', lastPoint.x);
@@ -1753,11 +1821,84 @@ function renderPortfolioTrend() {
   dot.setAttribute('class', 'line-dot line-dot-latest');
   dot.style.fill = amber;
   dot.style.filter = 'drop-shadow(0 0 6px rgba(212,175,55,0.55))';
+
+  const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  overlay.setAttribute('x', '0');
+  overlay.setAttribute('y', '0');
+  overlay.setAttribute('width', String(width));
+  overlay.setAttribute('height', String(height));
+  overlay.setAttribute('fill', 'transparent');
+  overlay.style.cursor = 'grab';
+
+  const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
-  svg.append(title, defs, area, line, dot);
+  svg.append(title, defs, area, line, hoverGuide, dot, overlay);
+
+  const formatPct = (pct) => `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+  const updateSelection = (index) => {
+    const safeIndex = Math.min(Math.max(index, 0), points.length - 1);
+    const selectedPoint = points[safeIndex];
+    const selectedPct = ((selectedPoint.value / baseValue) - 1) * 100;
+    dot.setAttribute('cx', selectedPoint.x);
+    dot.setAttribute('cy', selectedPoint.y);
+    hoverGuide.setAttribute('x1', selectedPoint.x);
+    hoverGuide.setAttribute('x2', selectedPoint.x);
+    hoverGuide.style.opacity = '1';
+
+    const percentText = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(selectedPct);
+    const displayText = `${selectedPoint.label} • ${percentText}`;
+    title.textContent = displayText;
+    if (noteEl) noteEl.textContent = displayText;
+  };
+
+  const resetSelection = () => {
+    const latestPct = ((lastPoint.value / baseValue) - 1) * 100;
+    title.textContent = `${lastPoint.label} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(latestPct)}`;
+    if (noteEl) noteEl.textContent = defaultNote;
+    dot.setAttribute('cx', lastPoint.x);
+    dot.setAttribute('cy', lastPoint.y);
+    hoverGuide.style.opacity = '0';
+    overlay.style.cursor = 'grab';
+  };
+
+  const indexFromClientX = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return points.length - 1;
+    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+    if (points.length === 1) return 0;
+    return Math.round(ratio * (points.length - 1));
+  };
+
+  let isDragging = false;
+  overlay.addEventListener('pointerdown', (event) => {
+    isDragging = true;
+    overlay.style.cursor = 'grabbing';
+    overlay.setPointerCapture(event.pointerId);
+    updateSelection(indexFromClientX(event.clientX));
+  });
+  overlay.addEventListener('pointermove', (event) => {
+    if (!isDragging) return;
+    updateSelection(indexFromClientX(event.clientX));
+  });
+  const endDrag = (event) => {
+    if (!isDragging) return;
+    isDragging = false;
+    overlay.style.cursor = 'grab';
+    if (event && overlay.hasPointerCapture?.(event.pointerId)) {
+      overlay.releasePointerCapture(event.pointerId);
+    }
+  };
+  overlay.addEventListener('pointerup', endDrag);
+  overlay.addEventListener('pointercancel', endDrag);
+  overlay.addEventListener('mouseleave', () => {
+    if (isDragging) return;
+    resetSelection();
+  });
+
+  resetSelection();
   el.appendChild(svg);
 }
+
 
 function syncActiveTradesHeight() {
   const riskCard = $('#risk-card');
