@@ -1684,16 +1684,12 @@ function renderPortfolioTrend() {
     el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
     return;
   }
-  const startIndex = Math.max(entries.length - last.length, 0);
-  let cumulativeCashFlow = entries
-    .slice(0, startIndex)
-    .reduce((sum, entry) => sum + (Number.isFinite(entry?.cashFlow) ? entry.cashFlow : 0), 0);
+  // Plot pure performance trend using daily percentage return only (cashflow-neutral).
+  let performanceIndex = 100;
   const values = last.map(entry => {
-    cumulativeCashFlow += Number.isFinite(entry?.cashFlow) ? entry.cashFlow : 0;
-    const closing = Number.isFinite(entry?.closing)
-      ? entry.closing
-      : (Number.isFinite(entry?.opening) ? entry.opening : 0);
-    return closing - cumulativeCashFlow;
+    const dailyPct = Number.isFinite(entry?.pct) ? entry.pct : 0;
+    performanceIndex *= (1 + (dailyPct / 100));
+    return performanceIndex;
   });
   const max = Math.max(...values);
   const min = Math.min(...values);
@@ -1763,8 +1759,10 @@ function renderPortfolioTrend() {
   dot.setAttribute('class', 'line-dot line-dot-latest');
   dot.style.fill = amber;
   dot.style.filter = 'drop-shadow(0 0 6px rgba(212,175,55,0.55))';
+  const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
+  const latestPct = ((lastPoint.value / baseValue) - 1) * 100;
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
+  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : `${latestPct >= 0 ? '+' : ''}${latestPct.toFixed(2)}%`}`;
   svg.append(title, defs, area, line, dot);
   el.appendChild(svg);
 }
