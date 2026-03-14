@@ -252,6 +252,28 @@
               <option value="other">Other</option>
             </select>
           </div>
+          <div id="options-fields" class="grid two-col is-hidden" style="grid-column: 1 / -1; gap: 12px;">
+            <div class="tool-field">
+              <label for="form-option-type">Option type</label>
+              <select id="form-option-type">
+                <option value="">Select</option>
+                <option value="call">Call</option>
+                <option value="put">Put</option>
+              </select>
+            </div>
+            <div class="tool-field">
+              <label for="form-option-strike">Strike price</label>
+              <input type="number" id="form-option-strike" step="0.01" min="0" placeholder="180">
+            </div>
+            <div class="tool-field">
+              <label for="form-option-expiration">Expiration date</label>
+              <input type="date" id="form-option-expiration">
+            </div>
+            <div class="tool-field">
+              <label for="form-option-contracts">Contracts</label>
+              <input type="number" id="form-option-contracts" step="1" min="0" placeholder="1">
+            </div>
+          </div>
           <div class="tool-field">
             <label for="form-strategy">Strategy tag</label>
             <input type="text" id="form-strategy" placeholder="Breakout, pullback...">
