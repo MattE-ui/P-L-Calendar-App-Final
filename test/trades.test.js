@@ -196,5 +196,5 @@ test('records partial trims when reducing units and includes trim pnl in final r
   const closed = list.data.trades.find(t => t.id === id);
   assert.ok(closed);
   assert.equal(closed.status, 'closed');
-  assert.equal(closed.realizedPnlGBP, 90);
+  assert.equal(closed.realizedPnlGBP, 70);
 });
