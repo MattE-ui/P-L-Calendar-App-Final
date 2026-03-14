@@ -1678,13 +1678,22 @@ function renderPortfolioTrend() {
   const el = $('#portfolio-trend');
   if (!el) return;
   el.innerHTML = '';
-  const entries = getAllEntries();
-  const last = entries.slice(-12);
-  if (!last.length) {
+
+  const periodReturns = getValuesForSummary().map(item => item?.pct);
+  const hasPerformanceData = periodReturns.some(val => Number.isFinite(val));
+  if (!periodReturns.length || !hasPerformanceData) {
     el.innerHTML = '<p class="tool-note">No portfolio data yet.</p>';
     return;
   }
-  const values = last.map(entry => entry.closing ?? entry.opening ?? 0);
+
+  // Plot pure performance trend using selected time-period percentage returns only.
+  let performanceIndex = 100;
+  const values = periodReturns.map(pct => {
+    const safePct = Number.isFinite(pct) ? pct : 0;
+    performanceIndex *= (1 + (safePct / 100));
+    return performanceIndex;
+  });
+
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = Math.max(max - min, 1);
@@ -1697,7 +1706,7 @@ function renderPortfolioTrend() {
     const x = pointCount === 1 ? width / 2 : (index / (pointCount - 1)) * width;
     const normalized = (val - min) / range;
     const y = height - padding - normalized * plotHeight;
-    return { x, y, value: val, date: last[index].date };
+    return { x, y, value: val };
   });
   const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
   const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
@@ -1753,11 +1762,14 @@ function renderPortfolioTrend() {
   dot.setAttribute('class', 'line-dot line-dot-latest');
   dot.style.fill = amber;
   dot.style.filter = 'drop-shadow(0 0 6px rgba(212,175,55,0.55))';
+  const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
+  const latestPct = ((lastPoint.value / baseValue) - 1) * 100;
   const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-  title.textContent = `${lastPoint.date.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(lastPoint.value)}`;
+  title.textContent = `${state.selected.toLocaleDateString()} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : `${latestPct >= 0 ? '+' : ''}${latestPct.toFixed(2)}%`}`;
   svg.append(title, defs, area, line, dot);
   el.appendChild(svg);
 }
+
 
 function syncActiveTradesHeight() {
   const riskCard = $('#risk-card');
