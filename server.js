@@ -1612,7 +1612,11 @@ function normalizeTradeJournal(user) {
       const stop = Number(trade.stop);
       const riskPct = Number(trade.riskPct);
       const currency = ['GBP', 'USD', 'EUR'].includes(trade.currency) ? trade.currency : 'GBP';
-      const status = trade.status === 'closed' ? 'closed' : 'open';
+      const executionSummary = summarizeExecutionLegs(trade, {});
+      const hasExecutions = Array.isArray(trade.executions) && trade.executions.length > 0;
+      const status = hasExecutions
+        ? executionSummary.status
+        : (trade.status === 'closed' ? 'closed' : 'open');
       const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
       const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol.trim().toUpperCase() : '';
       const trading212Name = typeof trade.trading212Name === 'string' ? trade.trading212Name : '';
@@ -1649,7 +1653,13 @@ function normalizeTradeJournal(user) {
       const portfolioCurrencyAtCalc = Number(trade.portfolioCurrencyAtCalc);
       const fxFeeEligible = trade.fxFeeEligible === true;
       const fxFeeRate = Number(trade.fxFeeRate);
-      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sizeUnits) || sizeUnits <= 0) {
+      const validEntry = hasExecutions ? executionSummary.avgEntry : entry;
+      const validSizeUnits = hasExecutions ? executionSummary.totalEntered : sizeUnits;
+      if (
+        !Number.isFinite(validEntry) || validEntry <= 0
+        || !Number.isFinite(validSizeUnits) || validSizeUnits <= 0
+        || (hasExecutions && !executionSummary.isValid)
+      ) {
         mutated = true;
         continue;
       }
@@ -1677,7 +1687,7 @@ function normalizeTradeJournal(user) {
       const partialCloses = normalizePartialCloses(trade.partialCloses, cleanDate);
       const normalizedTrade = {
         id,
-        entry,
+        entry: validEntry,
         stop: stopValue,
         symbol: symbol || undefined,
         displaySymbol: displaySymbol || undefined,
@@ -1686,7 +1696,7 @@ function normalizeTradeJournal(user) {
           ? riskPct
           : (Number.isFinite(derivedRiskPct) && derivedRiskPct > 0 ? derivedRiskPct : 0),
         perUnitRisk,
-        sizeUnits,
+        sizeUnits: hasExecutions ? executionSummary.openQuantity : sizeUnits,
         status,
         tradeType: TRADE_TYPES.includes(typeRaw) ? typeRaw : 'day',
         assetClass: ASSET_CLASSES.includes(assetRaw) ? assetRaw : 'stocks',
@@ -1781,7 +1791,15 @@ function normalizeTradeJournal(user) {
         normalizedTrade.riskAmountCurrency = derivedRiskAmountCurrency;
       }
       if (Number.isFinite(trade.positionCurrency)) normalizedTrade.positionCurrency = trade.positionCurrency;
-      if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
+      if (hasExecutions) {
+        normalizedTrade.executions = executionSummary.executions;
+        if (Number.isFinite(executionSummary.avgExit) && executionSummary.avgExit > 0) {
+          normalizedTrade.closePrice = executionSummary.avgExit;
+        }
+        if (executionSummary.lastExitDate && cleanDate.test(executionSummary.lastExitDate)) {
+          normalizedTrade.closeDate = executionSummary.lastExitDate;
+        }
+      } else if (status === 'closed' && Number.isFinite(closePrice) && closePrice > 0) {
         normalizedTrade.closePrice = closePrice;
         if (closeDate && cleanDate.test(closeDate)) {
           normalizedTrade.closeDate = closeDate;

@@ -210,3 +210,29 @@ test('records partial trims when reducing units and includes trim pnl in final r
   assert.equal(closed.status, 'closed');
   assert.equal(closed.realizedPnlGBP, 70);
 });
+
+test('persists and lists fully closed execution-leg trades', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: 'AAPL',
+      assetClass: 'stocks',
+      currency: 'GBP',
+      executions: [
+        { side: 'entry', quantity: 3, price: 10, date: '2024-05-01' },
+        { side: 'exit', quantity: 3, price: 11, date: '2024-05-02' }
+      ]
+    })
+  });
+  assert.equal(create.res.status, 200);
+
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const trade = list.data.trades.find(t => t.id === create.data.trade.id);
+  assert.ok(trade);
+  assert.equal(trade.status, 'closed');
+  assert.equal(trade.totalEnteredQuantity, 3);
+  assert.equal(trade.totalExitedQuantity, 3);
+  assert.equal(trade.openQuantity, 0);
+});
