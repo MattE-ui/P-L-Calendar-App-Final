@@ -2174,6 +2174,153 @@ td .mapping-badge {
   font-size: 0.75rem;
   padding: 4px 10px;
 }
+
+.modal-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 620px;
+}
+
+#trade-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.trade-form-section {
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(165deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trade-form-section-prominent {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.trade-form-section-header h4 {
+  margin: 0;
+  color: var(--highlight);
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.grid.three-col {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compact-grid { gap: 10px; }
+
+.chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.select-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.select-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.select-chip span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  transition: all .18s ease;
+}
+
+.select-chip input:checked + span {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border) 42%);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--highlight);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.select-chip input:focus-visible + span {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, white 45%);
+  outline-offset: 2px;
+}
+
+.trade-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.trade-metric {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trade-metric span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trade-metric strong {
+  font-size: 16px;
+}
+
+.trade-form-footer {
+  margin-top: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding-top: 12px;
+}
+
+.trade-form-secondary-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .grid.three-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trade-metrics { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .grid.three-col { grid-template-columns: 1fr; }
+  .trade-form-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .trade-form-secondary-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
 .analytics-grid, .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
