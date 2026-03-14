@@ -950,6 +950,60 @@ function applyAccountAggregatesToHistoryEntry(entry = {}) {
   return nextEntry;
 }
 
+function findLatestAccountEndBeforeDate(history, accountId, beforeDateKey) {
+  let latest = null;
+  for (const days of Object.values(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object' || dateKey >= beforeDateKey) continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      const accountRecord = accountMap[accountId];
+      if (!accountRecord || typeof accountRecord !== 'object') continue;
+      const end = Number(accountRecord.end);
+      if (!Number.isFinite(end) || end < 0) continue;
+      if (!latest || dateKey > latest.dateKey) {
+        latest = { dateKey, end };
+      }
+    }
+  }
+  return latest;
+}
+
+function carryForwardTradingAccountDayValues(user, history, dateKey, payload, sourceAccountId) {
+  if (!payload || typeof payload !== 'object') return false;
+  ensureTradingAccounts(user);
+  const accounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  if (!accounts.length) return false;
+
+  const existingAccounts = payload.accounts && typeof payload.accounts === 'object' ? payload.accounts : {};
+  const nextAccounts = { ...existingAccounts };
+  let mutated = false;
+
+  for (const account of accounts) {
+    if (!account?.id || account.id === sourceAccountId) continue;
+    const currentRecord = nextAccounts[account.id] && typeof nextAccounts[account.id] === 'object'
+      ? nextAccounts[account.id]
+      : null;
+    const currentEnd = Number(currentRecord?.end);
+    if (Number.isFinite(currentEnd) && currentEnd >= 0) continue;
+
+    const latest = findLatestAccountEndBeforeDate(history, account.id, dateKey);
+    if (!latest) continue;
+
+    nextAccounts[account.id] = {
+      ...currentRecord,
+      end: latest.end,
+      cashIn: Number.isFinite(Number(currentRecord?.cashIn)) && Number(currentRecord.cashIn) >= 0 ? Number(currentRecord.cashIn) : 0,
+      cashOut: Number.isFinite(Number(currentRecord?.cashOut)) && Number(currentRecord.cashOut) >= 0 ? Number(currentRecord.cashOut) : 0
+    };
+    mutated = true;
+  }
+
+  if (!mutated) return false;
+  payload.accounts = nextAccounts;
+  return true;
+}
+
 function syncIntegratedTradingAccountValuesFromHistory(user, history = ensurePortfolioHistory(user)) {
   if (!user || typeof user !== 'object') return false;
   ensureTradingAccounts(user);
@@ -4430,6 +4484,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           cashOut
         }
       };
+      carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
       applyAccountAggregatesToHistoryEntry(payload);
       integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
       const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
@@ -4909,6 +4964,7 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
         cashOut
       }
     };
+    carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
     applyAccountAggregatesToHistoryEntry(payload);
     integratedAccount.currentValue = Number.isFinite(nextPortfolio) ? nextPortfolio : (Number(integratedAccount.currentValue) || 0);
     const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
@@ -8988,6 +9044,7 @@ module.exports = {
   buildIbkrActivePositionSummaries,
   updateIbkrLivePositions,
   applyIbkrHeartbeat,
+  carryForwardTradingAccountDayValues,
   createIbkrConnectorKey,
   findIbkrConnectorKeyOwner,
   exchangeIbkrConnectorToken
