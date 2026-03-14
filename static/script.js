@@ -351,15 +351,16 @@ function normalizeTradeRecords(trades) {
     const riskPct = Number(trade.riskPct);
     const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
     const perUnitRisk = Number(trade.perUnitRisk);
-    const sizeUnits = Number(trade.sizeUnits);
+    const sizeUnitsRaw = Number(trade.sizeUnits);
+    const optionContracts = Number(trade.optionContracts);
+    const sizeUnits = Number.isFinite(sizeUnitsRaw) && sizeUnitsRaw > 0
+      ? sizeUnitsRaw
+      : ((Number.isFinite(optionContracts) && optionContracts > 0) ? optionContracts * 100 : NaN);
     const status = trade.status === 'closed' ? 'closed' : 'open';
     const symbol = typeof trade.symbol === 'string' ? trade.symbol : '';
     const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol : '';
     const displayTicker = typeof trade.displayTicker === 'string' ? trade.displayTicker : '';
     if (!Number.isFinite(entry) || entry <= 0) return null;
-    if (!Number.isFinite(stop) || stop <= 0) return null;
-    if (!Number.isFinite(riskPct) || riskPct <= 0) return null;
-    if (!Number.isFinite(perUnitRisk) || perUnitRisk <= 0) return null;
     if (!Number.isFinite(sizeUnits) || sizeUnits <= 0) return null;
     const riskAmountGBP = Number(trade.riskAmountGBP);
     const positionGBP = Number(trade.positionGBP);
@@ -385,10 +386,10 @@ function normalizeTradeRecords(trades) {
     return {
       id: typeof trade.id === 'string' ? trade.id : `${entry}-${stop}-${riskPct}-${Math.random()}`,
       entry,
-      stop,
+      stop: Number.isFinite(stop) && stop > 0 ? stop : null,
       currency,
-      riskPct,
-      perUnitRisk,
+      riskPct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : null,
+      perUnitRisk: Number.isFinite(perUnitRisk) && perUnitRisk > 0 ? perUnitRisk : null,
       sizeUnits,
       status,
       symbol,
@@ -412,6 +413,10 @@ function normalizeTradeRecords(trades) {
       setupTags,
       emotionTags,
       screenshotUrl,
+      optionType: typeof trade.optionType === 'string' ? trade.optionType : '',
+      optionStrike: Number.isFinite(Number(trade.optionStrike)) ? Number(trade.optionStrike) : null,
+      optionExpiration: typeof trade.optionExpiration === 'string' ? trade.optionExpiration : '',
+      optionContracts: Number.isFinite(optionContracts) && optionContracts > 0 ? optionContracts : null,
       direction,
       fees: Number.isFinite(fees) ? fees : 0,
       slippage: Number.isFinite(slippage) ? slippage : 0,
@@ -3069,8 +3074,8 @@ function renderTradeList(trades = [], dateStr = null) {
     row2.className = 'trade-compact-row trade-compact-metrics';
     row2.innerHTML = `
       <span class="trade-inline-metric"><span class="k">Entry</span><span class="v">${formatPrice(trade.entry, currency)}</span></span>
-      <span class="trade-inline-metric"><span class="k">Stop</span><span class="v">${formatPrice(trade.stop, currency)}</span></span>
-      <span class="trade-inline-metric"><span class="k">R/share</span><span class="v">${perShareDisplay}</span></span>
+      <span class="trade-inline-metric"><span class="k">Stop</span><span class="v">${trade.stop === null ? '—' : formatPrice(trade.stop, currency)}</span></span>
+      <span class="trade-inline-metric"><span class="k">R/share</span><span class="v">${trade.perUnitRisk === null ? '—' : perShareDisplay}</span></span>
     `;
 
     const row3 = document.createElement('div');
@@ -3078,10 +3083,22 @@ function renderTradeList(trades = [], dateStr = null) {
     row3.innerHTML = `
       <span class="trade-inline-metric"><span class="k">Units</span><span class="v">${formatShares(trade.sizeUnits)}</span></span>
       <span class="trade-inline-metric"><span class="k">Position</span><span class="v">${positionDisplay}</span></span>
-      <span class="trade-inline-metric"><span class="k">Risk %</span><span class="v">${trade.riskPct.toFixed(2)}%</span></span>
+      <span class="trade-inline-metric"><span class="k">Risk %</span><span class="v">${Number.isFinite(trade.riskPct) ? `${trade.riskPct.toFixed(2)}%` : '—'}</span></span>
     `;
 
     pill.append(topRow, row2, row3);
+
+    if ((trade.assetClass || '').toLowerCase() === 'options') {
+      const optionRow = document.createElement('div');
+      optionRow.className = 'trade-compact-row trade-compact-metrics';
+      const parts = [];
+      if (trade.optionType) parts.push(String(trade.optionType).toUpperCase());
+      if (Number.isFinite(trade.optionStrike) && trade.optionStrike > 0) parts.push(`$${trade.optionStrike.toFixed(2)}`);
+      if (trade.optionExpiration) parts.push(trade.optionExpiration);
+      if (Number.isFinite(trade.optionContracts) && trade.optionContracts > 0) parts.push(`${trade.optionContracts} ctr`);
+      optionRow.innerHTML = `<span class="trade-inline-metric"><span class="k">Option</span><span class="v">${parts.join(' • ') || '—'}</span></span>`;
+      pill.appendChild(optionRow);
+    }
 
     const tags = document.createElement('div');
     tags.className = 'tag-chips trade-tags-inline';
