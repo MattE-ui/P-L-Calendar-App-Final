@@ -228,6 +228,36 @@ function setCheckboxes(name, values = []) {
   });
 }
 
+
+function updateRiskMetrics() {
+  const entry = Number(document.querySelector('#form-entry')?.value);
+  const stop = Number(document.querySelector('#form-stop')?.value);
+  const units = Number(document.querySelector('#form-units')?.value);
+  const riskAmount = Number(document.querySelector('#form-risk-amount')?.value);
+  const currency = document.querySelector('#form-currency')?.value || 'GBP';
+  const symbol = currencySymbols[currency] || '';
+
+  const perUnit = Number.isFinite(entry) && Number.isFinite(stop) ? Math.abs(entry - stop) : NaN;
+  const totalRisk = Number.isFinite(perUnit) && perUnit > 0 && Number.isFinite(units) ? perUnit * units : NaN;
+  const impliedUnits = Number.isFinite(perUnit) && perUnit > 0 && Number.isFinite(riskAmount) ? riskAmount / perUnit : NaN;
+
+  const perUnitEl = document.querySelector('#risk-metric-per-unit');
+  const totalRiskEl = document.querySelector('#risk-metric-total');
+  const impliedUnitsEl = document.querySelector('#risk-metric-units');
+
+  if (perUnitEl) perUnitEl.textContent = Number.isFinite(perUnit) ? `${symbol}${perUnit.toFixed(4)}` : '—';
+  if (totalRiskEl) totalRiskEl.textContent = Number.isFinite(totalRisk) ? `${symbol}${totalRisk.toFixed(2)}` : '—';
+  if (impliedUnitsEl) impliedUnitsEl.textContent = Number.isFinite(impliedUnits) ? impliedUnits.toFixed(2) : '—';
+}
+
+function bindRiskMetrics() {
+  ['#form-entry', '#form-stop', '#form-units', '#form-risk-amount', '#form-currency'].forEach((selector) => {
+    document.querySelector(selector)?.addEventListener('input', updateRiskMetrics);
+    document.querySelector(selector)?.addEventListener('change', updateRiskMetrics);
+  });
+  updateRiskMetrics();
+}
+
 function readFilters() {
   state.filters = {
     from: document.querySelector('#filter-from')?.value || '',
@@ -438,6 +468,7 @@ function populateForm(trade) {
   }
   toggleOptionsFields();
   document.querySelector('#form-notes').value = trade.note || '';
+  updateRiskMetrics();
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Editing existing trade';
   const mappingBadge = document.querySelector('#form-mapping-badge');
@@ -477,6 +508,7 @@ function applyDefaultsToForm() {
     setCheckboxes('form-emotion', state.defaults.emotionTags);
   }
   toggleOptionsFields();
+  updateRiskMetrics();
 }
 
 function resetForm() {
@@ -493,6 +525,7 @@ function resetForm() {
   document.querySelector('#form-mapping-badge')?.classList.add('is-hidden');
   document.querySelector('#form-promote-mapping-btn')?.classList.add('is-hidden');
   toggleOptionsFields();
+  updateRiskMetrics();
 }
 
 function collectFormData() {
@@ -696,7 +729,11 @@ function bindForm() {
   document.querySelector('#close-trade-form-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-form-modal')?.classList.add('hidden');
   });
+  document.querySelector('#cancel-trade-form-btn')?.addEventListener('click', () => {
+    document.querySelector('#trade-form-modal')?.classList.add('hidden');
+  });
   document.querySelector('#form-asset-class')?.addEventListener('change', toggleOptionsFields);
+  bindRiskMetrics();
   document.querySelector('#trade-settings-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
   });
