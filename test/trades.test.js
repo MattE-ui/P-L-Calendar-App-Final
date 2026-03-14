@@ -71,7 +71,11 @@ test('creates a trade with metadata', async () => {
       date: '2024-01-01',
       symbol: 'AAPL',
       tradeType: 'swing',
-      assetClass: 'stocks',
+      assetClass: 'options',
+      optionType: 'call',
+      optionStrike: 195,
+      optionExpiration: '2024-03-15',
+      optionContracts: 2,
       strategyTag: 'breakout',
       setupTags: ['breakout'],
       emotionTags: ['disciplined'],
@@ -80,10 +84,14 @@ test('creates a trade with metadata', async () => {
   });
   assert.equal(res.status, 200);
   assert.equal(data.trade.tradeType, 'swing');
+  assert.equal(data.trade.assetClass, 'options');
+  assert.equal(data.trade.optionType, 'call');
+  assert.equal(data.trade.optionStrike, 195);
   const list = await authedFetch('/api/trades');
   assert.equal(list.res.status, 200);
   assert.equal(list.data.trades.length, 1);
   assert.equal(list.data.trades[0].strategyTag, 'breakout');
+  assert.equal(list.data.trades[0].optionContracts, 2);
 });
 
 test('updates and closes a trade then filters winners', async () => {
@@ -118,6 +126,35 @@ test('updates and closes a trade then filters winners', async () => {
   const byType = await authedFetch('/api/trades?tradeType=day');
   assert.equal(byType.res.status, 200);
   assert.ok(byType.data.trades.length >= 1);
+});
+
+
+
+test('includes option metadata in trade export csv', async () => {
+  await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 5,
+      stop: 3,
+      riskPct: 1,
+      date: '2024-02-05',
+      symbol: 'AAPL',
+      assetClass: 'options',
+      optionType: 'put',
+      optionStrike: 170,
+      optionExpiration: '2024-04-19',
+      optionContracts: 3
+    })
+  });
+
+  const res = await fetch(`${baseUrl}/api/trades/export`, {
+    headers: { cookie: `auth_token=${token}` }
+  });
+  const csv = await res.text();
+  assert.equal(res.status, 200);
+  assert.match(csv, /optionType,optionStrike,optionExpiration,optionContracts/);
+  assert.match(csv, /put,170,2024-04-19,3/);
 });
 
 test('records partial trims when reducing units and includes trim pnl in final realized pnl', async () => {

@@ -22,6 +22,7 @@ const MARKET_CONDITIONS = ['bull', 'bear', 'range', 'volatile', 'news-driven'];
 const DEFAULT_SETUP_TAGS = ['breakout', 'pullback', 'mean reversion', 'trend', 'news', 'momentum'];
 const DEFAULT_EMOTION_TAGS = ['FOMO', 'revenge', 'disciplined', 'hesitant', 'confident'];
 const DIRECTIONS = ['long', 'short'];
+const OPTION_TYPES = ['call', 'put'];
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('UnhandledRejection:', reason, { promise });
@@ -1622,6 +1623,10 @@ function normalizeTradeJournal(user) {
       const assetRaw = typeof trade.assetClass === 'string' ? trade.assetClass.trim().toLowerCase() : '';
       const conditionRaw = typeof trade.marketCondition === 'string' ? trade.marketCondition.trim().toLowerCase() : '';
       const strategyTag = typeof trade.strategyTag === 'string' ? trade.strategyTag.trim() : '';
+      const optionTypeRaw = typeof trade.optionType === 'string' ? trade.optionType.trim().toLowerCase() : '';
+      const optionStrikeRaw = Number(trade.optionStrike);
+      const optionContractsRaw = Number(trade.optionContracts);
+      const optionExpirationRaw = typeof trade.optionExpiration === 'string' ? trade.optionExpiration.trim() : '';
       const setupTags = sanitizeTagList(trade.setupTags ?? trade.tags ?? []);
       const emotionTags = sanitizeTagList(trade.emotionTags ?? []);
       const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
@@ -1685,6 +1690,10 @@ function normalizeTradeJournal(user) {
         status,
         tradeType: TRADE_TYPES.includes(typeRaw) ? typeRaw : 'day',
         assetClass: ASSET_CLASSES.includes(assetRaw) ? assetRaw : 'stocks',
+        optionType: OPTION_TYPES.includes(optionTypeRaw) ? optionTypeRaw : undefined,
+        optionStrike: Number.isFinite(optionStrikeRaw) && optionStrikeRaw > 0 ? optionStrikeRaw : undefined,
+        optionContracts: Number.isFinite(optionContractsRaw) && optionContractsRaw > 0 ? Math.floor(optionContractsRaw) : undefined,
+        optionExpiration: /^\d{4}-\d{2}-\d{2}$/.test(optionExpirationRaw) ? optionExpirationRaw : undefined,
         strategyTag,
         marketCondition: MARKET_CONDITIONS.includes(conditionRaw) ? conditionRaw : '',
         direction: DIRECTIONS.includes(directionRaw) ? directionRaw : 'long',
@@ -7569,6 +7578,10 @@ function normalizeTradeMeta(trade = {}) {
   const screenshotRaw = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
   const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
   const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : 'long';
+  const optionTypeRaw = typeof trade.optionType === 'string' ? trade.optionType.trim().toLowerCase() : '';
+  const optionStrikeRaw = Number(trade.optionStrike);
+  const optionContractsRaw = Number(trade.optionContracts);
+  const optionExpirationRaw = typeof trade.optionExpiration === 'string' ? trade.optionExpiration.trim() : '';
   const feesRaw = Number(trade.fees);
   const slippageRaw = Number(trade.slippage);
   const rounding = trade.rounding === 'whole' ? 'whole' : 'fractional';
@@ -7590,7 +7603,11 @@ function normalizeTradeMeta(trade = {}) {
     setupTags: sanitizeTagList(trade.setupTags ?? trade.tags ?? [], 15),
     emotionTags: sanitizeTagList(trade.emotionTags ?? [], 15),
     screenshotUrl: screenshotRaw || undefined,
-    note: noteRaw || undefined
+    note: noteRaw || undefined,
+    optionType: OPTION_TYPES.includes(optionTypeRaw) ? optionTypeRaw : undefined,
+    optionStrike: Number.isFinite(optionStrikeRaw) && optionStrikeRaw > 0 ? optionStrikeRaw : undefined,
+    optionContracts: Number.isFinite(optionContractsRaw) && optionContractsRaw > 0 ? Math.floor(optionContractsRaw) : undefined,
+    optionExpiration: /^\d{4}-\d{2}-\d{2}$/.test(optionExpirationRaw) ? optionExpirationRaw : undefined
   };
 }
 
@@ -8178,7 +8195,7 @@ app.get('/api/trades/export', auth, async (req, res) => {
   const headers = [
     'id', 'symbol', 'broker_ticker', 'display_ticker', 'status', 'openDate', 'closeDate', 'entry', 'stop', 'currentStop', 'closePrice',
     'currency', 'sizeUnits', 'riskPct', 'riskAmountGBP', 'positionGBP', 'realizedPnlGBP',
-    'guaranteedPnlGBP', 'rMultiple', 'tradeType', 'assetClass', 'strategyTag', 'marketCondition',
+    'guaranteedPnlGBP', 'rMultiple', 'tradeType', 'assetClass', 'optionType', 'optionStrike', 'optionExpiration', 'optionContracts', 'strategyTag', 'marketCondition',
     'setupTags', 'emotionTags', 'note', 'screenshotUrl'
   ];
   const escape = (val) => {
@@ -8211,6 +8228,10 @@ app.get('/api/trades/export', auth, async (req, res) => {
     Number(trade.rMultiple) || '',
     trade.tradeType || '',
     trade.assetClass || '',
+    trade.optionType || '',
+    Number(trade.optionStrike) || '',
+    trade.optionExpiration || '',
+    Number(trade.optionContracts) || '',
     trade.strategyTag || '',
     trade.marketCondition || '',
     (trade.setupTags || []).join('|'),
@@ -8242,6 +8263,10 @@ app.post('/api/trades', auth, async (req, res) => {
     rounding,
     tradeType,
     assetClass,
+    optionType,
+    optionStrike,
+    optionExpiration,
+    optionContracts,
     strategyTag,
     marketCondition,
     setupTags,
@@ -8361,6 +8386,10 @@ app.post('/api/trades', auth, async (req, res) => {
     status: status === 'closed' ? 'closed' : 'open',
     tradeType,
     assetClass,
+    optionType,
+    optionStrike,
+    optionExpiration,
+    optionContracts,
     strategyTag,
     marketCondition,
     setupTags,
@@ -8546,6 +8575,10 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     slippage: updates.slippage ?? trade.slippage,
     tradeType: updates.tradeType ?? trade.tradeType,
     assetClass: updates.assetClass ?? trade.assetClass,
+    optionType: updates.optionType ?? trade.optionType,
+    optionStrike: updates.optionStrike ?? trade.optionStrike,
+    optionExpiration: updates.optionExpiration ?? trade.optionExpiration,
+    optionContracts: updates.optionContracts ?? trade.optionContracts,
     strategyTag: updates.strategyTag ?? trade.strategyTag,
     marketCondition: updates.marketCondition ?? trade.marketCondition,
     setupTags: updates.setupTags ?? trade.setupTags,
@@ -8557,6 +8590,10 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   });
   trade.tradeType = meta.tradeType;
   trade.assetClass = meta.assetClass;
+  trade.optionType = meta.optionType;
+  trade.optionStrike = meta.optionStrike;
+  trade.optionExpiration = meta.optionExpiration;
+  trade.optionContracts = meta.optionContracts;
   trade.strategyTag = meta.strategyTag;
   trade.marketCondition = meta.marketCondition;
   trade.setupTags = meta.setupTags;

@@ -241,6 +241,27 @@ function readFilters() {
   };
 }
 
+
+function optionSummary(trade) {
+  const type = trade.optionType ? String(trade.optionType).toUpperCase() : '';
+  const strike = Number(trade.optionStrike);
+  const expiry = trade.optionExpiration || '';
+  const contracts = Number(trade.optionContracts);
+  const parts = [];
+  if (type) parts.push(type);
+  if (Number.isFinite(strike) && strike > 0) parts.push(`$${strike.toFixed(2)}`);
+  if (expiry) parts.push(expiry);
+  if (Number.isFinite(contracts) && contracts > 0) parts.push(`${contracts} ctr`);
+  return parts.join(' • ');
+}
+
+function toggleOptionsFields() {
+  const assetClass = document.querySelector('#form-asset-class')?.value || '';
+  const optionsFields = document.querySelector('#options-fields');
+  if (!optionsFields) return;
+  optionsFields.classList.toggle('is-hidden', assetClass !== 'options');
+}
+
 async function loadTrades() {
   readFilters();
   const query = toQuery(state.filters);
@@ -279,6 +300,15 @@ function renderTrades() {
     symCell.appendChild(symLabel);
     if (shouldShowMappingBadge(trade)) {
       symCell.appendChild(createMappingBadge());
+    }
+    if ((trade.assetClass || '').toLowerCase() === 'options') {
+      const summary = optionSummary(trade);
+      if (summary) {
+        const meta = document.createElement('div');
+        meta.className = 'metric-sub';
+        meta.textContent = summary;
+        symCell.appendChild(meta);
+      }
     }
     tr.appendChild(symCell);
 
@@ -379,6 +409,11 @@ function populateForm(trade) {
   document.querySelector('#form-close-price').value = trade.closePrice ?? '';
   document.querySelector('#form-trade-type').value = trade.tradeType || 'day';
   document.querySelector('#form-asset-class').value = trade.assetClass || 'stocks';
+  document.querySelector('#form-option-type').value = trade.optionType || '';
+  document.querySelector('#form-option-strike').value = trade.optionStrike ?? '';
+  document.querySelector('#form-option-expiration').value = trade.optionExpiration || '';
+  document.querySelector('#form-option-contracts').value = trade.optionContracts ?? '';
+  toggleOptionsFields();
   document.querySelector('#form-strategy').value = trade.strategyTag || '';
   document.querySelector('#form-market-condition').value = trade.marketCondition || '';
   document.querySelector('#form-screenshot').value = trade.screenshotUrl || '';
@@ -401,6 +436,7 @@ function populateForm(trade) {
       document.querySelector('#form-market-condition').value = state.defaults.marketCondition;
     }
   }
+  toggleOptionsFields();
   document.querySelector('#form-notes').value = trade.note || '';
   const status = document.querySelector('#form-status');
   if (status) status.textContent = 'Editing existing trade';
@@ -440,6 +476,7 @@ function applyDefaultsToForm() {
   if (state.defaults.emotionTags.length) {
     setCheckboxes('form-emotion', state.defaults.emotionTags);
   }
+  toggleOptionsFields();
 }
 
 function resetForm() {
@@ -455,6 +492,7 @@ function resetForm() {
   if (status) status.textContent = 'Ready to log a new trade';
   document.querySelector('#form-mapping-badge')?.classList.add('is-hidden');
   document.querySelector('#form-promote-mapping-btn')?.classList.add('is-hidden');
+  toggleOptionsFields();
 }
 
 function collectFormData() {
@@ -478,6 +516,10 @@ function collectFormData() {
     closePrice: numberOrUndefined('#form-close-price'),
     tradeType: document.querySelector('#form-trade-type')?.value,
     assetClass: document.querySelector('#form-asset-class')?.value,
+    optionType: document.querySelector('#form-option-type')?.value,
+    optionStrike: numberOrUndefined('#form-option-strike'),
+    optionExpiration: document.querySelector('#form-option-expiration')?.value,
+    optionContracts: numberOrUndefined('#form-option-contracts'),
     strategyTag: document.querySelector('#form-strategy')?.value,
     marketCondition: document.querySelector('#form-market-condition')?.value,
     setupTags: selectedTags('form-setup'),
@@ -654,6 +696,7 @@ function bindForm() {
   document.querySelector('#close-trade-form-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-form-modal')?.classList.add('hidden');
   });
+  document.querySelector('#form-asset-class')?.addEventListener('change', toggleOptionsFields);
   document.querySelector('#trade-settings-btn')?.addEventListener('click', () => {
     document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
   });
