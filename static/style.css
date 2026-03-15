@@ -141,6 +141,10 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .app-shell-header {
+    height: auto;
+  }
+
   .app-shell-header__inner {
     grid-template-columns: 1fr;
     height: auto;
@@ -369,6 +373,53 @@ h1, h2, h3, h4 {
 }
 
 
+.portfolio-metrics-bar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 auto 12px;
+}
+
+.portfolio-metrics-bar .metric-card {
+  min-height: 86px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015) 60%, rgba(16, 21, 28, 0.9));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.portfolio-metrics-bar .metric-card h3 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.portfolio-metrics-bar .metric-value {
+  font-size: 19px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.portfolio-metrics-bar #hero-portfolio .metric-value {
+  font-size: 22px;
+}
+
+.portfolio-metrics-bar .metric-sub {
+  min-height: 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 
 

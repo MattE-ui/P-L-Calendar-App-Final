@@ -2274,11 +2274,6 @@ function renderMetrics() {
       netDepositsSub.textContent = '';
     }
   }
-  const netCard = $('#hero-net-deposits');
-  if (netCard) {
-    netCard.classList.remove('positive', 'negative');
-  }
-
   const netPerfEl = $('#hero-net-performance-value');
   if (netPerfEl) {
     netPerfEl.textContent = state.safeScreenshot
@@ -2302,6 +2297,22 @@ function renderMetrics() {
     }
   }
   setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
+
+  const returnEl = $('#metric-return-value');
+  if (returnEl) returnEl.textContent = formatPercent(netPerformancePct);
+  const returnSubEl = $('#metric-return-sub');
+  if (returnSubEl) returnSubEl.textContent = state.safeScreenshot ? '' : 'vs net deposits';
+  setMetricTrend($('#hero-return-card'), Number.isFinite(netPerformancePct) ? netPerformancePct : 0);
+
+  const tradeMetrics = computeTradeHeadlineMetrics();
+  const winRateEl = $('#metric-win-rate');
+  if (winRateEl) winRateEl.textContent = formatPercent(tradeMetrics.winRate);
+  const winRateSubEl = $('#metric-win-rate-sub');
+  if (winRateSubEl) winRateSubEl.textContent = `${tradeMetrics.winners} / ${tradeMetrics.closedTrades} closed`;
+  const tradeCountEl = $('#metric-trade-count');
+  if (tradeCountEl) tradeCountEl.textContent = String(tradeMetrics.totalTrades || 0);
+  const riskEl = $('#metric-risk-value');
+  if (riskEl) riskEl.textContent = Number.isFinite(tradeMetrics.avgRiskMultiple) ? `${tradeMetrics.avgRiskMultiple.toFixed(2)}R` : '—';
 
   const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
