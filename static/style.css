@@ -3842,6 +3842,10 @@ textarea {
   min-height: 0 !important;
 }
 
+.analytics-grid-trading .winrate-card {
+  grid-column: auto;
+}
+
 .snapshot-card-inline {
   align-self: stretch;
   padding: 9px;
@@ -3853,6 +3857,10 @@ textarea {
 
 .heatmap-card-full {
   width: 100%;
+}
+
+.behaviour-grid .heatmap-card {
+  grid-column: auto;
 }
 
 .category-summary {
