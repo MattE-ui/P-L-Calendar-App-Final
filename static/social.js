@@ -157,14 +157,24 @@ function createActionButton(label, tone = 'ghost') {
   return button;
 }
 
-function createIdentityRow(name, secondary, badge) {
+function createIdentityRow(name, secondary, badge, identity = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'social-row-identity';
+
+  const avatar = window.VeracitySocialAvatar?.createAvatar({
+    nickname: name,
+    avatar_url: identity.avatar_url,
+    avatar_initials: identity.avatar_initials
+  }, 'sm');
+  if (avatar) wrap.appendChild(avatar);
+
+  const textWrap = document.createElement('div');
+  textWrap.className = 'social-row-identity-text';
 
   const primary = document.createElement('div');
   primary.className = 'social-row-primary';
   primary.textContent = name || 'Unknown trader';
-  wrap.appendChild(primary);
+  textWrap.appendChild(primary);
 
   const meta = document.createElement('div');
   meta.className = 'social-row-meta';
@@ -182,7 +192,8 @@ function createIdentityRow(name, secondary, badge) {
     meta.appendChild(badgeEl);
   }
 
-  if (meta.childElementCount) wrap.appendChild(meta);
+  if (meta.childElementCount) textWrap.appendChild(meta);
+  wrap.appendChild(textWrap);
   return wrap;
 }
 
@@ -237,7 +248,7 @@ function renderFriendSection() {
       const row = document.createElement('article');
       row.className = 'social-list-row social-list-row--request';
       const display = getRequestUserDisplay(request);
-      row.appendChild(createIdentityRow(display.name, display.secondary));
+      row.appendChild(createIdentityRow(display.name, display.secondary, '', { avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }));
 
       const actionWrap = document.createElement('div');
       actionWrap.className = 'social-row-actions';
@@ -265,7 +276,7 @@ function renderFriendSection() {
       const row = document.createElement('article');
       row.className = 'social-list-row social-list-row--request';
       const display = getRequestUserDisplay(request);
-      row.appendChild(createIdentityRow(display.name, display.secondary));
+      row.appendChild(createIdentityRow(display.name, display.secondary, '', { avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }));
 
       const cancelBtn = createActionButton('Cancel', 'ghost');
       cancelBtn.disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest || socialState.nicknameRequired;
@@ -289,7 +300,7 @@ function renderFriendSection() {
       const badge = friend.verification_status === 'broker_verified' ? 'Broker verified'
         : friend.verification_status === 'platform_verified' ? 'Platform verified'
         : '';
-      row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', badge));
+      row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', badge, { avatar_url: friend.avatar_url, avatar_initials: friend.avatar_initials }));
 
       const removeBtn = createActionButton('Remove', 'danger outline');
       removeBtn.disabled = socialState.friendActionIds.has(friend.friend_user_id) || socialState.isGuest || socialState.nicknameRequired;
@@ -525,6 +536,19 @@ function applyProfile(profile) {
   const friendCodeEl = getEl('social-friend-code');
   if (friendCodeEl) {
     friendCodeEl.textContent = profile?.friend_code || 'Unavailable';
+  }
+  const nicknameEl = getEl('social-profile-nickname');
+  if (nicknameEl) {
+    nicknameEl.textContent = socialState.nickname || 'Nickname required';
+  }
+  const avatarSlot = getEl('social-profile-avatar');
+  if (avatarSlot) {
+    clearNode(avatarSlot);
+    avatarSlot.appendChild(window.VeracitySocialAvatar?.createAvatar({
+      nickname: socialState.nickname,
+      avatar_url: profile?.avatar_url,
+      avatar_initials: profile?.avatar_initials
+    }, 'md') || document.createTextNode(''));
   }
   applyVerification(profile, socialState.settings);
 }

@@ -42,6 +42,9 @@ const profileState = {
   netDepositsBaseline: 0,
   username: '',
   nickname: '',
+  avatarUrl: '',
+  avatarInitials: 'V',
+  avatarBusy: false,
   isGuest: false,
   currency: 'GBP',
   rates: { GBP: 1 },
@@ -258,6 +261,8 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
       : profileState.netDepositsBaseline;
     profileState.username = data.username || '';
     profileState.nickname = data.nickname || '';
+    profileState.avatarUrl = data.avatarUrl || '';
+    profileState.avatarInitials = data.avatarInitials || window.VeracitySocialAvatar?.deriveInitials(profileState.nickname) || 'V';
     profileState.isGuest = !!data.isGuest;
     profileState.multiTradingAccountsEnabled = !!data.multiTradingAccountsEnabled;
     profileState.tradingAccounts = Array.isArray(data.tradingAccounts) && data.tradingAccounts.length
@@ -387,6 +392,9 @@ function applyGuestRestrictions() {
     'account-password-submit',
     'account-nickname',
     'account-nickname-submit',
+    'account-avatar-input',
+    'account-avatar-upload',
+    'account-avatar-remove',
     'profile-reset',
     't212-enabled',
     't212-mode',
@@ -420,6 +428,120 @@ function applyGuestRestrictions() {
   document.querySelectorAll('#t212-accounts input, #t212-accounts button').forEach(input => {
     input.disabled = disable;
   });
+}
+
+
+function renderAvatarControls() {
+  const slot = document.getElementById('profile-avatar-preview');
+  if (slot) {
+    slot.innerHTML = '';
+    const avatarNode = window.VeracitySocialAvatar?.createAvatar({
+      nickname: profileState.nickname,
+      avatar_url: profileState.avatarUrl,
+      avatar_initials: profileState.avatarInitials
+    }, 'lg');
+    if (avatarNode) slot.appendChild(avatarNode);
+  }
+
+  const uploadBtn = document.getElementById('account-avatar-upload');
+  const removeBtn = document.getElementById('account-avatar-remove');
+  const hasAvatar = !!profileState.avatarUrl;
+  if (uploadBtn) {
+    uploadBtn.textContent = hasAvatar ? 'Replace avatar' : 'Upload avatar';
+    uploadBtn.disabled = profileState.isGuest || profileState.avatarBusy;
+  }
+  if (removeBtn) {
+    removeBtn.classList.toggle('hidden', !hasAvatar);
+    removeBtn.disabled = profileState.isGuest || profileState.avatarBusy;
+  }
+}
+
+function setAvatarFeedback(message = '', kind = 'muted') {
+  const status = document.getElementById('account-avatar-status');
+  const error = document.getElementById('account-avatar-error');
+  if (error) error.textContent = kind === 'error' ? message : '';
+  if (status) {
+    status.textContent = kind === 'error' ? '' : message;
+    status.classList.toggle('is-hidden', !(kind !== 'error' && message));
+    status.classList.toggle('is-error', kind === 'error');
+  }
+}
+
+async function uploadAvatarFile(file) {
+  const maxBytes = 2 * 1024 * 1024;
+  const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  if (!file) return;
+  if (!allowedTypes.includes(file.type)) {
+    setAvatarFeedback('Unsupported file type. Use JPG, PNG, or WEBP.', 'error');
+    return;
+  }
+  if (file.size > maxBytes) {
+    setAvatarFeedback('Avatar exceeds 2MB limit.', 'error');
+    return;
+  }
+
+  profileState.avatarBusy = true;
+  renderAvatarControls();
+  setAvatarFeedback('Uploading avatar...');
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    const imageBase64 = btoa(binary);
+    const response = await api('/api/profile/avatar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mimeType: file.type, imageBase64 })
+    });
+    profileState.avatarUrl = response.avatar_url || '';
+    profileState.avatarInitials = response.avatar_initials || window.VeracitySocialAvatar?.deriveInitials(profileState.nickname) || 'V';
+    renderAvatarControls();
+    setAvatarFeedback('Avatar updated.', 'success');
+    window.dispatchEvent(new CustomEvent('social:refresh-requested', { detail: { reason: 'avatar-uploaded' } }));
+  } catch (error) {
+    setAvatarFeedback(error?.data?.error || error.message || 'Unable to upload avatar.', 'error');
+  } finally {
+    profileState.avatarBusy = false;
+    renderAvatarControls();
+  }
+}
+
+async function removeAvatar() {
+  if (profileState.avatarBusy || !profileState.avatarUrl) return;
+  profileState.avatarBusy = true;
+  renderAvatarControls();
+  setAvatarFeedback('Removing avatar...');
+  try {
+    const response = await api('/api/profile/avatar', { method: 'DELETE' });
+    profileState.avatarUrl = response.avatar_url || '';
+    profileState.avatarInitials = response.avatar_initials || window.VeracitySocialAvatar?.deriveInitials(profileState.nickname) || 'V';
+    setAvatarFeedback('Avatar removed.', 'success');
+    window.dispatchEvent(new CustomEvent('social:refresh-requested', { detail: { reason: 'avatar-removed' } }));
+  } catch (error) {
+    setAvatarFeedback(error?.data?.error || error.message || 'Unable to remove avatar.', 'error');
+  } finally {
+    profileState.avatarBusy = false;
+    renderAvatarControls();
+  }
+}
+
+function bindAvatarActions() {
+  const fileInput = document.getElementById('account-avatar-input');
+  const uploadBtn = document.getElementById('account-avatar-upload');
+  const removeBtn = document.getElementById('account-avatar-remove');
+  uploadBtn?.addEventListener('click', () => {
+    if (profileState.isGuest || profileState.avatarBusy) return;
+    fileInput?.click();
+  });
+  fileInput?.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    uploadAvatarFile(file);
+    fileInput.value = '';
+  });
+  removeBtn?.addEventListener('click', removeAvatar);
 }
 
 function renderSecurityState() {
@@ -466,6 +588,16 @@ function renderSecurityState() {
   if (nicknameError) {
     nicknameError.textContent = '';
   }
+  const avatarStatus = document.getElementById('account-avatar-status');
+  if (avatarStatus) {
+    avatarStatus.textContent = '';
+    avatarStatus.classList.add('is-hidden');
+  }
+  const avatarError = document.getElementById('account-avatar-error');
+  if (avatarError) {
+    avatarError.textContent = '';
+  }
+  renderAvatarControls();
 }
 
 function renderTradingAccounts() {
@@ -678,7 +810,9 @@ async function handleNicknameUpdate() {
       body: JSON.stringify({ nickname: raw })
     });
     profileState.nickname = data.nickname || '';
+    profileState.avatarInitials = window.VeracitySocialAvatar?.deriveInitials(profileState.nickname) || 'V';
     input.value = profileState.nickname;
+    renderAvatarControls();
     if (status) {
       status.textContent = profileState.nickname
         ? 'Nickname updated successfully.'
@@ -2200,6 +2334,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('profile-reset')?.addEventListener('click', resetProfile);
   document.getElementById('account-password-submit')?.addEventListener('click', handlePasswordChange);
   document.getElementById('account-nickname-submit')?.addEventListener('click', handleNicknameUpdate);
+  bindAvatarActions();
   document.getElementById('trading-account-add')?.addEventListener('click', () => {
     const id = `account-${Date.now()}`;
     profileState.tradingAccounts.push({

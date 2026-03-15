@@ -60,6 +60,21 @@
         <input id="account-nickname" type="text" maxlength="20" placeholder="Optional nickname (max 20 characters)">
         <p class="helper">Letters, numbers, and spaces only. This is separate from your login username.</p>
       </div>
+      <div class="profile-field profile-avatar-field">
+        <label>Social avatar</label>
+        <div class="profile-avatar-controls">
+          <div id="profile-avatar-preview" class="social-avatar-slot"></div>
+          <div class="profile-avatar-actions">
+            <input id="account-avatar-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" class="hidden" aria-label="Upload avatar">
+            <button id="account-avatar-upload" class="ghost" type="button">Upload avatar</button>
+            <button id="account-avatar-remove" class="danger outline hidden" type="button">Remove avatar</button>
+            <p class="helper">JPG, PNG, or WEBP. Max 2MB.</p>
+          </div>
+        </div>
+        <div id="account-avatar-status" class="status-line is-hidden"></div>
+        <div id="account-avatar-error" class="error"></div>
+      </div>
+
       <div class="profile-field">
         <label for="account-password-current">Current password</label>
         <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password">
@@ -465,6 +480,7 @@
     </div>
   </div>
   <script src="static/theme-utils.js"></script>
+  <script src="static/social-avatar.js"></script>
   <script src="static/app-header.js"></script>
   <script src="static/guest.js"></script>
   <script>window.__INVESTOR_PORTAL__ = __INVESTOR_PORTAL__;</script>

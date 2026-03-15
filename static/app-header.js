@@ -291,6 +291,25 @@
     }
   }
 
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function createBannerIdentityHtml(request) {
+    const nickname = request?.counterparty_nickname || 'A trader';
+    const initials = window.VeracitySocialAvatar?.readAvatarData(request)?.initials || 'V';
+    const avatarUrl = request?.counterparty_avatar_url || '';
+    const avatarClass = `social-avatar social-avatar--xs social-global-alert__avatar${avatarUrl ? ' has-image' : ''}`;
+    const imageHtml = avatarUrl ? `<img class="social-avatar__image" src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" decoding="async">` : '';
+    return `<div class="social-global-alert__identity"><span class="${avatarClass}"><span class="social-avatar__fallback">${escapeHtml(initials)}</span>${imageHtml}</span><strong>${escapeHtml(nickname)}</strong></div>`;
+  }
+
   function renderIncomingRequest(request) {
     createAlertShell();
     const shell = document.getElementById('global-friend-request-alert');
@@ -304,7 +323,7 @@
     shell.classList.remove('hidden');
     shell.innerHTML = `
       <div class="social-global-alert__title">Friend request</div>
-      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> sent you a friend request.</div>
+      <div class="social-global-alert__body">${createBannerIdentityHtml(request)}<span>sent you a friend request.</span></div>
       <div class="social-global-alert__actions">
         <button type="button" class="primary" data-social-alert-action="accept">Accept</button>
         <button type="button" class="ghost" data-social-alert-action="decline">Decline</button>
@@ -333,7 +352,7 @@
     shell.classList.remove('hidden');
     shell.innerHTML = `
       <div class="social-global-alert__title">Friend connection</div>
-      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> is now your friend.</div>
+      <div class="social-global-alert__body">${createBannerIdentityHtml(request)}<span>is now your friend.</span></div>
       <div class="social-global-alert__actions">
         <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
       </div>
