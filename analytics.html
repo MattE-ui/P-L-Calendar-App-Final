@@ -214,7 +214,14 @@
       <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
       <div class="analytics-grid behaviour-grid">
         <div class="chart-card heatmap-card heatmap-card-full">
-          <div class="section-header"><h3>Monthly Heatmap</h3></div>
+          <div class="section-header heatmap-header">
+            <h3>Monthly Heatmap</h3>
+            <div class="heatmap-controls">
+              <button id="heatmap-prev-month" class="ghost icon-btn" type="button" aria-label="Show previous heatmap month">◀</button>
+              <select id="heatmap-month-select" aria-label="Select heatmap month"></select>
+              <button id="heatmap-next-month" class="ghost icon-btn" type="button" aria-label="Show next heatmap month">▶</button>
+            </div>
+          </div>
           <div id="heatmap-grid" class="heatmap"></div>
         </div>
         <aside class="chart-card snapshot-card snapshot-card-inline">
