@@ -3427,7 +3427,7 @@ textarea {
 }
 
 .metrics-grid .stats-card {
-  min-height: 114px;
+  min-height: 98px;
   padding: 12px;
   border-radius: 12px;
 }
@@ -3442,8 +3442,18 @@ textarea {
 }
 
 .metric-emphasis {
-  background: linear-gradient(150deg, rgba(11,191,122,0.18), rgba(11,191,122,0.04) 70%), var(--surface-2);
-  border-color: color-mix(in srgb, var(--accent) 44%, var(--border) 56%);
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  border-color: color-mix(in srgb, var(--border) 82%, transparent);
+}
+
+.metric-emphasis.positive {
+  background: linear-gradient(150deg, rgba(11,191,122,0.16), rgba(11,191,122,0.03) 72%), var(--surface-2);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
+}
+
+.metric-emphasis.negative {
+  background: linear-gradient(150deg, rgba(255,92,92,0.14), rgba(255,92,92,0.03) 72%), var(--surface-2);
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border) 58%);
 }
 
 .stats-mini {
@@ -3452,9 +3462,14 @@ textarea {
   color: var(--text-dim);
 }
 
-#hero-net-performance .stats-value,
-#kpi-return-pct {
+#hero-net-performance.positive .stats-value,
+#hero-return-card.positive .stats-value {
   color: var(--accent);
+}
+
+#hero-net-performance.negative .stats-value,
+#hero-return-card.negative .stats-value {
+  color: color-mix(in srgb, var(--danger) 88%, #ffc0c0 12%);
 }
 
 .analytics-block {
@@ -3472,23 +3487,20 @@ textarea {
 }
 
 .equity-hero-card {
-  min-height: 360px;
+  min-height: 0;
   padding: 14px;
   border-radius: 12px;
   border-color: color-mix(in srgb, var(--accent) 32%, var(--border) 68%);
   box-shadow: var(--shadow-soft), 0 0 0 1px rgba(11,191,122,0.16), 0 0 34px rgba(11,191,122,0.10);
 }
 
-.equity-hero-card canvas {
-  min-height: 280px;
-}
 
 .analytics-grid {
   gap: 10px;
 }
 
 .analytics-grid-risk .chart-card-risk {
-  min-height: 280px;
+  min-height: 0;
 }
 
 .chart-card {
@@ -3496,17 +3508,41 @@ textarea {
   padding: 12px;
 }
 
-.chart-card canvas {
-  max-height: none;
-  min-height: 220px;
+.chart-card {
+  min-height: 0;
+}
+
+.chart-frame {
+  position: relative;
+  height: clamp(190px, 24vh, 230px);
+  min-height: 190px;
+  max-height: 230px;
+  overflow: hidden;
+}
+
+.chart-frame-hero {
+  height: clamp(320px, 38vh, 370px);
+  min-height: 320px;
+  max-height: 370px;
+}
+
+.chart-frame-compact {
+  height: clamp(175px, 21vh, 210px);
+  min-height: 175px;
+  max-height: 210px;
+}
+
+.chart-frame canvas,
+.chart-frame > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
 }
 
 .compact-chart-card {
-  min-height: 240px !important;
-}
-
-.compact-chart-card canvas {
-  min-height: 175px;
+  min-height: 0 !important;
 }
 
 .behaviour-grid {
@@ -3605,5 +3641,21 @@ textarea {
 @media (max-width: 640px) {
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+
+@media (max-width: 900px) {
+  .chart-frame-hero {
+    height: 310px;
+    min-height: 310px;
+    max-height: 310px;
+  }
+
+  .chart-frame,
+  .chart-frame-compact {
+    height: 190px;
+    min-height: 190px;
+    max-height: 190px;
   }
 }

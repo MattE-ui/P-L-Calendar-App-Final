@@ -1,4 +1,5 @@
 const charts = {};
+const chartRenderCache = {};
 
 const state = {
   filters: {
@@ -12,7 +13,13 @@ const state = {
     winLoss: ''
   },
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  account: {
+    portfolioValue: 0,
+    netDeposits: 0,
+    netPerformance: 0,
+    returnPct: 0
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
@@ -197,6 +204,7 @@ function destroyChart(id) {
   if (charts[id]) {
     charts[id].destroy();
     delete charts[id];
+    delete chartRenderCache[id];
   }
 }
 
@@ -220,7 +228,10 @@ function showEmptyState(id, message) {
 }
 
 function renderChart(id, config) {
+  const cacheKey = JSON.stringify({ type: config?.type, data: config?.data, options: config?.options });
+  if (chartRenderCache[id] === cacheKey && charts[id]) return;
   destroyChart(id);
+  chartRenderCache[id] = cacheKey;
   if (config?.options?.scales) {
     Object.values(config.options.scales).forEach(scale => {
       if (!scale) return;
@@ -274,6 +285,12 @@ async function loadHeroMetrics() {
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
     const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
+    state.account = {
+      portfolioValue,
+      netDeposits: netDepositsValue,
+      netPerformance,
+      returnPct: netPerfPct
+    };
     const altCurrency = state.currency === 'GBP'
       ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
       : 'GBP';
@@ -304,6 +321,11 @@ async function loadHeroMetrics() {
       netPerfSub.textContent = pieces.join(' • ');
     }
     setMetricTrend(document.getElementById('hero-net-performance'), netPerformance);
+
+    const returnPctEl = document.getElementById('kpi-return-pct');
+    if (returnPctEl) returnPctEl.textContent = formatPercent(netPerfPct);
+    setMetricTrend(document.getElementById('hero-return-card'), netPerfPct);
+
     const portfolioCard = document.getElementById('hero-portfolio');
     if (portfolioCard) {
       setMetricTrend(portfolioCard, portfolioValue - netDepositsValue);
@@ -349,11 +371,20 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
 
   const returnPctEl = document.querySelector('#kpi-return-pct');
-  if (returnPctEl) returnPctEl.textContent = formatPercent(summary.returnPct);
+  const summaryReturn = Number(summary.returnPct);
+  const summaryNetPnl = (Number(summary.grossProfit) || 0) - (Number(summary.grossLoss) || 0);
+  const deposits = Number(state.account?.netDeposits);
+  const fallbackReturn = Number.isFinite(deposits) && deposits !== 0
+    ? (summaryNetPnl / Math.abs(deposits)) * 100
+    : Number(state.account?.returnPct);
+  const resolvedReturn = Number.isFinite(summaryReturn) ? summaryReturn : fallbackReturn;
+  if (returnPctEl) returnPctEl.textContent = Number.isFinite(resolvedReturn) ? formatPercent(resolvedReturn) : 'N/A';
+  setMetricTrend(document.querySelector('#hero-return-card'), Number.isFinite(resolvedReturn) ? resolvedReturn : 0);
+  setMetricTrend(document.querySelector('#hero-net-performance'), summaryNetPnl || Number(state.account?.netPerformance) || 0);
 
   document.querySelector('#snapshot-best-streak').textContent = streaks.maxWinStreak || 0;
   document.querySelector('#snapshot-worst-streak').textContent = streaks.maxLossStreak || 0;
-  document.querySelector('#snapshot-closed-trades').textContent = summary.closedTrades || 0;
+  document.querySelector('#snapshot-closed-trades').textContent = summary.closedTrades || summary.total || 0;
   document.querySelector('#snapshot-median').textContent = formatNumber(dist.median || 0);
   document.querySelector('#snapshot-stddev').textContent = dist.stddev !== null ? formatNumber(dist.stddev) : '—';
 }
@@ -402,6 +433,7 @@ function renderEquityCurve(curve = []) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
       interaction: { mode: 'index', intersect: false },
       scales: {
@@ -435,6 +467,7 @@ function renderDrawdown(drawdown = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
       scales: { x: { ticks: { maxTicksLimit: 7 } }, y: { ticks: { callback: v => formatNumber(v) } } }
     }
@@ -461,6 +494,7 @@ function renderDistribution(dist = {}) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
       scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { beginAtZero: true } }
     }
@@ -492,6 +526,7 @@ function renderBreakdown(canvasId, dataObj = {}, label) {
       responsive: true,
       maintainAspectRatio: false,
       indexAxis: horizontal ? 'y' : 'x',
+      animation: false,
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { callback: v => (isPct ? `${v}%` : formatNumber(v)) } },

@@ -136,7 +136,7 @@
           <div class="stats-value" id="hero-net-performance-value">£0.00</div>
           <p class="stats-sub" id="hero-net-performance-sub">—</p>
         </article>
-        <article class="stats-card metric-emphasis">
+        <article class="stats-card metric-emphasis" id="hero-return-card">
           <p class="stats-label">Return %</p>
           <div class="stats-value" id="kpi-return-pct">0.00%</div>
           <p class="stats-sub">On net deposited capital</p>
@@ -190,7 +190,7 @@
           <h3>Equity Curve</h3>
           <span id="equity-latest-value">£0.00</span>
         </div>
-        <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
+        <div class="chart-frame chart-frame-hero"><canvas id="equity-chart" aria-label="Equity curve chart"></canvas></div>
         <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
       </section>
     </section>
@@ -200,11 +200,11 @@
       <div class="analytics-grid analytics-grid-risk">
         <div class="chart-card chart-card-risk">
           <div class="section-header"><h3>Drawdown</h3></div>
-          <canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas>
+          <div class="chart-frame"><canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas></div>
         </div>
         <div class="chart-card chart-card-risk">
           <div class="section-header"><h3>P&amp;L Distribution</h3></div>
-          <canvas id="distribution-chart" aria-label="Distribution chart"></canvas>
+          <div class="chart-frame"><canvas id="distribution-chart" aria-label="Distribution chart"></canvas></div>
         </div>
       </div>
     </section>
@@ -214,15 +214,15 @@
       <div class="analytics-grid analytics-grid-trading">
         <div class="chart-card compact-chart-card">
           <div class="section-header"><h3>P&amp;L by Trade Type</h3></div>
-          <canvas id="type-chart"></canvas>
+          <div class="chart-frame chart-frame-compact"><canvas id="type-chart"></canvas></div>
         </div>
         <div class="chart-card compact-chart-card">
           <div class="section-header"><h3>P&amp;L by Strategy Tag</h3></div>
-          <canvas id="strategy-chart"></canvas>
+          <div class="chart-frame chart-frame-compact"><canvas id="strategy-chart"></canvas></div>
         </div>
         <div class="chart-card compact-chart-card winrate-card">
           <div class="section-header"><h3>Win Rate by Trade Type</h3></div>
-          <canvas id="winrate-type-chart"></canvas>
+          <div class="chart-frame chart-frame-compact"><canvas id="winrate-type-chart"></canvas></div>
         </div>
       </div>
     </section>
