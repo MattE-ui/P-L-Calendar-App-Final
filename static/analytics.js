@@ -288,7 +288,11 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
   document.querySelector('#kpi-median').textContent = `${formatNumber(dist.median || 0)} median`;
   document.querySelector('#kpi-stddev').textContent = dist.stddev !== null ? formatNumber(dist.stddev) : '—';
-  document.querySelector('#kpi-streaks').textContent = `${streaks.maxWinStreak || 0}W / ${streaks.maxLossStreak || 0}L`;
+  document.querySelector('#kpi-streaks').textContent = `${summary.wins || 0}W / ${summary.losses || 0}L`;
+  const streakSub = document.querySelector('#kpi-streaks-sub');
+  if (streakSub) {
+    streakSub.textContent = `Max streak: ${streaks.maxWinStreak || 0}W / ${streaks.maxLossStreak || 0}L`;
+  }
 }
 
 function renderEquityCurve(curve = []) {

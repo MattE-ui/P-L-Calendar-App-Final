@@ -60,89 +60,12 @@
   </aside>
 
   <main class="container analytics-page">
-    <section class="stats-hero">
-      <div class="stats-heading">
-        <span class="stats-icon">📊</span>
-        <div>
-          <h2>Trading Stats</h2>
-          <p>All-time performance metrics</p>
-        </div>
-      </div>
-      <p class="stats-range" id="analytics-range"></p>
-    </section>
-
-    <section class="stats-section">
-      <div class="stats-section-title">
-        <span class="stats-section-icon">📈</span>
-        <h3>Trading Performance</h3>
-      </div>
-      <div class="stats-grid">
-        <article class="stats-card">
-          <p class="stats-label">Win Rate</p>
-          <div class="stats-value" id="kpi-win-rate">0%</div>
-          <p class="stats-sub">Loss rate: <span id="kpi-loss-rate">0%</span></p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Average Win</p>
-          <div class="stats-value" id="kpi-avg-win">£0.00</div>
-          <p class="stats-sub">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Expectancy</p>
-          <div class="stats-value" id="kpi-expectancy">£0.00</div>
-          <p class="stats-sub">Profit factor: <span id="kpi-profit-factor">—</span></p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Average R</p>
-          <div class="stats-value gold-badge" id="kpi-r-multiple">—</div>
-          <p class="stats-sub">Closed trades only</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="stats-section">
-      <div class="stats-section-title">
-        <span class="stats-section-icon">💰</span>
-        <h3>Account Growth</h3>
-      </div>
-      <div class="stats-grid">
-        <article class="stats-card">
-          <p class="stats-label">Max Drawdown</p>
-          <div class="stats-value" id="kpi-drawdown">£0.00</div>
-          <p class="stats-sub">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Distribution</p>
-          <div class="stats-value" id="kpi-median">£0.00 median</div>
-          <p class="stats-sub">Std dev: <span id="kpi-stddev">—</span></p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Streaks</p>
-          <div class="stats-value" id="kpi-streaks">—</div>
-          <p class="stats-sub">Wins / losses</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Profit Factor</p>
-          <div class="stats-value" id="kpi-profit-factor-secondary">—</div>
-          <p class="stats-sub">From closed trades</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="stats-card stats-card-wide">
-      <div class="stats-card-header">
-        <h3>Equity Curve</h3>
-        <span id="equity-latest-value">£0.00</span>
-      </div>
-      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
-      <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
-    </section>
-
     <section class="analytics-filters tool-card">
       <div class="section-header">
         <div>
           <p class="tool-overline">Filters</p>
           <h3>Date & trade filters</h3>
+          <p class="stats-range" id="analytics-range"></p>
         </div>
       </div>
       <div class="filter-bar">
@@ -202,6 +125,74 @@
         <button id="reset-filters-btn" class="ghost">Reset</button>
       </div>
     </section>
+
+    <section class="stats-section">
+      <div class="stats-section-title">
+        <span class="stats-section-icon">📈</span>
+        <h3>Trading Performance</h3>
+      </div>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="stats-label">Win Rate</p>
+          <div class="stats-value" id="kpi-win-rate">0%</div>
+          <p class="stats-sub">Loss rate: <span id="kpi-loss-rate">0%</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Average Win</p>
+          <div class="stats-value" id="kpi-avg-win">£0.00</div>
+          <p class="stats-sub">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Expectancy</p>
+          <div class="stats-value" id="kpi-expectancy">£0.00</div>
+          <p class="stats-sub">Profit factor: <span id="kpi-profit-factor">—</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Average R</p>
+          <div class="stats-value gold-badge" id="kpi-r-multiple">—</div>
+          <p class="stats-sub">Closed trades only</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="stats-section">
+      <div class="stats-section-title">
+        <span class="stats-section-icon">💰</span>
+        <h3>Account Growth</h3>
+      </div>
+      <div class="stats-grid">
+        <article class="stats-card">
+          <p class="stats-label">Max Drawdown</p>
+          <div class="stats-value" id="kpi-drawdown">£0.00</div>
+          <p class="stats-sub">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Distribution</p>
+          <div class="stats-value" id="kpi-median">£0.00 median</div>
+          <p class="stats-sub">Std dev: <span id="kpi-stddev">—</span></p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Streaks</p>
+          <div class="stats-value" id="kpi-streaks">—</div>
+          <p class="stats-sub" id="kpi-streaks-sub">Max streak: 0W / 0L</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Profit Factor</p>
+          <div class="stats-value" id="kpi-profit-factor-secondary">—</div>
+          <p class="stats-sub">From closed trades</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="stats-card stats-card-wide">
+      <div class="stats-card-header">
+        <h3>Equity Curve</h3>
+        <span id="equity-latest-value">£0.00</span>
+      </div>
+      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
+      <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
+    </section>
+
 
     <section class="analytics-grid">
       <div class="chart-card">
