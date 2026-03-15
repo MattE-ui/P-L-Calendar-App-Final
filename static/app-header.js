@@ -7,6 +7,7 @@
     if (path.endsWith('/analytics.html')) return 'analytics';
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
+    if (path.endsWith('/social.html')) return 'social';
     if (path.endsWith('/profile.html')) return 'profile';
     if (isDashboardRoute) return 'dashboard';
     return '';
@@ -17,6 +18,7 @@
     { key: 'trades', label: 'Trades', href: '/trades.html' },
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
     { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
+    { key: 'social', label: 'Social', href: '/social.html' },
     { key: 'profile', label: 'Profile', href: '/profile.html' }
   ];
 
