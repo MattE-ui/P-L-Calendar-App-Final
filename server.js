@@ -203,6 +203,26 @@ function isNicknameAvailable(db, nickname, username) {
   });
 }
 
+function generateFriendCode(db, currentUsername = null) {
+  const users = db?.users || {};
+  const existingCodes = new Set();
+  for (const [username, user] of Object.entries(users)) {
+    if (currentUsername && username === currentUsername) continue;
+    if (typeof user?.friendCode === 'string' && user.friendCode.trim()) {
+      existingCodes.add(user.friendCode.trim().toUpperCase());
+    }
+  }
+
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let candidate = '';
+  do {
+    const partA = Array.from({ length: 4 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+    const partB = Array.from({ length: 4 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+    candidate = `${partA}-${partB}`;
+  } while (existingCodes.has(candidate));
+  return candidate;
+}
+
 const Trading212Error = (() => {
   if (global.__Trading212Error__) {
     return global.__Trading212Error__;
@@ -386,7 +406,16 @@ function loadDB() {
       db.investorInvites = [];
     }
     db.investorSessions ||= {};
-    const mutated = reconcileIbkrTokenSecret(db);
+    let mutated = reconcileIbkrTokenSecret(db);
+    for (const [username, user] of Object.entries(db.users)) {
+      if (ensureUserShape(user, username)) {
+        mutated = true;
+      }
+      if (!user.friendCode) {
+        user.friendCode = generateFriendCode(db, username);
+        mutated = true;
+      }
+    }
     if (mutated) {
       try {
         saveDB(db);
@@ -1305,6 +1334,17 @@ function ensureUserShape(user, identifier) {
       mutated = true;
     } else if (normalized.value !== user.nickname) {
       user.nickname = normalized.value;
+      mutated = true;
+    }
+  }
+  if (user.friendCode !== undefined && typeof user.friendCode !== 'string') {
+    delete user.friendCode;
+    mutated = true;
+  }
+  if (typeof user.friendCode === 'string') {
+    const normalizedCode = user.friendCode.trim().toUpperCase();
+    if (normalizedCode !== user.friendCode) {
+      user.friendCode = normalizedCode;
       mutated = true;
     }
   }
@@ -5257,6 +5297,7 @@ app.get('/', (req, res) => {
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
+app.get('/social.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
 app.get('/investor/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'investor-login.html'));
 });
@@ -5327,6 +5368,7 @@ app.post('/api/signup', asyncHandler(async (req,res)=>{
     username,
     passwordHash,
     nickname: '',
+    friendCode: generateFriendCode(db, username),
     portfolio: 0,
     initialPortfolio: 0,
     initialNetDeposits: 0,
@@ -5437,6 +5479,7 @@ app.post('/api/auth/guest', asyncHandler(async (req, res) => {
     expiresAt,
     passwordHash: '',
     nickname: '',
+    friendCode: generateFriendCode(db, username),
     portfolio: 0,
     initialPortfolio: 0,
     initialNetDeposits: 0,
@@ -5984,6 +6027,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     username: user.username || req.username,
     displayName: user.displayName || user.username || req.username,
     nickname: user.nickname || user.displayName || user.username || req.username,
+    friendCode: user.friendCode || '',
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username),
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
