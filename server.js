@@ -6446,6 +6446,7 @@ app.get('/api/social/me', auth, (req, res) => {
   ensureUserShape(user, req.username);
   const profile = getSocialProfile(db, req.username);
   const settings = getSocialSettings(db, req.username);
+  recomputeLeaderboardStatsForUser(db, req.username);
   saveDB(db);
   res.json({ profile, settings });
 });

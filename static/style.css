@@ -4048,17 +4048,213 @@ textarea {
   }
 }
 
+
 .social-page {
-  max-width: 900px;
+  max-width: 1180px;
+  display: grid;
+  gap: 14px;
+}
+
+.social-opt-in-note {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border) 80%);
+  border-radius: 10px;
+  background: rgba(11,191,122,0.05);
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
 }
 
 .social-card {
-  margin-top: 1.5rem;
+  margin-top: 0;
+  padding: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)), var(--surface-1);
+}
+
+.social-header h1,
+.social-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+}
+
+.social-profile-content {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 14px;
+}
+
+.social-friend-code-wrap,
+.social-verification-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255,255,255,0.015);
+}
+
+.social-friend-code-row,
+.social-verification-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .social-friend-code {
-  margin-top: 0.75rem;
-  font-size: 2rem;
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  color: #dfffee;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border) 55%);
+  background: rgba(11,191,122,0.08);
+}
+
+.social-inline-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.social-status-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+}
+
+.social-status-pill.is-verified {
+  color: #8bf0c4;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
+  background: rgba(11,191,122,0.15);
+}
+
+.social-status-pill.is-platform {
+  color: #a6c8ff;
+  border-color: color-mix(in srgb, var(--info) 55%, var(--border) 45%);
+  background: rgba(79,140,255,0.15);
+}
+
+.social-status-pill.is-unverified {
+  color: var(--text-muted);
+}
+
+.social-settings-form {
+  display: grid;
+  gap: 12px;
+}
+
+.social-settings-group {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.012);
+  overflow: hidden;
+}
+
+.social-settings-group-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.01);
+}
+
+.social-settings-group-header h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.social-settings-group-header .helper {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.social-setting-list {
+  display: grid;
+}
+
+.social-setting-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  background: transparent;
+}
+
+.social-setting-row + .social-setting-row {
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+
+.social-setting-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.social-setting-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.social-setting-row .helper {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.social-setting-row input[type="checkbox"] {
+  inline-size: 18px;
+  block-size: 18px;
+  accent-color: var(--accent);
+}
+
+.social-setting-row select {
+  margin-top: 2px;
+}
+
+.social-setting-row.is-muted {
+  opacity: 0.56;
+}
+
+.social-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+@media (max-width: 980px) {
+  .social-page {
+    max-width: 980px;
+  }
+
+  .social-profile-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .social-friend-code {
+    font-size: 1.1rem;
+    letter-spacing: 0.1em;
+  }
+
+  .social-settings-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
