@@ -123,10 +123,22 @@ function getRequestUserDisplay(request, direction) {
   return { name: displayName, secondary: code || fallbackId };
 }
 
-function createEmptyState(message) {
-  const empty = document.createElement('p');
+function createEmptyState(title, detail = '') {
+  const empty = document.createElement('div');
   empty.className = 'social-empty-state';
-  empty.textContent = message;
+
+  const titleEl = document.createElement('p');
+  titleEl.className = 'social-empty-state-title';
+  titleEl.textContent = title;
+  empty.appendChild(titleEl);
+
+  if (detail) {
+    const detailEl = document.createElement('p');
+    detailEl.className = 'social-empty-state-detail';
+    detailEl.textContent = detail;
+    empty.appendChild(detailEl);
+  }
+
   return empty;
 }
 
@@ -200,7 +212,7 @@ function renderFriendSection() {
   clearNode(friendsEl);
 
   if (socialState.friendsError) {
-    const err = createEmptyState(socialState.friendsError);
+    const err = createEmptyState('Friend data unavailable', socialState.friendsError);
     err.classList.add('is-error');
     incomingEl?.appendChild(err.cloneNode(true));
     outgoingEl?.appendChild(err.cloneNode(true));
@@ -210,11 +222,11 @@ function renderFriendSection() {
 
   const incoming = socialState.incomingRequests;
   if (!incoming.length) {
-    incomingEl?.appendChild(createEmptyState('No incoming requests.'));
+    incomingEl?.appendChild(createEmptyState('No incoming requests', 'New requests will appear here.'));
   } else {
     incoming.forEach(request => {
       const row = document.createElement('article');
-      row.className = 'social-list-row';
+      row.className = 'social-list-row social-list-row--request';
       const display = getRequestUserDisplay(request, 'incoming');
       row.appendChild(createIdentityRow(display.name, display.secondary));
 
@@ -238,11 +250,11 @@ function renderFriendSection() {
 
   const outgoing = socialState.outgoingRequests;
   if (!outgoing.length) {
-    outgoingEl?.appendChild(createEmptyState('No outgoing requests.'));
+    outgoingEl?.appendChild(createEmptyState('No outgoing requests', 'Sent requests stay here until accepted or cancelled.'));
   } else {
     outgoing.forEach(request => {
       const row = document.createElement('article');
-      row.className = 'social-list-row';
+      row.className = 'social-list-row social-list-row--request';
       const display = getRequestUserDisplay(request, 'outgoing');
       row.appendChild(createIdentityRow(display.name, display.secondary));
 
@@ -260,11 +272,11 @@ function renderFriendSection() {
 
   const friends = socialState.friends;
   if (!friends.length) {
-    friendsEl?.appendChild(createEmptyState('No friends added yet.'));
+    friendsEl?.appendChild(createEmptyState('No friends added yet', 'Send a friend-code request to build your network.'));
   } else {
     friends.forEach(friend => {
       const row = document.createElement('article');
-      row.className = 'social-list-row';
+      row.className = 'social-list-row social-list-row--friend';
       const badge = friend.verification_status === 'broker_verified' ? 'Broker verified'
         : friend.verification_status === 'platform_verified' ? 'Platform verified'
         : '';
