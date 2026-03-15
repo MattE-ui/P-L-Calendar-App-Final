@@ -103,6 +103,9 @@ body {
 }
 
 .app-shell-nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-muted);
   text-decoration: none;
   font-size: 13px;
@@ -114,6 +117,23 @@ body {
   border-radius: 0;
   white-space: nowrap;
   transition: color .16s ease, border-color .16s ease, background-color .16s ease;
+}
+
+.social-nav-pending-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  color: #09110f;
+  background: color-mix(in srgb, var(--accent) 85%, #ffffff 15%);
+  box-shadow: 0 0 0 1px rgba(7, 24, 17, 0.5);
 }
 
 .app-shell-nav__link:hover {
