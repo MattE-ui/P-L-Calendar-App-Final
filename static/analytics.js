@@ -371,16 +371,11 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
 
   const returnPctEl = document.querySelector('#kpi-return-pct');
-  const summaryReturn = Number(summary.returnPct);
-  const summaryNetPnl = (Number(summary.grossProfit) || 0) - (Number(summary.grossLoss) || 0);
-  const deposits = Number(state.account?.netDeposits);
-  const fallbackReturn = Number.isFinite(deposits) && deposits !== 0
-    ? (summaryNetPnl / Math.abs(deposits)) * 100
-    : Number(state.account?.returnPct);
-  const resolvedReturn = Number.isFinite(summaryReturn) ? summaryReturn : fallbackReturn;
+  const accountReturnPct = Number(state.account?.returnPct);
+  const resolvedReturn = Number.isFinite(accountReturnPct) ? accountReturnPct : Number(summary.returnPct);
   if (returnPctEl) returnPctEl.textContent = Number.isFinite(resolvedReturn) ? formatPercent(resolvedReturn) : 'N/A';
   setMetricTrend(document.querySelector('#hero-return-card'), Number.isFinite(resolvedReturn) ? resolvedReturn : 0);
-  setMetricTrend(document.querySelector('#hero-net-performance'), summaryNetPnl || Number(state.account?.netPerformance) || 0);
+  setMetricTrend(document.querySelector('#hero-net-performance'), Number(state.account?.netPerformance) || 0);
 
   document.querySelector('#snapshot-best-streak').textContent = streaks.maxWinStreak || 0;
   document.querySelector('#snapshot-worst-streak').textContent = streaks.maxLossStreak || 0;
