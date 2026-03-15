@@ -479,6 +479,27 @@
       <pre id="t212-raw-content" class="raw-json"></pre>
     </div>
   </div>
+  <div id="avatar-editor-modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card avatar-editor-card">
+      <div class="modal-header">
+        <h3>Frame avatar</h3>
+        <button id="avatar-editor-close" class="ghost" type="button">Close</button>
+      </div>
+      <p class="helper">Position your image for a circular avatar preview. The saved output is a square image optimized for web display.</p>
+      <div class="avatar-editor-stage-wrap">
+        <canvas id="avatar-editor-canvas" class="avatar-editor-canvas" width="320" height="320"></canvas>
+      </div>
+      <div class="avatar-editor-controls">
+        <label for="avatar-editor-zoom">Zoom</label>
+        <input id="avatar-editor-zoom" type="range" min="1" max="3" step="0.01" value="1">
+      </div>
+      <div id="avatar-editor-error" class="error"></div>
+      <div class="modal-actions avatar-editor-actions">
+        <button id="avatar-editor-cancel" class="ghost" type="button">Cancel</button>
+        <button id="avatar-editor-save" class="primary" type="button">Save avatar</button>
+      </div>
+    </div>
+  </div>
   <script src="static/theme-utils.js"></script>
   <script src="static/social-avatar.js"></script>
   <script src="static/app-header.js"></script>

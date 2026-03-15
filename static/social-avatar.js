@@ -44,6 +44,9 @@
         node.classList.remove('has-image');
       });
       node.appendChild(image);
+      if (image.complete && image.naturalWidth > 0) {
+        node.classList.add('has-image');
+      }
     }
 
     return node;

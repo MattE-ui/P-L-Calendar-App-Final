@@ -4840,3 +4840,53 @@ textarea {
   flex-wrap: wrap;
   gap: 4px;
 }
+
+.social-avatar.has-image .social-avatar__fallback {
+  display: none;
+}
+
+.avatar-editor-card {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.avatar-editor-stage-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background: rgba(4, 10, 16, 0.82);
+}
+
+.avatar-editor-canvas {
+  width: min(320px, 100%);
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  cursor: grab;
+  touch-action: none;
+  border: 1px solid rgba(79, 209, 167, 0.2);
+}
+
+.avatar-editor-canvas:active {
+  cursor: grabbing;
+}
+
+.avatar-editor-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.avatar-editor-controls label {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.avatar-editor-controls input[type="range"] {
+  width: 100%;
+}
+
+.avatar-editor-actions {
+  justify-content: flex-end;
+}
