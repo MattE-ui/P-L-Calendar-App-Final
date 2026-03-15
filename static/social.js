@@ -50,12 +50,19 @@ function getEl(id) {
   return document.getElementById(id);
 }
 
-function toTitleCase(value) {
-  return String(value || '')
-    .split('_')
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+function formatVerificationSource(source) {
+  switch (source) {
+    case 'ibkr':
+      return 'IBKR';
+    case 'trading212':
+      return 'Trading 212';
+    case 'platform_locked':
+      return 'Platform Locked';
+    case 'manual':
+      return 'Manual';
+    default:
+      return source ? String(source).replace(/_/g, ' ') : '';
+  }
 }
 
 function getVerificationDisplay(status, source) {
@@ -63,7 +70,7 @@ function getVerificationDisplay(status, source) {
     return {
       label: 'Broker Verified',
       badgeClass: 'is-verified',
-      sourceLabel: source ? `Source: ${toTitleCase(source)}` : '',
+      sourceLabel: source ? `Source: ${formatVerificationSource(source)}` : '',
       description: 'Calculated from broker-synced account data for trusted verification.'
     };
   }
@@ -71,14 +78,14 @@ function getVerificationDisplay(status, source) {
     return {
       label: 'Platform Verified',
       badgeClass: 'is-platform',
-      sourceLabel: source ? `Source: ${toTitleCase(source)}` : '',
-      description: 'Calculated from tracked platform trade history. Eligible experiences may depend on this status.'
+      sourceLabel: source ? `Source: ${formatVerificationSource(source)}` : 'Source: Platform Tracked',
+      description: 'Calculated from tracked platform trade history. Eligibility for trusted rankings may depend on this status.'
     };
   }
   return {
     label: 'Unverified',
     badgeClass: 'is-unverified',
-    sourceLabel: source ? `Source: ${toTitleCase(source)}` : '',
+    sourceLabel: source ? `Source: ${formatVerificationSource(source)}` : '',
     description: 'Not currently eligible for trusted rankings. You can still keep social features private and opt in later.'
   };
 }
@@ -141,6 +148,7 @@ function applyFormSettings(settings) {
       control.value = hasOption ? value : 'private';
     }
   }
+  updateDependentControls();
 }
 
 function isDirty() {
@@ -156,6 +164,27 @@ function setFormDisabled(disabled) {
   controls.forEach(control => {
     control.disabled = disabled;
   });
+}
+
+function setDependentGroupState(type, disabled) {
+  const rows = document.querySelectorAll(`[data-social-dependent="${type}"]`);
+  rows.forEach(row => {
+    row.classList.toggle('is-muted', disabled);
+    row.querySelectorAll('input, select').forEach(control => {
+      control.disabled = disabled || socialState.loading || socialState.isGuest;
+    });
+  });
+}
+
+function updateDependentControls() {
+  const form = getEl('social-settings-form');
+  if (!form) return;
+
+  const leaderboardEnabled = !!form.elements.namedItem('leaderboard_enabled')?.checked;
+  const sharingEnabled = !!form.elements.namedItem('trade_sharing_enabled')?.checked;
+
+  setDependentGroupState('leaderboard', !leaderboardEnabled);
+  setDependentGroupState('trade-sharing', !sharingEnabled);
 }
 
 function updateActionState() {
@@ -177,6 +206,8 @@ function updateActionState() {
   if (copyBtn) {
     copyBtn.disabled = socialState.loading;
   }
+
+  updateDependentControls();
 }
 
 function bindSettingsChangeTracking() {
