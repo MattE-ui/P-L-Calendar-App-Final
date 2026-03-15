@@ -30,8 +30,22 @@ test('mapIbkrPosition maps core fields', () => {
   assert.equal(mapped.buyPrice, 190.25);
   assert.equal(mapped.pnlValue, 55.5);
   assert.equal(mapped.currency, 'USD');
+  assert.equal(mapped.assetClass, 'stocks');
   assert.equal(mapped.livePrice, 195.8);
   assert.equal(mapped.conid, '265598');
+});
+
+test('mapIbkrPosition maps options secType to options asset class', () => {
+  const raw = {
+    symbol: 'SPY  241220C00500000',
+    position: 2,
+    avgPrice: 4.2,
+    currency: 'USD',
+    secType: 'OPT'
+  };
+  const mapped = mapIbkrPosition(raw);
+  assert.equal(mapped.ticker, 'SPY  241220C00500000');
+  assert.equal(mapped.assetClass, 'options');
 });
 
 test('parseIbkrOrders filters to open SELL stop orders', () => {

@@ -2326,6 +2326,34 @@ td .mapping-badge {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
+
+.analytics-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.analytics-grid .chart-card {
+  min-height: 360px;
+}
+
+.analytics-grid .winrate-card,
+.analytics-grid .heatmap-card {
+  grid-column: 1 / -1;
+}
+
+.analytics-grid .heatmap-card {
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-grid .winrate-card,
+  .analytics-grid .heatmap-card {
+    grid-column: auto;
+  }
+}
 .kpi-card, .chart-card, .list-card {
   background: var(--surface-1);
   border: 1px solid var(--border);

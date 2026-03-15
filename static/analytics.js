@@ -103,10 +103,12 @@ function toQuery(params = {}) {
 
 function formatPercent(value) {
   if (value === null || value === undefined) return '—';
-  if (value === 0) return '0.00%';
   const num = Number(value);
-  const sign = num < 0 ? '-' : '';
-  return `${sign}${Math.abs(num).toFixed(2)}%`;
+  if (!Number.isFinite(num)) return '—';
+  if (num === 0) return '0.00%';
+  const normalized = Math.abs(num) <= 1 ? num * 100 : num;
+  const sign = normalized < 0 ? '-' : '';
+  return `${sign}${Math.abs(normalized).toFixed(2)}%`;
 }
 
 function formatNumber(value) {
@@ -288,7 +290,11 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
   document.querySelector('#kpi-median').textContent = `${formatNumber(dist.median || 0)} median`;
   document.querySelector('#kpi-stddev').textContent = dist.stddev !== null ? formatNumber(dist.stddev) : '—';
-  document.querySelector('#kpi-streaks').textContent = `${streaks.maxWinStreak || 0}W / ${streaks.maxLossStreak || 0}L`;
+  document.querySelector('#kpi-streaks').textContent = `${summary.wins || 0}W / ${summary.losses || 0}L`;
+  const streakSub = document.querySelector('#kpi-streaks-sub');
+  if (streakSub) {
+    streakSub.textContent = `Max streak: ${streaks.maxWinStreak || 0}W / ${streaks.maxLossStreak || 0}L`;
+  }
 }
 
 function renderEquityCurve(curve = []) {
