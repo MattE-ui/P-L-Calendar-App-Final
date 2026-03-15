@@ -61,7 +61,10 @@ body {
   position: sticky;
   top: 0;
   z-index: 1200;
-  height: 62px;
+  width: 100%;
+  min-height: 62px;
+  display: flex;
+  align-items: stretch;
   backdrop-filter: blur(12px);
   background: linear-gradient(180deg, rgba(12, 15, 20, 0.97), rgba(10, 13, 19, 0.94));
   border-bottom: 1px solid rgba(39, 48, 66, 0.95);
@@ -70,7 +73,8 @@ body {
 .app-shell-header__inner {
   max-width: 1600px;
   margin: 0 auto;
-  height: 62px;
+  height: 100%;
+  min-height: 62px;
   padding: 0 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -196,7 +200,7 @@ h1, h2, h3, h4 {
 
 .container {
   max-width: 1600px;
-  margin: 10px auto 32px;
+  margin: 0 auto 32px;
   padding: 0 16px 32px;
 }
 .dashboard-grid {
@@ -3900,20 +3904,3 @@ textarea {
 }
 
 
-@media (max-width: 1280px) {
-  .portfolio-metrics-bar {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 768px) {
-  .portfolio-metrics-bar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 520px) {
-  .portfolio-metrics-bar {
-    grid-template-columns: 1fr;
-  }
-}

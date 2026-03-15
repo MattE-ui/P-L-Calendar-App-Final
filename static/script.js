@@ -747,33 +747,6 @@ function computeLifetimeMetrics() {
 }
 
 
-function computeTradeHeadlineMetrics() {
-  const trades = Object.values(state.data || {}).flatMap((days = {}) => Object.values(days || {}))
-    .flatMap(record => normalizeTradeRecords(record?.trades));
-  const closedTrades = trades.filter(trade => trade.status === 'closed' && Number.isFinite(trade.closePrice));
-  const winners = closedTrades.filter(trade => {
-    const pnl = Number(trade.closePrice - trade.entry) * Number(trade.sizeUnits || 0);
-    return Number.isFinite(pnl) && pnl > 0;
-  });
-  const avgRiskMultiple = (() => {
-    const values = closedTrades
-      .map(trade => {
-        const pnl = Number(trade.closePrice - trade.entry) * Number(trade.sizeUnits || 0);
-        return getTradeRiskMultiple(trade, toGBP(pnl, trade.currency || 'GBP'));
-      })
-      .filter(value => Number.isFinite(value));
-    if (!values.length) return null;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-  })();
-  return {
-    totalTrades: trades.length,
-    closedTrades: closedTrades.length,
-    winners: winners.length,
-    winRate: closedTrades.length ? (winners.length / closedTrades.length) * 100 : 0,
-    avgRiskMultiple
-  };
-}
-
 function getLatestPortfolioGBP() {
   const live = Number(state.livePortfolioGBP);
   if (Number.isFinite(live) && live > 0) return live;
@@ -2253,11 +2226,11 @@ function renderMetrics() {
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
-  const portfolioValueEl = $('#metric-portfolio-value');
+  const portfolioValueEl = $('#header-portfolio-value');
   if (portfolioValueEl) {
     portfolioValueEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
   }
-  const portfolioSubEl = $('#metric-portfolio-sub');
+  const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
       portfolioSubEl.textContent = '';
