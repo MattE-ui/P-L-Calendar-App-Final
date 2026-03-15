@@ -169,6 +169,74 @@
         </div>
       </form>
     </section>
+
+    <section class="card social-card" aria-labelledby="social-friends-title">
+      <header class="social-header">
+        <p class="tool-overline">Friend management</p>
+        <h2 id="social-friends-title">Friends</h2>
+      </header>
+
+      <div id="social-friends-disabled" class="helper hidden"></div>
+
+      <div class="social-friends-grid">
+        <p class="social-friends-intro helper">Build your trusted network with friend codes, pending requests, and quick relationship controls.</p>
+        <section class="social-friends-block" aria-labelledby="social-add-friend-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-add-friend-title">Add friend</h3>
+          </header>
+
+          <form id="social-add-friend-form" class="social-add-friend-form" novalidate>
+            <div class="social-add-friend-shell">
+            <label for="social-add-friend-code" class="helper">Enter a trader's friend code</label>
+            <div class="social-add-friend-row">
+              <input
+                id="social-add-friend-code"
+                name="friendCode"
+                type="text"
+                maxlength="32"
+                autocomplete="off"
+                placeholder="ABCD-1234"
+                aria-describedby="social-add-friend-helper"
+              >
+              <button id="social-add-friend-btn" class="primary" type="submit">Send</button>
+            </div>
+            <p id="social-add-friend-helper" class="helper">Use a verified friend code to send a direct request.</p>
+            <p id="social-add-friend-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-requests-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-requests-title">Requests</h3>
+          </header>
+
+          <div class="social-request-group" aria-labelledby="social-incoming-title">
+            <div class="social-subpanel-head">
+            <h4 id="social-incoming-title">Incoming</h4>
+              <span class="social-subpanel-caption">Needs your decision</span>
+            </div>
+            <div id="social-incoming-requests" class="social-list"></div>
+          </div>
+
+          <div class="social-request-group" aria-labelledby="social-outgoing-title">
+            <div class="social-subpanel-head">
+            <h4 id="social-outgoing-title">Outgoing</h4>
+              <span class="social-subpanel-caption">Waiting on response</span>
+            </div>
+            <div id="social-outgoing-requests" class="social-list"></div>
+          </div>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-friends-list-title">
+          <p class="social-friends-block-note helper">Your active trader connections.</p>
+          <header class="social-friends-block-header">
+            <h3 id="social-friends-list-title">Current friends</h3>
+          </header>
+          <div id="social-friends-list" class="social-list"></div>
+        </section>
+      </div>
+    </section>
   </main>
 
   <script src="static/theme-utils.js"></script>
