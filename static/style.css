@@ -3718,7 +3718,7 @@ textarea {
 }
 
 .behaviour-grid {
-  grid-template-columns: 1.25fr 0.75fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
 }
 
@@ -3834,7 +3834,7 @@ textarea {
 
 
 .analytics-grid-trading {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3901,11 +3901,11 @@ textarea {
 
 @media (max-width: 1200px) {
   .analytics-grid-trading {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .behaviour-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3914,4 +3914,3 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-
