@@ -1,3 +1,10 @@
+(() => {
+  if (window.__veracitySocialPageInitialized) {
+    // Defensive guard: tolerate accidental duplicate script inclusion without re-binding listeners.
+    return;
+  }
+  window.__veracitySocialPageInitialized = true;
+
 const SOCIAL_SETTING_KEYS = [
   'leaderboard_enabled',
   'trade_sharing_enabled',
@@ -10,6 +17,24 @@ const SOCIAL_SETTING_KEYS = [
   'leaderboard_visibility',
   'trade_sharing_scope'
 ];
+
+const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+const DEFAULT_LEADERBOARD_PERIOD = '30D';
+
+const DEFAULT_SOCIAL_SETTINGS = {
+  leaderboard_enabled: false,
+  trade_sharing_enabled: false,
+  allow_friend_requests: false,
+  share_open_trades: false,
+  share_closed_trades: false,
+  show_pnl_percent: true,
+  show_pnl_currency: false,
+  show_position_size: false,
+  leaderboard_visibility: 'private',
+  trade_sharing_scope: 'private',
+  verification_status: 'none',
+  verification_source: null
+};
 
 const socialState = {
   loading: true,
@@ -31,7 +56,11 @@ const socialState = {
   friendActionIds: new Set(),
   nicknameRequired: false,
   nickname: '',
-  friendPollTimer: null
+  friendPollTimer: null,
+  leaderboardLoading: false,
+  leaderboardError: '',
+  leaderboardEntries: [],
+  leaderboardPeriod: DEFAULT_LEADERBOARD_PERIOD
 };
 
 const TRANSIENT_FEEDBACK_TTL_MS = 15000;
@@ -109,6 +138,15 @@ function getVerificationDisplay(status, source) {
   };
 }
 
+
+
+function normalizeSocialSettings(settings = {}) {
+  const safe = (settings && typeof settings === 'object') ? settings : {};
+  return {
+    ...DEFAULT_SOCIAL_SETTINGS,
+    ...safe
+  };
+}
 
 function normalizeFriendCode(value) {
   return String(value || '')
@@ -195,6 +233,179 @@ function createIdentityRow(name, secondary, badge, identity = {}) {
   if (meta.childElementCount) textWrap.appendChild(meta);
   wrap.appendChild(textWrap);
   return wrap;
+}
+
+function normalizeLeaderboardEntry(entry = {}, rank = 0) {
+  if (!entry || typeof entry !== 'object') return null;
+  const verificationStatus = typeof entry.verification_status === 'string' ? entry.verification_status : 'none';
+  return {
+    rank: rank + 1,
+    nickname: String(entry.nickname || '').trim() || 'Unknown trader',
+    avatar_url: entry.avatar_url || '',
+    avatar_initials: entry.avatar_initials || '',
+    return_pct: Number(entry.return_pct),
+    trade_count: Number(entry.trade_count),
+    win_rate: Number(entry.win_rate),
+    verification_status: verificationStatus,
+    verification_source: entry.verification_source || null
+  };
+}
+
+function formatReturnPct(value) {
+  if (!Number.isFinite(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatWinRate(value) {
+  if (!Number.isFinite(value)) return '';
+  const normalized = value <= 1 ? value * 100 : value;
+  return `Win ${normalized.toFixed(0)}%`;
+}
+
+function renderLeaderboardFilters() {
+  const wrap = getEl('social-leaderboard-periods');
+  if (!wrap) return;
+  clearNode(wrap);
+
+  LEADERBOARD_PERIODS.forEach(period => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'social-period-pill';
+    if (period === socialState.leaderboardPeriod) button.classList.add('is-active');
+    button.disabled = socialState.leaderboardLoading;
+    button.textContent = period;
+    button.setAttribute('aria-pressed', period === socialState.leaderboardPeriod ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      if (socialState.leaderboardLoading || socialState.leaderboardPeriod === period) return;
+      socialState.leaderboardPeriod = period;
+      renderLeaderboardSection();
+      loadLeaderboard();
+    });
+    wrap.appendChild(button);
+  });
+}
+
+function renderLeaderboardSection() {
+  const listEl = getEl('social-leaderboard-list');
+  const loadingEl = getEl('social-leaderboard-loading');
+  const errorEl = getEl('social-leaderboard-error');
+  const emptyEl = getEl('social-leaderboard-empty');
+
+  renderLeaderboardFilters();
+
+  if (loadingEl) loadingEl.classList.toggle('hidden', !socialState.leaderboardLoading);
+  if (errorEl) {
+    if (socialState.leaderboardError) {
+      errorEl.classList.remove('hidden');
+      errorEl.textContent = '';
+      const title = document.createElement('p');
+      title.className = 'social-empty-state-title';
+      title.textContent = 'Unable to load leaderboard';
+      const detail = document.createElement('p');
+      detail.className = 'social-empty-state-detail';
+      detail.textContent = socialState.leaderboardError;
+      const retry = createActionButton('Retry', 'ghost');
+      retry.addEventListener('click', () => loadLeaderboard());
+      errorEl.appendChild(title);
+      errorEl.appendChild(detail);
+      errorEl.appendChild(retry);
+    } else {
+      errorEl.classList.add('hidden');
+      errorEl.textContent = '';
+    }
+  }
+
+  const hasEntries = Array.isArray(socialState.leaderboardEntries) && socialState.leaderboardEntries.length > 0;
+  if (emptyEl) emptyEl.classList.toggle('hidden', socialState.leaderboardLoading || !!socialState.leaderboardError || hasEntries);
+
+  if (!listEl) return;
+  clearNode(listEl);
+  listEl.classList.toggle('hidden', !hasEntries || !!socialState.leaderboardError);
+  if (!hasEntries || socialState.leaderboardError) return;
+
+  socialState.leaderboardEntries.forEach(entry => {
+    const row = document.createElement('article');
+    row.className = 'social-list-row social-list-row--leaderboard';
+    if (entry.rank <= 3) row.classList.add('is-top-rank');
+
+    const left = document.createElement('div');
+    left.className = 'social-leaderboard-left';
+
+    const rank = document.createElement('span');
+    rank.className = 'social-rank';
+    rank.textContent = `#${entry.rank}`;
+    left.appendChild(rank);
+
+    left.appendChild(createIdentityRow(entry.nickname, '', '', {
+      nickname: entry.nickname,
+      avatar_url: entry.avatar_url,
+      avatar_initials: entry.avatar_initials
+    }));
+
+    const right = document.createElement('div');
+    right.className = 'social-leaderboard-right';
+
+    const ret = document.createElement('div');
+    ret.className = 'social-leaderboard-return';
+    ret.textContent = formatReturnPct(entry.return_pct);
+    ret.classList.toggle('is-negative', Number.isFinite(entry.return_pct) && entry.return_pct < 0);
+    right.appendChild(ret);
+
+    const verification = getVerificationDisplay(entry.verification_status, entry.verification_source);
+    const meta = document.createElement('div');
+    meta.className = 'social-row-meta';
+
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `social-status-pill ${verification.badgeClass}`;
+    statusBadge.textContent = verification.label;
+    meta.appendChild(statusBadge);
+
+    if (verification.sourceLabel) {
+      const source = document.createElement('span');
+      source.textContent = verification.sourceLabel.replace(/^Source:\s*/, '');
+      meta.appendChild(source);
+    }
+
+    const stats = [];
+    if (Number.isFinite(entry.trade_count)) stats.push(`${entry.trade_count} trades`);
+    const winRateLabel = formatWinRate(entry.win_rate);
+    if (winRateLabel) stats.push(winRateLabel);
+    if (stats.length) {
+      const secondary = document.createElement('span');
+      secondary.textContent = stats.join(' • ');
+      meta.appendChild(secondary);
+    }
+
+    right.appendChild(meta);
+    row.appendChild(left);
+    row.appendChild(right);
+    listEl.appendChild(row);
+  });
+}
+
+async function loadLeaderboard() {
+  socialState.leaderboardLoading = true;
+  socialState.leaderboardError = '';
+  renderLeaderboardSection();
+
+  try {
+    const period = LEADERBOARD_PERIODS.includes(socialState.leaderboardPeriod)
+      ? socialState.leaderboardPeriod
+      : DEFAULT_LEADERBOARD_PERIOD;
+    const response = await socialApi(`/api/social/leaderboard?period=${encodeURIComponent(period)}&verification=trusted`);
+    const entries = Array.isArray(response?.entries) ? response.entries : [];
+    socialState.leaderboardEntries = entries
+      .map((entry, index) => normalizeLeaderboardEntry(entry, index))
+      .filter(Boolean);
+    socialState.leaderboardPeriod = typeof response?.period === 'string' ? response.period.toUpperCase() : period;
+  } catch (error) {
+    socialState.leaderboardEntries = [];
+    socialState.leaderboardError = error?.message || 'Please try again in a moment.';
+  } finally {
+    socialState.leaderboardLoading = false;
+    renderLeaderboardSection();
+  }
 }
 
 function clearNode(el) {
@@ -327,17 +538,33 @@ function updateAddFriendState() {
 
 async function loadFriendData() {
   if (window.socialRequestSync && typeof window.socialRequestSync.refresh === 'function') {
-    await window.socialRequestSync.refresh('social-page-load-friends');
-    const shared = window.socialRequestSync.getState();
-    socialState.friendsLoading = false;
-    socialState.friendsError = shared.error || '';
-    socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
-    socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
-    socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
-    socialState.acceptedOutgoingRequests = Array.isArray(shared.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
-    renderFriendSection();
+    socialState.friendsLoading = true;
+    socialState.friendsError = '';
     updateAddFriendState();
     setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
+    try {
+      await window.socialRequestSync.refresh('social-page-load-friends');
+      const shared = window.socialRequestSync.getState();
+      socialState.friendsError = shared?.error || '';
+      socialState.friends = Array.isArray(shared?.friends) ? shared.friends : [];
+      socialState.incomingRequests = Array.isArray(shared?.incomingRequests) ? shared.incomingRequests : [];
+      socialState.outgoingRequests = Array.isArray(shared?.outgoingRequests) ? shared.outgoingRequests : [];
+      socialState.acceptedOutgoingRequests = Array.isArray(shared?.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
+      renderFriendSection();
+    } catch (error) {
+      socialState.friends = [];
+      socialState.incomingRequests = [];
+      socialState.outgoingRequests = [];
+      socialState.acceptedOutgoingRequests = [];
+      socialState.friendsError = error?.message || 'Unable to load friend data.';
+      renderFriendSection();
+      // Keep the failure isolated to Friends so profile/settings/leaderboard continue working.
+      console.warn('[social] friends sync refresh failed:', error);
+    } finally {
+      socialState.friendsLoading = false;
+      updateAddFriendState();
+      setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
+    }
     return;
   }
 
@@ -675,20 +902,7 @@ async function loadSocialData() {
       socialState.nicknameRequired = false;
       socialState.nickname = '';
       socialState.profile = { friend_code: 'GUEST', verification_status: 'none', verification_source: 'manual' };
-      socialState.settings = {
-        leaderboard_enabled: false,
-        trade_sharing_enabled: false,
-        allow_friend_requests: false,
-        share_open_trades: false,
-        share_closed_trades: false,
-        show_pnl_percent: true,
-        show_pnl_currency: false,
-        show_position_size: false,
-        leaderboard_visibility: 'private',
-        trade_sharing_scope: 'private',
-        verification_status: 'none',
-        verification_source: 'manual'
-      };
+      socialState.settings = normalizeSocialSettings({ verification_source: 'manual' });
       socialState.initialSettings = { ...socialState.settings };
       applyProfile(socialState.profile);
       applyFormSettings(socialState.settings);
@@ -699,7 +913,7 @@ async function loadSocialData() {
       socialState.isGuest = false;
       const response = await socialApi('/api/social/me');
       socialState.profile = response?.profile || {};
-      socialState.settings = response?.settings || {};
+      socialState.settings = normalizeSocialSettings(response?.settings);
       socialState.nicknameRequired = !!response?.nickname_required;
       socialState.nickname = response?.nickname || '';
       socialState.initialSettings = SOCIAL_SETTING_KEYS.reduce((acc, key) => {
@@ -838,13 +1052,20 @@ function bindActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
-  loadSocialData().then(() => {
-    loadFriendData();
+
+  Promise.allSettled([
+    loadSocialData(),
+    loadLeaderboard(),
+    loadFriendData()
+  ]).finally(() => {
+    // Start polling after initial section loads settle so one failure does not block others.
     startFriendPolling();
   });
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && !socialState.isGuest && !socialState.nicknameRequired) {
       loadFriendData();
+      loadLeaderboard();
     }
   });
   window.addEventListener(SOCIAL_SYNC_EVENT, (event) => {
@@ -860,3 +1081,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('beforeunload', stopFriendPolling);
 });
+
+})();
