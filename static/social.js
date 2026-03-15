@@ -27,7 +27,10 @@ const socialState = {
   addFriendBusy: false,
   addFriendCode: '',
   requestActionIds: new Set(),
-  friendActionIds: new Set()
+  friendActionIds: new Set(),
+  nicknameRequired: false,
+  nickname: '',
+  friendPollTimer: null
 };
 
 function isGuestSession() {
@@ -112,15 +115,12 @@ function normalizeRequestList(list) {
   return list.filter(item => item && item.status === 'pending');
 }
 
-function getRequestUserDisplay(request, direction) {
+function getRequestUserDisplay(request) {
   if (!request || typeof request !== 'object') return { name: 'Unknown trader', secondary: '' };
-  const idKey = direction === 'incoming' ? 'sender_user_id' : 'recipient_user_id';
-  const nameKey = direction === 'incoming' ? 'sender_display_name' : 'recipient_display_name';
-  const codeKey = direction === 'incoming' ? 'sender_friend_code' : 'recipient_friend_code';
-  const fallbackId = request[idKey] || request.user_id || 'unknown';
-  const displayName = request[nameKey] || request.display_name || fallbackId;
-  const code = request[codeKey] || request.friend_code || '';
-  return { name: displayName, secondary: code || fallbackId };
+  return {
+    name: request.counterparty_nickname || 'Unknown trader',
+    secondary: request.counterparty_friend_code || ''
+  };
 }
 
 function createEmptyState(title, detail = '') {
@@ -189,7 +189,9 @@ function setFriendsDisabled(disabled) {
   if (disabled) {
     if (areaMessage) {
       areaMessage.classList.remove('hidden');
-      areaMessage.textContent = 'Sign in to send and manage friend requests.';
+      areaMessage.textContent = socialState.nicknameRequired
+        ? 'Set a nickname in Profile to enable friend requests and social actions.'
+        : 'Sign in to send and manage friend requests.';
     }
   } else if (areaMessage) {
     areaMessage.classList.add('hidden');
@@ -227,7 +229,7 @@ function renderFriendSection() {
     incoming.forEach(request => {
       const row = document.createElement('article');
       row.className = 'social-list-row social-list-row--request';
-      const display = getRequestUserDisplay(request, 'incoming');
+      const display = getRequestUserDisplay(request);
       row.appendChild(createIdentityRow(display.name, display.secondary));
 
       const actionWrap = document.createElement('div');
@@ -235,11 +237,11 @@ function renderFriendSection() {
       const busy = socialState.requestActionIds.has(request.id);
 
       const acceptBtn = createActionButton('Accept', 'primary');
-      acceptBtn.disabled = busy || socialState.isGuest;
+      acceptBtn.disabled = busy || socialState.isGuest || socialState.nicknameRequired;
       acceptBtn.addEventListener('click', () => respondToRequest(request.id, 'accept'));
 
       const declineBtn = createActionButton('Decline', 'ghost');
-      declineBtn.disabled = busy || socialState.isGuest;
+      declineBtn.disabled = busy || socialState.isGuest || socialState.nicknameRequired;
       declineBtn.addEventListener('click', () => respondToRequest(request.id, 'decline'));
 
       actionWrap.append(acceptBtn, declineBtn);
@@ -255,11 +257,11 @@ function renderFriendSection() {
     outgoing.forEach(request => {
       const row = document.createElement('article');
       row.className = 'social-list-row social-list-row--request';
-      const display = getRequestUserDisplay(request, 'outgoing');
+      const display = getRequestUserDisplay(request);
       row.appendChild(createIdentityRow(display.name, display.secondary));
 
       const cancelBtn = createActionButton('Cancel', 'ghost');
-      cancelBtn.disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest;
+      cancelBtn.disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest || socialState.nicknameRequired;
       cancelBtn.addEventListener('click', () => respondToRequest(request.id, 'cancel'));
       const actionWrap = document.createElement('div');
       actionWrap.className = 'social-row-actions';
@@ -280,11 +282,11 @@ function renderFriendSection() {
       const badge = friend.verification_status === 'broker_verified' ? 'Broker verified'
         : friend.verification_status === 'platform_verified' ? 'Platform verified'
         : '';
-      row.appendChild(createIdentityRow(friend.display_name || friend.user_id, friend.friend_code || friend.user_id, badge));
+      row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', badge));
 
       const removeBtn = createActionButton('Remove', 'danger outline');
-      removeBtn.disabled = socialState.friendActionIds.has(friend.user_id) || socialState.isGuest;
-      removeBtn.addEventListener('click', () => removeFriend(friend.user_id));
+      removeBtn.disabled = socialState.friendActionIds.has(friend.friend_user_id) || socialState.isGuest || socialState.nicknameRequired;
+      removeBtn.addEventListener('click', () => removeFriend(friend.friend_user_id));
       const actionWrap = document.createElement('div');
       actionWrap.className = 'social-row-actions';
       actionWrap.appendChild(removeBtn);
@@ -298,7 +300,7 @@ function updateAddFriendState() {
   const input = getEl('social-add-friend-code');
   const button = getEl('social-add-friend-btn');
   const value = normalizeFriendCode(input?.value || '');
-  const canSubmit = !!value && !socialState.addFriendBusy && !socialState.friendsLoading && !socialState.isGuest;
+  const canSubmit = !!value && !socialState.addFriendBusy && !socialState.friendsLoading && !socialState.isGuest && !socialState.nicknameRequired;
   if (button) {
     button.disabled = !canSubmit;
     button.textContent = socialState.addFriendBusy ? 'Sending…' : 'Send';
@@ -312,7 +314,7 @@ async function loadFriendData() {
   setFriendsDisabled(socialState.isGuest);
 
   try {
-    if (socialState.isGuest) {
+    if (socialState.isGuest || socialState.nicknameRequired) {
       socialState.friends = [];
       socialState.incomingRequests = [];
       socialState.outgoingRequests = [];
@@ -341,7 +343,7 @@ async function loadFriendData() {
 
 async function sendFriendRequest(event) {
   event.preventDefault();
-  if (socialState.isGuest || socialState.addFriendBusy) return;
+  if (socialState.isGuest || socialState.nicknameRequired || socialState.addFriendBusy) return;
 
   const input = getEl('social-add-friend-code');
   const feedback = getEl('social-add-friend-feedback');
@@ -379,7 +381,7 @@ async function sendFriendRequest(event) {
 }
 
 async function respondToRequest(requestId, action) {
-  if (!requestId || socialState.requestActionIds.has(requestId) || socialState.isGuest) return;
+  if (!requestId || socialState.requestActionIds.has(requestId) || socialState.isGuest || socialState.nicknameRequired) return;
   socialState.requestActionIds.add(requestId);
   renderFriendSection();
 
@@ -402,7 +404,7 @@ async function respondToRequest(requestId, action) {
 }
 
 async function removeFriend(friendUserId) {
-  if (!friendUserId || socialState.friendActionIds.has(friendUserId) || socialState.isGuest) return;
+  if (!friendUserId || socialState.friendActionIds.has(friendUserId) || socialState.isGuest || socialState.nicknameRequired) return;
   socialState.friendActionIds.add(friendUserId);
   renderFriendSection();
 
@@ -533,14 +535,14 @@ function updateActionState() {
   const copyBtn = getEl('social-copy-code-btn');
 
   const dirty = isDirty();
-  const disableSave = socialState.loading || socialState.isSaving || socialState.isGuest || !dirty;
+  const disableSave = socialState.loading || socialState.isSaving || socialState.isGuest || socialState.nicknameRequired || !dirty;
 
   if (saveBtn) {
     saveBtn.disabled = disableSave;
     saveBtn.textContent = socialState.isSaving ? 'Saving…' : 'Save settings';
   }
   if (regenBtn) {
-    regenBtn.disabled = socialState.loading || socialState.isRegenerating || socialState.isGuest;
+    regenBtn.disabled = socialState.loading || socialState.isRegenerating || socialState.isGuest || socialState.nicknameRequired;
     regenBtn.textContent = socialState.isRegenerating ? 'Regenerating…' : 'Regenerate code';
   }
   if (copyBtn) {
@@ -581,6 +583,8 @@ async function loadSocialData() {
         guestMessage.classList.remove('hidden');
         guestMessage.textContent = 'Guest mode: social profile and sharing settings are unavailable until you sign in.';
       }
+      socialState.nicknameRequired = false;
+      socialState.nickname = '';
       socialState.profile = { friend_code: 'GUEST', verification_status: 'none', verification_source: 'manual' };
       socialState.settings = {
         leaderboard_enabled: false,
@@ -607,6 +611,8 @@ async function loadSocialData() {
       const response = await socialApi('/api/social/me');
       socialState.profile = response?.profile || {};
       socialState.settings = response?.settings || {};
+      socialState.nicknameRequired = !!response?.nickname_required;
+      socialState.nickname = response?.nickname || '';
       socialState.initialSettings = SOCIAL_SETTING_KEYS.reduce((acc, key) => {
         acc[key] = socialState.settings[key];
         return acc;
@@ -614,12 +620,21 @@ async function loadSocialData() {
 
       applyProfile(socialState.profile);
       applyFormSettings(socialState.settings);
-      setFormDisabled(false);
+      setFormDisabled(socialState.nicknameRequired);
       getEl('social-settings-disabled')?.classList.add('hidden');
       setFeedback(getEl('social-settings-feedback'), '');
       setFriendsDisabled(false);
     }
 
+    const gateEl = getEl('social-nickname-gate');
+    if (gateEl) gateEl.classList.toggle('hidden', !socialState.nicknameRequired);
+    const disabledMessageEl = getEl('social-settings-disabled');
+    if (!socialState.isGuest && disabledMessageEl) {
+      disabledMessageEl.classList.toggle('hidden', !socialState.nicknameRequired);
+      disabledMessageEl.textContent = socialState.nicknameRequired
+        ? 'Set a nickname in Profile to enable social settings and participation.'
+        : '';
+    }
     if (contentEl) contentEl.classList.remove('hidden');
   } catch (error) {
     if (errorEl) {
@@ -635,7 +650,7 @@ async function loadSocialData() {
 
 async function saveSettings(event) {
   event.preventDefault();
-  if (socialState.isSaving || socialState.isGuest || !isDirty()) return;
+  if (socialState.isSaving || socialState.isGuest || socialState.nicknameRequired || !isDirty()) return;
 
   socialState.isSaving = true;
   updateActionState();
@@ -663,7 +678,7 @@ async function saveSettings(event) {
 }
 
 async function regenerateFriendCode() {
-  if (socialState.isRegenerating || socialState.isGuest) return;
+  if (socialState.isRegenerating || socialState.isGuest || socialState.nicknameRequired) return;
 
   const confirmed = window.confirm(
     'Regenerate your friend code? Your previous code will stop working immediately.'
@@ -703,6 +718,23 @@ async function copyFriendCode() {
   }
 }
 
+
+function startFriendPolling() {
+  stopFriendPolling();
+  if (socialState.isGuest || socialState.nicknameRequired) return;
+  socialState.friendPollTimer = window.setInterval(() => {
+    if (!document.hidden) {
+      loadFriendData();
+    }
+  }, 20000);
+}
+
+function stopFriendPolling() {
+  if (!socialState.friendPollTimer) return;
+  window.clearInterval(socialState.friendPollTimer);
+  socialState.friendPollTimer = null;
+}
+
 function bindActions() {
   getEl('social-settings-form')?.addEventListener('submit', saveSettings);
   getEl('social-regenerate-btn')?.addEventListener('click', regenerateFriendCode);
@@ -713,5 +745,17 @@ function bindActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
-  loadSocialData().then(() => loadFriendData());
+  loadSocialData().then(() => {
+    loadFriendData();
+    startFriendPolling();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !socialState.isGuest && !socialState.nicknameRequired) {
+      loadFriendData();
+    }
+  });
+  window.addEventListener('social:friend-requests-updated', () => {
+    loadFriendData();
+  });
+  window.addEventListener('beforeunload', stopFriendPolling);
 });

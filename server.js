@@ -135,6 +135,29 @@ function normalizeNickname(raw) {
   return { value: trimmed };
 }
 
+function getSocialNickname(user) {
+  if (!user || typeof user.nickname !== 'string') return '';
+  const normalized = normalizeNickname(user.nickname);
+  return normalized.value || '';
+}
+
+function requireSocialNickname(db, username, res) {
+  const user = db.users?.[username];
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return null;
+  }
+  const nickname = getSocialNickname(user);
+  if (!nickname) {
+    res.status(403).json({
+      error: 'Set a nickname on your Profile page before using social features.',
+      code: 'nickname_required'
+    });
+    return null;
+  }
+  return { user, nickname };
+}
+
 function loadIbkrInstallerMeta() {
   let meta = {};
   if (IBKR_CONNECTOR_WINDOWS_META_PATH && fs.existsSync(IBKR_CONNECTOR_WINDOWS_META_PATH)) {
@@ -533,6 +556,30 @@ function areFriends(db, a, b) {
   return db.friendships.some(f => f.user_one_id === u1 && f.user_two_id === u2);
 }
 
+function socialIdentityForUser(db, username) {
+  const user = db.users?.[username] || null;
+  const profile = getSocialProfile(db, username);
+  return {
+    nickname: getSocialNickname(user),
+    friend_code: profile?.friend_code || ''
+  };
+}
+
+function sanitizeFriendRequestForViewer(db, request, viewerUsername) {
+  const isIncoming = request.recipient_user_id === viewerUsername;
+  const counterpartyUsername = isIncoming ? request.sender_user_id : request.recipient_user_id;
+  const identity = socialIdentityForUser(db, counterpartyUsername);
+  return {
+    id: request.id,
+    status: request.status,
+    direction: isIncoming ? 'incoming' : 'outgoing',
+    counterparty_nickname: identity.nickname || 'Unknown trader',
+    counterparty_friend_code: identity.friend_code,
+    created_at: request.created_at,
+    updated_at: request.updated_at
+  };
+}
+
 function ensureTradeShareSettings(db, username, tradeId) {
   ensureSocialTables(db);
   let record = db.tradeShareSettings.find(r => r.user_id === username && r.trade_id === tradeId);
@@ -683,7 +730,7 @@ function sanitizeSocialTradePayload(owner, trade, settings, tradeShare) {
   const pnlPct = Number(trade.pnlPct ?? trade.returnPct);
   const payload = {
     id: trade.id,
-    ownerUserId: owner.username,
+    ownerNickname: getSocialNickname(owner) || 'Unknown trader',
     symbol: trade.displaySymbol || trade.symbol || null,
     direction: trade.direction || null,
     status: trade.status,
@@ -6446,15 +6493,17 @@ app.get('/api/social/me', auth, (req, res) => {
   ensureUserShape(user, req.username);
   const profile = getSocialProfile(db, req.username);
   const settings = getSocialSettings(db, req.username);
+  const nickname = getSocialNickname(user);
   recomputeLeaderboardStatsForUser(db, req.username);
   saveDB(db);
-  res.json({ profile, settings });
+  res.json({ profile, settings, nickname_required: !nickname, nickname: nickname || '' });
 });
 
 app.post('/api/social/friend-code/regenerate', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   if (!applySocialCodeRegenRateLimit(req, res)) return;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
@@ -6480,6 +6529,7 @@ app.post('/api/social/friends/request/by-code', auth, (req, res) => {
   const friendCode = typeof req.body?.friendCode === 'string' ? req.body.friendCode.trim().toUpperCase() : '';
   if (!friendCode) return res.status(400).json({ error: 'friendCode is required.' });
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   ensureSocialTables(db);
   const sender = db.users[req.username];
   if (!sender) return res.status(404).json({ error: 'User not found' });
@@ -6536,12 +6586,11 @@ app.get('/api/social/friends', auth, (req, res) => {
     .filter(f => f.user_one_id === req.username || f.user_two_id === req.username)
     .map(f => {
       const friendUserId = f.user_one_id === req.username ? f.user_two_id : f.user_one_id;
-      const profile = getSocialProfile(db, friendUserId);
-      const friendUser = db.users[friendUserId] || {};
+      const identity = socialIdentityForUser(db, friendUserId);
       return {
-        user_id: friendUserId,
-        friend_code: profile?.friend_code || '',
-        display_name: profile?.display_name_override || friendUser.nickname || friendUser.displayName || friendUserId,
+        friend_user_id: friendUserId,
+        nickname: identity.nickname || 'Unknown trader',
+        friend_code: identity.friend_code,
         created_at: f.created_at
       };
     });
@@ -6552,8 +6601,13 @@ app.get('/api/social/friends', auth, (req, res) => {
 app.get('/api/social/friends/requests', auth, (req, res) => {
   const db = loadDB();
   ensureSocialTables(db);
-  const incoming = db.friendRequests.filter(r => r.recipient_user_id === req.username);
-  const outgoing = db.friendRequests.filter(r => r.sender_user_id === req.username);
+  const incoming = db.friendRequests
+    .filter(r => r.recipient_user_id === req.username)
+    .map(r => sanitizeFriendRequestForViewer(db, r, req.username));
+  const outgoing = db.friendRequests
+    .filter(r => r.sender_user_id === req.username)
+    .map(r => sanitizeFriendRequestForViewer(db, r, req.username));
+  saveDB(db);
   res.json({ incoming, outgoing });
 });
 
@@ -6567,6 +6621,7 @@ function findFriendRequestForUser(db, requestId, username) {
 app.post('/api/social/friends/requests/:id/accept', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   ensureSocialTables(db);
   const result = findFriendRequestForUser(db, req.params.id, req.username);
   if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
@@ -6588,6 +6643,7 @@ app.post('/api/social/friends/requests/:id/accept', auth, (req, res) => {
 app.post('/api/social/friends/requests/:id/decline', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   const result = findFriendRequestForUser(db, req.params.id, req.username);
   if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
   if (result.error === 'forbidden') return res.status(403).json({ error: 'Forbidden' });
@@ -6604,6 +6660,7 @@ app.post('/api/social/friends/requests/:id/decline', auth, (req, res) => {
 app.post('/api/social/friends/requests/:id/cancel', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   const result = findFriendRequestForUser(db, req.params.id, req.username);
   if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
   if (result.error === 'forbidden') return res.status(403).json({ error: 'Forbidden' });
@@ -6620,6 +6677,7 @@ app.post('/api/social/friends/requests/:id/cancel', auth, (req, res) => {
 app.delete('/api/social/friends/:friendUserId', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   ensureSocialTables(db);
   const friendUserId = req.params.friendUserId;
   const [user_one_id, user_two_id] = normalizeFriendshipPair(req.username, friendUserId);
@@ -6637,6 +6695,7 @@ app.put('/api/social/settings', auth, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const updates = parsed.data;
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   const settings = getSocialSettings(db, req.username);
   Object.assign(settings, updates);
   settings.updated_at = new Date().toISOString();
@@ -6651,6 +6710,7 @@ app.put('/api/social/trades/:tradeId/share', auth, (req, res) => {
   const parsed = tradeSharePatchSchema.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   normalizeTradeJournal(user);
@@ -6728,8 +6788,7 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
       const profile = getSocialProfile(db, s.user_id);
       const user = db.users[s.user_id] || {};
       return {
-        user_id: s.user_id,
-        display_name: profile?.display_name_override || user.nickname || user.displayName || s.user_id,
+        nickname: profile?.display_name_override || getSocialNickname(user) || 'Unknown trader',
         period_key: s.period_key,
         return_pct: s.return_pct,
         realized_return_pct: s.realized_return_pct,
@@ -6750,6 +6809,7 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
 
 app.post('/api/social/leaderboard/recompute', auth, (req, res) => {
   const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
   for (const username of Object.keys(db.users || {})) {
     recomputeLeaderboardStatsForUser(db, username);
   }

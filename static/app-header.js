@@ -45,3 +45,143 @@
   document.body.prepend(header);
   document.body.classList.add('with-app-shell-header');
 })();
+
+(function initFriendRequestAlertPolling() {
+  const isGuest = (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
+    && typeof window.handleGuestRequest === 'function';
+  if (isGuest) return;
+
+  const state = {
+    seenIncoming: new Set(),
+    activeRequestId: '',
+    pollTimer: null,
+    actionBusy: false,
+    hiddenByUser: new Set(),
+    nicknameRequired: false
+  };
+
+  function createAlertShell() {
+    if (document.getElementById('global-friend-request-alert')) return;
+    const shell = document.createElement('aside');
+    shell.id = 'global-friend-request-alert';
+    shell.className = 'social-global-alert hidden';
+    shell.setAttribute('aria-live', 'polite');
+    document.body.appendChild(shell);
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, { credentials: 'include', ...opts });
+    if (res.status === 401) return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
+
+  function stopPolling() {
+    if (state.pollTimer) {
+      window.clearInterval(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
+  function dismissActive() {
+    state.activeRequestId = '';
+    const shell = document.getElementById('global-friend-request-alert');
+    if (shell) {
+      shell.classList.add('hidden');
+      shell.innerHTML = '';
+    }
+  }
+
+  async function handleAction(id, action) {
+    if (!id || state.actionBusy) return;
+    state.actionBusy = true;
+    try {
+      await api(`/api/social/friends/requests/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+      state.hiddenByUser.add(id);
+      dismissActive();
+      if (typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('social:friend-requests-updated', { detail: { action, requestId: id } }));
+      }
+    } catch (_error) {
+      // Keep unobtrusive: we silently ignore here and poll will continue.
+    } finally {
+      state.actionBusy = false;
+      pollOnce();
+    }
+  }
+
+  function renderRequest(request) {
+    createAlertShell();
+    const shell = document.getElementById('global-friend-request-alert');
+    if (!shell || !request?.id) return;
+    state.activeRequestId = request.id;
+    shell.classList.remove('hidden');
+    shell.innerHTML = `
+      <div class="social-global-alert__title">Friend request</div>
+      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> sent you a friend request.</div>
+      <div class="social-global-alert__actions">
+        <button type="button" class="primary" data-social-alert-action="accept">Accept</button>
+        <button type="button" class="ghost" data-social-alert-action="decline">Decline</button>
+        <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
+      </div>
+    `;
+    shell.querySelector('[data-social-alert-action="accept"]')?.addEventListener('click', () => handleAction(request.id, 'accept'));
+    shell.querySelector('[data-social-alert-action="decline"]')?.addEventListener('click', () => handleAction(request.id, 'decline'));
+    shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', () => {
+      state.hiddenByUser.add(request.id);
+      dismissActive();
+    });
+  }
+
+  function pickNewIncoming(incoming) {
+    for (const request of incoming) {
+      if (!request?.id || request.status !== 'pending') continue;
+      if (state.hiddenByUser.has(request.id)) continue;
+      if (!state.seenIncoming.has(request.id)) return request;
+    }
+    return null;
+  }
+
+  async function pollOnce() {
+    if (document.hidden) return;
+    try {
+      const me = await api('/api/social/me');
+      if (!me) {
+        stopPolling();
+        dismissActive();
+        return;
+      }
+      state.nicknameRequired = !!me.nickname_required;
+      if (state.nicknameRequired) {
+        dismissActive();
+        return;
+      }
+      const payload = await api('/api/social/friends/requests');
+      if (!payload) return;
+      const incoming = Array.isArray(payload.incoming) ? payload.incoming : [];
+      const pendingIds = new Set(incoming.filter(item => item?.status === 'pending').map(item => item.id));
+      state.seenIncoming = new Set([...state.seenIncoming].filter(id => pendingIds.has(id)));
+      if (state.activeRequestId && !pendingIds.has(state.activeRequestId)) {
+        dismissActive();
+      }
+      const next = pickNewIncoming(incoming);
+      incoming.forEach(item => { if (item?.id) state.seenIncoming.add(item.id); });
+      if (next && !state.activeRequestId) {
+        renderRequest(next);
+      }
+    } catch (_error) {
+      // keep polling resilient and quiet
+    }
+  }
+
+  pollOnce();
+  state.pollTimer = window.setInterval(pollOnce, 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pollOnce();
+  });
+  window.addEventListener('beforeunload', () => {
+    stopPolling();
+  });
+})();
