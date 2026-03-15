@@ -3718,7 +3718,7 @@ textarea {
 }
 
 .behaviour-grid {
-  grid-template-columns: 1.25fr 0.75fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
 }
 
@@ -3834,12 +3834,16 @@ textarea {
 
 
 .analytics-grid-trading {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
 .analytics-grid-trading .compact-chart-card {
   min-height: 0 !important;
+}
+
+.analytics-grid-trading .winrate-card {
+  grid-column: auto;
 }
 
 .snapshot-card-inline {
@@ -3853,6 +3857,10 @@ textarea {
 
 .heatmap-card-full {
   width: 100%;
+}
+
+.behaviour-grid .heatmap-card {
+  grid-column: auto;
 }
 
 .category-summary {
@@ -3901,11 +3909,11 @@ textarea {
 
 @media (max-width: 1200px) {
   .analytics-grid-trading {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .behaviour-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3914,4 +3922,3 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-
