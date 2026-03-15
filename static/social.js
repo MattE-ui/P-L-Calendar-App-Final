@@ -18,7 +18,16 @@ const socialState = {
   initialSettings: null,
   isSaving: false,
   isRegenerating: false,
-  isGuest: false
+  isGuest: false,
+  friendsLoading: false,
+  friendsError: '',
+  friends: [],
+  incomingRequests: [],
+  outgoingRequests: [],
+  addFriendBusy: false,
+  addFriendCode: '',
+  requestActionIds: new Set(),
+  friendActionIds: new Set()
 };
 
 function isGuestSession() {
@@ -88,6 +97,325 @@ function getVerificationDisplay(status, source) {
     sourceLabel: source ? `Source: ${formatVerificationSource(source)}` : '',
     description: 'Not currently eligible for trusted rankings. You can still keep social features private and opt in later.'
   };
+}
+
+
+function normalizeFriendCode(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+function normalizeRequestList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(item => item && item.status === 'pending');
+}
+
+function getRequestUserDisplay(request, direction) {
+  if (!request || typeof request !== 'object') return { name: 'Unknown trader', secondary: '' };
+  const idKey = direction === 'incoming' ? 'sender_user_id' : 'recipient_user_id';
+  const nameKey = direction === 'incoming' ? 'sender_display_name' : 'recipient_display_name';
+  const codeKey = direction === 'incoming' ? 'sender_friend_code' : 'recipient_friend_code';
+  const fallbackId = request[idKey] || request.user_id || 'unknown';
+  const displayName = request[nameKey] || request.display_name || fallbackId;
+  const code = request[codeKey] || request.friend_code || '';
+  return { name: displayName, secondary: code || fallbackId };
+}
+
+function createEmptyState(message) {
+  const empty = document.createElement('p');
+  empty.className = 'social-empty-state';
+  empty.textContent = message;
+  return empty;
+}
+
+function createActionButton(label, tone = 'ghost') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = tone;
+  button.textContent = label;
+  return button;
+}
+
+function createIdentityRow(name, secondary, badge) {
+  const wrap = document.createElement('div');
+  wrap.className = 'social-row-identity';
+
+  const primary = document.createElement('div');
+  primary.className = 'social-row-primary';
+  primary.textContent = name || 'Unknown trader';
+  wrap.appendChild(primary);
+
+  const meta = document.createElement('div');
+  meta.className = 'social-row-meta';
+
+  if (secondary) {
+    const secondaryEl = document.createElement('span');
+    secondaryEl.textContent = secondary;
+    meta.appendChild(secondaryEl);
+  }
+
+  if (badge) {
+    const badgeEl = document.createElement('span');
+    badgeEl.className = 'social-row-badge';
+    badgeEl.textContent = badge;
+    meta.appendChild(badgeEl);
+  }
+
+  if (meta.childElementCount) wrap.appendChild(meta);
+  return wrap;
+}
+
+function clearNode(el) {
+  if (!el) return;
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function setFriendsDisabled(disabled) {
+  const areaMessage = getEl('social-friends-disabled');
+  if (disabled) {
+    if (areaMessage) {
+      areaMessage.classList.remove('hidden');
+      areaMessage.textContent = 'Sign in to send and manage friend requests.';
+    }
+  } else if (areaMessage) {
+    areaMessage.classList.add('hidden');
+    areaMessage.textContent = '';
+  }
+
+  const controls = document.querySelectorAll('#social-add-friend-form input, #social-add-friend-form button');
+  controls.forEach(control => {
+    control.disabled = disabled || socialState.addFriendBusy || socialState.friendsLoading;
+  });
+}
+
+function renderFriendSection() {
+  const incomingEl = getEl('social-incoming-requests');
+  const outgoingEl = getEl('social-outgoing-requests');
+  const friendsEl = getEl('social-friends-list');
+
+  clearNode(incomingEl);
+  clearNode(outgoingEl);
+  clearNode(friendsEl);
+
+  if (socialState.friendsError) {
+    const err = createEmptyState(socialState.friendsError);
+    err.classList.add('is-error');
+    incomingEl?.appendChild(err.cloneNode(true));
+    outgoingEl?.appendChild(err.cloneNode(true));
+    friendsEl?.appendChild(err);
+    return;
+  }
+
+  const incoming = socialState.incomingRequests;
+  if (!incoming.length) {
+    incomingEl?.appendChild(createEmptyState('No incoming requests.'));
+  } else {
+    incoming.forEach(request => {
+      const row = document.createElement('article');
+      row.className = 'social-list-row';
+      const display = getRequestUserDisplay(request, 'incoming');
+      row.appendChild(createIdentityRow(display.name, display.secondary));
+
+      const actionWrap = document.createElement('div');
+      actionWrap.className = 'social-row-actions';
+      const busy = socialState.requestActionIds.has(request.id);
+
+      const acceptBtn = createActionButton('Accept', 'primary');
+      acceptBtn.disabled = busy || socialState.isGuest;
+      acceptBtn.addEventListener('click', () => respondToRequest(request.id, 'accept'));
+
+      const declineBtn = createActionButton('Decline', 'ghost');
+      declineBtn.disabled = busy || socialState.isGuest;
+      declineBtn.addEventListener('click', () => respondToRequest(request.id, 'decline'));
+
+      actionWrap.append(acceptBtn, declineBtn);
+      row.appendChild(actionWrap);
+      incomingEl?.appendChild(row);
+    });
+  }
+
+  const outgoing = socialState.outgoingRequests;
+  if (!outgoing.length) {
+    outgoingEl?.appendChild(createEmptyState('No outgoing requests.'));
+  } else {
+    outgoing.forEach(request => {
+      const row = document.createElement('article');
+      row.className = 'social-list-row';
+      const display = getRequestUserDisplay(request, 'outgoing');
+      row.appendChild(createIdentityRow(display.name, display.secondary));
+
+      const cancelBtn = createActionButton('Cancel', 'ghost');
+      cancelBtn.disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest;
+      cancelBtn.addEventListener('click', () => respondToRequest(request.id, 'cancel'));
+      const actionWrap = document.createElement('div');
+      actionWrap.className = 'social-row-actions';
+      actionWrap.appendChild(cancelBtn);
+
+      row.appendChild(actionWrap);
+      outgoingEl?.appendChild(row);
+    });
+  }
+
+  const friends = socialState.friends;
+  if (!friends.length) {
+    friendsEl?.appendChild(createEmptyState('No friends added yet.'));
+  } else {
+    friends.forEach(friend => {
+      const row = document.createElement('article');
+      row.className = 'social-list-row';
+      const badge = friend.verification_status === 'broker_verified' ? 'Broker verified'
+        : friend.verification_status === 'platform_verified' ? 'Platform verified'
+        : '';
+      row.appendChild(createIdentityRow(friend.display_name || friend.user_id, friend.friend_code || friend.user_id, badge));
+
+      const removeBtn = createActionButton('Remove', 'danger outline');
+      removeBtn.disabled = socialState.friendActionIds.has(friend.user_id) || socialState.isGuest;
+      removeBtn.addEventListener('click', () => removeFriend(friend.user_id));
+      const actionWrap = document.createElement('div');
+      actionWrap.className = 'social-row-actions';
+      actionWrap.appendChild(removeBtn);
+      row.appendChild(actionWrap);
+      friendsEl?.appendChild(row);
+    });
+  }
+}
+
+function updateAddFriendState() {
+  const input = getEl('social-add-friend-code');
+  const button = getEl('social-add-friend-btn');
+  const value = normalizeFriendCode(input?.value || '');
+  const canSubmit = !!value && !socialState.addFriendBusy && !socialState.friendsLoading && !socialState.isGuest;
+  if (button) {
+    button.disabled = !canSubmit;
+    button.textContent = socialState.addFriendBusy ? 'Sending…' : 'Send';
+  }
+}
+
+async function loadFriendData() {
+  socialState.friendsLoading = true;
+  socialState.friendsError = '';
+  updateAddFriendState();
+  setFriendsDisabled(socialState.isGuest);
+
+  try {
+    if (socialState.isGuest) {
+      socialState.friends = [];
+      socialState.incomingRequests = [];
+      socialState.outgoingRequests = [];
+      renderFriendSection();
+      return;
+    }
+
+    const [friendsResponse, requestsResponse] = await Promise.all([
+      socialApi('/api/social/friends'),
+      socialApi('/api/social/friends/requests')
+    ]);
+
+    socialState.friends = Array.isArray(friendsResponse?.friends) ? friendsResponse.friends : [];
+    socialState.incomingRequests = normalizeRequestList(requestsResponse?.incoming);
+    socialState.outgoingRequests = normalizeRequestList(requestsResponse?.outgoing);
+    renderFriendSection();
+  } catch (error) {
+    socialState.friendsError = error.message || 'Unable to load friend data.';
+    renderFriendSection();
+  } finally {
+    socialState.friendsLoading = false;
+    updateAddFriendState();
+    setFriendsDisabled(socialState.isGuest);
+  }
+}
+
+async function sendFriendRequest(event) {
+  event.preventDefault();
+  if (socialState.isGuest || socialState.addFriendBusy) return;
+
+  const input = getEl('social-add-friend-code');
+  const feedback = getEl('social-add-friend-feedback');
+  const code = normalizeFriendCode(input?.value || '');
+  if (!code) {
+    setFeedback(feedback, 'Enter a friend code before sending.', 'error');
+    updateAddFriendState();
+    return;
+  }
+
+  socialState.addFriendBusy = true;
+  updateAddFriendState();
+  setFeedback(feedback, 'Sending friend request...');
+
+  try {
+    const response = await socialApi('/api/social/friends/request/by-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ friendCode: code })
+    });
+
+    input.value = '';
+    if (response?.autoAccepted) {
+      setFeedback(feedback, 'Request auto-accepted. You are now friends.', 'success');
+    } else {
+      setFeedback(feedback, 'Friend request sent.', 'success');
+    }
+    await loadFriendData();
+  } catch (error) {
+    setFeedback(feedback, error.message || 'Unable to send friend request.', 'error');
+  } finally {
+    socialState.addFriendBusy = false;
+    updateAddFriendState();
+  }
+}
+
+async function respondToRequest(requestId, action) {
+  if (!requestId || socialState.requestActionIds.has(requestId) || socialState.isGuest) return;
+  socialState.requestActionIds.add(requestId);
+  renderFriendSection();
+
+  const endpoint = action === 'accept'
+    ? `/api/social/friends/requests/${encodeURIComponent(requestId)}/accept`
+    : action === 'decline'
+      ? `/api/social/friends/requests/${encodeURIComponent(requestId)}/decline`
+      : `/api/social/friends/requests/${encodeURIComponent(requestId)}/cancel`;
+
+  try {
+    await socialApi(endpoint, { method: 'POST' });
+    await loadFriendData();
+  } catch (error) {
+    socialState.friendsError = error.message || 'Unable to update request.';
+    renderFriendSection();
+  } finally {
+    socialState.requestActionIds.delete(requestId);
+    renderFriendSection();
+  }
+}
+
+async function removeFriend(friendUserId) {
+  if (!friendUserId || socialState.friendActionIds.has(friendUserId) || socialState.isGuest) return;
+  socialState.friendActionIds.add(friendUserId);
+  renderFriendSection();
+
+  try {
+    await socialApi(`/api/social/friends/${encodeURIComponent(friendUserId)}`, { method: 'DELETE' });
+    await loadFriendData();
+  } catch (error) {
+    socialState.friendsError = error.message || 'Unable to remove friend.';
+    renderFriendSection();
+  } finally {
+    socialState.friendActionIds.delete(friendUserId);
+    renderFriendSection();
+  }
+}
+
+function bindFriendActions() {
+  const form = getEl('social-add-friend-form');
+  const input = getEl('social-add-friend-code');
+  form?.addEventListener('submit', sendFriendRequest);
+  input?.addEventListener('input', () => {
+    const normalized = normalizeFriendCode(input.value).replace(/[^A-Z0-9-]/g, '');
+    if (input.value !== normalized) input.value = normalized;
+    setFeedback(getEl('social-add-friend-feedback'), '');
+    updateAddFriendState();
+  });
 }
 
 function setFeedback(el, message, kind = 'muted') {
@@ -261,6 +589,7 @@ async function loadSocialData() {
       applyFormSettings(socialState.settings);
       setFormDisabled(true);
       setFeedback(getEl('social-settings-feedback'), 'Sign in to change social settings.', 'muted');
+      setFriendsDisabled(true);
     } else {
       socialState.isGuest = false;
       const response = await socialApi('/api/social/me');
@@ -276,6 +605,7 @@ async function loadSocialData() {
       setFormDisabled(false);
       getEl('social-settings-disabled')?.classList.add('hidden');
       setFeedback(getEl('social-settings-feedback'), '');
+      setFriendsDisabled(false);
     }
 
     if (contentEl) contentEl.classList.remove('hidden');
@@ -366,9 +696,10 @@ function bindActions() {
   getEl('social-regenerate-btn')?.addEventListener('click', regenerateFriendCode);
   getEl('social-copy-code-btn')?.addEventListener('click', copyFriendCode);
   bindSettingsChangeTracking();
+  bindFriendActions();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
-  loadSocialData();
+  loadSocialData().then(() => loadFriendData());
 });
