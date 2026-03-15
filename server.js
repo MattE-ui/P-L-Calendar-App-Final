@@ -48,6 +48,10 @@ const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
 const IBKR_CONNECTOR_TOKEN_TTL_MS = Number(process.env.IBKR_CONNECTOR_TOKEN_TTL_MS) || 15 * 60 * 1000;
 const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
 const IBKR_RATE_LIMIT_WINDOW_MS = Number(process.env.IBKR_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
+const SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX = Number(process.env.SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX) || 30;
+const SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS = Number(process.env.SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
+const SOCIAL_CODE_REGEN_RATE_LIMIT_MAX = Number(process.env.SOCIAL_CODE_REGEN_RATE_LIMIT_MAX) || 3;
+const SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS = Number(process.env.SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS) || 24 * 60 * 60 * 1000;
 const PORTFOLIO_SOURCE_T212_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_T212_STALE_MS) || 36 * 60 * 60 * 1000;
 const PORTFOLIO_SOURCE_IBKR_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_IBKR_STALE_MS) || 5 * 60 * 1000;
 const T212_SYNC_INTERVAL_MS = (() => {
@@ -74,6 +78,8 @@ const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
+const socialCodeLookupRateLimit = new Map();
+const socialCodeRegenRateLimit = new Map();
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
 const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
@@ -348,6 +354,360 @@ function parseRetryAfter(header) {
   return null;
 }
 
+function applySimpleRateLimit(bucket, key, max, windowMs) {
+  const now = Date.now();
+  const entry = bucket.get(key);
+  if (!entry || entry.resetAt <= now) {
+    bucket.set(key, { count: 1, resetAt: now + windowMs });
+    return null;
+  }
+  if (entry.count >= max) {
+    return Math.max(0, entry.resetAt - now);
+  }
+  entry.count += 1;
+  return null;
+}
+
+function applySocialCodeLookupRateLimit(req, res) {
+  const retryAfterMs = applySimpleRateLimit(
+    socialCodeLookupRateLimit,
+    `${getClientIp(req)}:lookup`,
+    SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX,
+    SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS
+  );
+  if (retryAfterMs === null) return true;
+  const waitSeconds = Math.ceil(retryAfterMs / 1000);
+  res.set('Retry-After', String(waitSeconds));
+  res.status(429).json({ error: 'Too many friend code lookups. Please retry shortly.', retryAfter: waitSeconds });
+  return false;
+}
+
+function applySocialCodeRegenRateLimit(req, res) {
+  const retryAfterMs = applySimpleRateLimit(
+    socialCodeRegenRateLimit,
+    `${req.username || getClientIp(req)}:regen`,
+    SOCIAL_CODE_REGEN_RATE_LIMIT_MAX,
+    SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS
+  );
+  if (retryAfterMs === null) return true;
+  const waitSeconds = Math.ceil(retryAfterMs / 1000);
+  res.set('Retry-After', String(waitSeconds));
+  res.status(429).json({ error: 'Friend code regeneration rate limit reached.', retryAfter: waitSeconds });
+  return false;
+}
+
+function ensureSocialTables(db) {
+  if (!db || typeof db !== 'object') return false;
+  let mutated = false;
+  if (!Array.isArray(db.socialProfiles)) {
+    db.socialProfiles = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.socialSettings)) {
+    db.socialSettings = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.friendRequests)) {
+    db.friendRequests = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.friendships)) {
+    db.friendships = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.tradeShareSettings)) {
+    db.tradeShareSettings = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.leaderboardStats)) {
+    db.leaderboardStats = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.socialEventLog)) {
+    db.socialEventLog = [];
+    mutated = true;
+  }
+  return mutated;
+}
+
+const SOCIAL_VISIBILITY_VALUES = ['private', 'friends_only', 'public'];
+const FRIEND_REQUEST_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled', 'blocked'];
+const VERIFICATION_STATUS_VALUES = ['none', 'platform_verified', 'broker_verified'];
+const VERIFICATION_SOURCE_VALUES = ['manual', 'platform_locked', 'trading212', 'ibkr'];
+const LEADERBOARD_PERIOD_KEYS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+
+function defaultSocialProfile(username, friendCode) {
+  const nowIso = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    user_id: username,
+    friend_code: friendCode,
+    display_name_override: null,
+    avatar_url: null,
+    bio: null,
+    social_visibility: 'private',
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+}
+
+function defaultSocialSettings(username) {
+  const nowIso = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    user_id: username,
+    leaderboard_enabled: false,
+    leaderboard_visibility: 'private',
+    trade_sharing_enabled: false,
+    trade_sharing_scope: 'private',
+    share_open_trades: false,
+    share_closed_trades: false,
+    show_pnl_percent: true,
+    show_pnl_currency: false,
+    show_position_size: false,
+    allow_friend_requests: true,
+    verification_status: 'none',
+    verification_source: null,
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+}
+
+function getSocialProfile(db, username) {
+  ensureSocialTables(db);
+  const user = db.users?.[username];
+  if (!user) return null;
+  if (!user.friendCode) {
+    user.friendCode = generateFriendCode(db, username);
+  }
+  let profile = db.socialProfiles.find(p => p.user_id === username);
+  if (!profile) {
+    profile = defaultSocialProfile(username, user.friendCode);
+    db.socialProfiles.push(profile);
+  }
+  if (profile.friend_code !== user.friendCode) {
+    profile.friend_code = user.friendCode;
+    profile.updated_at = new Date().toISOString();
+  }
+  if (!SOCIAL_VISIBILITY_VALUES.includes(profile.social_visibility)) {
+    profile.social_visibility = 'private';
+    profile.updated_at = new Date().toISOString();
+  }
+  return profile;
+}
+
+function getSocialSettings(db, username) {
+  ensureSocialTables(db);
+  let settings = db.socialSettings.find(s => s.user_id === username);
+  if (!settings) {
+    settings = defaultSocialSettings(username);
+    db.socialSettings.push(settings);
+  }
+  if (!SOCIAL_VISIBILITY_VALUES.includes(settings.leaderboard_visibility)) settings.leaderboard_visibility = 'private';
+  if (!SOCIAL_VISIBILITY_VALUES.includes(settings.trade_sharing_scope)) settings.trade_sharing_scope = 'private';
+  if (!VERIFICATION_STATUS_VALUES.includes(settings.verification_status)) settings.verification_status = 'none';
+  if (settings.verification_source && !VERIFICATION_SOURCE_VALUES.includes(settings.verification_source)) settings.verification_source = 'manual';
+  return settings;
+}
+
+function logSocialEvent(db, { userId, actorUserId = null, eventType, entityType, entityId = null, metadata = {} }) {
+  ensureSocialTables(db);
+  db.socialEventLog.push({
+    id: crypto.randomUUID(),
+    user_id: userId,
+    actor_user_id: actorUserId,
+    event_type: eventType,
+    entity_type: entityType,
+    entity_id: entityId,
+    metadata_json: metadata,
+    created_at: new Date().toISOString()
+  });
+}
+
+function normalizeFriendshipPair(a, b) {
+  return [a, b].sort((x, y) => x.localeCompare(y));
+}
+
+function areFriends(db, a, b) {
+  const [u1, u2] = normalizeFriendshipPair(a, b);
+  return db.friendships.some(f => f.user_one_id === u1 && f.user_two_id === u2);
+}
+
+function ensureTradeShareSettings(db, username, tradeId) {
+  ensureSocialTables(db);
+  let record = db.tradeShareSettings.find(r => r.user_id === username && r.trade_id === tradeId);
+  if (!record) {
+    const nowIso = new Date().toISOString();
+    record = {
+      id: crypto.randomUUID(),
+      trade_id: tradeId,
+      user_id: username,
+      is_shared: false,
+      shared_scope: 'private',
+      share_after_close_only: true,
+      hide_position_size: true,
+      hide_cash_pnl: true,
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+    db.tradeShareSettings.push(record);
+  }
+  return record;
+}
+
+function isBrokerConnected(user) {
+  return !!(user?.trading212?.enabled || user?.ibkr?.enabled);
+}
+
+function canBePlatformVerified(user) {
+  const journal = user?.tradeJournal || {};
+  let closedWithPnL = 0;
+  for (const trades of Object.values(journal)) {
+    if (!Array.isArray(trades)) continue;
+    for (const trade of trades) {
+      if (trade?.status === 'closed' && Number.isFinite(Number(trade?.realizedPnlGBP))) {
+        closedWithPnL += 1;
+      }
+    }
+  }
+  return closedWithPnL >= 5;
+}
+
+function computeEligibilityReason(settings, stats) {
+  if (!settings.leaderboard_enabled) return 'leaderboard_disabled';
+  if (settings.verification_status === 'none') return 'unverified';
+  if (stats.trade_count < 3) return 'insufficient_trades';
+  return null;
+}
+
+function periodStartDate(period) {
+  const now = new Date();
+  if (period === 'ALL') return new Date(0);
+  if (period === 'YTD') return new Date(now.getFullYear(), 0, 1);
+  const days = { '7D': 7, '30D': 30, '90D': 90 }[period] || 30;
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
+function computeLeaderboardStatForUser(db, username, periodKey) {
+  const user = db.users?.[username];
+  if (!user) return null;
+  const settings = getSocialSettings(db, username);
+  const rates = { GBP: 1 };
+  const trades = flattenTrades(user, rates);
+  const start = periodStartDate(periodKey);
+  const filtered = trades.filter(t => {
+    const openDate = t.openDate || t.date;
+    if (!openDate) return false;
+    const ts = Date.parse(openDate);
+    if (Number.isNaN(ts)) return false;
+    return ts >= start.getTime();
+  });
+  const closed = filtered.filter(t => t.status === 'closed');
+  const tradeCount = filtered.length;
+  const winners = closed.filter(t => Number(t.realizedPnlGBP) > 0).length;
+  const winRate = closed.length ? (winners / closed.length) * 100 : null;
+  const realizedPnl = closed.reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
+  const baseline = Math.max(1, Number(user.initialNetDeposits) || Number(user.initialPortfolio) || 1);
+  const realizedReturnPct = (realizedPnl / baseline) * 100;
+  const approxReturnPct = realizedReturnPct;
+  const nowIso = new Date().toISOString();
+  const stat = {
+    user_id: username,
+    period_key: periodKey,
+    verification_status: settings.verification_status,
+    return_pct: Number.isFinite(approxReturnPct) ? approxReturnPct : 0,
+    realized_return_pct: Number.isFinite(realizedReturnPct) ? realizedReturnPct : null,
+    trade_count: tradeCount,
+    win_rate: Number.isFinite(winRate) ? winRate : null,
+    computed_at: nowIso,
+    updated_at: nowIso,
+    eligible: false,
+    ineligibility_reason: 'unknown'
+  };
+  const reason = computeEligibilityReason(settings, stat);
+  stat.eligible = reason === null;
+  stat.ineligibility_reason = reason;
+  return stat;
+}
+
+function upsertLeaderboardStat(db, stat) {
+  ensureSocialTables(db);
+  const index = db.leaderboardStats.findIndex(s => s.user_id === stat.user_id && s.period_key === stat.period_key);
+  if (index >= 0) db.leaderboardStats[index] = { ...db.leaderboardStats[index], ...stat };
+  else db.leaderboardStats.push({ id: crypto.randomUUID(), ...stat });
+}
+
+function recomputeLeaderboardStatsForUser(db, username) {
+  let changed = false;
+  const settings = getSocialSettings(db, username);
+  const user = db.users?.[username];
+  if (user) {
+    let nextStatus = 'none';
+    let nextSource = settings.verification_source;
+    if (isBrokerConnected(user)) {
+      nextStatus = 'broker_verified';
+      nextSource = user?.ibkr?.enabled ? 'ibkr' : 'trading212';
+    } else if (canBePlatformVerified(user)) {
+      nextStatus = 'platform_verified';
+      nextSource = 'platform_locked';
+    } else {
+      nextSource = settings.verification_source || 'manual';
+    }
+    if (settings.verification_status !== nextStatus || settings.verification_source !== nextSource) {
+      settings.verification_status = nextStatus;
+      settings.verification_source = nextSource;
+      settings.updated_at = new Date().toISOString();
+      changed = true;
+      logSocialEvent(db, {
+        userId: username,
+        actorUserId: null,
+        eventType: 'verification.status_changed',
+        entityType: 'social_settings',
+        entityId: settings.id,
+        metadata: { verification_status: nextStatus, verification_source: nextSource }
+      });
+    }
+  }
+  for (const period of LEADERBOARD_PERIOD_KEYS) {
+    const stat = computeLeaderboardStatForUser(db, username, period);
+    if (stat) {
+      upsertLeaderboardStat(db, stat);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function sanitizeSocialTradePayload(owner, trade, settings, tradeShare) {
+  const isOpen = trade.status !== 'closed';
+  const pnlPct = Number(trade.pnlPct ?? trade.returnPct);
+  const payload = {
+    id: trade.id,
+    ownerUserId: owner.username,
+    symbol: trade.displaySymbol || trade.symbol || null,
+    direction: trade.direction || null,
+    status: trade.status,
+    openDate: trade.openDate || trade.date || null,
+    closeDate: trade.closeDate || null,
+    entry: Number.isFinite(Number(trade.entry)) ? Number(trade.entry) : null,
+    closePrice: Number.isFinite(Number(trade.closePrice)) ? Number(trade.closePrice) : null,
+    pnlPercent: settings.show_pnl_percent && Number.isFinite(pnlPct) ? pnlPct : null,
+    pnlCurrency: null,
+    positionSize: null,
+    sharedScope: tradeShare.shared_scope,
+    isOpen,
+    verificationStatus: settings.verification_status,
+    verificationSource: settings.verification_source || null
+  };
+  if (!tradeShare.hide_cash_pnl && settings.show_pnl_currency) {
+    payload.pnlCurrency = Number.isFinite(Number(trade.realizedPnlGBP)) ? Number(trade.realizedPnlGBP) : null;
+  }
+  if (!tradeShare.hide_position_size && settings.show_position_size) {
+    payload.positionSize = Number.isFinite(Number(trade.sizeUnits)) ? Number(trade.sizeUnits) : null;
+  }
+  return payload;
+}
+
 function checkIbkrRateLimit(key, res) {
   const now = Date.now();
   const entry = ibkrRateLimit.get(key) || { count: 0, resetAt: now + IBKR_RATE_LIMIT_WINDOW_MS };
@@ -406,6 +766,7 @@ function loadDB() {
       db.investorInvites = [];
     }
     db.investorSessions ||= {};
+    ensureSocialTables(db);
     let mutated = reconcileIbkrTokenSecret(db);
     for (const [username, user] of Object.entries(db.users)) {
       if (ensureUserShape(user, username)) {
@@ -413,6 +774,12 @@ function loadDB() {
       }
       if (!user.friendCode) {
         user.friendCode = generateFriendCode(db, username);
+        mutated = true;
+      }
+      const profile = getSocialProfile(db, username);
+      const settings = getSocialSettings(db, username);
+      if (profile && !db.socialEventLog.some(e => e.event_type === 'social.profile_created' && e.user_id === username)) {
+        logSocialEvent(db, { userId: username, actorUserId: username, eventType: 'social.profile_created', entityType: 'social_profile', entityId: profile.id, metadata: { friend_code: profile.friend_code } });
         mutated = true;
       }
     }
@@ -439,7 +806,14 @@ function loadDB() {
       investorCashflows: [],
       masterValuations: [],
       investorInvites: [],
-      investorSessions: {}
+      investorSessions: {},
+      socialProfiles: [],
+      socialSettings: [],
+      friendRequests: [],
+      friendships: [],
+      tradeShareSettings: [],
+      leaderboardStats: [],
+      socialEventLog: []
     };
   }
 }
@@ -6043,6 +6417,344 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     investorPortalAvailable: true
   });
 }));
+
+const socialSettingsPatchSchema = z.object({
+  leaderboard_enabled: z.boolean().optional(),
+  leaderboard_visibility: z.enum(SOCIAL_VISIBILITY_VALUES).optional(),
+  trade_sharing_enabled: z.boolean().optional(),
+  trade_sharing_scope: z.enum(SOCIAL_VISIBILITY_VALUES).optional(),
+  share_open_trades: z.boolean().optional(),
+  share_closed_trades: z.boolean().optional(),
+  show_pnl_percent: z.boolean().optional(),
+  show_pnl_currency: z.boolean().optional(),
+  show_position_size: z.boolean().optional(),
+  allow_friend_requests: z.boolean().optional()
+});
+
+const tradeSharePatchSchema = z.object({
+  is_shared: z.boolean().optional(),
+  shared_scope: z.enum(SOCIAL_VISIBILITY_VALUES).optional(),
+  share_after_close_only: z.boolean().optional(),
+  hide_position_size: z.boolean().optional(),
+  hide_cash_pnl: z.boolean().optional()
+});
+
+app.get('/api/social/me', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const profile = getSocialProfile(db, req.username);
+  const settings = getSocialSettings(db, req.username);
+  saveDB(db);
+  res.json({ profile, settings });
+});
+
+app.post('/api/social/friend-code/regenerate', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  if (!applySocialCodeRegenRateLimit(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  user.friendCode = generateFriendCode(db, req.username);
+  const profile = getSocialProfile(db, req.username);
+  profile.friend_code = user.friendCode;
+  profile.updated_at = new Date().toISOString();
+  logSocialEvent(db, {
+    userId: req.username,
+    actorUserId: req.username,
+    eventType: 'social.friend_code_regenerated',
+    entityType: 'social_profile',
+    entityId: profile.id,
+    metadata: { friend_code: profile.friend_code }
+  });
+  saveDB(db);
+  res.json({ friend_code: profile.friend_code });
+});
+
+app.post('/api/social/friends/request/by-code', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  if (!applySocialCodeLookupRateLimit(req, res)) return;
+  const friendCode = typeof req.body?.friendCode === 'string' ? req.body.friendCode.trim().toUpperCase() : '';
+  if (!friendCode) return res.status(400).json({ error: 'friendCode is required.' });
+  const db = loadDB();
+  ensureSocialTables(db);
+  const sender = db.users[req.username];
+  if (!sender) return res.status(404).json({ error: 'User not found' });
+  const recipientProfile = db.socialProfiles.find(p => p.friend_code === friendCode);
+  if (!recipientProfile) return res.status(404).json({ error: 'Friend code not found.' });
+  const recipientUserId = recipientProfile.user_id;
+  if (recipientUserId === req.username) return res.status(400).json({ error: 'You cannot add yourself.' });
+  if (!db.users[recipientUserId]) return res.status(404).json({ error: 'Friend code not found.' });
+  const recipientSettings = getSocialSettings(db, recipientUserId);
+  if (!recipientSettings.allow_friend_requests) return res.status(403).json({ error: 'This user is not accepting friend requests.' });
+  if (areFriends(db, req.username, recipientUserId)) {
+    return res.status(409).json({ error: 'You are already friends.' });
+  }
+  const pendingExisting = db.friendRequests.find(r =>
+    r.status === 'pending' && r.sender_user_id === req.username && r.recipient_user_id === recipientUserId
+  );
+  if (pendingExisting) {
+    return res.status(409).json({ error: 'A friend request is already pending.' });
+  }
+  const reversePending = db.friendRequests.find(r =>
+    r.status === 'pending' && r.sender_user_id === recipientUserId && r.recipient_user_id === req.username
+  );
+  // Cleaner behavior: auto-accept reverse pending requests to avoid redundant client branching.
+  if (reversePending) {
+    reversePending.status = 'accepted';
+    reversePending.updated_at = new Date().toISOString();
+    const [user_one_id, user_two_id] = normalizeFriendshipPair(req.username, recipientUserId);
+    if (!db.friendships.some(f => f.user_one_id === user_one_id && f.user_two_id === user_two_id)) {
+      db.friendships.push({ id: crypto.randomUUID(), user_one_id, user_two_id, created_at: new Date().toISOString() });
+    }
+    logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friend_request_auto_accepted', entityType: 'friend_request', entityId: reversePending.id, metadata: { with_user_id: recipientUserId } });
+    saveDB(db);
+    return res.json({ ok: true, autoAccepted: true, friendUserId: recipientUserId });
+  }
+  const nowIso = new Date().toISOString();
+  const request = {
+    id: crypto.randomUUID(),
+    sender_user_id: req.username,
+    recipient_user_id: recipientUserId,
+    status: 'pending',
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+  db.friendRequests.push(request);
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friend_request_sent', entityType: 'friend_request', entityId: request.id, metadata: { recipient_user_id: recipientUserId } });
+  saveDB(db);
+  res.json({ ok: true, request });
+});
+
+app.get('/api/social/friends', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const friends = db.friendships
+    .filter(f => f.user_one_id === req.username || f.user_two_id === req.username)
+    .map(f => {
+      const friendUserId = f.user_one_id === req.username ? f.user_two_id : f.user_one_id;
+      const profile = getSocialProfile(db, friendUserId);
+      const friendUser = db.users[friendUserId] || {};
+      return {
+        user_id: friendUserId,
+        friend_code: profile?.friend_code || '',
+        display_name: profile?.display_name_override || friendUser.nickname || friendUser.displayName || friendUserId,
+        created_at: f.created_at
+      };
+    });
+  saveDB(db);
+  res.json({ friends });
+});
+
+app.get('/api/social/friends/requests', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const incoming = db.friendRequests.filter(r => r.recipient_user_id === req.username);
+  const outgoing = db.friendRequests.filter(r => r.sender_user_id === req.username);
+  res.json({ incoming, outgoing });
+});
+
+function findFriendRequestForUser(db, requestId, username) {
+  const request = db.friendRequests.find(r => r.id === requestId);
+  if (!request) return { error: 'not_found' };
+  if (request.sender_user_id !== username && request.recipient_user_id !== username) return { error: 'forbidden' };
+  return { request };
+}
+
+app.post('/api/social/friends/requests/:id/accept', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureSocialTables(db);
+  const result = findFriendRequestForUser(db, req.params.id, req.username);
+  if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
+  if (result.error === 'forbidden') return res.status(403).json({ error: 'Forbidden' });
+  const request = result.request;
+  if (request.recipient_user_id !== req.username) return res.status(403).json({ error: 'Only recipient can accept.' });
+  if (request.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be accepted.' });
+  request.status = 'accepted';
+  request.updated_at = new Date().toISOString();
+  const [user_one_id, user_two_id] = normalizeFriendshipPair(request.sender_user_id, request.recipient_user_id);
+  if (!db.friendships.some(f => f.user_one_id === user_one_id && f.user_two_id === user_two_id)) {
+    db.friendships.push({ id: crypto.randomUUID(), user_one_id, user_two_id, created_at: new Date().toISOString() });
+  }
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friend_request_accepted', entityType: 'friend_request', entityId: request.id, metadata: { sender_user_id: request.sender_user_id } });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/social/friends/requests/:id/decline', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const result = findFriendRequestForUser(db, req.params.id, req.username);
+  if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
+  if (result.error === 'forbidden') return res.status(403).json({ error: 'Forbidden' });
+  const request = result.request;
+  if (request.recipient_user_id !== req.username) return res.status(403).json({ error: 'Only recipient can decline.' });
+  if (request.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be declined.' });
+  request.status = 'declined';
+  request.updated_at = new Date().toISOString();
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friend_request_declined', entityType: 'friend_request', entityId: request.id, metadata: { sender_user_id: request.sender_user_id } });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/social/friends/requests/:id/cancel', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const result = findFriendRequestForUser(db, req.params.id, req.username);
+  if (result.error === 'not_found') return res.status(404).json({ error: 'Friend request not found.' });
+  if (result.error === 'forbidden') return res.status(403).json({ error: 'Forbidden' });
+  const request = result.request;
+  if (request.sender_user_id !== req.username) return res.status(403).json({ error: 'Only sender can cancel.' });
+  if (request.status !== 'pending') return res.status(400).json({ error: 'Only pending requests can be cancelled.' });
+  request.status = 'cancelled';
+  request.updated_at = new Date().toISOString();
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friend_request_cancelled', entityType: 'friend_request', entityId: request.id, metadata: { recipient_user_id: request.recipient_user_id } });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.delete('/api/social/friends/:friendUserId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureSocialTables(db);
+  const friendUserId = req.params.friendUserId;
+  const [user_one_id, user_two_id] = normalizeFriendshipPair(req.username, friendUserId);
+  const before = db.friendships.length;
+  db.friendships = db.friendships.filter(f => !(f.user_one_id === user_one_id && f.user_two_id === user_two_id));
+  if (db.friendships.length === before) return res.status(404).json({ error: 'Friendship not found.' });
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friendship_removed', entityType: 'friendship', entityId: `${user_one_id}:${user_two_id}`, metadata: { friend_user_id: friendUserId } });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.put('/api/social/settings', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = socialSettingsPatchSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const updates = parsed.data;
+  const db = loadDB();
+  const settings = getSocialSettings(db, req.username);
+  Object.assign(settings, updates);
+  settings.updated_at = new Date().toISOString();
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.settings_changed', entityType: 'social_settings', entityId: settings.id, metadata: updates });
+  recomputeLeaderboardStatsForUser(db, req.username);
+  saveDB(db);
+  res.json({ settings });
+});
+
+app.put('/api/social/trades/:tradeId/share', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = tradeSharePatchSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.tradeId);
+  if (!found) return res.status(404).json({ error: 'Trade not found' });
+  const settings = getSocialSettings(db, req.username);
+  if (!settings.trade_sharing_enabled && parsed.data.is_shared) {
+    return res.status(400).json({ error: 'Enable trade sharing in social settings first.' });
+  }
+  const share = ensureTradeShareSettings(db, req.username, req.params.tradeId);
+  Object.assign(share, parsed.data);
+  share.updated_at = new Date().toISOString();
+  logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.trade_share_settings_changed', entityType: 'trade_share_settings', entityId: share.id, metadata: parsed.data });
+  saveDB(db);
+  res.json({ share });
+});
+
+app.get('/api/social/trades/feed', auth, async (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const friendIds = db.friendships
+    .filter(f => f.user_one_id === req.username || f.user_two_id === req.username)
+    .map(f => (f.user_one_id === req.username ? f.user_two_id : f.user_one_id));
+  const rates = await fetchRates();
+  const feed = [];
+  for (const friendId of friendIds) {
+    const owner = db.users[friendId];
+    if (!owner) continue;
+    ensureUserShape(owner, friendId);
+    const settings = getSocialSettings(db, friendId);
+    if (!settings.trade_sharing_enabled) continue;
+    const trades = flattenTrades(owner, rates);
+    for (const trade of trades) {
+      const share = ensureTradeShareSettings(db, friendId, trade.id);
+      if (!share.is_shared) continue;
+      if (share.shared_scope !== 'friends_only') continue;
+      if (share.share_after_close_only && trade.status !== 'closed') continue;
+      if (trade.status === 'closed' && !settings.share_closed_trades) continue;
+      if (trade.status !== 'closed' && !settings.share_open_trades) continue;
+      feed.push(sanitizeSocialTradePayload(owner, trade, settings, share));
+    }
+  }
+  saveDB(db);
+  feed.sort((a, b) => (b.openDate || '').localeCompare(a.openDate || ''));
+  res.json({ trades: feed });
+});
+
+app.get('/api/social/leaderboard', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const period = typeof req.query?.period === 'string' ? req.query.period.toUpperCase() : '30D';
+  const selectedPeriod = LEADERBOARD_PERIOD_KEYS.includes(period) ? period : '30D';
+  const verification = typeof req.query?.verification === 'string' ? req.query.verification : 'trusted';
+
+  for (const username of Object.keys(db.users || {})) {
+    recomputeLeaderboardStatsForUser(db, username);
+  }
+
+  const allowedStatuses = verification === 'all'
+    ? new Set(VERIFICATION_STATUS_VALUES)
+    : verification === 'none'
+      ? new Set(['none'])
+      : new Set(['platform_verified', 'broker_verified']);
+
+  const entries = db.leaderboardStats
+    .filter(s => s.period_key === selectedPeriod)
+    .filter(s => allowedStatuses.has(s.verification_status))
+    .filter(s => {
+      const settings = getSocialSettings(db, s.user_id);
+      if (!settings.leaderboard_enabled) return false;
+      return s.eligible;
+    })
+    .map(s => {
+      const settings = getSocialSettings(db, s.user_id);
+      const profile = getSocialProfile(db, s.user_id);
+      const user = db.users[s.user_id] || {};
+      return {
+        user_id: s.user_id,
+        display_name: profile?.display_name_override || user.nickname || user.displayName || s.user_id,
+        period_key: s.period_key,
+        return_pct: s.return_pct,
+        realized_return_pct: s.realized_return_pct,
+        trade_count: s.trade_count,
+        win_rate: s.win_rate,
+        eligible: s.eligible,
+        ineligibility_reason: s.ineligibility_reason,
+        last_updated_at: s.updated_at,
+        verification_status: settings.verification_status,
+        verification_source: settings.verification_source || null
+      };
+    })
+    .sort((a, b) => (Number(b.return_pct) || 0) - (Number(a.return_pct) || 0));
+
+  saveDB(db);
+  res.json({ period: selectedPeriod, verification, entries });
+});
+
+app.post('/api/social/leaderboard/recompute', auth, (req, res) => {
+  const db = loadDB();
+  for (const username of Object.keys(db.users || {})) {
+    recomputeLeaderboardStatsForUser(db, username);
+  }
+  saveDB(db);
+  res.json({ ok: true, users: Object.keys(db.users || {}).length });
+});
 
 app.get('/api/prefs', auth, (req, res) => {
   const db = loadDB();
