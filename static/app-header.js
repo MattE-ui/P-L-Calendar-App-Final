@@ -2,24 +2,21 @@
   if (document.getElementById('global-app-header')) return;
 
   const path = window.location.pathname || '/';
-  const hash = window.location.hash || '';
   const isDashboardRoute = path === '/' || path.endsWith('/index.html');
   const activeKey = (() => {
     if (path.endsWith('/analytics.html')) return 'analytics';
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
     if (path.endsWith('/profile.html')) return 'profile';
-    if (isDashboardRoute && hash.toLowerCase() === '#calendar') return 'calendar';
     if (isDashboardRoute) return 'dashboard';
     return '';
   })();
 
   const navItems = [
     { key: 'dashboard', label: 'Dashboard', href: '/' },
-    { key: 'calendar', label: 'Calendar', href: '/#calendar' },
     { key: 'trades', label: 'Trades', href: '/trades.html' },
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
-    { key: 'portfolio', label: 'Portfolio', href: '/transactions.html' },
+    { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
     { key: 'profile', label: 'Profile', href: '/profile.html' }
   ];
 
