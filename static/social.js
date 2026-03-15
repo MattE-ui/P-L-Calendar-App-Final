@@ -1,3 +1,10 @@
+(() => {
+  if (window.__veracitySocialPageInitialized) {
+    // Defensive guard: tolerate accidental duplicate script inclusion without re-binding listeners.
+    return;
+  }
+  window.__veracitySocialPageInitialized = true;
+
 const SOCIAL_SETTING_KEYS = [
   'leaderboard_enabled',
   'trade_sharing_enabled',
@@ -1077,3 +1084,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('beforeunload', stopFriendPolling);
 });
+
+})();
