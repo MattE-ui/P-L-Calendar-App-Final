@@ -84,6 +84,16 @@ const socialCodeRegenRateLimit = new Map();
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
 const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
 const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
+const AVATAR_DIRECTORY_RELATIVE = path.join('uploads', 'avatars');
+const AVATAR_DIRECTORY = path.join(__dirname, 'static', AVATAR_DIRECTORY_RELATIVE);
+const AVATAR_PUBLIC_PREFIX = '/static/uploads/avatars/';
+const AVATAR_MAX_BYTES = Number(process.env.AVATAR_MAX_BYTES) || (2 * 1024 * 1024);
+const AVATAR_ALLOWED_TYPES = new Map([
+  ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp']
+]);
 const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
 
 function ensureDataStore() {
@@ -112,6 +122,7 @@ function ensureDataStore() {
 }
 
 ensureDataStore();
+fs.mkdirSync(AVATAR_DIRECTORY, { recursive: true });
 
 function isStrongPassword(password) {
   if (typeof password !== 'string' || password.length < 12) return false;
@@ -121,6 +132,73 @@ function isStrongPassword(password) {
   const hasSymbol = /[^A-Za-z0-9]/.test(password);
   return hasUpper && hasLower && hasNumber && hasSymbol;
 }
+
+
+function sanitizeAvatarPath(raw) {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith(AVATAR_PUBLIC_PREFIX)) return '';
+  const filename = path.basename(trimmed);
+  return filename ? `${AVATAR_PUBLIC_PREFIX}${filename}` : '';
+}
+
+function avatarAbsolutePathFromPublic(raw) {
+  const safePublic = sanitizeAvatarPath(raw);
+  if (!safePublic) return '';
+  const filename = path.basename(safePublic);
+  if (!filename) return '';
+  return path.join(AVATAR_DIRECTORY, filename);
+}
+
+function removeAvatarFile(publicPath) {
+  const absolute = avatarAbsolutePathFromPublic(publicPath);
+  if (!absolute) return;
+  if (fs.existsSync(absolute)) {
+    try {
+      fs.unlinkSync(absolute);
+    } catch (error) {
+      console.warn('Unable to remove avatar file:', error);
+    }
+  }
+}
+
+function computeAvatarInitials(rawNickname) {
+  if (typeof rawNickname !== 'string') return 'V';
+  const cleaned = rawNickname.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return 'V';
+  const parts = cleaned.split(' ').filter(Boolean);
+  if (!parts.length) return 'V';
+  const chars = parts.slice(0, 2).map(part => part[0]?.toUpperCase()).filter(Boolean);
+  if (!chars.length) return 'V';
+  return chars.join('').slice(0, 2);
+}
+
+function socialAvatarForUser(user) {
+  const avatarUrl = sanitizeAvatarPath(user?.avatarUrl || user?.avatar_url || '');
+  return {
+    avatar_url: avatarUrl || '',
+    avatar_initials: computeAvatarInitials(getSocialNickname(user))
+  };
+}
+
+function detectImageExtension(buffer, declaredType = '') {
+  const type = String(declaredType || '').toLowerCase().split(';')[0].trim();
+  if (AVATAR_ALLOWED_TYPES.has(type)) return AVATAR_ALLOWED_TYPES.get(type);
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return '';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'png';
+  const riff = buffer.toString('ascii', 0, 4);
+  const webp = buffer.toString('ascii', 8, 12);
+  if (riff === 'RIFF' && webp === 'WEBP') return 'webp';
+  return '';
+}
+
+function buildAvatarPublicPath(username, extension) {
+  const safeUser = String(username || 'user').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24) || 'user';
+  const unique = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  return `${AVATAR_PUBLIC_PREFIX}${safeUser}-${unique}.${extension}`;
+}
+
 
 function normalizeNickname(raw) {
   if (typeof raw !== 'string') return { value: '', error: 'Nickname must be a string.' };
@@ -559,9 +637,12 @@ function areFriends(db, a, b) {
 function socialIdentityForUser(db, username) {
   const user = db.users?.[username] || null;
   const profile = getSocialProfile(db, username);
+  const avatar = socialAvatarForUser(user);
   return {
     nickname: getSocialNickname(user),
-    friend_code: profile?.friend_code || ''
+    friend_code: profile?.friend_code || '',
+    avatar_url: avatar.avatar_url,
+    avatar_initials: avatar.avatar_initials
   };
 }
 
@@ -575,6 +656,8 @@ function sanitizeFriendRequestForViewer(db, request, viewerUsername) {
     direction: isIncoming ? 'incoming' : 'outgoing',
     counterparty_nickname: identity.nickname || 'Unknown trader',
     counterparty_friend_code: identity.friend_code,
+    counterparty_avatar_url: identity.avatar_url,
+    counterparty_avatar_initials: identity.avatar_initials,
     created_at: request.created_at,
     updated_at: request.updated_at
   };
@@ -1768,6 +1851,26 @@ function ensureUserShape(user, identifier) {
       user.friendCode = normalizedCode;
       mutated = true;
     }
+  }
+  const legacyAvatar = typeof user.avatar_url === 'string' ? user.avatar_url : '';
+  const currentAvatar = typeof user.avatarUrl === 'string' ? user.avatarUrl : legacyAvatar;
+  const safeAvatar = sanitizeAvatarPath(currentAvatar);
+  if (safeAvatar !== currentAvatar) {
+    if (currentAvatar) removeAvatarFile(currentAvatar);
+    mutated = true;
+  }
+  if (safeAvatar) {
+    if (user.avatarUrl !== safeAvatar) {
+      user.avatarUrl = safeAvatar;
+      mutated = true;
+    }
+  } else if (user.avatarUrl !== undefined) {
+    delete user.avatarUrl;
+    mutated = true;
+  }
+  if (user.avatar_url !== undefined) {
+    delete user.avatar_url;
+    mutated = true;
   }
   if (user.email !== undefined) {
     delete user.email;
@@ -6448,6 +6551,8 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     username: user.username || req.username,
     displayName: user.displayName || user.username || req.username,
     nickname: user.nickname || user.displayName || user.username || req.username,
+    avatarUrl: socialAvatarForUser(user).avatar_url,
+    avatarInitials: socialAvatarForUser(user).avatar_initials,
     friendCode: user.friendCode || '',
     isGuest: !!user.guest,
     isAdmin: isAdminUser(user, req.username),
@@ -6494,9 +6599,19 @@ app.get('/api/social/me', auth, (req, res) => {
   const profile = getSocialProfile(db, req.username);
   const settings = getSocialSettings(db, req.username);
   const nickname = getSocialNickname(user);
+  const avatar = socialAvatarForUser(user);
   recomputeLeaderboardStatsForUser(db, req.username);
   saveDB(db);
-  res.json({ profile, settings, nickname_required: !nickname, nickname: nickname || '' });
+  res.json({
+    profile: {
+      ...profile,
+      avatar_url: avatar.avatar_url,
+      avatar_initials: avatar.avatar_initials
+    },
+    settings,
+    nickname_required: !nickname,
+    nickname: nickname || ''
+  });
 });
 
 app.post('/api/social/friend-code/regenerate', auth, (req, res) => {
@@ -6591,6 +6706,8 @@ app.get('/api/social/friends', auth, (req, res) => {
         friend_user_id: friendUserId,
         nickname: identity.nickname || 'Unknown trader',
         friend_code: identity.friend_code,
+        avatar_url: identity.avatar_url,
+        avatar_initials: identity.avatar_initials,
         created_at: f.created_at
       };
     });
@@ -7051,6 +7168,76 @@ app.post('/api/transactions/profiles', auth, (req, res) => {
   user.transactionProfiles = cleaned;
   saveDB(db);
   res.json({ profiles: user.transactionProfiles });
+});
+
+
+app.post('/api/profile/avatar', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const mimeType = typeof req.body?.mimeType === 'string' ? req.body.mimeType : '';
+  const imageBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64.trim() : '';
+  if (!imageBase64) {
+    return res.status(400).json({ error: 'Avatar image payload is required.' });
+  }
+
+  let imageBuffer;
+  try {
+    imageBuffer = Buffer.from(imageBase64, 'base64');
+  } catch (_error) {
+    return res.status(400).json({ error: 'Invalid avatar payload.' });
+  }
+  if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
+    return res.status(400).json({ error: 'Avatar image payload is required.' });
+  }
+  if (imageBuffer.length > AVATAR_MAX_BYTES) {
+    return res.status(413).json({ error: `Avatar exceeds ${Math.round(AVATAR_MAX_BYTES / (1024 * 1024))}MB limit.` });
+  }
+
+  const extension = detectImageExtension(imageBuffer, mimeType);
+  if (!extension) {
+    return res.status(400).json({ error: 'Unsupported avatar file type. Use JPG, PNG, or WEBP.' });
+  }
+
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+
+  const nextPublicPath = buildAvatarPublicPath(req.username, extension);
+  const nextAbsolutePath = avatarAbsolutePathFromPublic(nextPublicPath);
+  if (!nextAbsolutePath) return res.status(500).json({ error: 'Unable to store avatar.' });
+
+  try {
+    fs.writeFileSync(nextAbsolutePath, imageBuffer, { flag: 'wx' });
+  } catch (error) {
+    console.error('Failed to persist avatar upload:', error);
+    return res.status(500).json({ error: 'Unable to save avatar right now.' });
+  }
+
+  const previousAvatar = user.avatarUrl;
+  user.avatarUrl = nextPublicPath;
+  saveDB(db);
+  if (previousAvatar && previousAvatar !== nextPublicPath) {
+    removeAvatarFile(previousAvatar);
+  }
+
+  const avatar = socialAvatarForUser(user);
+  res.json({ ok: true, avatar_url: avatar.avatar_url, avatar_initials: avatar.avatar_initials });
+});
+
+app.delete('/api/profile/avatar', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const previousAvatar = user.avatarUrl;
+  if (user.avatarUrl !== undefined) {
+    delete user.avatarUrl;
+  }
+  saveDB(db);
+  removeAvatarFile(previousAvatar);
+  const avatar = socialAvatarForUser(user);
+  res.json({ ok: true, avatar_url: avatar.avatar_url, avatar_initials: avatar.avatar_initials });
 });
 
 app.post('/api/profile', auth, (req,res)=>{
@@ -10120,6 +10307,9 @@ module.exports = {
 
 // global error handler
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  if (err?.type === 'entity.too.large') {
+    return res.status(413).json({ error: `Avatar exceeds ${Math.round(AVATAR_MAX_BYTES / (1024 * 1024))}MB limit.` });
+  }
   console.error('Unhandled error', err);
   if (res.headersSent) return;
   res.status(500).json({ error: 'Unexpected server error' });
