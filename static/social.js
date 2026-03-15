@@ -11,6 +11,24 @@ const SOCIAL_SETTING_KEYS = [
   'trade_sharing_scope'
 ];
 
+const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+const DEFAULT_LEADERBOARD_PERIOD = '30D';
+
+const DEFAULT_SOCIAL_SETTINGS = {
+  leaderboard_enabled: false,
+  trade_sharing_enabled: false,
+  allow_friend_requests: false,
+  share_open_trades: false,
+  share_closed_trades: false,
+  show_pnl_percent: true,
+  show_pnl_currency: false,
+  show_position_size: false,
+  leaderboard_visibility: 'private',
+  trade_sharing_scope: 'private',
+  verification_status: 'none',
+  verification_source: null
+};
+
 const socialState = {
   loading: true,
   profile: null,
@@ -116,6 +134,15 @@ function getVerificationDisplay(status, source) {
   };
 }
 
+
+
+function normalizeSocialSettings(settings = {}) {
+  const safe = (settings && typeof settings === 'object') ? settings : {};
+  return {
+    ...DEFAULT_SOCIAL_SETTINGS,
+    ...safe
+  };
+}
 
 function normalizeFriendCode(value) {
   return String(value || '')
@@ -507,17 +534,33 @@ function updateAddFriendState() {
 
 async function loadFriendData() {
   if (window.socialRequestSync && typeof window.socialRequestSync.refresh === 'function') {
-    await window.socialRequestSync.refresh('social-page-load-friends');
-    const shared = window.socialRequestSync.getState();
-    socialState.friendsLoading = false;
-    socialState.friendsError = shared.error || '';
-    socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
-    socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
-    socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
-    socialState.acceptedOutgoingRequests = Array.isArray(shared.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
-    renderFriendSection();
+    socialState.friendsLoading = true;
+    socialState.friendsError = '';
     updateAddFriendState();
     setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
+    try {
+      await window.socialRequestSync.refresh('social-page-load-friends');
+      const shared = window.socialRequestSync.getState();
+      socialState.friendsError = shared?.error || '';
+      socialState.friends = Array.isArray(shared?.friends) ? shared.friends : [];
+      socialState.incomingRequests = Array.isArray(shared?.incomingRequests) ? shared.incomingRequests : [];
+      socialState.outgoingRequests = Array.isArray(shared?.outgoingRequests) ? shared.outgoingRequests : [];
+      socialState.acceptedOutgoingRequests = Array.isArray(shared?.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
+      renderFriendSection();
+    } catch (error) {
+      socialState.friends = [];
+      socialState.incomingRequests = [];
+      socialState.outgoingRequests = [];
+      socialState.acceptedOutgoingRequests = [];
+      socialState.friendsError = error?.message || 'Unable to load friend data.';
+      renderFriendSection();
+      // Keep the failure isolated to Friends so profile/settings/leaderboard continue working.
+      console.warn('[social] friends sync refresh failed:', error);
+    } finally {
+      socialState.friendsLoading = false;
+      updateAddFriendState();
+      setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
+    }
     return;
   }
 
@@ -855,20 +898,7 @@ async function loadSocialData() {
       socialState.nicknameRequired = false;
       socialState.nickname = '';
       socialState.profile = { friend_code: 'GUEST', verification_status: 'none', verification_source: 'manual' };
-      socialState.settings = {
-        leaderboard_enabled: false,
-        trade_sharing_enabled: false,
-        allow_friend_requests: false,
-        share_open_trades: false,
-        share_closed_trades: false,
-        show_pnl_percent: true,
-        show_pnl_currency: false,
-        show_position_size: false,
-        leaderboard_visibility: 'private',
-        trade_sharing_scope: 'private',
-        verification_status: 'none',
-        verification_source: 'manual'
-      };
+      socialState.settings = normalizeSocialSettings({ verification_source: 'manual' });
       socialState.initialSettings = { ...socialState.settings };
       applyProfile(socialState.profile);
       applyFormSettings(socialState.settings);
@@ -879,7 +909,7 @@ async function loadSocialData() {
       socialState.isGuest = false;
       const response = await socialApi('/api/social/me');
       socialState.profile = response?.profile || {};
-      socialState.settings = response?.settings || {};
+      socialState.settings = normalizeSocialSettings(response?.settings);
       socialState.nicknameRequired = !!response?.nickname_required;
       socialState.nickname = response?.nickname || '';
       socialState.initialSettings = SOCIAL_SETTING_KEYS.reduce((acc, key) => {
@@ -1018,14 +1048,20 @@ function bindActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
-  loadSocialData().then(() => {
-    loadLeaderboard();
-    loadFriendData();
+
+  Promise.allSettled([
+    loadSocialData(),
+    loadLeaderboard(),
+    loadFriendData()
+  ]).finally(() => {
+    // Start polling after initial section loads settle so one failure does not block others.
     startFriendPolling();
   });
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && !socialState.isGuest && !socialState.nicknameRequired) {
       loadFriendData();
+      loadLeaderboard();
     }
   });
   window.addEventListener(SOCIAL_SYNC_EVENT, (event) => {
