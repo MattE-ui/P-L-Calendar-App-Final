@@ -4661,3 +4661,60 @@ textarea {
     gap: 2px;
   }
 }
+
+.social-gate {
+  border: 1px solid rgba(79, 209, 167, 0.24);
+  background: linear-gradient(160deg, rgba(12, 20, 32, 0.9), rgba(8, 13, 24, 0.9));
+}
+
+.social-gate h2 {
+  margin: 6px 0 10px;
+  font-size: 1.05rem;
+}
+
+.social-gate-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  text-decoration: none;
+}
+
+.social-global-alert {
+  position: fixed;
+  top: 88px;
+  right: 20px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(79, 209, 167, 0.25);
+  background: rgba(6, 11, 20, 0.95);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  z-index: 1300;
+}
+
+.social-global-alert__title {
+  font-size: 0.76rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(186, 230, 211, 0.75);
+  margin-bottom: 8px;
+}
+
+.social-global-alert__body {
+  color: #d8efe6;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.social-global-alert__actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.social-global-alert__actions button {
+  padding: 7px 10px;
+  font-size: 0.8rem;
+}
