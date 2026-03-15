@@ -946,6 +946,8 @@ async function updateAutoStop(symbol, stopInput, markAuto) {
 }
 
 function renderActiveTrades() {
+  try {
+
   const list = $('#active-trade-list');
   const empty = $('#active-trade-empty');
   const showAll = $('#active-trade-show-all');
@@ -1056,6 +1058,17 @@ function renderActiveTrades() {
     list.appendChild(groupCard);
   });
   updateActiveTradesOverflow();
+  } catch (error) {
+    console.error('Failed to render active trades panel', error);
+    const list = $('#active-trade-list');
+    const empty = $('#active-trade-empty');
+    if (list) list.innerHTML = '';
+    if (empty) {
+      empty.textContent = 'Active trades are temporarily unavailable.';
+      empty.classList.remove('is-hidden');
+    }
+  }
+
 }
 
 function normalizeTicker(ticker) {
@@ -2839,9 +2852,25 @@ function render() {
   renderTitle();
   renderMetrics();
   renderRiskCalculator();
-  renderActiveTrades();
-  renderPortfolioTrend();
-  renderView();
+
+  try {
+    renderView();
+  } catch (error) {
+    console.error('Failed to render calendar view', error);
+  }
+
+  try {
+    renderActiveTrades();
+  } catch (error) {
+    console.error('Failed to render active trades', error);
+  }
+
+  try {
+    renderPortfolioTrend();
+  } catch (error) {
+    console.error('Failed to render portfolio trend', error);
+  }
+
   renderSummary();
   syncActiveTradesHeight();
 }
