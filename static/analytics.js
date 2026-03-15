@@ -103,10 +103,12 @@ function toQuery(params = {}) {
 
 function formatPercent(value) {
   if (value === null || value === undefined) return '—';
-  if (value === 0) return '0.00%';
   const num = Number(value);
-  const sign = num < 0 ? '-' : '';
-  return `${sign}${Math.abs(num).toFixed(2)}%`;
+  if (!Number.isFinite(num)) return '—';
+  if (num === 0) return '0.00%';
+  const normalized = Math.abs(num) <= 1 ? num * 100 : num;
+  const sign = normalized < 0 ? '-' : '';
+  return `${sign}${Math.abs(normalized).toFixed(2)}%`;
 }
 
 function formatNumber(value) {
