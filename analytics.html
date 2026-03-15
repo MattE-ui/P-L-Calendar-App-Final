@@ -224,17 +224,7 @@
           <div class="section-header"><h3>Win Rate by Trade Type</h3></div>
           <div class="chart-frame chart-frame-compact"><canvas id="winrate-type-chart"></canvas></div>
         </div>
-      </div>
-    </section>
-
-    <section class="analytics-block">
-      <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
-      <div class="analytics-grid behaviour-grid">
-        <div class="chart-card heatmap-card">
-          <div class="section-header"><h3>Monthly Heatmap</h3></div>
-          <div id="heatmap-grid" class="heatmap"></div>
-        </div>
-        <aside class="chart-card snapshot-card">
+        <aside class="chart-card snapshot-card snapshot-card-inline">
           <div class="section-header"><h3>Trading Snapshot</h3></div>
           <div class="snapshot-grid">
             <div><span>Best Day</span><strong id="snapshot-best-day">—</strong></div>
@@ -246,6 +236,16 @@
             <div><span>Std Dev</span><strong id="snapshot-stddev">—</strong></div>
           </div>
         </aside>
+      </div>
+    </section>
+
+    <section class="analytics-block">
+      <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
+      <div class="analytics-grid behaviour-grid">
+        <div class="chart-card heatmap-card heatmap-card-full">
+          <div class="section-header"><h3>Monthly Heatmap</h3></div>
+          <div id="heatmap-grid" class="heatmap"></div>
+        </div>
       </div>
     </section>
   </main>

@@ -496,16 +496,90 @@ function renderDistribution(dist = {}) {
   });
 }
 
+
+function normalizeCategoryLabel(raw) {
+  if (raw === null || raw === undefined || raw === '') return 'Unspecified';
+  const value = String(raw).trim();
+  if (!value) return 'Unspecified';
+  const presets = {
+    scalp: 'Scalp',
+    day: 'Day',
+    swing: 'Swing',
+    position: 'Position',
+    unknown: 'Unspecified',
+    none: 'Unspecified'
+  };
+  if (presets[value.toLowerCase()]) return presets[value.toLowerCase()];
+  return value;
+}
+
+function renderSparseBreakdownSummary(canvasId, entries, isPct) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const frame = canvas.closest('.chart-frame');
+  const card = canvas.closest('.chart-card');
+  if (!frame || !card) return;
+  frame.classList.add('hidden');
+  let host = card.querySelector('.category-summary');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'category-summary';
+    card.appendChild(host);
+  }
+  host.innerHTML = '';
+  entries.forEach(([label, rawValue]) => {
+    const value = Number(rawValue) || 0;
+    const row = document.createElement('div');
+    row.className = `category-summary-row ${value > 0 ? 'positive' : value < 0 ? 'negative' : ''}`;
+
+    const name = document.createElement('span');
+    name.className = 'category-name';
+    name.textContent = normalizeCategoryLabel(label);
+
+    const num = document.createElement('strong');
+    num.textContent = isPct ? formatPercent(value) : formatNumber(value);
+
+    const meter = document.createElement('div');
+    meter.className = 'category-meter';
+    const fill = document.createElement('div');
+    fill.className = 'category-meter-fill';
+    fill.style.width = `${Math.max(8, Math.min(100, Math.abs(value)))}%`;
+    meter.appendChild(fill);
+
+    row.append(name, num, meter);
+    host.appendChild(row);
+  });
+}
+
+function clearSparseBreakdownSummary(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const frame = canvas.closest('.chart-frame');
+  const card = canvas.closest('.chart-card');
+  frame?.classList.remove('hidden');
+  card?.querySelector('.category-summary')?.remove();
+}
+
 function renderBreakdown(canvasId, dataObj = {}, label) {
   const entries = Object.entries(dataObj || {});
+  clearSparseBreakdownSummary(canvasId);
   if (!entries.length) {
     showEmptyState(canvasId, 'No data for current filters.');
     return;
   }
-  const labels = entries.map(([k]) => k);
-  const values = entries.map(([, v]) => Number(v) || 0);
   const isPct = (label || '').toLowerCase().includes('win');
-  const horizontal = entries.length > 3;
+  const sortedEntries = entries
+    .map(([k, v]) => [normalizeCategoryLabel(k), Number(v) || 0])
+    .sort((a, b) => b[1] - a[1]);
+
+  if (sortedEntries.length <= 2) {
+    destroyChart(canvasId);
+    renderSparseBreakdownSummary(canvasId, sortedEntries, isPct);
+    return;
+  }
+
+  const labels = sortedEntries.map(([k]) => k);
+  const values = sortedEntries.map(([, v]) => v);
   renderChart(canvasId, {
     type: 'bar',
     data: {
@@ -514,18 +588,20 @@ function renderBreakdown(canvasId, dataObj = {}, label) {
         label: label || '',
         data: values,
         borderRadius: 6,
+        barThickness: 12,
+        maxBarThickness: 14,
         backgroundColor: values.map(v => (v >= 0 ? CHART_THEME.accent() : CHART_THEME.danger()))
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      indexAxis: horizontal ? 'y' : 'x',
+      indexAxis: 'y',
       animation: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { ticks: { callback: v => (isPct ? `${v}%` : formatNumber(v)) } },
-        y: { ticks: { callback: v => (horizontal ? undefined : (isPct ? `${v}%` : formatNumber(v))) } }
+        x: { ticks: { callback: v => (isPct ? `${Number(v).toFixed(0)}%` : formatNumber(v)) } },
+        y: { ticks: { autoSkip: false } }
       }
     }
   });

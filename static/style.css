@@ -3337,11 +3337,11 @@ textarea {
 
 /* Analytics redesign */
 .analytics-page {
-  gap: 14px;
+  gap: 10px;
 }
 
 .analytics-toolbar {
-  padding: 14px;
+  padding: 11px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01) 52%), var(--surface-1);
 }
@@ -3417,7 +3417,7 @@ textarea {
 .metrics-overview {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .metrics-grid {
@@ -3427,8 +3427,8 @@ textarea {
 }
 
 .metrics-grid .stats-card {
-  min-height: 98px;
-  padding: 12px;
+  min-height: 88px;
+  padding: 10px;
   border-radius: 12px;
 }
 
@@ -3475,7 +3475,7 @@ textarea {
 .analytics-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .analytics-block-head h3 {
@@ -3514,22 +3514,22 @@ textarea {
 
 .chart-frame {
   position: relative;
-  height: clamp(190px, 24vh, 230px);
-  min-height: 190px;
-  max-height: 230px;
+  height: clamp(170px, 21vh, 205px);
+  min-height: 170px;
+  max-height: 205px;
   overflow: hidden;
 }
 
 .chart-frame-hero {
-  height: clamp(320px, 38vh, 370px);
-  min-height: 320px;
-  max-height: 370px;
+  height: clamp(270px, 32vh, 310px);
+  min-height: 270px;
+  max-height: 310px;
 }
 
 .chart-frame-compact {
-  height: clamp(175px, 21vh, 210px);
-  min-height: 175px;
-  max-height: 210px;
+  height: clamp(150px, 18vh, 180px);
+  min-height: 150px;
+  max-height: 180px;
 }
 
 .chart-frame canvas,
@@ -3546,7 +3546,7 @@ textarea {
 }
 
 .behaviour-grid {
-  grid-template-columns: 1.35fr 0.85fr;
+  grid-template-columns: 1fr;
   align-items: stretch;
 }
 
@@ -3584,14 +3584,14 @@ textarea {
 }
 
 .heatmap {
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  gap: 4px;
 }
 
 .heatmap-day {
   border-radius: 8px;
-  padding: 7px;
-  min-height: 56px;
+  padding: 6px;
+  min-height: 50px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -3647,15 +3647,94 @@ textarea {
 
 @media (max-width: 900px) {
   .chart-frame-hero {
-    height: 310px;
-    min-height: 310px;
-    max-height: 310px;
+    height: 260px;
+    min-height: 260px;
+    max-height: 260px;
   }
 
   .chart-frame,
   .chart-frame-compact {
-    height: 190px;
-    min-height: 190px;
-    max-height: 190px;
+    height: 165px;
+    min-height: 165px;
+    max-height: 165px;
+  }
+}
+
+
+.analytics-grid-trading {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.analytics-grid-trading .compact-chart-card {
+  min-height: 0 !important;
+}
+
+.snapshot-card-inline {
+  align-self: stretch;
+  padding: 10px;
+}
+
+.snapshot-card-inline .snapshot-grid div {
+  padding: 6px 7px;
+}
+
+.heatmap-card-full {
+  width: 100%;
+}
+
+.category-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.category-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+
+.category-summary-row .category-name {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.category-summary-row strong {
+  font-size: 13px;
+}
+
+.category-meter {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+
+.category-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(11,191,122,0.85), rgba(11,191,122,0.25));
+}
+
+.category-summary-row.negative .category-meter-fill {
+  background: linear-gradient(90deg, rgba(255,92,92,0.9), rgba(255,92,92,0.3));
+}
+
+@media (max-width: 1200px) {
+  .analytics-grid-trading {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .analytics-grid-trading {
+    grid-template-columns: 1fr;
   }
 }
