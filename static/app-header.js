@@ -47,17 +47,169 @@
 })();
 
 (function initFriendRequestAlertPolling() {
-  const isGuest = (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
-    && typeof window.handleGuestRequest === 'function';
-  if (isGuest) return;
+  const SOCIAL_SYNC_EVENT = 'social:state-changed';
+  const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
+
+  function isGuestSession() {
+    return (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
+      && typeof window.handleGuestRequest === 'function';
+  }
+
+  function createSocialRequestSync() {
+    const state = {
+      pollTimer: null,
+      pollingStarted: false,
+      refreshInFlight: null,
+      listenersBound: false,
+      data: {
+        friends: [],
+        incomingRequests: [],
+        outgoingRequests: [],
+        nicknameRequired: false,
+        authenticated: false,
+        lastRefreshAt: 0,
+        error: ''
+      }
+    };
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { credentials: 'include', ...opts });
+      if (res.status === 401) return null;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      return data;
+    }
+
+    function normalizeRequests(list) {
+      if (!Array.isArray(list)) return [];
+      return list.filter(item => item && item.status === 'pending');
+    }
+
+    function emitChange(reason) {
+      window.dispatchEvent(new CustomEvent(SOCIAL_SYNC_EVENT, {
+        detail: {
+          reason,
+          state: { ...state.data }
+        }
+      }));
+    }
+
+    async function refresh(reason = 'manual') {
+      if (isGuestSession()) return { ...state.data };
+      if (state.refreshInFlight) return state.refreshInFlight;
+
+      state.refreshInFlight = (async () => {
+        try {
+          const me = await api('/api/social/me');
+          if (!me) {
+            state.data = {
+              friends: [],
+              incomingRequests: [],
+              outgoingRequests: [],
+              nicknameRequired: false,
+              authenticated: false,
+              lastRefreshAt: Date.now(),
+              error: ''
+            };
+            emitChange('unauthenticated');
+            return { ...state.data };
+          }
+
+          const nicknameRequired = !!me.nickname_required;
+          if (nicknameRequired) {
+            state.data = {
+              friends: [],
+              incomingRequests: [],
+              outgoingRequests: [],
+              nicknameRequired: true,
+              authenticated: true,
+              lastRefreshAt: Date.now(),
+              error: ''
+            };
+            emitChange(reason);
+            return { ...state.data };
+          }
+
+          const [friendsResponse, requestsResponse] = await Promise.all([
+            api('/api/social/friends'),
+            api('/api/social/friends/requests')
+          ]);
+
+          state.data = {
+            friends: Array.isArray(friendsResponse?.friends) ? friendsResponse.friends : [],
+            incomingRequests: normalizeRequests(requestsResponse?.incoming),
+            outgoingRequests: normalizeRequests(requestsResponse?.outgoing),
+            nicknameRequired: false,
+            authenticated: true,
+            lastRefreshAt: Date.now(),
+            error: ''
+          };
+          emitChange(reason);
+        } catch (error) {
+          state.data = {
+            ...state.data,
+            error: error?.message || 'Unable to refresh social request state.',
+            lastRefreshAt: Date.now()
+          };
+          console.warn('[social-sync] refresh failed; polling will continue', error);
+          emitChange('error');
+        } finally {
+          state.refreshInFlight = null;
+        }
+        return { ...state.data };
+      })();
+
+      return state.refreshInFlight;
+    }
+
+    function requestRefresh(reason = 'external-refresh') {
+      return refresh(reason);
+    }
+
+    function startPolling() {
+      if (state.pollingStarted || isGuestSession()) return;
+      state.pollingStarted = true;
+      console.info('[social-sync] starting polling loop');
+      refresh('startup');
+      state.pollTimer = window.setInterval(() => {
+        if (!document.hidden) refresh('poll');
+      }, 15000);
+
+      if (!state.listenersBound) {
+        state.listenersBound = true;
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden) refresh('tab-visible');
+        });
+        window.addEventListener(SOCIAL_REFRESH_EVENT, (event) => {
+          const reason = event?.detail?.reason || 'external-event';
+          requestRefresh(reason);
+        });
+        window.addEventListener('beforeunload', () => {
+          if (state.pollTimer) {
+            window.clearInterval(state.pollTimer);
+            state.pollTimer = null;
+          }
+        });
+      }
+    }
+
+    return {
+      getState: () => ({ ...state.data }),
+      refresh: requestRefresh,
+      startPolling
+    };
+  }
+
+  if (!window.socialRequestSync) {
+    window.socialRequestSync = createSocialRequestSync();
+  }
+
+  window.socialRequestSync.startPolling();
 
   const state = {
-    seenIncoming: new Set(),
     activeRequestId: '',
-    pollTimer: null,
     actionBusy: false,
-    hiddenByUser: new Set(),
-    nicknameRequired: false
+    hiddenByUser: new Set()
   };
 
   function createAlertShell() {
@@ -69,22 +221,6 @@
     document.body.appendChild(shell);
   }
 
-  async function api(path, opts = {}) {
-    const res = await fetch(path, { credentials: 'include', ...opts });
-    if (res.status === 401) return null;
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Request failed');
-    return data;
-  }
-
-
-  function stopPolling() {
-    if (state.pollTimer) {
-      window.clearInterval(state.pollTimer);
-      state.pollTimer = null;
-    }
-  }
-
   function dismissActive() {
     state.activeRequestId = '';
     const shell = document.getElementById('global-friend-request-alert');
@@ -94,6 +230,14 @@
     }
   }
 
+  async function api(path, opts = {}) {
+    const res = await fetch(path, { credentials: 'include', ...opts });
+    if (res.status === 401) return null;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
   async function handleAction(id, action) {
     if (!id || state.actionBusy) return;
     state.actionBusy = true;
@@ -101,14 +245,12 @@
       await api(`/api/social/friends/requests/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
       state.hiddenByUser.add(id);
       dismissActive();
-      if (typeof window.dispatchEvent === 'function') {
-        window.dispatchEvent(new CustomEvent('social:friend-requests-updated', { detail: { action, requestId: id } }));
-      }
+      await window.socialRequestSync.refresh(`banner-${action}`);
     } catch (_error) {
       // Keep unobtrusive: we silently ignore here and poll will continue.
     } finally {
       state.actionBusy = false;
-      pollOnce();
+      window.socialRequestSync.refresh('banner-action-finalize');
     }
   }
 
@@ -135,53 +277,27 @@
     });
   }
 
-  function pickNewIncoming(incoming) {
-    for (const request of incoming) {
-      if (!request?.id || request.status !== 'pending') continue;
-      if (state.hiddenByUser.has(request.id)) continue;
-      if (!state.seenIncoming.has(request.id)) return request;
-    }
-    return null;
+  function pickRequestForBanner(incoming) {
+    // Intentional behavior: show the newest pending request not dismissed by this browser session.
+    const sorted = [...incoming].sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    return sorted.find((request) => request?.id && !state.hiddenByUser.has(request.id)) || null;
   }
 
-  async function pollOnce() {
-    if (document.hidden) return;
-    try {
-      const me = await api('/api/social/me');
-      if (!me) {
-        stopPolling();
-        dismissActive();
-        return;
-      }
-      state.nicknameRequired = !!me.nickname_required;
-      if (state.nicknameRequired) {
-        dismissActive();
-        return;
-      }
-      const payload = await api('/api/social/friends/requests');
-      if (!payload) return;
-      const incoming = Array.isArray(payload.incoming) ? payload.incoming : [];
-      const pendingIds = new Set(incoming.filter(item => item?.status === 'pending').map(item => item.id));
-      state.seenIncoming = new Set([...state.seenIncoming].filter(id => pendingIds.has(id)));
-      if (state.activeRequestId && !pendingIds.has(state.activeRequestId)) {
-        dismissActive();
-      }
-      const next = pickNewIncoming(incoming);
-      incoming.forEach(item => { if (item?.id) state.seenIncoming.add(item.id); });
-      if (next && !state.activeRequestId) {
-        renderRequest(next);
-      }
-    } catch (_error) {
-      // keep polling resilient and quiet
+  function renderFromSharedState() {
+    const socialData = window.socialRequestSync.getState();
+    if (!socialData.authenticated || socialData.nicknameRequired) {
+      dismissActive();
+      return;
     }
+    const pendingIds = new Set((socialData.incomingRequests || []).map(item => item.id));
+    if (state.activeRequestId && !pendingIds.has(state.activeRequestId)) {
+      dismissActive();
+    }
+    if (state.activeRequestId) return;
+    const next = pickRequestForBanner(socialData.incomingRequests || []);
+    if (next) renderRequest(next);
   }
 
-  pollOnce();
-  state.pollTimer = window.setInterval(pollOnce, 20000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) pollOnce();
-  });
-  window.addEventListener('beforeunload', () => {
-    stopPolling();
-  });
+  renderFromSharedState();
+  window.addEventListener(SOCIAL_SYNC_EVENT, renderFromSharedState);
 })();

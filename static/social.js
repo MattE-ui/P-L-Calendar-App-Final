@@ -33,6 +33,9 @@ const socialState = {
   friendPollTimer: null
 };
 
+const SOCIAL_SYNC_EVENT = 'social:state-changed';
+const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
+
 function isGuestSession() {
   return (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
     && typeof window.handleGuestRequest === 'function';
@@ -308,6 +311,20 @@ function updateAddFriendState() {
 }
 
 async function loadFriendData() {
+  if (window.socialRequestSync && typeof window.socialRequestSync.refresh === 'function') {
+    await window.socialRequestSync.refresh('social-page-load-friends');
+    const shared = window.socialRequestSync.getState();
+    socialState.friendsLoading = false;
+    socialState.friendsError = shared.error || '';
+    socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
+    socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
+    socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
+    renderFriendSection();
+    updateAddFriendState();
+    setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
+    return;
+  }
+
   socialState.friendsLoading = true;
   socialState.friendsError = '';
   updateAddFriendState();
@@ -371,7 +388,7 @@ async function sendFriendRequest(event) {
     } else {
       setFeedback(feedback, 'Friend request sent.', 'success');
     }
-    await loadFriendData();
+    await triggerSocialRefresh('request-sent');
   } catch (error) {
     setFeedback(feedback, error.message || 'Unable to send friend request.', 'error');
   } finally {
@@ -393,7 +410,7 @@ async function respondToRequest(requestId, action) {
 
   try {
     await socialApi(endpoint, { method: 'POST' });
-    await loadFriendData();
+    await triggerSocialRefresh(`request-${action}`);
   } catch (error) {
     socialState.friendsError = error.message || 'Unable to update request.';
     renderFriendSection();
@@ -410,7 +427,7 @@ async function removeFriend(friendUserId) {
 
   try {
     await socialApi(`/api/social/friends/${encodeURIComponent(friendUserId)}`, { method: 'DELETE' });
-    await loadFriendData();
+    await triggerSocialRefresh('friend-removed');
   } catch (error) {
     socialState.friendsError = error.message || 'Unable to remove friend.';
     renderFriendSection();
@@ -418,6 +435,30 @@ async function removeFriend(friendUserId) {
     socialState.friendActionIds.delete(friendUserId);
     renderFriendSection();
   }
+}
+
+function applySharedSocialState(shared) {
+  if (!shared || typeof shared !== 'object') return;
+  socialState.nicknameRequired = !!shared.nicknameRequired;
+  socialState.friendsError = shared.error || '';
+  socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
+  socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
+  socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
+  renderFriendSection();
+  updateAddFriendState();
+}
+
+async function triggerSocialRefresh(reason) {
+  if (window.socialRequestSync && typeof window.socialRequestSync.refresh === 'function') {
+    await window.socialRequestSync.refresh(reason);
+    applySharedSocialState(window.socialRequestSync.getState());
+    return;
+  }
+  if (typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT, { detail: { reason } }));
+    return;
+  }
+  await loadFriendData();
 }
 
 function bindFriendActions() {
@@ -722,6 +763,10 @@ async function copyFriendCode() {
 function startFriendPolling() {
   stopFriendPolling();
   if (socialState.isGuest || socialState.nicknameRequired) return;
+  if (window.socialRequestSync && typeof window.socialRequestSync.startPolling === 'function') {
+    window.socialRequestSync.startPolling();
+    return;
+  }
   socialState.friendPollTimer = window.setInterval(() => {
     if (!document.hidden) {
       loadFriendData();
@@ -754,7 +799,15 @@ document.addEventListener('DOMContentLoaded', () => {
       loadFriendData();
     }
   });
-  window.addEventListener('social:friend-requests-updated', () => {
+  window.addEventListener(SOCIAL_SYNC_EVENT, (event) => {
+    const sharedState = event?.detail?.state;
+    if (sharedState) {
+      applySharedSocialState(sharedState);
+      return;
+    }
+    loadFriendData();
+  });
+  window.addEventListener(SOCIAL_REFRESH_EVENT, () => {
     loadFriendData();
   });
   window.addEventListener('beforeunload', stopFriendPolling);
