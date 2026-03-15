@@ -746,6 +746,7 @@ function computeLifetimeMetrics() {
   };
 }
 
+
 function getLatestPortfolioGBP() {
   const live = Number(state.livePortfolioGBP);
   if (Number.isFinite(live) && live > 0) return live;
@@ -945,6 +946,8 @@ async function updateAutoStop(symbol, stopInput, markAuto) {
 }
 
 function renderActiveTrades() {
+  try {
+
   const list = $('#active-trade-list');
   const empty = $('#active-trade-empty');
   const showAll = $('#active-trade-show-all');
@@ -1055,6 +1058,17 @@ function renderActiveTrades() {
     list.appendChild(groupCard);
   });
   updateActiveTradesOverflow();
+  } catch (error) {
+    console.error('Failed to render active trades panel', error);
+    const list = $('#active-trade-list');
+    const empty = $('#active-trade-empty');
+    if (list) list.innerHTML = '';
+    if (empty) {
+      empty.textContent = 'Active trades are temporarily unavailable.';
+      empty.classList.remove('is-hidden');
+    }
+  }
+
 }
 
 function normalizeTicker(ticker) {
@@ -2225,11 +2239,11 @@ function renderMetrics() {
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
-  const portfolioValueEl = $('#metric-portfolio-value');
+  const portfolioValueEl = $('#header-portfolio-value');
   if (portfolioValueEl) {
     portfolioValueEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
   }
-  const portfolioSubEl = $('#metric-portfolio-sub');
+  const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
       portfolioSubEl.textContent = '';
@@ -2827,9 +2841,25 @@ function render() {
   renderTitle();
   renderMetrics();
   renderRiskCalculator();
-  renderActiveTrades();
-  renderPortfolioTrend();
-  renderView();
+
+  try {
+    renderView();
+  } catch (error) {
+    console.error('Failed to render calendar view', error);
+  }
+
+  try {
+    renderActiveTrades();
+  } catch (error) {
+    console.error('Failed to render active trades', error);
+  }
+
+  try {
+    renderPortfolioTrend();
+  } catch (error) {
+    console.error('Failed to render portfolio trend', error);
+  }
+
   renderSummary();
   syncActiveTradesHeight();
 }
@@ -4072,5 +4102,9 @@ async function init() {
 }
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('DOMContentLoaded', init);
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 }
