@@ -66,9 +66,6 @@ const socialState = {
 const TRANSIENT_FEEDBACK_TTL_MS = 15000;
 const feedbackTimers = new WeakMap();
 
-const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
-const DEFAULT_LEADERBOARD_PERIOD = '30D';
-
 const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
 
