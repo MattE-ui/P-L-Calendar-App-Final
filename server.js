@@ -2991,6 +2991,27 @@ function mapIbkrPosition(raw) {
   );
   const marketValue = parseTradingNumber(raw?.marketValue ?? raw?.mktValue ?? raw?.value);
   const currency = String(raw?.currency || raw?.asset?.currency || raw?.fxCurrency || '').trim() || 'USD';
+  const secType = String(
+    raw?.secType
+    ?? raw?.assetClass
+    ?? raw?.asset?.assetClass
+    ?? raw?.asset?.type
+    ?? raw?.contract?.secType
+    ?? raw?.contract?.assetClass
+    ?? ''
+  ).trim().toUpperCase();
+  let assetClass = secType ? 'other' : 'stocks';
+  if (['STK', 'STOCK', 'EQUITY', 'ETF', 'CFD'].includes(secType)) {
+    assetClass = 'stocks';
+  } else if (['OPT', 'OPTION', 'OPTIONS'].includes(secType)) {
+    assetClass = 'options';
+  } else if (['CASH', 'FOREX', 'FX'].includes(secType)) {
+    assetClass = 'forex';
+  } else if (['CRYPTO', 'CRYPTOCURRENCY'].includes(secType)) {
+    assetClass = 'crypto';
+  } else if (['FUT', 'FUTURE', 'FUTURES'].includes(secType)) {
+    assetClass = 'futures';
+  }
   const conid = raw?.conid ?? raw?.conidex ?? raw?.contract?.conid ?? raw?.contract?.conidex ?? null;
   if (!ticker || !Number.isFinite(units) || !Number.isFinite(buyPrice)) return null;
   return {
@@ -2999,6 +3020,7 @@ function mapIbkrPosition(raw) {
     buyPrice,
     pnlValue: Number.isFinite(pnlValue) ? pnlValue : null,
     currency,
+    assetClass,
     livePrice: Number.isFinite(livePrice) ? livePrice : null,
     conid: conid ? String(conid) : '',
     marketValue: Number.isFinite(marketValue) ? marketValue : null
@@ -3287,6 +3309,7 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
         existingTrade.currency = tradeCurrency;
         existingTrade.direction = direction;
         existingTrade.status = 'open';
+        existingTrade.assetClass = ASSET_CLASSES.includes(position.assetClass) ? position.assetClass : (existingTrade.assetClass || 'stocks');
         existingTrade.source = 'ibkr';
         existingTrade.ibkrPositionId = positionId;
         existingTrade.ibkrTicker = ticker;
@@ -3320,7 +3343,7 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
         direction,
         status: 'open',
         tradeType: 'day',
-        assetClass: 'stocks',
+        assetClass: ASSET_CLASSES.includes(position.assetClass) ? position.assetClass : 'stocks',
         source: 'ibkr',
         ibkrPositionId: positionId,
         ibkrTicker: ticker,
