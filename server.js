@@ -6607,8 +6607,11 @@ app.get('/api/social/friends/requests', auth, (req, res) => {
   const outgoing = db.friendRequests
     .filter(r => r.sender_user_id === req.username)
     .map(r => sanitizeFriendRequestForViewer(db, r, req.username));
+  const acceptedOutgoing = db.friendRequests
+    .filter(r => r.sender_user_id === req.username && r.status === 'accepted')
+    .map(r => sanitizeFriendRequestForViewer(db, r, req.username));
   saveDB(db);
-  res.json({ incoming, outgoing });
+  res.json({ incoming, outgoing, acceptedOutgoing });
 });
 
 function findFriendRequestForUser(db, requestId, username) {
