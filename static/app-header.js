@@ -65,6 +65,7 @@
         friends: [],
         incomingRequests: [],
         outgoingRequests: [],
+        acceptedOutgoingRequests: [],
         nicknameRequired: false,
         authenticated: false,
         lastRefreshAt: 0,
@@ -106,6 +107,7 @@
               friends: [],
               incomingRequests: [],
               outgoingRequests: [],
+              acceptedOutgoingRequests: [],
               nicknameRequired: false,
               authenticated: false,
               lastRefreshAt: Date.now(),
@@ -121,6 +123,7 @@
               friends: [],
               incomingRequests: [],
               outgoingRequests: [],
+              acceptedOutgoingRequests: [],
               nicknameRequired: true,
               authenticated: true,
               lastRefreshAt: Date.now(),
@@ -139,6 +142,7 @@
             friends: Array.isArray(friendsResponse?.friends) ? friendsResponse.friends : [],
             incomingRequests: normalizeRequests(requestsResponse?.incoming),
             outgoingRequests: normalizeRequests(requestsResponse?.outgoing),
+            acceptedOutgoingRequests: Array.isArray(requestsResponse?.acceptedOutgoing) ? requestsResponse.acceptedOutgoing : [],
             nicknameRequired: false,
             authenticated: true,
             lastRefreshAt: Date.now(),
@@ -207,9 +211,13 @@
   window.socialRequestSync.startPolling();
 
   const state = {
-    activeRequestId: '',
+    activeBanner: null,
     actionBusy: false,
-    hiddenByUser: new Set()
+    hiddenIncomingRequestIds: new Set(),
+    hiddenAcceptedRequestIds: new Set(),
+    autoDismissTimer: null,
+    hideAnimationTimer: null,
+    seededAcceptedRequestIds: false
   };
 
   function createAlertShell() {
@@ -222,12 +230,35 @@
   }
 
   function dismissActive() {
-    state.activeRequestId = '';
+    state.activeBanner = null;
+    if (state.autoDismissTimer) {
+      window.clearTimeout(state.autoDismissTimer);
+      state.autoDismissTimer = null;
+    }
+    if (state.hideAnimationTimer) {
+      window.clearTimeout(state.hideAnimationTimer);
+      state.hideAnimationTimer = null;
+    }
     const shell = document.getElementById('global-friend-request-alert');
     if (shell) {
-      shell.classList.add('hidden');
-      shell.innerHTML = '';
+      shell.classList.add('is-leaving');
+      state.hideAnimationTimer = window.setTimeout(() => {
+        shell.classList.remove('is-leaving');
+        shell.classList.add('hidden');
+        shell.innerHTML = '';
+        state.hideAnimationTimer = null;
+      }, 220);
     }
+  }
+
+  function scheduleAutoDismiss(bannerType, id) {
+    if (state.autoDismissTimer) window.clearTimeout(state.autoDismissTimer);
+    state.autoDismissTimer = window.setTimeout(() => {
+      if (!state.activeBanner || state.activeBanner.type !== bannerType || state.activeBanner.id !== id) return;
+      if (bannerType === 'incoming') state.hiddenIncomingRequestIds.add(id);
+      if (bannerType === 'accepted') state.hiddenAcceptedRequestIds.add(id);
+      dismissActive();
+    }, 15000);
   }
 
   async function api(path, opts = {}) {
@@ -243,7 +274,7 @@
     state.actionBusy = true;
     try {
       await api(`/api/social/friends/requests/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-      state.hiddenByUser.add(id);
+      state.hiddenIncomingRequestIds.add(id);
       dismissActive();
       await window.socialRequestSync.refresh(`banner-${action}`);
     } catch (_error) {
@@ -254,11 +285,16 @@
     }
   }
 
-  function renderRequest(request) {
+  function renderIncomingRequest(request) {
     createAlertShell();
     const shell = document.getElementById('global-friend-request-alert');
     if (!shell || !request?.id) return;
-    state.activeRequestId = request.id;
+    state.activeBanner = { type: 'incoming', id: request.id };
+    if (state.hideAnimationTimer) {
+      window.clearTimeout(state.hideAnimationTimer);
+      state.hideAnimationTimer = null;
+    }
+    shell.classList.remove('is-leaving');
     shell.classList.remove('hidden');
     shell.innerHTML = `
       <div class="social-global-alert__title">Friend request</div>
@@ -272,15 +308,47 @@
     shell.querySelector('[data-social-alert-action="accept"]')?.addEventListener('click', () => handleAction(request.id, 'accept'));
     shell.querySelector('[data-social-alert-action="decline"]')?.addEventListener('click', () => handleAction(request.id, 'decline'));
     shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', () => {
-      state.hiddenByUser.add(request.id);
+      state.hiddenIncomingRequestIds.add(request.id);
       dismissActive();
     });
+    scheduleAutoDismiss('incoming', request.id);
+  }
+
+  function renderAcceptedRequest(request) {
+    createAlertShell();
+    const shell = document.getElementById('global-friend-request-alert');
+    if (!shell || !request?.id) return;
+    state.activeBanner = { type: 'accepted', id: request.id };
+    if (state.hideAnimationTimer) {
+      window.clearTimeout(state.hideAnimationTimer);
+      state.hideAnimationTimer = null;
+    }
+    shell.classList.remove('is-leaving');
+    shell.classList.remove('hidden');
+    shell.innerHTML = `
+      <div class="social-global-alert__title">Friend request accepted</div>
+      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> accepted your friend request!</div>
+      <div class="social-global-alert__actions">
+        <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
+      </div>
+    `;
+    shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', () => {
+      state.hiddenAcceptedRequestIds.add(request.id);
+      dismissActive();
+    });
+    scheduleAutoDismiss('accepted', request.id);
   }
 
   function pickRequestForBanner(incoming) {
     // Intentional behavior: show the newest pending request not dismissed by this browser session.
     const sorted = [...incoming].sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
-    return sorted.find((request) => request?.id && !state.hiddenByUser.has(request.id)) || null;
+    return sorted.find((request) => request?.id && !state.hiddenIncomingRequestIds.has(request.id)) || null;
+  }
+
+  function pickAcceptedForBanner(acceptedOutgoing) {
+    // Intentional behavior: acceptance banners are shown once per request id in this browser session.
+    const sorted = [...acceptedOutgoing].sort((a, b) => String(b?.updated_at || b?.created_at || '').localeCompare(String(a?.updated_at || a?.created_at || '')));
+    return sorted.find((request) => request?.id && !state.hiddenAcceptedRequestIds.has(request.id)) || null;
   }
 
   function renderFromSharedState() {
@@ -289,13 +357,29 @@
       dismissActive();
       return;
     }
+    if (!state.seededAcceptedRequestIds) {
+      // UX intent: only surface newly-detected acceptances after this session starts.
+      (socialData.acceptedOutgoingRequests || []).forEach((request) => {
+        if (request?.id) state.hiddenAcceptedRequestIds.add(request.id);
+      });
+      state.seededAcceptedRequestIds = true;
+    }
     const pendingIds = new Set((socialData.incomingRequests || []).map(item => item.id));
-    if (state.activeRequestId && !pendingIds.has(state.activeRequestId)) {
+    const acceptedIds = new Set((socialData.acceptedOutgoingRequests || []).map(item => item.id));
+    if (state.activeBanner?.type === 'incoming' && state.activeBanner?.id && !pendingIds.has(state.activeBanner.id)) {
       dismissActive();
     }
-    if (state.activeRequestId) return;
-    const next = pickRequestForBanner(socialData.incomingRequests || []);
-    if (next) renderRequest(next);
+    if (state.activeBanner?.type === 'accepted' && state.activeBanner?.id && !acceptedIds.has(state.activeBanner.id)) {
+      dismissActive();
+    }
+    if (state.activeBanner?.id) return;
+    const incomingNext = pickRequestForBanner(socialData.incomingRequests || []);
+    if (incomingNext) {
+      renderIncomingRequest(incomingNext);
+      return;
+    }
+    const acceptedNext = pickAcceptedForBanner(socialData.acceptedOutgoingRequests || []);
+    if (acceptedNext) renderAcceptedRequest(acceptedNext);
   }
 
   renderFromSharedState();

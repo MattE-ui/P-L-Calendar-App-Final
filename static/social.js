@@ -24,6 +24,7 @@ const socialState = {
   friends: [],
   incomingRequests: [],
   outgoingRequests: [],
+  acceptedOutgoingRequests: [],
   addFriendBusy: false,
   addFriendCode: '',
   requestActionIds: new Set(),
@@ -32,6 +33,9 @@ const socialState = {
   nickname: '',
   friendPollTimer: null
 };
+
+const TRANSIENT_FEEDBACK_TTL_MS = 15000;
+const feedbackTimers = new WeakMap();
 
 const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
@@ -319,6 +323,7 @@ async function loadFriendData() {
     socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
     socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
     socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
+    socialState.acceptedOutgoingRequests = Array.isArray(shared.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
     renderFriendSection();
     updateAddFriendState();
     setFriendsDisabled(socialState.isGuest || socialState.nicknameRequired);
@@ -335,6 +340,7 @@ async function loadFriendData() {
       socialState.friends = [];
       socialState.incomingRequests = [];
       socialState.outgoingRequests = [];
+      socialState.acceptedOutgoingRequests = [];
       renderFriendSection();
       return;
     }
@@ -347,6 +353,7 @@ async function loadFriendData() {
     socialState.friends = Array.isArray(friendsResponse?.friends) ? friendsResponse.friends : [];
     socialState.incomingRequests = normalizeRequestList(requestsResponse?.incoming);
     socialState.outgoingRequests = normalizeRequestList(requestsResponse?.outgoing);
+    socialState.acceptedOutgoingRequests = [];
     renderFriendSection();
   } catch (error) {
     socialState.friendsError = error.message || 'Unable to load friend data.';
@@ -444,6 +451,7 @@ function applySharedSocialState(shared) {
   socialState.friends = Array.isArray(shared.friends) ? shared.friends : [];
   socialState.incomingRequests = Array.isArray(shared.incomingRequests) ? shared.incomingRequests : [];
   socialState.outgoingRequests = Array.isArray(shared.outgoingRequests) ? shared.outgoingRequests : [];
+  socialState.acceptedOutgoingRequests = Array.isArray(shared.acceptedOutgoingRequests) ? shared.acceptedOutgoingRequests : [];
   renderFriendSection();
   updateAddFriendState();
 }
@@ -475,9 +483,25 @@ function bindFriendActions() {
 
 function setFeedback(el, message, kind = 'muted') {
   if (!el) return;
+  const existingTimer = feedbackTimers.get(el);
+  if (existingTimer) {
+    window.clearTimeout(existingTimer);
+    feedbackTimers.delete(el);
+  }
   el.textContent = message || '';
   el.classList.toggle('is-error', kind === 'error');
   el.classList.toggle('success', kind === 'success');
+  if (message && kind !== 'error') {
+    const capturedMessage = message;
+    const timer = window.setTimeout(() => {
+      if (el.textContent === capturedMessage) {
+        el.textContent = '';
+        el.classList.remove('is-error', 'success');
+      }
+      feedbackTimers.delete(el);
+    }, TRANSIENT_FEEDBACK_TTL_MS);
+    feedbackTimers.set(el, timer);
+  }
 }
 
 function applyVerification(profile, settings) {

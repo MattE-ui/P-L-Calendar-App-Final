@@ -4692,6 +4692,21 @@ textarea {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(8px);
   z-index: 1300;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.social-global-alert.hidden {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+.social-global-alert.is-leaving {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
 }
 
 .social-global-alert__title {
