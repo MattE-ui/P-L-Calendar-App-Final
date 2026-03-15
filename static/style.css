@@ -4753,3 +4753,140 @@ textarea {
   padding: 7px 10px;
   font-size: 0.8rem;
 }
+
+.social-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border) 65%);
+  background: radial-gradient(circle at 30% 20%, rgba(79, 209, 167, 0.24), rgba(12, 20, 30, 0.95));
+  color: #d6f7ea;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex: 0 0 auto;
+}
+
+.social-avatar__fallback {
+  position: relative;
+  z-index: 1;
+}
+
+.social-avatar__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.social-avatar--lg { width: 72px; height: 72px; font-size: 1.1rem; }
+.social-avatar--md { width: 52px; height: 52px; font-size: 0.92rem; }
+.social-avatar--sm { width: 36px; height: 36px; font-size: 0.74rem; }
+.social-avatar--xs { width: 28px; height: 28px; font-size: 0.66rem; }
+
+.social-row-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.social-row-identity-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.social-identity-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(0,0,0,0.16);
+}
+
+.social-profile-nickname {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.profile-avatar-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-avatar-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.social-global-alert__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+}
+
+.social-global-alert__body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.social-avatar.has-image .social-avatar__fallback {
+  display: none;
+}
+
+.avatar-editor-card {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.avatar-editor-stage-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background: rgba(4, 10, 16, 0.82);
+}
+
+.avatar-editor-canvas {
+  width: min(320px, 100%);
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  cursor: grab;
+  touch-action: none;
+  border: 1px solid rgba(79, 209, 167, 0.2);
+}
+
+.avatar-editor-canvas:active {
+  cursor: grabbing;
+}
+
+.avatar-editor-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.avatar-editor-controls label {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.avatar-editor-controls input[type="range"] {
+  width: 100%;
+}
+
+.avatar-editor-actions {
+  justify-content: flex-end;
+}

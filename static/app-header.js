@@ -291,6 +291,22 @@
     }
   }
 
+
+  function createBannerIdentityNode(request) {
+    const wrap = document.createElement('div');
+    wrap.className = 'social-global-alert__identity';
+    const avatar = window.VeracitySocialAvatar?.createAvatar({
+      nickname: request?.counterparty_nickname || 'A trader',
+      avatar_url: request?.counterparty_avatar_url || '',
+      avatar_initials: request?.counterparty_avatar_initials || ''
+    }, 'xs');
+    if (avatar) wrap.appendChild(avatar);
+    const name = document.createElement('strong');
+    name.textContent = request?.counterparty_nickname || 'A trader';
+    wrap.appendChild(name);
+    return wrap;
+  }
+
   function renderIncomingRequest(request) {
     createAlertShell();
     const shell = document.getElementById('global-friend-request-alert');
@@ -304,13 +320,20 @@
     shell.classList.remove('hidden');
     shell.innerHTML = `
       <div class="social-global-alert__title">Friend request</div>
-      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> sent you a friend request.</div>
+      <div class="social-global-alert__body"></div>
       <div class="social-global-alert__actions">
         <button type="button" class="primary" data-social-alert-action="accept">Accept</button>
         <button type="button" class="ghost" data-social-alert-action="decline">Decline</button>
         <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
       </div>
     `;
+    const body = shell.querySelector('.social-global-alert__body');
+    if (body) {
+      body.appendChild(createBannerIdentityNode(request));
+      const text = document.createElement('span');
+      text.textContent = 'sent you a friend request.';
+      body.appendChild(text);
+    }
     shell.querySelector('[data-social-alert-action="accept"]')?.addEventListener('click', () => handleAction(request.id, 'accept'));
     shell.querySelector('[data-social-alert-action="decline"]')?.addEventListener('click', () => handleAction(request.id, 'decline'));
     shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', () => {
@@ -333,11 +356,18 @@
     shell.classList.remove('hidden');
     shell.innerHTML = `
       <div class="social-global-alert__title">Friend connection</div>
-      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> is now your friend.</div>
+      <div class="social-global-alert__body"></div>
       <div class="social-global-alert__actions">
         <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
       </div>
     `;
+    const body = shell.querySelector('.social-global-alert__body');
+    if (body) {
+      body.appendChild(createBannerIdentityNode(request));
+      const text = document.createElement('span');
+      text.textContent = 'is now your friend.';
+      body.appendChild(text);
+    }
     shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', () => {
       state.hiddenAcceptedRequestIds.add(request.id);
       dismissActive();
