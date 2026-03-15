@@ -19,6 +19,10 @@ const state = {
     netDeposits: 0,
     netPerformance: 0,
     returnPct: 0
+  },
+  heatmap: {
+    selectedMonth: '',
+    monthKeys: []
   }
 };
 
@@ -619,6 +623,62 @@ function normalizeWeekday(dateStr = '') {
   return (day + 6) % 7;
 }
 
+function monthKeyToIndex(monthKey = '') {
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return Number.NaN;
+  return (year * 12) + (month - 1);
+}
+
+function deriveFilterMonthKey(filters = {}) {
+  const candidate = filters.to || filters.from;
+  if (!candidate) return '';
+  return candidate.slice(0, 7);
+}
+
+function resolveHeatmapMonth(monthKeys = [], preferredMonth = '', fallbackMonth = '') {
+  if (!monthKeys.length) return '';
+  if (preferredMonth && monthKeys.includes(preferredMonth)) return preferredMonth;
+  if (preferredMonth) {
+    const preferredIdx = monthKeyToIndex(preferredMonth);
+    if (Number.isFinite(preferredIdx)) {
+      return monthKeys.reduce((closest, key) => {
+        const idx = monthKeyToIndex(key);
+        if (!Number.isFinite(idx)) return closest;
+        if (!closest) return key;
+        const closestDiff = Math.abs(monthKeyToIndex(closest) - preferredIdx);
+        const diff = Math.abs(idx - preferredIdx);
+        return diff < closestDiff ? key : closest;
+      }, '');
+    }
+  }
+  if (fallbackMonth && monthKeys.includes(fallbackMonth)) return fallbackMonth;
+  return monthKeys[monthKeys.length - 1];
+}
+
+function syncHeatmapControls(monthKeys = [], activeMonth = '', lockSelection = false) {
+  const monthSelect = document.querySelector('#heatmap-month-select');
+  const prevBtn = document.querySelector('#heatmap-prev-month');
+  const nextBtn = document.querySelector('#heatmap-next-month');
+  if (!monthSelect || !prevBtn || !nextBtn) return;
+
+  monthSelect.innerHTML = '';
+  monthKeys.forEach(monthKey => {
+    const [year, month] = monthKey.split('-').map(Number);
+    const option = document.createElement('option');
+    option.value = monthKey;
+    option.textContent = new Date(year, month - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    monthSelect.appendChild(option);
+  });
+
+  const hasMonths = monthKeys.length > 0;
+  monthSelect.disabled = !hasMonths || lockSelection;
+  if (hasMonths) monthSelect.value = activeMonth;
+
+  const activeIndex = monthKeys.indexOf(activeMonth);
+  prevBtn.disabled = lockSelection || !hasMonths || activeIndex <= 0;
+  nextBtn.disabled = lockSelection || !hasMonths || activeIndex < 0 || activeIndex >= monthKeys.length - 1;
+}
+
 function formatHeatmapTooltip(dayData = {}, modeLabel = 'PnL') {
   const lines = [`${formatRangeDate(dayData.date)} • ${modeLabel}: ${formatNumber(dayData.value)}`];
   if (Number.isFinite(dayData.tradeCount)) lines.push(`Trades: ${dayData.tradeCount}`);
@@ -630,18 +690,20 @@ function formatHeatmapTooltip(dayData = {}, modeLabel = 'PnL') {
 
 function getDirectionalIntensity(value, monthStats) {
   const sign = value > 0 ? 'positive' : value < 0 ? 'negative' : 'flat';
-  if (!value || sign === 'flat') return { sign: 'flat', scale: 0, alpha: 0.08 };
+  if (!Number.isFinite(value)) return { sign: 'no-data', scale: 0, alpha: 0.08 };
+  if (sign === 'flat') return { sign: 'flat', scale: 0, alpha: 0.1 };
 
   const maxScale = sign === 'positive' ? monthStats.maxPositive : monthStats.maxNegative;
-  if (!maxScale) return { sign, scale: 0, alpha: 0.12 };
-  const flatBand = Math.max(1, maxScale * 0.04);
-  const normalized = (Math.abs(value) - flatBand) / Math.max(1, maxScale - flatBand);
-  const scale = Math.min(1, Math.max(0, normalized));
-  const shaped = Math.pow(scale, 0.82);
+  if (!maxScale) return { sign, scale: 0.28, alpha: 0.26 };
+
+  const normalized = Math.min(1, Math.max(0, Math.abs(value) / maxScale));
+  const shaped = Math.pow(normalized, 0.68);
+  const minVisible = 0.24;
+  const scale = minVisible + (shaped * (1 - minVisible));
   return {
     sign,
-    scale: shaped,
-    alpha: 0.14 + shaped * 0.72
+    scale,
+    alpha: 0.2 + (scale * 0.6)
   };
 }
 
@@ -660,6 +722,8 @@ function renderHeatmap(curve = [], options = {}) {
   grid.innerHTML = '';
   const modeLabel = options.modeLabel || 'PnL';
   const valueAccessor = options.valueAccessor || (point => point.pnl);
+  state.heatmap.lastCurve = curve;
+  state.heatmap.lastOptions = options;
 
   const byDate = {};
   curve.forEach(point => {
@@ -697,6 +761,9 @@ function renderHeatmap(curve = [], options = {}) {
     grid.appendChild(note);
     document.querySelector('#snapshot-best-day').textContent = '—';
     document.querySelector('#snapshot-worst-day').textContent = '—';
+    state.heatmap.monthKeys = [];
+    state.heatmap.selectedMonth = '';
+    syncHeatmapControls([], '');
     return;
   }
 
@@ -712,77 +779,86 @@ function renderHeatmap(curve = [], options = {}) {
     monthBuckets.get(monthKey).push(day);
   });
 
+  const monthKeys = [...monthBuckets.keys()].sort();
+  const filterMonth = deriveFilterMonthKey(state.filters);
+  const followsFilter = Boolean(filterMonth);
+  const activeMonth = resolveHeatmapMonth(monthKeys, filterMonth, state.heatmap.selectedMonth);
+  state.heatmap.monthKeys = monthKeys;
+  state.heatmap.selectedMonth = activeMonth;
+  syncHeatmapControls(monthKeys, activeMonth, followsFilter);
+
+  const monthData = monthBuckets.get(activeMonth) || [];
+  const [year, month] = activeMonth.split('-').map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const firstDate = `${activeMonth}-01`;
+  const monthStats = buildMonthNormalization(monthData);
+
   const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  [...monthBuckets.keys()].sort().forEach(monthKey => {
-    const monthData = monthBuckets.get(monthKey) || [];
-    const [year, month] = monthKey.split('-').map(Number);
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const firstDate = `${monthKey}-01`;
-    const monthStats = buildMonthNormalization(monthData);
+  const section = document.createElement('section');
+  section.className = 'heatmap-month';
 
-    const section = document.createElement('section');
-    section.className = 'heatmap-month';
+  const title = document.createElement('h4');
+  title.className = 'heatmap-month-title';
+  title.textContent = new Date(year, month - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  section.appendChild(title);
 
-    const title = document.createElement('h4');
-    title.className = 'heatmap-month-title';
-    title.textContent = new Date(year, month - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
-    section.appendChild(title);
-
-    const weekdayRow = document.createElement('div');
-    weekdayRow.className = 'heatmap-weekdays';
-    weekdayLabels.forEach(label => {
-      const dayHead = document.createElement('span');
-      dayHead.textContent = label;
-      weekdayRow.appendChild(dayHead);
-    });
-    section.appendChild(weekdayRow);
-
-    const monthGrid = document.createElement('div');
-    monthGrid.className = 'heatmap-month-grid';
-    const leadBlanks = normalizeWeekday(firstDate);
-    for (let i = 0; i < leadBlanks; i += 1) {
-      const blank = document.createElement('div');
-      blank.className = 'heatmap-day heatmap-day-empty';
-      monthGrid.appendChild(blank);
-    }
-
-    for (let dayNum = 1; dayNum <= daysInMonth; dayNum += 1) {
-      const isoDate = `${monthKey}-${String(dayNum).padStart(2, '0')}`;
-      const dayData = monthData.find(day => day.date === isoDate);
-      if (!dayData) {
-        const empty = document.createElement('div');
-        empty.className = 'heatmap-day heatmap-day-no-data';
-        empty.innerHTML = `<div class="date">${dayNum}</div><div class="value">—</div>`;
-        monthGrid.appendChild(empty);
-        continue;
-      }
-
-      const card = document.createElement('button');
-      card.type = 'button';
-      const intensity = getDirectionalIntensity(dayData.value, monthStats);
-      card.className = `heatmap-day ${intensity.sign}`;
-      card.style.setProperty('--heat-strength', intensity.scale.toFixed(4));
-      card.style.setProperty('--heat-alpha', intensity.alpha.toFixed(4));
-      card.title = formatHeatmapTooltip(dayData, modeLabel);
-
-      const dateEl = document.createElement('div');
-      dateEl.className = 'date';
-      dateEl.textContent = dayNum;
-      const valueEl = document.createElement('div');
-      valueEl.className = 'value';
-      valueEl.textContent = formatNumber(dayData.value);
-
-      card.append(dateEl, valueEl);
-      monthGrid.appendChild(card);
-    }
-
-    section.appendChild(monthGrid);
-    grid.appendChild(section);
+  const weekdayRow = document.createElement('div');
+  weekdayRow.className = 'heatmap-weekdays';
+  weekdayLabels.forEach(label => {
+    const dayHead = document.createElement('span');
+    dayHead.textContent = label;
+    weekdayRow.appendChild(dayHead);
   });
+  section.appendChild(weekdayRow);
+
+  const monthGrid = document.createElement('div');
+  monthGrid.className = 'heatmap-month-grid';
+  const leadBlanks = normalizeWeekday(firstDate);
+  for (let i = 0; i < leadBlanks; i += 1) {
+    const blank = document.createElement('div');
+    blank.className = 'heatmap-day heatmap-day-empty';
+    monthGrid.appendChild(blank);
+  }
+
+  const monthDataByDay = new Map(monthData.map(day => [day.date, day]));
+
+  for (let dayNum = 1; dayNum <= daysInMonth; dayNum += 1) {
+    const isoDate = `${activeMonth}-${String(dayNum).padStart(2, '0')}`;
+    const dayData = monthDataByDay.get(isoDate);
+    if (!dayData) {
+      const empty = document.createElement('div');
+      empty.className = 'heatmap-day heatmap-day-no-data';
+      empty.innerHTML = `<div class="date">${dayNum}</div><div class="value">No data</div>`;
+      monthGrid.appendChild(empty);
+      continue;
+    }
+
+    const card = document.createElement('button');
+    card.type = 'button';
+    const intensity = getDirectionalIntensity(dayData.value, monthStats);
+    card.className = `heatmap-day ${intensity.sign}`;
+    card.style.setProperty('--heat-strength', intensity.scale.toFixed(4));
+    card.style.setProperty('--heat-alpha', intensity.alpha.toFixed(4));
+    card.title = formatHeatmapTooltip(dayData, modeLabel);
+
+    const dateEl = document.createElement('div');
+    dateEl.className = 'date';
+    dateEl.textContent = dayNum;
+    const valueEl = document.createElement('div');
+    valueEl.className = 'value';
+    valueEl.textContent = dayData.value === 0 ? 'Flat' : formatNumber(dayData.value);
+
+    card.append(dateEl, valueEl);
+    monthGrid.appendChild(card);
+  }
+
+  section.appendChild(monthGrid);
+  grid.appendChild(section);
 
   document.querySelector('#snapshot-best-day').textContent = `${formatRangeDate(best.date)} • ${formatNumber(best.value)}`;
   document.querySelector('#snapshot-worst-day').textContent = `${formatRangeDate(worst.date)} • ${formatNumber(worst.value)}`;
 }
+
 
 async function refreshAnalytics() {
   readFilters();
@@ -928,9 +1004,36 @@ function bindFilters() {
   });
 }
 
+function bindHeatmapControls() {
+  const monthSelect = document.querySelector('#heatmap-month-select');
+  const prevBtn = document.querySelector('#heatmap-prev-month');
+  const nextBtn = document.querySelector('#heatmap-next-month');
+
+  monthSelect?.addEventListener('change', () => {
+    if (!monthSelect.value) return;
+    state.heatmap.selectedMonth = monthSelect.value;
+    renderHeatmap(state.heatmap.lastCurve || [], state.heatmap.lastOptions || {});
+  });
+
+  prevBtn?.addEventListener('click', () => {
+    const idx = state.heatmap.monthKeys.indexOf(state.heatmap.selectedMonth);
+    if (idx <= 0) return;
+    state.heatmap.selectedMonth = state.heatmap.monthKeys[idx - 1];
+    renderHeatmap(state.heatmap.lastCurve || [], state.heatmap.lastOptions || {});
+  });
+
+  nextBtn?.addEventListener('click', () => {
+    const idx = state.heatmap.monthKeys.indexOf(state.heatmap.selectedMonth);
+    if (idx < 0 || idx >= state.heatmap.monthKeys.length - 1) return;
+    state.heatmap.selectedMonth = state.heatmap.monthKeys[idx + 1];
+    renderHeatmap(state.heatmap.lastCurve || [], state.heatmap.lastOptions || {});
+  });
+}
+
 function init() {
   bindNav();
   bindFilters();
+  bindHeatmapControls();
   loadHeroMetrics();
   setFilterPanel(false);
   refreshAnalytics().catch(console.error);
