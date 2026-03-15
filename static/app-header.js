@@ -32,7 +32,12 @@
         <img class="app-shell-brand__logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
       </a>
       <nav class="app-shell-nav" aria-label="Primary">
-        ${navItems.map((item) => `<a id="${item.key}-btn" class="app-shell-nav__link ${activeKey === item.key ? 'is-active' : ''}" href="${item.href}">${item.label}</a>`).join('')}
+        ${navItems.map((item) => {
+          const labelHtml = item.key === 'social'
+            ? `${item.label}<span id="social-nav-pending-badge" class="social-nav-pending-badge hidden" aria-live="polite" aria-label="Pending incoming friend requests"></span>`
+            : item.label;
+          return `<a id="${item.key}-btn" class="app-shell-nav__link ${activeKey === item.key ? 'is-active' : ''}" href="${item.href}">${labelHtml}</a>`;
+        }).join('')}
       </nav>
       <div class="app-shell-actions">
         <button id="quick-settings-btn" class="ghost app-shell-action-btn" type="button">Settings</button>
@@ -213,6 +218,7 @@
   const state = {
     activeBanner: null,
     actionBusy: false,
+    lastBadgeCount: null,
     hiddenIncomingRequestIds: new Set(),
     hiddenAcceptedRequestIds: new Set(),
     autoDismissTimer: null,
@@ -326,8 +332,8 @@
     shell.classList.remove('is-leaving');
     shell.classList.remove('hidden');
     shell.innerHTML = `
-      <div class="social-global-alert__title">Friend request accepted</div>
-      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> accepted your friend request!</div>
+      <div class="social-global-alert__title">Friend connection</div>
+      <div class="social-global-alert__body"><strong>${request.counterparty_nickname || 'A trader'}</strong> is now your friend.</div>
       <div class="social-global-alert__actions">
         <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
       </div>
@@ -353,6 +359,7 @@
 
   function renderFromSharedState() {
     const socialData = window.socialRequestSync.getState();
+    renderPendingBadge(socialData);
     if (!socialData.authenticated || socialData.nicknameRequired) {
       dismissActive();
       return;
@@ -380,6 +387,30 @@
     }
     const acceptedNext = pickAcceptedForBanner(socialData.acceptedOutgoingRequests || []);
     if (acceptedNext) renderAcceptedRequest(acceptedNext);
+  }
+
+  function renderPendingBadge(socialData) {
+    const badge = document.getElementById('social-nav-pending-badge');
+    if (!badge) return;
+    if (!socialData?.authenticated || socialData.nicknameRequired || isGuestSession()) {
+      if (!badge.classList.contains('hidden')) badge.classList.add('hidden');
+      badge.textContent = '';
+      badge.removeAttribute('data-count');
+      state.lastBadgeCount = 0;
+      return;
+    }
+    const pendingCount = Array.isArray(socialData.incomingRequests) ? socialData.incomingRequests.length : 0;
+    if (state.lastBadgeCount === pendingCount) return;
+    state.lastBadgeCount = pendingCount;
+    if (pendingCount <= 0) {
+      badge.textContent = '';
+      badge.classList.add('hidden');
+      badge.removeAttribute('data-count');
+      return;
+    }
+    badge.textContent = String(pendingCount);
+    badge.setAttribute('data-count', String(pendingCount));
+    badge.classList.remove('hidden');
   }
 
   renderFromSharedState();
