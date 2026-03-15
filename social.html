@@ -185,6 +185,25 @@
       </form>
     </section>
 
+    <section class="card social-card" aria-labelledby="social-leaderboard-section-title">
+      <header class="social-header social-leaderboard-header">
+        <div>
+          <p class="tool-overline">Verified rankings</p>
+          <h2 id="social-leaderboard-section-title">Verified leaderboard</h2>
+          <p class="helper">Opt-in rankings based on trusted performance data.</p>
+        </div>
+        <div id="social-leaderboard-periods" class="social-period-filter" role="group" aria-label="Leaderboard timeframe"></div>
+      </header>
+
+      <div id="social-leaderboard-loading" class="helper">Loading leaderboard…</div>
+      <div id="social-leaderboard-error" class="social-empty-state is-error hidden" role="alert"></div>
+      <div id="social-leaderboard-empty" class="social-empty-state hidden">
+        <p class="social-empty-state-title">No traders available yet</p>
+        <p class="social-empty-state-detail">Leaderboard rankings are opt-in and trusted-first. Eligible traders will appear once they choose to participate.</p>
+      </div>
+      <div id="social-leaderboard-list" class="social-list hidden" aria-live="polite"></div>
+    </section>
+
     <section class="card social-card" aria-labelledby="social-friends-title">
       <header class="social-header">
         <p class="tool-overline">Friend management</p>
