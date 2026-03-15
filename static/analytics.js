@@ -1,4 +1,5 @@
 const charts = {};
+const chartRenderCache = {};
 
 const state = {
   filters: {
@@ -12,7 +13,13 @@ const state = {
     winLoss: ''
   },
   currency: 'GBP',
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  account: {
+    portfolioValue: 0,
+    netDeposits: 0,
+    netPerformance: 0,
+    returnPct: 0
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
@@ -114,13 +121,69 @@ function formatPercent(value) {
 function formatNumber(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return '—';
-  return `£${num.toFixed(2)}`;
+  return formatSignedCurrency(num);
 }
 
 function setMetricTrend(el, value) {
   if (!el) return;
   window.ThemeUtils?.applyPnlColorClass(el, value);
 }
+
+function formatRangeDate(date) {
+  if (!date) return '';
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return date;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getPresetRange(key) {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const start = new Date(end);
+  if (key === '1w') start.setDate(end.getDate() - 6);
+  else if (key === '1m') start.setMonth(end.getMonth() - 1);
+  else if (key === '3m') start.setMonth(end.getMonth() - 3);
+  else if (key === 'ytd') start.setMonth(0, 1);
+  else if (key === '1y') start.setFullYear(end.getFullYear() - 1);
+  else if (key === 'all') return { from: '', to: '' };
+  else return null;
+  const toISO = d => d.toISOString().slice(0, 10);
+  return { from: toISO(start), to: toISO(end) };
+}
+
+function updateFilterChips() {
+  const chipHost = document.querySelector('#active-filter-chips');
+  if (!chipHost) return;
+  const filterLabels = {
+    from: 'From', to: 'To', symbol: 'Symbol', tradeType: 'Type',
+    assetClass: 'Asset', strategyTag: 'Strategy', tags: 'Tags', winLoss: 'Result'
+  };
+  const entries = Object.entries(state.filters).filter(([, value]) => value);
+  chipHost.innerHTML = '';
+  if (!entries.length) {
+    const empty = document.createElement('span');
+    empty.className = 'pill';
+    empty.textContent = 'No active filters';
+    chipHost.appendChild(empty);
+    return;
+  }
+  entries.forEach(([key, value]) => {
+    const chip = document.createElement('span');
+    chip.className = 'pill active-filter-chip';
+    chip.textContent = `${filterLabels[key] || key}: ${value}`;
+    chipHost.appendChild(chip);
+  });
+}
+
+function setFilterPanel(open) {
+  const panel = document.querySelector('#analytics-filter-panel');
+  const toggle = document.querySelector('#filter-toggle-btn');
+  if (!panel || !toggle) return;
+  panel.classList.toggle('hidden', !open);
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  toggle.textContent = open ? 'Hide Filters' : 'Filters';
+}
+
 
 async function loadRates() {
   try {
@@ -141,6 +204,7 @@ function destroyChart(id) {
   if (charts[id]) {
     charts[id].destroy();
     delete charts[id];
+    delete chartRenderCache[id];
   }
 }
 
@@ -164,7 +228,10 @@ function showEmptyState(id, message) {
 }
 
 function renderChart(id, config) {
+  const cacheKey = JSON.stringify({ type: config?.type, data: config?.data, options: config?.options });
+  if (chartRenderCache[id] === cacheKey && charts[id]) return;
   destroyChart(id);
+  chartRenderCache[id] = cacheKey;
   if (config?.options?.scales) {
     Object.values(config.options.scales).forEach(scale => {
       if (!scale) return;
@@ -218,6 +285,12 @@ async function loadHeroMetrics() {
     const netPerformance = portfolioValue - netDepositsValue;
     await loadRates();
     const netPerfPct = netDepositsValue ? (netPerformance / Math.abs(netDepositsValue)) * 100 : 0;
+    state.account = {
+      portfolioValue,
+      netDeposits: netDepositsValue,
+      netPerformance,
+      returnPct: netPerfPct
+    };
     const altCurrency = state.currency === 'GBP'
       ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
       : 'GBP';
@@ -248,6 +321,11 @@ async function loadHeroMetrics() {
       netPerfSub.textContent = pieces.join(' • ');
     }
     setMetricTrend(document.getElementById('hero-net-performance'), netPerformance);
+
+    const returnPctEl = document.getElementById('kpi-return-pct');
+    if (returnPctEl) returnPctEl.textContent = formatPercent(netPerfPct);
+    setMetricTrend(document.getElementById('hero-return-card'), netPerfPct);
+
     const portfolioCard = document.getElementById('hero-portfolio');
     if (portfolioCard) {
       setMetricTrend(portfolioCard, portfolioValue - netDepositsValue);
@@ -280,21 +358,30 @@ function updateKpis(summary, dist, dd, streaks) {
   document.querySelector('#kpi-avg-win').textContent = formatNumber(summary.avgWin);
   document.querySelector('#kpi-avg-loss').textContent = formatNumber(summary.avgLoss);
   document.querySelector('#kpi-expectancy').textContent = formatNumber(summary.expectancy);
-  document.querySelector('#kpi-profit-factor').textContent = summary.profitFactor ? summary.profitFactor.toFixed(2) : '—';
-  const pfSecondary = document.querySelector('#kpi-profit-factor-secondary');
-  if (pfSecondary) {
-    pfSecondary.textContent = summary.profitFactor ? summary.profitFactor.toFixed(2) : '—';
-  }
-  document.querySelector('#kpi-r-multiple').textContent = summary.avgR !== null ? summary.avgR.toFixed(2) : '—';
+
+  const pf = Number(summary.profitFactor);
+  const pfDisplay = Number.isFinite(pf) && pf > 0 ? pf.toFixed(2) : '—';
+  const pfPrimary = document.querySelector('#kpi-profit-factor-primary');
+  if (pfPrimary) pfPrimary.textContent = pfDisplay;
+  const pfSecondary = document.querySelector('#kpi-profit-factor');
+  if (pfSecondary) pfSecondary.textContent = pfDisplay;
+
+  document.querySelector('#kpi-r-multiple').textContent = summary.avgR !== null ? Number(summary.avgR || 0).toFixed(2) : '—';
   document.querySelector('#kpi-drawdown').textContent = formatNumber(dd.maxDrawdown || 0);
   document.querySelector('#kpi-drawdown-duration').textContent = dd.durationDays || 0;
-  document.querySelector('#kpi-median').textContent = `${formatNumber(dist.median || 0)} median`;
-  document.querySelector('#kpi-stddev').textContent = dist.stddev !== null ? formatNumber(dist.stddev) : '—';
-  document.querySelector('#kpi-streaks').textContent = `${summary.wins || 0}W / ${summary.losses || 0}L`;
-  const streakSub = document.querySelector('#kpi-streaks-sub');
-  if (streakSub) {
-    streakSub.textContent = `Max streak: ${streaks.maxWinStreak || 0}W / ${streaks.maxLossStreak || 0}L`;
-  }
+
+  const returnPctEl = document.querySelector('#kpi-return-pct');
+  const accountReturnPct = Number(state.account?.returnPct);
+  const resolvedReturn = Number.isFinite(accountReturnPct) ? accountReturnPct : Number(summary.returnPct);
+  if (returnPctEl) returnPctEl.textContent = Number.isFinite(resolvedReturn) ? formatPercent(resolvedReturn) : 'N/A';
+  setMetricTrend(document.querySelector('#hero-return-card'), Number.isFinite(resolvedReturn) ? resolvedReturn : 0);
+  setMetricTrend(document.querySelector('#hero-net-performance'), Number(state.account?.netPerformance) || 0);
+
+  document.querySelector('#snapshot-best-streak').textContent = streaks.maxWinStreak || 0;
+  document.querySelector('#snapshot-worst-streak').textContent = streaks.maxLossStreak || 0;
+  document.querySelector('#snapshot-closed-trades').textContent = summary.closedTrades || summary.total || 0;
+  document.querySelector('#snapshot-median').textContent = formatNumber(dist.median || 0);
+  document.querySelector('#snapshot-stddev').textContent = dist.stddev !== null ? formatNumber(dist.stddev) : '—';
 }
 
 function renderEquityCurve(curve = []) {
@@ -313,6 +400,14 @@ function renderEquityCurve(curve = []) {
     const latest = values[values.length - 1];
     latestEl.textContent = formatNumber(latest);
   }
+  const gradient = (() => {
+    const ctx = document.getElementById('equity-chart')?.getContext('2d');
+    if (!ctx) return CHART_THEME.accentSoft();
+    const g = ctx.createLinearGradient(0, 0, 0, 320);
+    g.addColorStop(0, 'rgba(11,191,122,0.26)');
+    g.addColorStop(1, 'rgba(11,191,122,0.02)');
+    return g;
+  })();
   renderChart('equity-chart', {
     type: 'line',
     data: {
@@ -320,15 +415,26 @@ function renderEquityCurve(curve = []) {
       datasets: [{
         label: 'Equity (GBP)',
         data: values,
-        tension: 0.2,
+        tension: 0.24,
         borderColor: CHART_THEME.accent(),
-        fill: false
+        borderWidth: 2.4,
+        pointRadius: values.length < 60 ? 2 : 0,
+        pointHoverRadius: 4,
+        pointBackgroundColor: CHART_THEME.accent(),
+        fill: true,
+        backgroundColor: gradient
       }]
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
-      scales: { x: { display: true }, y: { display: true } }
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { display: true, ticks: { maxTicksLimit: 8 } },
+        y: { display: true, ticks: { callback: v => formatNumber(v) } }
+      }
     }
   });
 }
@@ -349,13 +455,16 @@ function renderDrawdown(drawdown = {}) {
         data: values,
         borderColor: CHART_THEME.danger(),
         backgroundColor: 'rgba(255,92,92,0.18)',
-        fill: true
+        fill: true,
+        tension: 0.24
       }]
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
-      scales: { y: { ticks: { callback: v => formatNumber(v) } } }
+      scales: { x: { ticks: { maxTicksLimit: 7 } }, y: { ticks: { callback: v => formatNumber(v) } } }
     }
   });
 }
@@ -379,16 +488,98 @@ function renderDistribution(dist = {}) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
       plugins: { legend: { display: false } },
-      scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 8 } } }
+      scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { beginAtZero: true } }
     }
   });
 }
 
+
+function normalizeCategoryLabel(raw) {
+  if (raw === null || raw === undefined || raw === '') return 'Unspecified';
+  const value = String(raw).trim();
+  if (!value) return 'Unspecified';
+  const presets = {
+    scalp: 'Scalp',
+    day: 'Day',
+    swing: 'Swing',
+    position: 'Position',
+    unknown: 'Unspecified',
+    none: 'Unspecified'
+  };
+  if (presets[value.toLowerCase()]) return presets[value.toLowerCase()];
+  return value;
+}
+
+function renderSparseBreakdownSummary(canvasId, entries, isPct) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const frame = canvas.closest('.chart-frame');
+  const card = canvas.closest('.chart-card');
+  if (!frame || !card) return;
+  frame.classList.add('hidden');
+  let host = card.querySelector('.category-summary');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'category-summary';
+    card.appendChild(host);
+  }
+  host.innerHTML = '';
+  entries.forEach(([label, rawValue]) => {
+    const value = Number(rawValue) || 0;
+    const row = document.createElement('div');
+    row.className = `category-summary-row ${value > 0 ? 'positive' : value < 0 ? 'negative' : ''}`;
+
+    const name = document.createElement('span');
+    name.className = 'category-name';
+    name.textContent = normalizeCategoryLabel(label);
+
+    const num = document.createElement('strong');
+    num.textContent = isPct ? formatPercent(value) : formatNumber(value);
+
+    const meter = document.createElement('div');
+    meter.className = 'category-meter';
+    const fill = document.createElement('div');
+    fill.className = 'category-meter-fill';
+    fill.style.width = `${Math.max(8, Math.min(100, Math.abs(value)))}%`;
+    meter.appendChild(fill);
+
+    row.append(name, num, meter);
+    host.appendChild(row);
+  });
+}
+
+function clearSparseBreakdownSummary(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const frame = canvas.closest('.chart-frame');
+  const card = canvas.closest('.chart-card');
+  frame?.classList.remove('hidden');
+  card?.querySelector('.category-summary')?.remove();
+}
+
 function renderBreakdown(canvasId, dataObj = {}, label) {
   const entries = Object.entries(dataObj || {});
-  const labels = entries.map(([k]) => k);
-  const values = entries.map(([, v]) => v);
+  clearSparseBreakdownSummary(canvasId);
+  if (!entries.length) {
+    showEmptyState(canvasId, 'No data for current filters.');
+    return;
+  }
+  const isPct = (label || '').toLowerCase().includes('win');
+  const sortedEntries = entries
+    .map(([k, v]) => [normalizeCategoryLabel(k), Number(v) || 0])
+    .sort((a, b) => b[1] - a[1]);
+
+  if (sortedEntries.length <= 2) {
+    destroyChart(canvasId);
+    renderSparseBreakdownSummary(canvasId, sortedEntries, isPct);
+    return;
+  }
+
+  const labels = sortedEntries.map(([k]) => k);
+  const values = sortedEntries.map(([, v]) => v);
   renderChart(canvasId, {
     type: 'bar',
     data: {
@@ -396,12 +587,22 @@ function renderBreakdown(canvasId, dataObj = {}, label) {
       datasets: [{
         label: label || '',
         data: values,
-        backgroundColor: CHART_THEME.warning()
+        borderRadius: 6,
+        barThickness: 12,
+        maxBarThickness: 14,
+        backgroundColor: values.map(v => (v >= 0 ? CHART_THEME.accent() : CHART_THEME.danger()))
       }]
     },
     options: {
       responsive: true,
-      plugins: { legend: { display: false } }
+      maintainAspectRatio: false,
+      indexAxis: 'y',
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { callback: v => (isPct ? `${Number(v).toFixed(0)}%` : formatNumber(v)) } },
+        y: { ticks: { autoSkip: false } }
+      }
     }
   });
 }
@@ -415,36 +616,52 @@ function renderHeatmap(curve = []) {
     if (!point.date) return;
     byDate[point.date] = (byDate[point.date] || 0) + (point.pnl || 0);
   });
-  if (!Object.keys(byDate).length) {
+  const entries = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!entries.length) {
     const note = document.createElement('p');
     note.className = 'tool-note';
     note.textContent = 'No monthly data yet.';
     grid.appendChild(note);
+    document.querySelector('#snapshot-best-day').textContent = '—';
+    document.querySelector('#snapshot-worst-day').textContent = '—';
     return;
   }
-  const entries = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
+
+  let best = entries[0];
+  let worst = entries[0];
   entries.forEach(([date, pnl]) => {
-    const card = document.createElement('div');
+    if (pnl > best[1]) best = [date, pnl];
+    if (pnl < worst[1]) worst = [date, pnl];
+    const card = document.createElement('button');
+    card.type = 'button';
     card.className = 'heatmap-day';
     if (pnl > 0) card.classList.add('positive');
     if (pnl < 0) card.classList.add('negative');
+    card.title = `${date}: ${formatNumber(pnl)}`;
+
     const dateEl = document.createElement('div');
-    dateEl.textContent = date;
+    dateEl.className = 'date';
+    dateEl.textContent = date.slice(5);
     const valueEl = document.createElement('div');
     valueEl.className = 'value';
     valueEl.textContent = formatNumber(pnl);
+
     card.append(dateEl, valueEl);
     grid.appendChild(card);
   });
+
+  document.querySelector('#snapshot-best-day').textContent = `${formatRangeDate(best[0])} • ${formatNumber(best[1])}`;
+  document.querySelector('#snapshot-worst-day').textContent = `${formatRangeDate(worst[0])} • ${formatNumber(worst[1])}`;
 }
 
 async function refreshAnalytics() {
   readFilters();
   const query = toQuery(state.filters);
   const rangeText = [];
-  if (state.filters.from) rangeText.push(`From ${state.filters.from}`);
-  if (state.filters.to) rangeText.push(`to ${state.filters.to}`);
+  if (state.filters.from) rangeText.push(`From ${formatRangeDate(state.filters.from)}`);
+  if (state.filters.to) rangeText.push(`to ${formatRangeDate(state.filters.to)}`);
   document.querySelector('#analytics-range').textContent = rangeText.join(' ') || 'All time';
+  updateFilterChips();
 
   const summary = await api(`/api/analytics/summary${query}`);
   const equityRes = await api(`/api/analytics/equity-curve${query}`);
@@ -561,12 +778,31 @@ function bindNav() {
 function bindFilters() {
   document.querySelector('#apply-filters-btn')?.addEventListener('click', () => refreshAnalytics().catch(console.error));
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
+
+  document.querySelector('#filter-toggle-btn')?.addEventListener('click', () => {
+    const panel = document.querySelector('#analytics-filter-panel');
+    const open = panel?.classList.contains('hidden');
+    setFilterPanel(Boolean(open));
+  });
+
+  document.querySelectorAll('.range-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const range = getPresetRange(btn.dataset.range);
+      if (!range) return;
+      document.querySelector('#filter-from').value = range.from;
+      document.querySelector('#filter-to').value = range.to;
+      refreshAnalytics().catch(console.error);
+      document.querySelectorAll('.range-preset').forEach(el => el.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
 }
 
 function init() {
   bindNav();
   bindFilters();
   loadHeroMetrics();
+  setFilterPanel(false);
   refreshAnalytics().catch(console.error);
 }
 

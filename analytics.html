@@ -14,23 +14,6 @@
           <img class="brand-logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
         </h1>
       </div>
-      <div class="hero-metrics">
-        <article class="metric-card" id="hero-net-deposits">
-          <h3>Net deposits</h3>
-          <div class="metric-value" id="hero-net-deposits-value"></div>
-          <div class="metric-sub" id="hero-net-deposits-sub"></div>
-        </article>
-        <article class="metric-card" id="hero-portfolio">
-          <h3>Portfolio value</h3>
-          <div class="metric-value" id="header-portfolio-value"></div>
-          <div class="metric-sub" id="header-portfolio-sub"></div>
-        </article>
-        <article class="metric-card" id="hero-net-performance">
-          <h3>Net performance</h3>
-          <div class="metric-value" id="hero-net-performance-value"></div>
-          <div class="metric-sub" id="hero-net-performance-sub"></div>
-        </article>
-      </div>
       <div class="hero-right">
         <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
           <span></span>
@@ -60,78 +43,116 @@
   </aside>
 
   <main class="container analytics-page">
-    <section class="analytics-filters tool-card">
-      <div class="section-header">
+    <section class="analytics-toolbar tool-card">
+      <div class="analytics-toolbar-main">
         <div>
-          <p class="tool-overline">Filters</p>
-          <h3>Date & trade filters</h3>
-          <p class="stats-range" id="analytics-range"></p>
+          <p class="tool-overline">Performance / Analytics</p>
+          <h2>Trading Performance Dashboard</h2>
+          <p class="stats-range" id="analytics-range">All time</p>
+        </div>
+        <div class="range-presets" role="group" aria-label="Quick date range presets">
+          <button class="ghost range-preset" data-range="1w">1W</button>
+          <button class="ghost range-preset" data-range="1m">1M</button>
+          <button class="ghost range-preset" data-range="3m">3M</button>
+          <button class="ghost range-preset" data-range="ytd">YTD</button>
+          <button class="ghost range-preset" data-range="1y">1Y</button>
+          <button class="ghost range-preset" data-range="all">ALL</button>
         </div>
       </div>
-      <div class="filter-bar">
-        <div class="tool-field">
-          <label for="filter-from">From</label>
-          <input type="date" id="filter-from">
-        </div>
-        <div class="tool-field">
-          <label for="filter-to">To</label>
-          <input type="date" id="filter-to">
-        </div>
-        <div class="tool-field">
-          <label for="filter-symbol">Symbol</label>
-          <input type="text" id="filter-symbol" placeholder="AAPL">
-        </div>
-        <div class="tool-field">
-          <label for="filter-trade-type">Trade type</label>
-          <select id="filter-trade-type">
-            <option value="">Any</option>
-            <option value="scalp">Scalp</option>
-            <option value="day">Day</option>
-            <option value="swing">Swing</option>
-            <option value="position">Position</option>
-          </select>
-        </div>
-        <div class="tool-field">
-          <label for="filter-asset-class">Asset class</label>
-          <select id="filter-asset-class">
-            <option value="">Any</option>
-            <option value="stocks">Stocks</option>
-            <option value="options">Options</option>
-            <option value="forex">Forex</option>
-            <option value="crypto">Crypto</option>
-            <option value="futures">Futures</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div class="tool-field">
-          <label for="filter-strategy">Strategy tag</label>
-          <input type="text" id="filter-strategy" placeholder="Breakout">
-        </div>
-        <div class="tool-field">
-          <label for="filter-tags">Tags</label>
-          <input type="text" id="filter-tags" placeholder="disciplined, breakout">
-        </div>
-        <div class="tool-field">
-          <label for="filter-winloss">Result</label>
-          <select id="filter-winloss">
-            <option value="">Any</option>
-            <option value="win">Win</option>
-            <option value="loss">Loss</option>
-          </select>
-        </div>
+      <div class="filter-summary-row">
+        <div id="active-filter-chips" class="active-filter-chips"></div>
+        <button id="filter-toggle-btn" class="ghost filter-toggle-btn" aria-expanded="false" aria-controls="analytics-filter-panel">Filters</button>
       </div>
-      <div class="filter-actions" style="margin-top:12px;">
-        <button id="apply-filters-btn" class="primary">Apply</button>
-        <button id="reset-filters-btn" class="ghost">Reset</button>
+      <div id="analytics-filter-panel" class="analytics-filter-panel hidden">
+        <div class="filter-bar">
+          <div class="tool-field">
+            <label for="filter-from">From</label>
+            <input type="date" id="filter-from">
+          </div>
+          <div class="tool-field">
+            <label for="filter-to">To</label>
+            <input type="date" id="filter-to">
+          </div>
+          <div class="tool-field">
+            <label for="filter-symbol">Symbol</label>
+            <input type="text" id="filter-symbol" placeholder="AAPL">
+          </div>
+          <div class="tool-field">
+            <label for="filter-trade-type">Trade type</label>
+            <select id="filter-trade-type">
+              <option value="">Any</option>
+              <option value="scalp">Scalp</option>
+              <option value="day">Day</option>
+              <option value="swing">Swing</option>
+              <option value="position">Position</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label for="filter-asset-class">Asset class</label>
+            <select id="filter-asset-class">
+              <option value="">Any</option>
+              <option value="stocks">Stocks</option>
+              <option value="options">Options</option>
+              <option value="forex">Forex</option>
+              <option value="crypto">Crypto</option>
+              <option value="futures">Futures</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="tool-field">
+            <label for="filter-strategy">Strategy tag</label>
+            <input type="text" id="filter-strategy" placeholder="Breakout">
+          </div>
+          <div class="tool-field">
+            <label for="filter-tags">Tags</label>
+            <input type="text" id="filter-tags" placeholder="disciplined, breakout">
+          </div>
+          <div class="tool-field">
+            <label for="filter-winloss">Result</label>
+            <select id="filter-winloss">
+              <option value="">Any</option>
+              <option value="win">Win</option>
+              <option value="loss">Loss</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-actions compact-actions">
+          <button id="apply-filters-btn" class="primary">Apply</button>
+          <button id="reset-filters-btn" class="ghost">Reset</button>
+        </div>
       </div>
     </section>
 
-    <section class="stats-section">
-      <div class="stats-section-title">
-        <span class="stats-section-icon">📈</span>
-        <h3>Trading Performance</h3>
+    <section class="metrics-overview">
+      <div class="metrics-grid metrics-grid-primary">
+        <article class="stats-card" id="hero-portfolio">
+          <p class="stats-label">Portfolio Value</p>
+          <div class="stats-value" id="header-portfolio-value">£0.00</div>
+          <p class="stats-sub" id="header-portfolio-sub">—</p>
+          <p class="stats-mini">Net deposits: <span id="hero-net-deposits-value">£0.00</span> <span id="hero-net-deposits-sub"></span></p>
+        </article>
+        <article class="stats-card metric-emphasis" id="hero-net-performance">
+          <p class="stats-label">Net P&amp;L</p>
+          <div class="stats-value" id="hero-net-performance-value">£0.00</div>
+          <p class="stats-sub" id="hero-net-performance-sub">—</p>
+        </article>
+        <article class="stats-card metric-emphasis" id="hero-return-card">
+          <p class="stats-label">Return %</p>
+          <div class="stats-value" id="kpi-return-pct">0.00%</div>
+          <p class="stats-sub">On net deposited capital</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Profit Factor</p>
+          <div class="stats-value" id="kpi-profit-factor-primary">—</div>
+          <p class="stats-sub">Closed trades</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Max Drawdown</p>
+          <div class="stats-value" id="kpi-drawdown">£0.00</div>
+          <p class="stats-sub">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
+        </article>
       </div>
-      <div class="stats-grid">
+      <div class="metrics-grid metrics-grid-secondary">
         <article class="stats-card">
           <p class="stats-label">Win Rate</p>
           <div class="stats-value" id="kpi-win-rate">0%</div>
@@ -140,96 +161,91 @@
         <article class="stats-card">
           <p class="stats-label">Average Win</p>
           <div class="stats-value" id="kpi-avg-win">£0.00</div>
-          <p class="stats-sub">Average loss: <span id="kpi-avg-loss">£0.00</span></p>
+          <p class="stats-sub">Per closed winning trade</p>
+        </article>
+        <article class="stats-card">
+          <p class="stats-label">Average Loss</p>
+          <div class="stats-value" id="kpi-avg-loss">£0.00</div>
+          <p class="stats-sub">Per closed losing trade</p>
         </article>
         <article class="stats-card">
           <p class="stats-label">Expectancy</p>
           <div class="stats-value" id="kpi-expectancy">£0.00</div>
-          <p class="stats-sub">Profit factor: <span id="kpi-profit-factor">—</span></p>
+          <p class="stats-sub">Per closed trade</p>
         </article>
         <article class="stats-card">
           <p class="stats-label">Average R</p>
-          <div class="stats-value gold-badge" id="kpi-r-multiple">—</div>
-          <p class="stats-sub">Closed trades only</p>
+          <div class="stats-value" id="kpi-r-multiple">—</div>
+          <p class="stats-sub">Risk-adjusted outcome</p>
         </article>
       </div>
     </section>
 
-    <section class="stats-section">
-      <div class="stats-section-title">
-        <span class="stats-section-icon">💰</span>
-        <h3>Account Growth</h3>
+    <section class="analytics-block">
+      <div class="analytics-block-head">
+        <h3>Performance Overview</h3>
       </div>
-      <div class="stats-grid">
-        <article class="stats-card">
-          <p class="stats-label">Max Drawdown</p>
-          <div class="stats-value" id="kpi-drawdown">£0.00</div>
-          <p class="stats-sub">Duration: <span id="kpi-drawdown-duration">0</span> days</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Distribution</p>
-          <div class="stats-value" id="kpi-median">£0.00 median</div>
-          <p class="stats-sub">Std dev: <span id="kpi-stddev">—</span></p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Streaks</p>
-          <div class="stats-value" id="kpi-streaks">—</div>
-          <p class="stats-sub" id="kpi-streaks-sub">Max streak: 0W / 0L</p>
-        </article>
-        <article class="stats-card">
-          <p class="stats-label">Profit Factor</p>
-          <div class="stats-value" id="kpi-profit-factor-secondary">—</div>
-          <p class="stats-sub">From closed trades</p>
-        </article>
+      <section class="stats-card stats-card-wide equity-hero-card">
+        <div class="stats-card-header">
+          <h3>Equity Curve</h3>
+          <span id="equity-latest-value">£0.00</span>
+        </div>
+        <div class="chart-frame chart-frame-hero"><canvas id="equity-chart" aria-label="Equity curve chart"></canvas></div>
+        <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
+      </section>
+    </section>
+
+    <section class="analytics-block">
+      <div class="analytics-block-head"><h3>Risk Analysis</h3></div>
+      <div class="analytics-grid analytics-grid-risk">
+        <div class="chart-card chart-card-risk">
+          <div class="section-header"><h3>Drawdown</h3></div>
+          <div class="chart-frame"><canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-risk">
+          <div class="section-header"><h3>P&amp;L Distribution</h3></div>
+          <div class="chart-frame"><canvas id="distribution-chart" aria-label="Distribution chart"></canvas></div>
+        </div>
       </div>
     </section>
 
-    <section class="stats-card stats-card-wide">
-      <div class="stats-card-header">
-        <h3>Equity Curve</h3>
-        <span id="equity-latest-value">£0.00</span>
+    <section class="analytics-block">
+      <div class="analytics-block-head"><h3>Trading Analysis</h3></div>
+      <div class="analytics-grid analytics-grid-trading">
+        <div class="chart-card compact-chart-card">
+          <div class="section-header"><h3>P&amp;L by Trade Type</h3></div>
+          <div class="chart-frame chart-frame-compact"><canvas id="type-chart"></canvas></div>
+        </div>
+        <div class="chart-card compact-chart-card">
+          <div class="section-header"><h3>P&amp;L by Strategy Tag</h3></div>
+          <div class="chart-frame chart-frame-compact"><canvas id="strategy-chart"></canvas></div>
+        </div>
+        <div class="chart-card compact-chart-card winrate-card">
+          <div class="section-header"><h3>Win Rate by Trade Type</h3></div>
+          <div class="chart-frame chart-frame-compact"><canvas id="winrate-type-chart"></canvas></div>
+        </div>
+        <aside class="chart-card snapshot-card snapshot-card-inline">
+          <div class="section-header"><h3>Trading Snapshot</h3></div>
+          <div class="snapshot-grid">
+            <div><span>Best Day</span><strong id="snapshot-best-day">—</strong></div>
+            <div><span>Worst Day</span><strong id="snapshot-worst-day">—</strong></div>
+            <div><span>Best Win Streak</span><strong id="snapshot-best-streak">0</strong></div>
+            <div><span>Worst Loss Streak</span><strong id="snapshot-worst-streak">0</strong></div>
+            <div><span>Total Closed Trades</span><strong id="snapshot-closed-trades">0</strong></div>
+            <div><span>Median Daily P&amp;L</span><strong id="snapshot-median">—</strong></div>
+            <div><span>Std Dev</span><strong id="snapshot-stddev">—</strong></div>
+          </div>
+        </aside>
       </div>
-      <canvas id="equity-chart" aria-label="Equity curve chart"></canvas>
-      <p class="stats-empty-note" id="equity-empty-note">Close some trades to see your equity curve.</p>
     </section>
 
-
-    <section class="analytics-grid">
-      <div class="chart-card">
-        <div class="section-header">
-          <h3>Drawdown</h3>
+    <section class="analytics-block">
+      <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
+      <div class="analytics-grid behaviour-grid">
+        <div class="chart-card heatmap-card heatmap-card-full">
+          <div class="section-header"><h3>Monthly Heatmap</h3></div>
+          <div id="heatmap-grid" class="heatmap"></div>
         </div>
-        <canvas id="drawdown-chart" aria-label="Drawdown chart"></canvas>
-      </div>
-      <div class="chart-card">
-        <div class="section-header">
-          <h3>P&amp;L distribution</h3>
-        </div>
-        <canvas id="distribution-chart" aria-label="Distribution chart"></canvas>
-      </div>
-      <div class="chart-card">
-        <div class="section-header">
-          <h3>P&amp;L by trade type</h3>
-        </div>
-        <canvas id="type-chart"></canvas>
-      </div>
-      <div class="chart-card">
-        <div class="section-header">
-          <h3>P&amp;L by strategy tag</h3>
-        </div>
-        <canvas id="strategy-chart"></canvas>
-      </div>
-      <div class="chart-card winrate-card">
-        <div class="section-header">
-          <h3>Win rate by trade type</h3>
-        </div>
-        <canvas id="winrate-type-chart"></canvas>
-      </div>
-      <div class="chart-card heatmap-card">
-        <div class="section-header">
-          <h3>Monthly heatmap</h3>
-        </div>
-        <div id="heatmap-grid" class="heatmap"></div>
       </div>
     </section>
   </main>
