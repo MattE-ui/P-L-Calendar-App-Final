@@ -7,7 +7,40 @@
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-  
+  <header class="hero panel interactive">
+    <div class="hero-top">
+      <div class="hero-left">
+        <h1 class="brand-heading">
+          <img class="brand-logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
+        </h1>
+      </div>
+      <div class="hero-right">
+        <button id="nav-toggle-btn" class="ghost nav-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="nav-drawer">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div id="nav-drawer-overlay" class="nav-overlay hidden" aria-hidden="true"></div>
+  <aside id="nav-drawer" class="nav-drawer hidden" aria-label="Primary navigation">
+    <div class="nav-drawer-header">
+      <h3>Menu</h3>
+      <button id="nav-close-btn" class="ghost close-btn" aria-label="Close navigation">✕</button>
+    </div>
+    <nav class="nav-drawer-actions">
+      <button id="quick-settings-btn" class="ghost">Quick Settings</button>
+      <button id="calendar-btn" class="ghost">Calendar</button>
+      <button id="analytics-btn" class="ghost">Analytics</button>
+      <button id="trades-btn" class="ghost">Trades</button>
+      <button id="transactions-btn" class="ghost">Transactions</button>
+      <button id="profile-btn" class="ghost">Profile</button>
+      <button id="devtools-btn" class="ghost is-hidden">Devtools</button>
+      <button id="logout-btn" class="danger ghost">Logout</button>
+    </nav>
+  </aside>
 
   <main class="container analytics-page">
     <section class="analytics-toolbar tool-card">
@@ -191,6 +224,16 @@
           <div class="section-header"><h3>Win Rate by Trade Type</h3></div>
           <div class="chart-frame chart-frame-compact"><canvas id="winrate-type-chart"></canvas></div>
         </div>
+      </div>
+    </section>
+
+    <section class="analytics-block">
+      <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
+      <div class="analytics-grid behaviour-grid">
+        <div class="chart-card heatmap-card heatmap-card-full">
+          <div class="section-header"><h3>Monthly Heatmap</h3></div>
+          <div id="heatmap-grid" class="heatmap"></div>
+        </div>
         <aside class="chart-card snapshot-card snapshot-card-inline">
           <div class="section-header"><h3>Trading Snapshot</h3></div>
           <div class="snapshot-grid">
@@ -203,16 +246,6 @@
             <div><span>Std Dev</span><strong id="snapshot-stddev">—</strong></div>
           </div>
         </aside>
-      </div>
-    </section>
-
-    <section class="analytics-block">
-      <div class="analytics-block-head"><h3>Behaviour / Calendar View</h3></div>
-      <div class="analytics-grid behaviour-grid">
-        <div class="chart-card heatmap-card heatmap-card-full">
-          <div class="section-header"><h3>Monthly Heatmap</h3></div>
-          <div id="heatmap-grid" class="heatmap"></div>
-        </div>
       </div>
     </section>
   </main>

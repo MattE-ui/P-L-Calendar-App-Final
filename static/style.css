@@ -3443,14 +3443,14 @@ textarea {
 }
 
 .analytics-toolbar {
-  padding: 11px;
+  padding: 9px 11px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01) 52%), var(--surface-1);
 }
 
 .analytics-toolbar-main {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
@@ -3458,8 +3458,18 @@ textarea {
 
 .analytics-toolbar-main h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
   color: var(--text);
+}
+
+.analytics-toolbar .tool-overline {
+  margin: 0 0 2px;
+  font-size: 10px;
+}
+
+.analytics-toolbar .stats-range {
+  margin: 0;
+  font-size: 12px;
 }
 
 .range-presets {
@@ -3481,7 +3491,7 @@ textarea {
 }
 
 .filter-summary-row {
-  margin-top: 10px;
+  margin-top: 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3507,8 +3517,8 @@ textarea {
 }
 
 .analytics-filter-panel {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid rgba(255,255,255,0.06);
 }
 
@@ -3574,10 +3584,16 @@ textarea {
   color: color-mix(in srgb, var(--danger) 88%, #ffc0c0 12%);
 }
 
+#hero-net-performance .stats-value,
+#hero-return-card .stats-value {
+  font-size: 25px;
+  font-weight: 800;
+}
+
 .analytics-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .analytics-block-head h3 {
@@ -3623,9 +3639,9 @@ textarea {
 }
 
 .chart-frame-hero {
-  height: clamp(270px, 32vh, 310px);
-  min-height: 270px;
-  max-height: 310px;
+  height: clamp(320px, 34vh, 340px);
+  min-height: 320px;
+  max-height: 340px;
 }
 
 .chart-frame-compact {
@@ -3648,7 +3664,7 @@ textarea {
 }
 
 .behaviour-grid {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1.25fr 0.75fr;
   align-items: stretch;
 }
 
@@ -3749,9 +3765,9 @@ textarea {
 
 @media (max-width: 900px) {
   .chart-frame-hero {
-    height: 260px;
-    min-height: 260px;
-    max-height: 260px;
+    height: 300px;
+    min-height: 300px;
+    max-height: 300px;
   }
 
   .chart-frame,
@@ -3764,7 +3780,7 @@ textarea {
 
 
 .analytics-grid-trading {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -3774,7 +3790,7 @@ textarea {
 
 .snapshot-card-inline {
   align-self: stretch;
-  padding: 10px;
+  padding: 9px;
 }
 
 .snapshot-card-inline .snapshot-grid div {
@@ -3832,6 +3848,10 @@ textarea {
 @media (max-width: 1200px) {
   .analytics-grid-trading {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .behaviour-grid {
+    grid-template-columns: 1fr;
   }
 }
 
