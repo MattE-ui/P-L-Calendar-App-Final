@@ -60,16 +60,17 @@ body {
 .app-shell-header {
   position: sticky;
   top: 0;
-  z-index: 120;
+  z-index: 1200;
+  height: 62px;
   backdrop-filter: blur(12px);
-  background: rgba(10, 13, 19, 0.9);
+  background: linear-gradient(180deg, rgba(12, 15, 20, 0.97), rgba(10, 13, 19, 0.94));
   border-bottom: 1px solid rgba(39, 48, 66, 0.95);
 }
 
 .app-shell-header__inner {
   max-width: 1600px;
   margin: 0 auto;
-  height: 60px;
+  height: 62px;
   padding: 0 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -136,11 +137,16 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .app-shell-header {
+    height: auto;
+  }
+
   .app-shell-header__inner {
     grid-template-columns: 1fr;
     height: auto;
-    padding: 10px 16px;
-    gap: 10px;
+    min-height: 62px;
+    padding: 8px 16px;
+    gap: 8px;
   }
 
   .app-shell-brand__logo {
@@ -190,7 +196,7 @@ h1, h2, h3, h4 {
 
 .container {
   max-width: 1600px;
-  margin: 12px auto 32px;
+  margin: 10px auto 32px;
   padding: 0 16px 32px;
 }
 .dashboard-grid {
@@ -363,34 +369,66 @@ h1, h2, h3, h4 {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-.page-title {
-  display: flex;
-  justify-content: center;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  margin: 4px auto 14px;
-  text-align: center;
+.portfolio-metrics-bar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 auto 12px;
 }
 
-.page-title h2 {
+.portfolio-metrics-bar .metric-card {
+  min-height: 86px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015) 60%, rgba(16, 21, 28, 0.9));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.portfolio-metrics-bar .metric-card h3 {
   margin: 0;
-  font-size: 24px;
-  letter-spacing: 0.2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.portfolio-metrics-bar .metric-value {
+  font-size: 19px;
+  line-height: 1.1;
+  font-weight: 700;
   color: var(--text);
 }
+
+.portfolio-metrics-bar #hero-portfolio .metric-value {
+  font-size: 22px;
+}
+
+.portfolio-metrics-bar .metric-sub {
+  min-height: 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #view-controls { display:flex; flex-wrap: wrap; gap:12px; align-items:center; justify-content: space-between; margin-bottom: 10px; }
@@ -3857,6 +3895,25 @@ textarea {
 
 @media (max-width: 760px) {
   .analytics-grid-trading {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+@media (max-width: 1280px) {
+  .portfolio-metrics-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .portfolio-metrics-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .portfolio-metrics-bar {
     grid-template-columns: 1fr;
   }
 }

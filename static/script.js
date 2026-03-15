@@ -746,6 +746,34 @@ function computeLifetimeMetrics() {
   };
 }
 
+
+function computeTradeHeadlineMetrics() {
+  const trades = Object.values(state.data || {}).flatMap((days = {}) => Object.values(days || {}))
+    .flatMap(record => normalizeTradeRecords(record?.trades));
+  const closedTrades = trades.filter(trade => trade.status === 'closed' && Number.isFinite(trade.closePrice));
+  const winners = closedTrades.filter(trade => {
+    const pnl = Number(trade.closePrice - trade.entry) * Number(trade.sizeUnits || 0);
+    return Number.isFinite(pnl) && pnl > 0;
+  });
+  const avgRiskMultiple = (() => {
+    const values = closedTrades
+      .map(trade => {
+        const pnl = Number(trade.closePrice - trade.entry) * Number(trade.sizeUnits || 0);
+        return getTradeRiskMultiple(trade, toGBP(pnl, trade.currency || 'GBP'));
+      })
+      .filter(value => Number.isFinite(value));
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  })();
+  return {
+    totalTrades: trades.length,
+    closedTrades: closedTrades.length,
+    winners: winners.length,
+    winRate: closedTrades.length ? (winners.length / closedTrades.length) * 100 : 0,
+    avgRiskMultiple
+  };
+}
+
 function getLatestPortfolioGBP() {
   const live = Number(state.livePortfolioGBP);
   if (Number.isFinite(live) && live > 0) return live;
@@ -2260,11 +2288,6 @@ function renderMetrics() {
       netDepositsSub.textContent = '';
     }
   }
-  const netCard = $('#hero-net-deposits');
-  if (netCard) {
-    netCard.classList.remove('positive', 'negative');
-  }
-
   const netPerfEl = $('#hero-net-performance-value');
   if (netPerfEl) {
     netPerfEl.textContent = state.safeScreenshot
@@ -2288,6 +2311,22 @@ function renderMetrics() {
     }
   }
   setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
+
+  const returnEl = $('#metric-return-value');
+  if (returnEl) returnEl.textContent = formatPercent(netPerformancePct);
+  const returnSubEl = $('#metric-return-sub');
+  if (returnSubEl) returnSubEl.textContent = state.safeScreenshot ? '' : 'vs net deposits';
+  setMetricTrend($('#hero-return-card'), Number.isFinite(netPerformancePct) ? netPerformancePct : 0);
+
+  const tradeMetrics = computeTradeHeadlineMetrics();
+  const winRateEl = $('#metric-win-rate');
+  if (winRateEl) winRateEl.textContent = formatPercent(tradeMetrics.winRate);
+  const winRateSubEl = $('#metric-win-rate-sub');
+  if (winRateSubEl) winRateSubEl.textContent = `${tradeMetrics.winners} / ${tradeMetrics.closedTrades} closed`;
+  const tradeCountEl = $('#metric-trade-count');
+  if (tradeCountEl) tradeCountEl.textContent = String(tradeMetrics.totalTrades || 0);
+  const riskEl = $('#metric-risk-value');
+  if (riskEl) riskEl.textContent = Number.isFinite(tradeMetrics.avgRiskMultiple) ? `${tradeMetrics.avgRiskMultiple.toFixed(2)}R` : '—';
 
   const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
