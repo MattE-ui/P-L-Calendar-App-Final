@@ -746,6 +746,7 @@ function computeLifetimeMetrics() {
   };
 }
 
+
 function getLatestPortfolioGBP() {
   const live = Number(state.livePortfolioGBP);
   if (Number.isFinite(live) && live > 0) return live;
@@ -2225,11 +2226,11 @@ function renderMetrics() {
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
-  const portfolioValueEl = $('#metric-portfolio-value');
+  const portfolioValueEl = $('#header-portfolio-value');
   if (portfolioValueEl) {
     portfolioValueEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
   }
-  const portfolioSubEl = $('#metric-portfolio-sub');
+  const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
       portfolioSubEl.textContent = '';
