@@ -607,16 +607,89 @@ function renderBreakdown(canvasId, dataObj = {}, label) {
   });
 }
 
-function renderHeatmap(curve = []) {
+function percentile(values = [], p = 0.9) {
+  if (!Array.isArray(values) || !values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx] || 0;
+}
+
+function normalizeWeekday(dateStr = '') {
+  const day = new Date(`${dateStr}T00:00:00`).getDay();
+  return (day + 6) % 7;
+}
+
+function formatHeatmapTooltip(dayData = {}, modeLabel = 'PnL') {
+  const lines = [`${formatRangeDate(dayData.date)} • ${modeLabel}: ${formatNumber(dayData.value)}`];
+  if (Number.isFinite(dayData.tradeCount)) lines.push(`Trades: ${dayData.tradeCount}`);
+  if (Number.isFinite(dayData.winRate)) lines.push(`Win rate: ${dayData.winRate.toFixed(1)}%`);
+  if (Number.isFinite(dayData.bestTrade)) lines.push(`Best trade: ${formatNumber(dayData.bestTrade)}`);
+  if (Number.isFinite(dayData.worstTrade)) lines.push(`Worst trade: ${formatNumber(dayData.worstTrade)}`);
+  return lines.join('\n');
+}
+
+function getDirectionalIntensity(value, monthStats) {
+  const sign = value > 0 ? 'positive' : value < 0 ? 'negative' : 'flat';
+  if (!value || sign === 'flat') return { sign: 'flat', scale: 0, alpha: 0.08 };
+
+  const maxScale = sign === 'positive' ? monthStats.maxPositive : monthStats.maxNegative;
+  if (!maxScale) return { sign, scale: 0, alpha: 0.12 };
+  const flatBand = Math.max(1, maxScale * 0.04);
+  const normalized = (Math.abs(value) - flatBand) / Math.max(1, maxScale - flatBand);
+  const scale = Math.min(1, Math.max(0, normalized));
+  const shaped = Math.pow(scale, 0.82);
+  return {
+    sign,
+    scale: shaped,
+    alpha: 0.14 + shaped * 0.72
+  };
+}
+
+function buildMonthNormalization(days = []) {
+  const positives = days.map(day => day.value).filter(v => v > 0);
+  const negatives = days.map(day => Math.abs(day.value)).filter(v => v > 0);
+  return {
+    maxPositive: percentile(positives, 0.9) || Math.max(...positives, 0),
+    maxNegative: percentile(negatives, 0.9) || Math.max(...negatives, 0)
+  };
+}
+
+function renderHeatmap(curve = [], options = {}) {
   const grid = document.querySelector('#heatmap-grid');
   if (!grid) return;
   grid.innerHTML = '';
+  const modeLabel = options.modeLabel || 'PnL';
+  const valueAccessor = options.valueAccessor || (point => point.pnl);
+
   const byDate = {};
   curve.forEach(point => {
     if (!point.date) return;
-    byDate[point.date] = (byDate[point.date] || 0) + (point.pnl || 0);
+    if (!byDate[point.date]) {
+      byDate[point.date] = {
+        date: point.date,
+        value: 0,
+        tradeCount: 0,
+        winCount: 0,
+        bestTrade: Number.NEGATIVE_INFINITY,
+        worstTrade: Number.POSITIVE_INFINITY
+      };
+    }
+    const value = Number(valueAccessor(point)) || 0;
+    byDate[point.date].value += value;
+    if (Number.isFinite(point.tradeCount)) byDate[point.date].tradeCount += point.tradeCount;
+    if (Number.isFinite(point.winCount)) byDate[point.date].winCount += point.winCount;
+    if (Number.isFinite(point.bestTrade)) byDate[point.date].bestTrade = Math.max(byDate[point.date].bestTrade, point.bestTrade);
+    if (Number.isFinite(point.worstTrade)) byDate[point.date].worstTrade = Math.min(byDate[point.date].worstTrade, point.worstTrade);
   });
-  const entries = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
+  const entries = Object.values(byDate)
+    .map(day => ({
+      ...day,
+      winRate: day.tradeCount > 0 ? (day.winCount / day.tradeCount) * 100 : null,
+      bestTrade: Number.isFinite(day.bestTrade) ? day.bestTrade : null,
+      worstTrade: Number.isFinite(day.worstTrade) ? day.worstTrade : null
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
   if (!entries.length) {
     const note = document.createElement('p');
     note.className = 'tool-note';
@@ -629,29 +702,86 @@ function renderHeatmap(curve = []) {
 
   let best = entries[0];
   let worst = entries[0];
-  entries.forEach(([date, pnl]) => {
-    if (pnl > best[1]) best = [date, pnl];
-    if (pnl < worst[1]) worst = [date, pnl];
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'heatmap-day';
-    if (pnl > 0) card.classList.add('positive');
-    if (pnl < 0) card.classList.add('negative');
-    card.title = `${date}: ${formatNumber(pnl)}`;
+  const monthBuckets = new Map();
 
-    const dateEl = document.createElement('div');
-    dateEl.className = 'date';
-    dateEl.textContent = date.slice(5);
-    const valueEl = document.createElement('div');
-    valueEl.className = 'value';
-    valueEl.textContent = formatNumber(pnl);
-
-    card.append(dateEl, valueEl);
-    grid.appendChild(card);
+  entries.forEach(day => {
+    if (day.value > best.value) best = day;
+    if (day.value < worst.value) worst = day;
+    const monthKey = day.date.slice(0, 7);
+    if (!monthBuckets.has(monthKey)) monthBuckets.set(monthKey, []);
+    monthBuckets.get(monthKey).push(day);
   });
 
-  document.querySelector('#snapshot-best-day').textContent = `${formatRangeDate(best[0])} • ${formatNumber(best[1])}`;
-  document.querySelector('#snapshot-worst-day').textContent = `${formatRangeDate(worst[0])} • ${formatNumber(worst[1])}`;
+  const weekdayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  [...monthBuckets.keys()].sort().forEach(monthKey => {
+    const monthData = monthBuckets.get(monthKey) || [];
+    const [year, month] = monthKey.split('-').map(Number);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstDate = `${monthKey}-01`;
+    const monthStats = buildMonthNormalization(monthData);
+
+    const section = document.createElement('section');
+    section.className = 'heatmap-month';
+
+    const title = document.createElement('h4');
+    title.className = 'heatmap-month-title';
+    title.textContent = new Date(year, month - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    section.appendChild(title);
+
+    const weekdayRow = document.createElement('div');
+    weekdayRow.className = 'heatmap-weekdays';
+    weekdayLabels.forEach(label => {
+      const dayHead = document.createElement('span');
+      dayHead.textContent = label;
+      weekdayRow.appendChild(dayHead);
+    });
+    section.appendChild(weekdayRow);
+
+    const monthGrid = document.createElement('div');
+    monthGrid.className = 'heatmap-month-grid';
+    const leadBlanks = normalizeWeekday(firstDate);
+    for (let i = 0; i < leadBlanks; i += 1) {
+      const blank = document.createElement('div');
+      blank.className = 'heatmap-day heatmap-day-empty';
+      monthGrid.appendChild(blank);
+    }
+
+    for (let dayNum = 1; dayNum <= daysInMonth; dayNum += 1) {
+      const isoDate = `${monthKey}-${String(dayNum).padStart(2, '0')}`;
+      const dayData = monthData.find(day => day.date === isoDate);
+      if (!dayData) {
+        const empty = document.createElement('div');
+        empty.className = 'heatmap-day heatmap-day-no-data';
+        empty.innerHTML = `<div class="date">${dayNum}</div><div class="value">—</div>`;
+        monthGrid.appendChild(empty);
+        continue;
+      }
+
+      const card = document.createElement('button');
+      card.type = 'button';
+      const intensity = getDirectionalIntensity(dayData.value, monthStats);
+      card.className = `heatmap-day ${intensity.sign}`;
+      card.style.setProperty('--heat-strength', intensity.scale.toFixed(4));
+      card.style.setProperty('--heat-alpha', intensity.alpha.toFixed(4));
+      card.title = formatHeatmapTooltip(dayData, modeLabel);
+
+      const dateEl = document.createElement('div');
+      dateEl.className = 'date';
+      dateEl.textContent = dayNum;
+      const valueEl = document.createElement('div');
+      valueEl.className = 'value';
+      valueEl.textContent = formatNumber(dayData.value);
+
+      card.append(dateEl, valueEl);
+      monthGrid.appendChild(card);
+    }
+
+    section.appendChild(monthGrid);
+    grid.appendChild(section);
+  });
+
+  document.querySelector('#snapshot-best-day').textContent = `${formatRangeDate(best.date)} • ${formatNumber(best.value)}`;
+  document.querySelector('#snapshot-worst-day').textContent = `${formatRangeDate(worst.date)} • ${formatNumber(worst.value)}`;
 }
 
 async function refreshAnalytics() {
@@ -680,7 +810,7 @@ async function refreshAnalytics() {
     const prev = arr[idx - 1];
     const prevCum = prev ? prev.cumulative : 0;
     return { date: point.date, pnl: point.cumulative - prevCum };
-  }));
+  }), { mode: 'pnl', modeLabel: 'PnL', valueAccessor: point => point.pnl });
 }
 
 function resetFilters() {
