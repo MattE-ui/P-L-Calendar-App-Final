@@ -285,6 +285,61 @@
         </section>
       </div>
     </section>
+
+    <section class="card social-card" aria-labelledby="social-trade-groups-title">
+      <header class="social-header">
+        <p class="tool-overline">Private trade alerts</p>
+        <h2 id="social-trade-groups-title">Trade Groups</h2>
+      </header>
+      <div class="social-trade-groups-grid">
+        <section class="social-friends-block" aria-labelledby="social-create-trade-group-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-create-trade-group-title">Create Group</h3>
+          </header>
+          <form id="social-create-group-form" class="social-add-friend-form" novalidate>
+            <div class="social-add-friend-shell">
+              <label for="social-group-name" class="helper">Group name</label>
+              <div class="social-add-friend-row">
+                <input id="social-group-name" name="name" type="text" maxlength="64" placeholder="Swing Team" autocomplete="off">
+                <button id="social-create-group-btn" class="primary" type="submit">Create</button>
+              </div>
+              <p id="social-group-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-your-trade-groups-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-your-trade-groups-title">Your Groups</h3>
+          </header>
+          <div id="social-trade-groups-list" class="social-list"></div>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-trade-group-detail-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-trade-group-detail-title">Group Detail</h3>
+          </header>
+          <p id="social-group-detail-heading" class="helper">Select a group to view members and alerts.</p>
+          <div class="social-subpanel-head">
+            <h4>Members</h4>
+          </div>
+          <form id="social-group-add-member-form" class="social-add-friend-form" novalidate>
+            <div class="social-add-friend-shell">
+              <div class="social-add-friend-row">
+                <select id="social-group-friend-select" name="friend_user_id"></select>
+                <button id="social-group-add-member-btn" class="ghost" type="submit">Add friend</button>
+              </div>
+              <p id="social-group-member-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+            </div>
+          </form>
+          <div id="social-trade-group-members" class="social-list"></div>
+          <div class="social-subpanel-head social-subpanel-head--alerts">
+            <h4>Recent Alerts</h4>
+          </div>
+          <div id="social-trade-group-alerts" class="social-list"></div>
+        </section>
+      </div>
+    </section>
   </main>
 
   <script src="static/theme-utils.js"></script>

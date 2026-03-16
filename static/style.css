@@ -5002,3 +5002,12 @@ textarea {
     min-width: 130px;
   }
 }
+
+.social-trade-groups-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.social-subpanel-head--alerts {
+  margin-top: 10px;
+}

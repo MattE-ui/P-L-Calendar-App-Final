@@ -534,6 +534,22 @@ function ensureSocialTables(db) {
     db.socialEventLog = [];
     mutated = true;
   }
+  if (!Array.isArray(db.tradeGroups)) {
+    db.tradeGroups = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.tradeGroupMembers)) {
+    db.tradeGroupMembers = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.tradeGroupAlerts)) {
+    db.tradeGroupAlerts = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.tradeGroupNotifications)) {
+    db.tradeGroupNotifications = [];
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -544,6 +560,123 @@ const VERIFICATION_SOURCE_VALUES = ['manual', 'platform_locked', 'trading212', '
 const LEADERBOARD_PERIOD_KEYS = ['7D', '30D', '90D', 'YTD', 'ALL'];
 const LEADERBOARD_MODE_VALUES = ['trade', 'account'];
 const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
+const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
+const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'removed'];
+
+function getTradeGroupsLedByUser(db, username) {
+  ensureSocialTables(db);
+  return db.tradeGroups.filter(group => group.leader_user_id === username && group.is_active !== false);
+}
+
+function getTradeGroupMembers(db, groupId, { status = 'active' } = {}) {
+  ensureSocialTables(db);
+  return db.tradeGroupMembers.filter(member => (
+    member.group_id === groupId
+    && TRADE_GROUP_MEMBER_STATUS_VALUES.includes(member.status)
+    && (status ? member.status === status : true)
+  ));
+}
+
+function isTradeGroupMember(db, groupId, username) {
+  return db.tradeGroupMembers.some(member => (
+    member.group_id === groupId
+    && member.user_id === username
+    && member.status === 'active'
+  ));
+}
+
+function sanitizeTradeGroupForViewer(db, group, viewerUsername) {
+  const leaderIdentity = socialIdentityForUser(db, group.leader_user_id);
+  const members = getTradeGroupMembers(db, group.id, { status: 'active' });
+  const isLeader = group.leader_user_id === viewerUsername;
+  return {
+    id: group.id,
+    name: group.name,
+    is_private: true,
+    is_active: group.is_active !== false,
+    created_at: group.created_at,
+    leader: {
+      nickname: leaderIdentity.nickname || 'Unknown trader',
+      avatar_url: leaderIdentity.avatar_url,
+      avatar_initials: leaderIdentity.avatar_initials
+    },
+    role: isLeader ? 'leader' : 'member',
+    member_count: members.length
+  };
+}
+
+function sanitizeTradeGroupMemberRow(db, member) {
+  const identity = socialIdentityForUser(db, member.user_id);
+  return {
+    user_id: member.user_id,
+    nickname: identity.nickname || 'Unknown trader',
+    avatar_url: identity.avatar_url,
+    avatar_initials: identity.avatar_initials,
+    role: TRADE_GROUP_ROLE_VALUES.includes(member.role) ? member.role : 'member',
+    status: member.status,
+    joined_at: member.joined_at
+  };
+}
+
+function isQualifyingTradeForGroupAlert(trade) {
+  if (!trade || typeof trade !== 'object') return false;
+  const ticker = typeof trade.symbol === 'string' ? trade.symbol.trim() : '';
+  const entry = Number(trade.entry);
+  const stop = Number(trade.stop);
+  const riskPct = Number(trade.riskPct);
+  return Boolean(ticker)
+    && Number.isFinite(entry)
+    && entry > 0
+    && Number.isFinite(stop)
+    && stop > 0
+    && Number.isFinite(riskPct)
+    && riskPct > 0;
+}
+
+function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
+  ensureSocialTables(db);
+  if (!isQualifyingTradeForGroupAlert(trade)) return { alertsCreated: 0, notificationsCreated: 0 };
+  const groups = getTradeGroupsLedByUser(db, leaderUsername);
+  if (!groups.length) return { alertsCreated: 0, notificationsCreated: 0 };
+  const nowIso = new Date().toISOString();
+  let alertsCreated = 0;
+  let notificationsCreated = 0;
+  for (const group of groups) {
+    const duplicate = db.tradeGroupAlerts.find(alert => alert.group_id === group.id && alert.source_trade_id === trade.id);
+    if (duplicate) continue;
+    const alert = {
+      id: crypto.randomUUID(),
+      group_id: group.id,
+      leader_user_id: leaderUsername,
+      source_trade_id: trade.id,
+      ticker: String(trade.symbol || '').trim().toUpperCase(),
+      entry_price: Number(trade.entry),
+      stop_price: Number(trade.stop),
+      risk_pct: Number(trade.riskPct),
+      created_at: nowIso
+    };
+    db.tradeGroupAlerts.push(alert);
+    alertsCreated += 1;
+    const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
+      .filter(member => member.user_id !== leaderUsername);
+    for (const member of activeMembers) {
+      const alreadyExists = db.tradeGroupNotifications.some(notification => (
+        notification.user_id === member.user_id && notification.alert_id === alert.id
+      ));
+      if (alreadyExists) continue;
+      db.tradeGroupNotifications.push({
+        id: crypto.randomUUID(),
+        user_id: member.user_id,
+        group_id: group.id,
+        alert_id: alert.id,
+        is_read: false,
+        created_at: nowIso
+      });
+      notificationsCreated += 1;
+    }
+  }
+  return { alertsCreated, notificationsCreated };
+}
 
 function defaultSocialProfile(username, friendCode) {
   const nowIso = new Date().toISOString();
@@ -7102,6 +7235,14 @@ const tradeSharePatchSchema = z.object({
   hide_cash_pnl: z.boolean().optional()
 });
 
+const tradeGroupCreateSchema = z.object({
+  name: z.string().min(1).max(64)
+});
+
+const tradeGroupMemberAddSchema = z.object({
+  friend_user_id: z.string().min(1)
+});
+
 app.get('/api/social/me', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
@@ -7324,6 +7465,255 @@ app.delete('/api/social/friends/:friendUserId', auth, (req, res) => {
   db.friendships = db.friendships.filter(f => !(f.user_one_id === user_one_id && f.user_two_id === user_two_id));
   if (db.friendships.length === before) return res.status(404).json({ error: 'Friendship not found.' });
   logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.friendship_removed', entityType: 'friendship', entityId: `${user_one_id}:${user_two_id}`, metadata: { friend_user_id: friendUserId } });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+
+function getTradeGroupIfAccessible(db, groupId, username) {
+  const group = db.tradeGroups.find(item => item.id === groupId && item.is_active !== false);
+  if (!group) return { error: 'not_found' };
+  const isLeader = group.leader_user_id === username;
+  const isMember = isTradeGroupMember(db, group.id, username);
+  if (!isLeader && !isMember) return { error: 'forbidden' };
+  return { group, isLeader };
+}
+
+app.post('/api/social/trade-groups', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = tradeGroupCreateSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
+  ensureSocialTables(db);
+  const nowIso = new Date().toISOString();
+  const group = {
+    id: crypto.randomUUID(),
+    name: parsed.data.name.trim(),
+    leader_user_id: req.username,
+    is_private: true,
+    is_active: true,
+    created_at: nowIso
+  };
+  db.tradeGroups.push(group);
+  db.tradeGroupMembers.push({
+    id: crypto.randomUUID(),
+    group_id: group.id,
+    user_id: req.username,
+    role: 'leader',
+    status: 'active',
+    joined_at: nowIso
+  });
+  logSocialEvent(db, {
+    userId: req.username,
+    actorUserId: req.username,
+    eventType: 'social.trade_group_created',
+    entityType: 'trade_group',
+    entityId: group.id,
+    metadata: { name: group.name }
+  });
+  saveDB(db);
+  res.status(201).json({ group: sanitizeTradeGroupForViewer(db, group, req.username) });
+});
+
+app.get('/api/social/trade-groups', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const memberships = db.tradeGroupMembers.filter(member => member.user_id === req.username && member.status === 'active');
+  const groups = memberships
+    .map(member => db.tradeGroups.find(group => group.id === member.group_id && group.is_active !== false))
+    .filter(Boolean)
+    .map(group => sanitizeTradeGroupForViewer(db, group, req.username));
+  saveDB(db);
+  res.json({ groups });
+});
+
+app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' }).map(member => sanitizeTradeGroupMemberRow(db, member));
+  const alerts = db.tradeGroupAlerts
+    .filter(alert => alert.group_id === access.group.id)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .slice(0, 25)
+    .map(alert => {
+      const leaderIdentity = socialIdentityForUser(db, access.group.leader_user_id);
+      return {
+        id: alert.id,
+        ticker: alert.ticker,
+        entry_price: alert.entry_price,
+        stop_price: alert.stop_price,
+        risk_pct: alert.risk_pct,
+        created_at: alert.created_at,
+        leader_nickname: leaderIdentity.nickname || 'Unknown trader',
+        leader_avatar_url: leaderIdentity.avatar_url,
+        leader_avatar_initials: leaderIdentity.avatar_initials
+      };
+    });
+  saveDB(db);
+  res.json({
+    group: sanitizeTradeGroupForViewer(db, access.group, req.username),
+    members,
+    alerts
+  });
+});
+
+app.post('/api/social/trade-groups/:groupId/members', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = tradeGroupMemberAddSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
+  ensureSocialTables(db);
+  const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
+  if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+  if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only the group leader can manage members.' });
+  const friendUserId = parsed.data.friend_user_id.trim();
+  if (!db.users[friendUserId]) return res.status(404).json({ error: 'User not found.' });
+  if (friendUserId === req.username) return res.status(400).json({ error: 'Leader is already a member.' });
+  if (!areFriends(db, req.username, friendUserId)) {
+    return res.status(400).json({ error: 'Only accepted friends can be added in phase one.' });
+  }
+  let member = db.tradeGroupMembers.find(item => item.group_id === group.id && item.user_id === friendUserId);
+  if (member && member.status === 'active') {
+    return res.status(409).json({ error: 'User is already a group member.' });
+  }
+  if (member) {
+    member.status = 'active';
+    member.role = 'member';
+    member.joined_at = new Date().toISOString();
+  } else {
+    member = {
+      id: crypto.randomUUID(),
+      group_id: group.id,
+      user_id: friendUserId,
+      role: 'member',
+      status: 'active',
+      joined_at: new Date().toISOString()
+    };
+    db.tradeGroupMembers.push(member);
+  }
+  logSocialEvent(db, {
+    userId: friendUserId,
+    actorUserId: req.username,
+    eventType: 'social.trade_group_member_added',
+    entityType: 'trade_group',
+    entityId: group.id,
+    metadata: { group_name: group.name }
+  });
+  saveDB(db);
+  res.status(201).json({ member: sanitizeTradeGroupMemberRow(db, member) });
+});
+
+app.delete('/api/social/trade-groups/:groupId/members/:userId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
+  ensureSocialTables(db);
+  const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
+  if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+  if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only the group leader can manage members.' });
+  const memberUserId = req.params.userId;
+  if (memberUserId === req.username) return res.status(400).json({ error: 'Leader cannot remove themselves.' });
+  const member = db.tradeGroupMembers.find(item => item.group_id === group.id && item.user_id === memberUserId && item.status === 'active');
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  member.status = 'removed';
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+
+app.get('/api/social/trade-groups/:groupId/eligible-friends', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
+  if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+  if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only the group leader can manage members.' });
+  const existing = new Set(getTradeGroupMembers(db, group.id, { status: 'active' }).map(member => member.user_id));
+  const eligible = db.friendships
+    .filter(f => f.user_one_id === req.username || f.user_two_id === req.username)
+    .map(f => (f.user_one_id === req.username ? f.user_two_id : f.user_one_id))
+    .filter(friendId => !existing.has(friendId))
+    .map(friendId => {
+      const identity = socialIdentityForUser(db, friendId);
+      return {
+        friend_user_id: friendId,
+        nickname: identity.nickname || 'Unknown trader',
+        avatar_url: identity.avatar_url,
+        avatar_initials: identity.avatar_initials
+      };
+    });
+  saveDB(db);
+  res.json({ eligible });
+});
+
+app.get('/api/social/trade-groups/:groupId/alerts', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const leaderIdentity = socialIdentityForUser(db, access.group.leader_user_id);
+  const alerts = db.tradeGroupAlerts
+    .filter(alert => alert.group_id === access.group.id)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .map(alert => ({
+      id: alert.id,
+      ticker: alert.ticker,
+      entry_price: alert.entry_price,
+      stop_price: alert.stop_price,
+      risk_pct: alert.risk_pct,
+      created_at: alert.created_at,
+      leader_nickname: leaderIdentity.nickname || 'Unknown trader',
+      leader_avatar_url: leaderIdentity.avatar_url,
+      leader_avatar_initials: leaderIdentity.avatar_initials
+    }));
+  saveDB(db);
+  res.json({ alerts });
+});
+
+app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const unread = db.tradeGroupNotifications
+    .filter(notification => notification.user_id === req.username && !notification.is_read)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .map(notification => {
+      const alert = db.tradeGroupAlerts.find(item => item.id === notification.alert_id);
+      const group = db.tradeGroups.find(item => item.id === notification.group_id);
+      if (!alert || !group || group.is_active === false) return null;
+      if (!isTradeGroupMember(db, group.id, req.username)) return null;
+      const leaderIdentity = socialIdentityForUser(db, alert.leader_user_id);
+      return {
+        notification_id: notification.id,
+        alert_id: alert.id,
+        group_id: group.id,
+        group_name: group.name,
+        ticker: alert.ticker,
+        entry_price: alert.entry_price,
+        stop_price: alert.stop_price,
+        risk_pct: alert.risk_pct,
+        created_at: alert.created_at,
+        leader_nickname: leaderIdentity.nickname || 'Unknown trader',
+        leader_avatar_url: leaderIdentity.avatar_url,
+        leader_avatar_initials: leaderIdentity.avatar_initials
+      };
+    })
+    .filter(Boolean);
+  saveDB(db);
+  res.json({ notifications: unread });
+});
+
+app.post('/api/social/trade-groups/notifications/:notificationId/read', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const notification = db.tradeGroupNotifications.find(item => item.id === req.params.notificationId && item.user_id === req.username);
+  if (!notification) return res.status(404).json({ error: 'Notification not found.' });
+  notification.is_read = true;
+  notification.read_at = new Date().toISOString();
   saveDB(db);
   res.json({ ok: true });
 });
@@ -10159,6 +10549,7 @@ app.post('/api/trades', auth, async (req, res) => {
     }
     applyTradeClose(user, trade, closeNum, closeDate, rates, targetDate);
   }
+  createTradeGroupAlertsForNewTrade(db, req.username, trade);
   saveDB(db);
   res.json({ ok: true, trade, date: targetDate });
 });

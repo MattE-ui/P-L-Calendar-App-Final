@@ -180,8 +180,12 @@
       state.pollingStarted = true;
       console.info('[social-sync] starting polling loop');
       refresh('startup');
+      refreshTradeGroupNotifications().finally(renderFromSharedState);
       state.pollTimer = window.setInterval(() => {
-        if (!document.hidden) refresh('poll');
+        if (!document.hidden) {
+          refresh('poll');
+          refreshTradeGroupNotifications().finally(renderFromSharedState);
+        }
       }, 15000);
 
       if (!state.listenersBound) {
@@ -223,7 +227,9 @@
     hiddenAcceptedRequestIds: new Set(),
     autoDismissTimer: null,
     hideAnimationTimer: null,
-    seededAcceptedRequestIds: false
+    seededAcceptedRequestIds: false,
+    tradeGroupNotifications: [],
+    hiddenTradeGroupNotificationIds: new Set()
   };
 
   function createAlertShell() {
@@ -263,6 +269,7 @@
       if (!state.activeBanner || state.activeBanner.type !== bannerType || state.activeBanner.id !== id) return;
       if (bannerType === 'incoming') state.hiddenIncomingRequestIds.add(id);
       if (bannerType === 'accepted') state.hiddenAcceptedRequestIds.add(id);
+      if (bannerType === 'trade-group') dismissTradeGroupNotification(id);
       dismissActive();
     }, 15000);
   }
@@ -375,6 +382,65 @@
     scheduleAutoDismiss('accepted', request.id);
   }
 
+
+  async function refreshTradeGroupNotifications() {
+    try {
+      const payload = await api('/api/social/trade-groups/notifications/unread');
+      state.tradeGroupNotifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
+    } catch (_error) {
+      state.tradeGroupNotifications = [];
+    }
+  }
+
+  async function dismissTradeGroupNotification(notificationId) {
+    if (!notificationId) return;
+    state.hiddenTradeGroupNotificationIds.add(notificationId);
+    try {
+      await api(`/api/social/trade-groups/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST' });
+    } catch (_error) {
+      // ignore and keep local dismissal
+    }
+    dismissActive();
+    await refreshTradeGroupNotifications();
+    refreshTradeGroupNotifications().finally(renderFromSharedState);
+  }
+
+  function renderTradeGroupNotification(notification) {
+    createAlertShell();
+    const shell = document.getElementById('global-friend-request-alert');
+    if (!shell || !notification?.notification_id) return;
+    state.activeBanner = { type: 'trade-group', id: notification.notification_id };
+    shell.classList.remove('is-leaving');
+    shell.classList.remove('hidden');
+    shell.innerHTML = `
+      <div class="social-global-alert__title">Trade group alert</div>
+      <div class="social-global-alert__body"></div>
+      <div class="social-global-alert__actions">
+        <button type="button" class="primary" data-social-alert-action="open">Open</button>
+        <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
+      </div>
+    `;
+    const body = shell.querySelector('.social-global-alert__body');
+    if (body) {
+      body.appendChild(createBannerIdentityNode({
+        counterparty_nickname: notification.leader_nickname,
+        counterparty_avatar_url: notification.leader_avatar_url,
+        counterparty_avatar_initials: notification.leader_avatar_initials
+      }));
+      const text = document.createElement('span');
+      text.textContent = `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
+      body.appendChild(text);
+    }
+    shell.querySelector('[data-social-alert-action="open"]')?.addEventListener('click', async () => {
+      await dismissTradeGroupNotification(notification.notification_id);
+      window.location.href = `/social.html?group=${encodeURIComponent(notification.group_id)}`;
+    });
+    shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
+      await dismissTradeGroupNotification(notification.notification_id);
+    });
+    scheduleAutoDismiss('trade-group', notification.notification_id);
+  }
+
   function pickRequestForBanner(incoming) {
     // Intentional behavior: show the newest pending request not dismissed by this browser session.
     const sorted = [...incoming].sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
@@ -410,6 +476,11 @@
       dismissActive();
     }
     if (state.activeBanner?.id) return;
+    const tradeGroupNext = (state.tradeGroupNotifications || []).find(item => item?.notification_id && !state.hiddenTradeGroupNotificationIds.has(item.notification_id));
+    if (tradeGroupNext) {
+      renderTradeGroupNotification(tradeGroupNext);
+      return;
+    }
     const incomingNext = pickRequestForBanner(socialData.incomingRequests || []);
     if (incomingNext) {
       renderIncomingRequest(incomingNext);
@@ -443,6 +514,8 @@
     badge.classList.remove('hidden');
   }
 
-  renderFromSharedState();
-  window.addEventListener(SOCIAL_SYNC_EVENT, renderFromSharedState);
+  refreshTradeGroupNotifications().finally(renderFromSharedState);
+  window.addEventListener(SOCIAL_SYNC_EVENT, () => {
+    refreshTradeGroupNotifications().finally(renderFromSharedState);
+  });
 })();
