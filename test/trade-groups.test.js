@@ -83,6 +83,12 @@ test('leader can create group, add friend, and member receives alert for qualify
   });
   assert.equal(addMember.res.status, 201);
 
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  assert.equal(inviteUnread.res.status, 200);
+  assert.equal(inviteUnread.data.notifications[0].type, 'invite');
+  const acceptInvite = await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
+  assert.equal(acceptInvite.res.status, 200);
+
   const tradeCreate = await authedFetch(tokens.leader, '/api/trades', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -99,6 +105,7 @@ test('leader can create group, add friend, and member receives alert for qualify
   const unread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
   assert.equal(unread.res.status, 200);
   assert.equal(unread.data.notifications.length, 1);
+  assert.equal(unread.data.notifications[0].type, 'alert');
   assert.equal(unread.data.notifications[0].ticker, 'NVDA');
 
   const alerts = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}/alerts`);
@@ -122,6 +129,8 @@ test('does not create group alert when stop or risk is missing and blocks non-me
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ friend_user_id: member })
   });
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
 
   const noStopTrade = await authedFetch(tokens.leader, '/api/trades', {
     method: 'POST',
@@ -136,4 +145,35 @@ test('does not create group alert when stop or risk is missing and blocks non-me
 
   const outsiderView = await authedFetch(tokens.outsider, `/api/social/trade-groups/${groupId}`);
   assert.equal(outsiderView.res.status, 403);
+});
+
+
+test('leader can post announcement, delete alert, and close group', async () => {
+  const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Ops Group' })
+  });
+  const groupId = created.data.group.id;
+  await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/members`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ friend_user_id: member })
+  });
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
+
+  const announcement = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/announcements`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Risk off into CPI' })
+  });
+  assert.equal(announcement.res.status, 201);
+
+  await authedFetch(tokens.leader, '/api/trades', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: 100, stop: 95, riskPct: 1, symbol: 'MSFT', date: '2024-04-01' })
+  });
+  const alerts = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/alerts`);
+  assert.equal(alerts.res.status, 200);
+  const delAlert = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/alerts/${alerts.data.alerts[0].id}`, { method: 'DELETE' });
+  assert.equal(delAlert.res.status, 200);
+
+  const closeGroup = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}`, { method: 'DELETE' });
+  assert.equal(closeGroup.res.status, 200);
+  const memberView = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}`);
+  assert.equal(memberView.res.status, 404);
 });
