@@ -724,35 +724,90 @@ function periodStartDate(period) {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
+function dateKeyFromDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function computeHistoryPeriodReturnPct(user, periodKey) {
+  const history = ensurePortfolioHistory(user);
+  const entries = listChronologicalEntries(history);
+  if (!entries.length) return null;
+
+  if (periodKey === 'ALL') {
+    const totals = computeNetDepositsTotals(user, history);
+    const portfolioSnapshot = getCurrentPortfolioValue(user);
+    const netDeposits = Number(totals.total);
+    const portfolio = Number(portfolioSnapshot.value);
+    if (!Number.isFinite(netDeposits) || !Number.isFinite(portfolio) || netDeposits === 0) return null;
+    return ((portfolio - netDeposits) / Math.abs(netDeposits)) * 100;
+  }
+
+  const startKey = dateKeyFromDate(periodStartDate(periodKey));
+  if (!startKey) return null;
+  const priorEntries = entries.filter(entry => entry.date < startKey);
+  const periodEntries = entries.filter(entry => entry.date >= startKey);
+  if (!priorEntries.length || !periodEntries.length) return null;
+
+  const startEquity = Number(priorEntries[priorEntries.length - 1].end);
+  const endEquity = Number(periodEntries[periodEntries.length - 1].end);
+  if (!Number.isFinite(startEquity) || !Number.isFinite(endEquity) || startEquity === 0) return null;
+  const netFlows = periodEntries.reduce((sum, entry) => sum + (Number(entry.cashIn) || 0) - (Number(entry.cashOut) || 0), 0);
+  const pnl = endEquity - startEquity - netFlows;
+  return (pnl / Math.abs(startEquity)) * 100;
+}
+
+function computeTradeFallbackReturnPct(trades, user, periodKey) {
+  const startKey = dateKeyFromDate(periodStartDate(periodKey));
+  const closeDateFor = trade => (typeof trade.closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.closeDate) ? trade.closeDate : null);
+  const closedWithDate = trades.filter(t => t.status === 'closed' && Number.isFinite(Number(t.realizedPnlGBP)) && closeDateFor(t));
+  const inWindow = periodKey === 'ALL'
+    ? closedWithDate
+    : closedWithDate.filter(t => closeDateFor(t) >= startKey);
+  const realizedPnl = inWindow.reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
+
+  if (periodKey === 'ALL') {
+    const totals = computeNetDepositsTotals(user, ensurePortfolioHistory(user));
+    const denominator = Math.abs(Number(totals.total));
+    if (Number.isFinite(denominator) && denominator > 0) {
+      return (realizedPnl / denominator) * 100;
+    }
+  }
+
+  const realizedBeforeStart = periodKey === 'ALL'
+    ? 0
+    : closedWithDate
+      .filter(t => closeDateFor(t) < startKey)
+      .reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
+  const baselineCapital = Math.max(1, Math.abs((Number(user.initialNetDeposits) || 0) + realizedBeforeStart));
+  return (realizedPnl / baselineCapital) * 100;
+}
+
 function computeLeaderboardStatForUser(db, username, periodKey) {
   const user = db.users?.[username];
   if (!user) return null;
   const settings = getSocialSettings(db, username);
   const rates = { GBP: 1 };
   const trades = flattenTrades(user, rates);
-  const start = periodStartDate(periodKey);
-  const filtered = trades.filter(t => {
-    const openDate = t.openDate || t.date;
-    if (!openDate) return false;
-    const ts = Date.parse(openDate);
-    if (Number.isNaN(ts)) return false;
-    return ts >= start.getTime();
-  });
-  const closed = filtered.filter(t => t.status === 'closed');
+  const startKey = dateKeyFromDate(periodStartDate(periodKey));
+  const closed = trades.filter(t => t.status === 'closed' && Number.isFinite(Number(t.realizedPnlGBP)));
+  const filtered = periodKey === 'ALL'
+    ? closed
+    : closed.filter(t => typeof t.closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.closeDate) && t.closeDate >= startKey);
   const tradeCount = filtered.length;
-  const winners = closed.filter(t => Number(t.realizedPnlGBP) > 0).length;
-  const winRate = closed.length ? (winners / closed.length) * 100 : null;
-  const realizedPnl = closed.reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
-  const baseline = Math.max(1, Number(user.initialNetDeposits) || Number(user.initialPortfolio) || 1);
-  const realizedReturnPct = (realizedPnl / baseline) * 100;
-  const approxReturnPct = realizedReturnPct;
+  const winners = filtered.filter(t => Number(t.realizedPnlGBP) > 0).length;
+  const winRate = filtered.length ? (winners / filtered.length) * 100 : null;
+  const historyBasedReturnPct = computeHistoryPeriodReturnPct(user, periodKey);
+  const tradeFallbackReturnPct = computeTradeFallbackReturnPct(trades, user, periodKey);
+  const resolvedReturnPct = Number.isFinite(historyBasedReturnPct) ? historyBasedReturnPct : tradeFallbackReturnPct;
   const nowIso = new Date().toISOString();
   const stat = {
     user_id: username,
     period_key: periodKey,
     verification_status: settings.verification_status,
-    return_pct: Number.isFinite(approxReturnPct) ? approxReturnPct : 0,
-    realized_return_pct: Number.isFinite(realizedReturnPct) ? realizedReturnPct : null,
+    return_pct: Number.isFinite(resolvedReturnPct) ? resolvedReturnPct : 0,
+    realized_return_pct: Number.isFinite(tradeFallbackReturnPct) ? tradeFallbackReturnPct : null,
     trade_count: tradeCount,
     win_rate: Number.isFinite(winRate) ? winRate : null,
     computed_at: nowIso,
@@ -6914,8 +6969,11 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
       const settings = getSocialSettings(db, s.user_id);
       const profile = getSocialProfile(db, s.user_id);
       const user = db.users[s.user_id] || {};
+      const avatar = socialAvatarForUser(user);
       return {
         nickname: profile?.display_name_override || getSocialNickname(user) || 'Unknown trader',
+        avatar_url: avatar.avatar_url,
+        avatar_initials: avatar.avatar_initials,
         period_key: s.period_key,
         return_pct: s.return_pct,
         realized_return_pct: s.realized_return_pct,
