@@ -51,12 +51,29 @@ function resetDatabase() {
         security: {},
         trading212: { enabled: true },
         ibkr: { enabled: false },
+        multiTradingAccountsEnabled: true,
+        tradingAccounts: [
+          {
+            id: 'primary',
+            label: 'Primary account',
+            currentValue: 1200,
+            currentNetDeposits: 0,
+            integrationProvider: 'trading212',
+            integrationEnabled: true
+          }
+        ],
         portfolioHistory: {
           [monthKey(beforeWindow)]: {
-            [beforeWindow]: { end: 1000, cashIn: 0, cashOut: 0 }
+            [beforeWindow]: {
+              end: 1000, cashIn: 0, cashOut: 0,
+              accounts: { primary: { end: 1000, cashIn: 0, cashOut: 0 } }
+            }
           },
           [monthKey(withinWindow)]: {
-            [withinWindow]: { end: 1200, cashIn: 100, cashOut: 0 }
+            [withinWindow]: {
+              end: 1200, cashIn: 100, cashOut: 0,
+              accounts: { primary: { end: 1200, cashIn: 100, cashOut: 0 } }
+            }
           }
         },
         tradeJournal: {
@@ -123,4 +140,19 @@ test('leaderboard includes persisted avatar and computes 7D return from deployed
   assert.equal(entry.trade_count, 3);
   assert.equal(Math.round(entry.return_pct * 100) / 100, 33.33);
   assert.equal(entry.leaderboard_source, 'trading212');
+});
+
+
+test('leaderboard supports account mode using source-specific equity history', async () => {
+  const { res, data } = await authedFetch('/api/social/leaderboard?period=7D&verification=trusted&mode=account');
+  assert.equal(res.status, 200);
+  assert.equal(data.period, '7D');
+  assert.equal(data.mode, 'account');
+  assert.equal(Array.isArray(data.entries), true);
+  assert.equal(data.entries.length, 1);
+
+  const [entry] = data.entries;
+  assert.equal(entry.leaderboard_mode, 'account');
+  assert.equal(entry.leaderboard_source, 'trading212');
+  assert.equal(Math.round(entry.return_pct * 100) / 100, 0);
 });

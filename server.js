@@ -542,6 +542,7 @@ const FRIEND_REQUEST_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancel
 const VERIFICATION_STATUS_VALUES = ['none', 'platform_verified', 'broker_verified'];
 const VERIFICATION_SOURCE_VALUES = ['manual', 'platform_locked', 'trading212', 'ibkr'];
 const LEADERBOARD_PERIOD_KEYS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+const LEADERBOARD_MODE_VALUES = ['trade', 'account'];
 const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
 
 function defaultSocialProfile(username, friendCode) {
@@ -712,11 +713,11 @@ function canBePlatformVerified(user) {
   return closedWithPnL >= 5;
 }
 
-function computeEligibilityReason(settings, stats) {
+function computeEligibilityReason(settings, stats, mode = 'trade') {
   if (!settings.leaderboard_enabled) return 'leaderboard_disabled';
   if (settings.verification_status === 'none') return 'unverified';
   if (!Number.isFinite(Number(stats.return_pct))) return 'return_unavailable';
-  if (stats.trade_count < 3) return 'insufficient_trades';
+  if (mode === 'trade' && stats.trade_count < 3) return 'insufficient_trades';
   return null;
 }
 
@@ -960,6 +961,9 @@ function explainFormula(periodKey, path, diagnostics = {}) {
     const end = diagnostics?.period_end || currentDateKey();
     return `Using portfolio history from ${start} to ${end}, adjusted for net deposits and withdrawals.`;
   }
+  if (path === 'account_source_equity_history') {
+    return 'Using source-specific account equity history adjusted for net cash flows.';
+  }
   if (path === 'trade_deployed_capital') {
     return 'Using closed trades in the selected window with realized PnL divided by deployed trade capital.';
   }
@@ -969,10 +973,74 @@ function explainFormula(periodKey, path, diagnostics = {}) {
   return `Using ${path} leaderboard methodology.`;
 }
 
-function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) {
+function buildAccountModeReturnFromEntries(entries, periodKey) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return { returnPct: null, reason: 'missing_source_history_entries', details: null };
+  }
+
+  if (periodKey === 'ALL') {
+    if (entries.length < 2) {
+      return { returnPct: null, reason: 'insufficient_source_history_points', details: null };
+    }
+    const startEquity = Number(entries[0].end);
+    const endEquity = Number(entries[entries.length - 1].end);
+    if (!Number.isFinite(startEquity) || startEquity === 0 || !Number.isFinite(endEquity)) {
+      return { returnPct: null, reason: 'invalid_source_history_equity', details: null };
+    }
+    const inPeriod = entries.slice(1);
+    const deposits = inPeriod.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+    const withdrawals = inPeriod.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+    const netFlows = deposits - withdrawals;
+    const pnl = endEquity - startEquity - netFlows;
+    return {
+      returnPct: (pnl / Math.abs(startEquity)) * 100,
+      reason: null,
+      details: {
+        start_equity: startEquity,
+        end_equity: endEquity,
+        deposits_in_period: deposits,
+        withdrawals_in_period: withdrawals,
+        net_cash_flow_adjustment: netFlows,
+        formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
+      }
+    };
+  }
+
+  const startKey = dateKeyFromDate(periodStartDate(periodKey));
+  if (!startKey) return { returnPct: null, reason: 'invalid_period_start', details: null };
+  const priorEntries = entries.filter(entry => entry.date < startKey);
+  const periodEntries = entries.filter(entry => entry.date >= startKey);
+  if (!priorEntries.length || !periodEntries.length) {
+    return { returnPct: null, reason: 'insufficient_source_history_window', details: null };
+  }
+  const startEquity = Number(priorEntries[priorEntries.length - 1].end);
+  const endEquity = Number(periodEntries[periodEntries.length - 1].end);
+  if (!Number.isFinite(startEquity) || startEquity === 0 || !Number.isFinite(endEquity)) {
+    return { returnPct: null, reason: 'invalid_source_history_equity', details: null };
+  }
+  const deposits = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+  const withdrawals = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+  const netFlows = deposits - withdrawals;
+  const pnl = endEquity - startEquity - netFlows;
+  return {
+    returnPct: (pnl / Math.abs(startEquity)) * 100,
+    reason: null,
+    details: {
+      start_equity: startEquity,
+      end_equity: endEquity,
+      deposits_in_period: deposits,
+      withdrawals_in_period: withdrawals,
+      net_cash_flow_adjustment: netFlows,
+      formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
+    }
+  };
+}
+
+function buildLeaderboardStatDiagnostics(db, username, periodKey, mode = 'trade', options = {}) {
   const user = db.users?.[username];
   if (!user) return null;
   const includeTrades = options.includeTrades === true;
+  const selectedMode = LEADERBOARD_MODE_VALUES.includes(mode) ? mode : 'trade';
   const settings = getSocialSettings(db, username);
   const rates = { GBP: 1 };
   const allTrades = flattenTrades(user, rates);
@@ -985,7 +1053,6 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
   const includedTrades = [];
   const excludedTrades = [];
   const closedForPeriod = [];
-  const closedForFallback = [];
   const pushTradeView = (trade, reason, included) => {
     const realized = Number(trade.realizedPnlGBP);
     const pct = Number(trade.pnlPct ?? trade.returnPct);
@@ -1032,7 +1099,6 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
       pushTradeView(trade, 'missing_required_fields', false);
       continue;
     }
-    closedForFallback.push(trade);
     if (periodKey !== 'ALL' && closeDate < startKey) {
       pushTradeView(trade, 'outside_selected_period', false);
       continue;
@@ -1046,19 +1112,32 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
 
   const historyResult = computeHistoryPeriodReturnDetails(user, periodKey);
   const tradeResult = computeTradeDeployedReturnDetails(closedForPeriod);
-  const usingHistory = Number.isFinite(historyResult.returnPct);
-  const usingTradeDeployed = !usingHistory && Number.isFinite(tradeResult.returnPct);
-  const resolvedReturnPct = usingHistory
-    ? historyResult.returnPct
-    : (usingTradeDeployed ? tradeResult.returnPct : null);
-  const calculationPath = usingHistory
-    ? 'history_based'
-    : (usingTradeDeployed ? 'trade_deployed_capital' : 'return_unavailable');
+  const sourceHistory = listChronologicalEntriesForSource(user, selectedSource);
+  const accountResult = buildAccountModeReturnFromEntries(sourceHistory.entries, periodKey);
+
+  let resolvedReturnPct = null;
+  let calculationPath = 'return_unavailable';
+  if (selectedMode === 'account') {
+    resolvedReturnPct = Number.isFinite(accountResult.returnPct) ? accountResult.returnPct : null;
+    calculationPath = Number.isFinite(accountResult.returnPct)
+      ? 'account_source_equity_history'
+      : 'return_unavailable';
+  } else {
+    const usingHistory = Number.isFinite(historyResult.returnPct);
+    const usingTradeDeployed = !usingHistory && Number.isFinite(tradeResult.returnPct);
+    resolvedReturnPct = usingHistory
+      ? historyResult.returnPct
+      : (usingTradeDeployed ? tradeResult.returnPct : null);
+    calculationPath = usingHistory
+      ? 'history_based'
+      : (usingTradeDeployed ? 'trade_deployed_capital' : 'return_unavailable');
+  }
 
   const nowIso = new Date().toISOString();
   const stat = {
     user_id: username,
     period_key: periodKey,
+    leaderboard_mode: selectedMode,
     leaderboard_source: selectedSource,
     verification_status: settings.verification_status,
     return_pct: Number.isFinite(resolvedReturnPct) ? resolvedReturnPct : null,
@@ -1070,12 +1149,13 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
     eligible: false,
     ineligibility_reason: 'unknown'
   };
-  const reason = computeEligibilityReason(settings, stat);
+  const reason = computeEligibilityReason(settings, stat, selectedMode);
   stat.eligible = reason === null;
   stat.ineligibility_reason = reason;
 
   const diagnostics = {
     period_key: periodKey,
+    leaderboard_mode: selectedMode,
     period_start: startKey,
     period_end: endKey,
     selected_leaderboard_source: selectedSource,
@@ -1099,13 +1179,19 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
     },
     unavailable_reason: null,
     history_details: null,
+    account_history_details: null,
+    account_history_account_id: sourceHistory.accountId,
+    account_history_reason: sourceHistory.reason,
     trade_fallback_details: null,
     trade_return_details: null,
     included_trades: includeTrades ? includedTrades : undefined,
     excluded_trades: includeTrades ? excludedTrades : undefined
   };
 
-  if (calculationPath === 'history_based') {
+  if (selectedMode === 'account') {
+    diagnostics.account_history_details = accountResult.details;
+    diagnostics.unavailable_reason = accountResult.reason || sourceHistory.reason || null;
+  } else if (calculationPath === 'history_based') {
     diagnostics.history_details = historyResult.details;
     diagnostics.trade_return_details = tradeResult.details;
     diagnostics.trade_fallback_details = tradeResult.details;
@@ -1124,14 +1210,18 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
   return { stat, diagnostics };
 }
 
-function computeLeaderboardStatForUser(db, username, periodKey) {
-  const built = buildLeaderboardStatDiagnostics(db, username, periodKey);
+function computeLeaderboardStatForUser(db, username, periodKey, mode = 'trade') {
+  const built = buildLeaderboardStatDiagnostics(db, username, periodKey, mode);
   return built?.stat || null;
 }
 
 function upsertLeaderboardStat(db, stat) {
   ensureSocialTables(db);
-  const index = db.leaderboardStats.findIndex(s => s.user_id === stat.user_id && s.period_key === stat.period_key);
+  const index = db.leaderboardStats.findIndex(s => (
+    s.user_id === stat.user_id
+    && s.period_key === stat.period_key
+    && (s.leaderboard_mode || 'trade') === (stat.leaderboard_mode || 'trade')
+  ));
   if (index >= 0) db.leaderboardStats[index] = { ...db.leaderboardStats[index], ...stat };
   else db.leaderboardStats.push({ id: crypto.randomUUID(), ...stat });
 }
@@ -1167,11 +1257,13 @@ function recomputeLeaderboardStatsForUser(db, username) {
       });
     }
   }
-  for (const period of LEADERBOARD_PERIOD_KEYS) {
-    const stat = computeLeaderboardStatForUser(db, username, period);
-    if (stat) {
-      upsertLeaderboardStat(db, stat);
-      changed = true;
+  for (const mode of LEADERBOARD_MODE_VALUES) {
+    for (const period of LEADERBOARD_PERIOD_KEYS) {
+      const stat = computeLeaderboardStatForUser(db, username, period, mode);
+      if (stat) {
+        upsertLeaderboardStat(db, stat);
+        changed = true;
+      }
     }
   }
   return changed;
@@ -2521,6 +2613,49 @@ function listChronologicalEntries(history) {
   }
   entries.sort((a, b) => a.date.localeCompare(b.date));
   return entries;
+}
+
+function listChronologicalEntriesForSource(user, source) {
+  const history = ensurePortfolioHistory(user);
+  const sourceKey = source === 'trading212' || source === 'ibkr' ? source : null;
+  if (!sourceKey) {
+    return { entries: [], accountId: null, reason: 'account_history_unsupported_source' };
+  }
+
+  const integratedAccount = getIntegratedTradingAccount(user, sourceKey);
+  const accountId = integratedAccount?.id || null;
+  if (!accountId) {
+    return { entries: [], accountId: null, reason: 'integrated_account_not_connected' };
+  }
+
+  const entries = [];
+  for (const days of Object.values(history || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const accountRecord = record.accounts && typeof record.accounts === 'object'
+        ? record.accounts[accountId]
+        : null;
+      if (!accountRecord || typeof accountRecord !== 'object') continue;
+      const end = Number(accountRecord.end);
+      if (!Number.isFinite(end) || end < 0) continue;
+      const cashInRaw = Number(accountRecord.cashIn ?? 0);
+      const cashOutRaw = Number(accountRecord.cashOut ?? 0);
+      entries.push({
+        date: dateKey,
+        end,
+        cashIn: Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0,
+        cashOut: Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0,
+        preBaseline: accountRecord.preBaseline === true || record.preBaseline === true
+      });
+    }
+  }
+
+  entries.sort((a, b) => a.date.localeCompare(b.date));
+  if (!entries.length) {
+    return { entries: [], accountId, reason: 'missing_source_history_entries' };
+  }
+
+  return { entries, accountId, reason: null };
 }
 
 function normalizeTradeJournal(user) {
@@ -7287,10 +7422,13 @@ app.get('/api/devtools/leaderboard-diagnostics', auth, (req, res) => {
   const sourceResolution = resolveLeaderboardDataSource(settings, availableSources);
 
   const timeframe = {};
-  for (const period of LEADERBOARD_PERIOD_KEYS) {
-    const built = buildLeaderboardStatDiagnostics(db, req.username, period, { includeTrades: true });
-    if (!built) continue;
-    timeframe[period] = built.diagnostics;
+  for (const mode of LEADERBOARD_MODE_VALUES) {
+    timeframe[mode] = {};
+    for (const period of LEADERBOARD_PERIOD_KEYS) {
+      const built = buildLeaderboardStatDiagnostics(db, req.username, period, mode, { includeTrades: true });
+      if (!built) continue;
+      timeframe[mode][period] = built.diagnostics;
+    }
   }
 
   saveDB(db);
@@ -7314,6 +7452,8 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
   const period = typeof req.query?.period === 'string' ? req.query.period.toUpperCase() : '30D';
   const selectedPeriod = LEADERBOARD_PERIOD_KEYS.includes(period) ? period : '30D';
   const verification = typeof req.query?.verification === 'string' ? req.query.verification : 'trusted';
+  const modeRaw = typeof req.query?.mode === 'string' ? req.query.mode.toLowerCase() : 'trade';
+  const selectedMode = LEADERBOARD_MODE_VALUES.includes(modeRaw) ? modeRaw : 'trade';
 
   for (const username of Object.keys(db.users || {})) {
     recomputeLeaderboardStatsForUser(db, username);
@@ -7326,6 +7466,7 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
       : new Set(['platform_verified', 'broker_verified']);
 
   const entries = db.leaderboardStats
+    .filter(s => (s.leaderboard_mode || 'trade') === selectedMode)
     .filter(s => s.period_key === selectedPeriod)
     .filter(s => allowedStatuses.has(s.verification_status))
     .filter(s => {
@@ -7343,6 +7484,7 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
         avatar_url: avatar.avatar_url,
         avatar_initials: avatar.avatar_initials,
         period_key: s.period_key,
+        leaderboard_mode: s.leaderboard_mode || 'trade',
         return_pct: s.return_pct,
         realized_return_pct: s.realized_return_pct,
         trade_count: s.trade_count,
@@ -7362,7 +7504,7 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
     });
 
   saveDB(db);
-  res.json({ period: selectedPeriod, verification, entries });
+  res.json({ period: selectedPeriod, verification, mode: selectedMode, entries });
 });
 
 app.post('/api/social/leaderboard/recompute', auth, (req, res) => {
