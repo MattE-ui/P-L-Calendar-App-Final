@@ -15,7 +15,8 @@ const SOCIAL_SETTING_KEYS = [
   'show_pnl_currency',
   'show_position_size',
   'leaderboard_visibility',
-  'trade_sharing_scope'
+  'trade_sharing_scope',
+  'leaderboard_data_source'
 ];
 
 const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
@@ -32,6 +33,7 @@ const DEFAULT_SOCIAL_SETTINGS = {
   show_position_size: false,
   leaderboard_visibility: 'private',
   trade_sharing_scope: 'private',
+  leaderboard_data_source: 'auto',
   verification_status: 'none',
   verification_source: null
 };
@@ -60,7 +62,8 @@ const socialState = {
   leaderboardLoading: false,
   leaderboardError: '',
   leaderboardEntries: [],
-  leaderboardPeriod: DEFAULT_LEADERBOARD_PERIOD
+  leaderboardPeriod: DEFAULT_LEADERBOARD_PERIOD,
+  leaderboardDataSourceOptions: []
 };
 
 const TRANSIENT_FEEDBACK_TTL_MS = 15000;
@@ -780,6 +783,29 @@ function applyProfile(profile) {
   applyVerification(profile, socialState.settings);
 }
 
+
+function renderLeaderboardDataSourceOptions() {
+  const form = getEl('social-settings-form');
+  const control = form?.elements?.namedItem('leaderboard_data_source');
+  if (!control || !control.options) return;
+  const options = Array.isArray(socialState.leaderboardDataSourceOptions)
+    ? socialState.leaderboardDataSourceOptions
+    : [];
+  if (!options.length) return;
+  const current = socialState.settings?.leaderboard_data_source || 'auto';
+  control.innerHTML = '';
+  options.forEach(option => {
+    const opt = document.createElement('option');
+    opt.value = option.value;
+    opt.textContent = option.available ? option.label : `${option.label} (unavailable)`;
+    opt.disabled = !option.available;
+    if (option.reason) opt.title = option.reason;
+    control.appendChild(opt);
+  });
+  const hasCurrent = options.some(option => option.value === current && option.available);
+  control.value = hasCurrent ? current : 'auto';
+}
+
 function readFormSettings() {
   const form = getEl('social-settings-form');
   const values = {};
@@ -794,6 +820,7 @@ function readFormSettings() {
 
 function applyFormSettings(settings) {
   const form = getEl('social-settings-form');
+  renderLeaderboardDataSourceOptions();
   if (!form) return;
   for (const key of SOCIAL_SETTING_KEYS) {
     const control = form.elements.namedItem(key);
@@ -803,7 +830,8 @@ function applyFormSettings(settings) {
       control.checked = !!value;
     } else if (typeof value === 'string') {
       const hasOption = Array.from(control.options || []).some(opt => opt.value === value);
-      control.value = hasOption ? value : 'private';
+      const fallbackValue = key === 'leaderboard_data_source' ? 'auto' : 'private';
+      control.value = hasOption ? value : fallbackValue;
     }
   }
   updateDependentControls();
@@ -904,6 +932,9 @@ async function loadSocialData() {
       socialState.profile = { friend_code: 'GUEST', verification_status: 'none', verification_source: 'manual' };
       socialState.settings = normalizeSocialSettings({ verification_source: 'manual' });
       socialState.initialSettings = { ...socialState.settings };
+      socialState.leaderboardDataSourceOptions = [
+        { value: 'auto', label: 'Auto', available: true }
+      ];
       applyProfile(socialState.profile);
       applyFormSettings(socialState.settings);
       setFormDisabled(true);
@@ -916,6 +947,9 @@ async function loadSocialData() {
       socialState.settings = normalizeSocialSettings(response?.settings);
       socialState.nicknameRequired = !!response?.nickname_required;
       socialState.nickname = response?.nickname || '';
+      socialState.leaderboardDataSourceOptions = Array.isArray(response?.leaderboard_data_source_options)
+        ? response.leaderboard_data_source_options
+        : [];
       socialState.initialSettings = SOCIAL_SETTING_KEYS.reduce((acc, key) => {
         acc[key] = socialState.settings[key];
         return acc;
