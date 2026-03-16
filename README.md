@@ -103,6 +103,8 @@ User accounts, sessions, and P&L entries are stored in a JSON file whose locatio
 - By default the app reads and writes `storage/data.json` (the directory is created automatically on boot).
 - Set `DB_PATH` to an absolute file path (for example `/var/data/pl-calendar/db.json`) to keep data across redeploys. You can also use `DATA_DIR` (directory) or `DATA_FILE` (explicit file path) if preferred.
 - On Render, create a [Persistent Disk](https://render.com/docs/persistent-disks), mount it at a path such as `/var/data`, and set `DB_PATH=/var/data/pl-calendar/db.json` in the service environment so user records and connector keys survive code pushes and restarts.
+- Avatars are stored on disk under `uploads/avatars` alongside the configured data file directory (for example `/var/data/pl-calendar/uploads/avatars` when `DB_PATH=/var/data/pl-calendar/db.json`), so they persist across redeploys when you use persistent storage.
+- Optional: set `AVATAR_STORAGE_DIR` to override where avatar files are stored; point it at your persistent disk path in production.
 - Guest sessions expire automatically; configure the TTL with `GUEST_TTL_HOURS` (defaults to 24 hours).
 
 When the new location is empty the server will migrate any legacy `data.json` file that shipped with earlier versions so existing installs retain their data.
