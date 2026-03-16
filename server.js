@@ -542,6 +542,7 @@ const FRIEND_REQUEST_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancel
 const VERIFICATION_STATUS_VALUES = ['none', 'platform_verified', 'broker_verified'];
 const VERIFICATION_SOURCE_VALUES = ['manual', 'platform_locked', 'trading212', 'ibkr'];
 const LEADERBOARD_PERIOD_KEYS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
 
 function defaultSocialProfile(username, friendCode) {
   const nowIso = new Date().toISOString();
@@ -575,6 +576,7 @@ function defaultSocialSettings(username) {
     allow_friend_requests: true,
     verification_status: 'none',
     verification_source: null,
+    leaderboard_data_source: 'auto',
     created_at: nowIso,
     updated_at: nowIso
   };
@@ -614,6 +616,7 @@ function getSocialSettings(db, username) {
   if (!SOCIAL_VISIBILITY_VALUES.includes(settings.trade_sharing_scope)) settings.trade_sharing_scope = 'private';
   if (!VERIFICATION_STATUS_VALUES.includes(settings.verification_status)) settings.verification_status = 'none';
   if (settings.verification_source && !VERIFICATION_SOURCE_VALUES.includes(settings.verification_source)) settings.verification_source = 'manual';
+  if (!LEADERBOARD_DATA_SOURCE_VALUES.includes(settings.leaderboard_data_source)) settings.leaderboard_data_source = 'auto';
   return settings;
 }
 
@@ -724,6 +727,53 @@ function periodStartDate(period) {
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
+function normalizeTradeSource(trade = {}) {
+  const sourceRaw = typeof trade.source === 'string' ? trade.source.trim().toLowerCase() : '';
+  return sourceRaw === 'trading212'
+    ? 'trading212'
+    : sourceRaw === 'ibkr'
+      ? 'ibkr'
+      : 'manual';
+}
+
+function getAvailableLeaderboardSources(trades = []) {
+  const available = new Set();
+  for (const trade of trades) {
+    const source = normalizeTradeSource(trade);
+    if (source) available.add(source);
+  }
+  return Array.from(available);
+}
+
+function resolveLeaderboardDataSource(settings, availableSources = []) {
+  const preferred = settings?.leaderboard_data_source || 'auto';
+  const availableSet = new Set(availableSources);
+  if (preferred !== 'auto') {
+    return {
+      requested: preferred,
+      selected: preferred,
+      isAuto: false,
+      autoReason: null,
+      available: availableSources,
+      ignored: availableSources.filter(source => source !== preferred)
+    };
+  }
+
+  const priority = ['trading212', 'ibkr', 'manual'];
+  const selected = priority.find(source => availableSet.has(source)) || 'manual';
+  const autoReason = availableSet.has(selected)
+    ? `auto_priority_${selected}`
+    : 'auto_default_manual_no_trade_data';
+  return {
+    requested: preferred,
+    selected,
+    isAuto: true,
+    autoReason,
+    available: availableSources,
+    ignored: availableSources.filter(source => source !== selected)
+  };
+}
+
 function dateKeyFromDate(value) {
   const date = value instanceof Date ? value : new Date(value);
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
@@ -784,23 +834,98 @@ function computeTradeFallbackReturnPct(trades, user, periodKey) {
   return (realizedPnl / baselineCapital) * 100;
 }
 
-function computeLeaderboardStatForUser(db, username, periodKey) {
+function explainFormula(periodKey, path, diagnostics = {}) {
+  if (path === 'history_based') {
+    const start = diagnostics?.period_start || 'unknown';
+    const end = diagnostics?.period_end || currentDateKey();
+    return `Using portfolio history from ${start} to ${end}, adjusted for net deposits and withdrawals.`;
+  }
+  if (path === 'trade_fallback') {
+    return 'Using closed trades in the selected window with realized PnL divided by computed baseline capital.';
+  }
+  return `Using ${path} leaderboard methodology.`;
+}
+
+function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) {
   const user = db.users?.[username];
   if (!user) return null;
+  const includeTrades = options.includeTrades === true;
   const settings = getSocialSettings(db, username);
   const rates = { GBP: 1 };
-  const trades = flattenTrades(user, rates);
+  const allTrades = flattenTrades(user, rates);
+  const availableSources = getAvailableLeaderboardSources(allTrades);
+  const sourceResolution = resolveLeaderboardDataSource(settings, availableSources);
+  const selectedSource = sourceResolution.selected;
+
   const startKey = dateKeyFromDate(periodStartDate(periodKey));
-  const closed = trades.filter(t => t.status === 'closed' && Number.isFinite(Number(t.realizedPnlGBP)));
-  const filtered = periodKey === 'ALL'
-    ? closed
-    : closed.filter(t => typeof t.closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.closeDate) && t.closeDate >= startKey);
-  const tradeCount = filtered.length;
-  const winners = filtered.filter(t => Number(t.realizedPnlGBP) > 0).length;
-  const winRate = filtered.length ? (winners / filtered.length) * 100 : null;
-  const historyBasedReturnPct = computeHistoryPeriodReturnPct(user, periodKey);
-  const tradeFallbackReturnPct = computeTradeFallbackReturnPct(trades, user, periodKey);
-  const resolvedReturnPct = Number.isFinite(historyBasedReturnPct) ? historyBasedReturnPct : tradeFallbackReturnPct;
+  const endKey = currentDateKey();
+  const includedTrades = [];
+  const excludedTrades = [];
+  const closedForPeriod = [];
+  const closedForFallback = [];
+  const pushTradeView = (trade, reason, included) => {
+    const realized = Number(trade.realizedPnlGBP);
+    const pct = Number(trade.pnlPct ?? trade.returnPct);
+    const row = {
+      trade_id: trade.id || null,
+      ticker: trade.displayTicker || trade.displaySymbol || trade.symbol || null,
+      source: normalizeTradeSource(trade),
+      open_date: trade.openDate || trade.date || null,
+      close_date: trade.closeDate || null,
+      status: trade.status || null,
+      entry_value: Number.isFinite(Number(trade.entry)) && Number.isFinite(Number(trade.sizeUnits))
+        ? Number(trade.entry) * Number(trade.sizeUnits)
+        : (Number.isFinite(Number(trade.entryValue)) ? Number(trade.entryValue) : null),
+      realized_pnl: Number.isFinite(realized) ? realized : null,
+      pnl_pct: Number.isFinite(pct) ? pct : null,
+      counted_toward_trade_count: included,
+      counted_toward_win_rate: included,
+      reason
+    };
+    (included ? includedTrades : excludedTrades).push(row);
+  };
+
+  for (const trade of allTrades) {
+    const source = normalizeTradeSource(trade);
+    if (source !== selectedSource) {
+      pushTradeView(trade, 'wrong_data_source', false);
+      continue;
+    }
+    if (trade.status !== 'closed') {
+      pushTradeView(trade, 'trade_still_open', false);
+      continue;
+    }
+    if (!Number.isFinite(Number(trade.realizedPnlGBP))) {
+      pushTradeView(trade, 'missing_required_fields', false);
+      continue;
+    }
+    const closeDate = typeof trade.closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.closeDate)
+      ? trade.closeDate
+      : null;
+    if (!closeDate) {
+      pushTradeView(trade, 'missing_required_fields', false);
+      continue;
+    }
+    closedForFallback.push(trade);
+    if (periodKey !== 'ALL' && closeDate < startKey) {
+      pushTradeView(trade, 'outside_selected_period', false);
+      continue;
+    }
+    closedForPeriod.push(trade);
+    pushTradeView(trade, 'included', true);
+  }
+
+  const winners = closedForPeriod.filter(t => Number(t.realizedPnlGBP) > 0).length;
+  const winRate = closedForPeriod.length ? (winners / closedForPeriod.length) * 100 : null;
+
+  const historyBasedReturnPct = selectedSource === 'manual'
+    ? computeHistoryPeriodReturnPct(user, periodKey)
+    : null;
+  const tradeFallbackReturnPct = computeTradeFallbackReturnPct(closedForFallback, user, periodKey);
+  const usingHistory = Number.isFinite(historyBasedReturnPct);
+  const resolvedReturnPct = usingHistory ? historyBasedReturnPct : tradeFallbackReturnPct;
+  const calculationPath = usingHistory ? 'history_based' : 'trade_fallback';
+
   const nowIso = new Date().toISOString();
   const stat = {
     user_id: username,
@@ -808,7 +933,7 @@ function computeLeaderboardStatForUser(db, username, periodKey) {
     verification_status: settings.verification_status,
     return_pct: Number.isFinite(resolvedReturnPct) ? resolvedReturnPct : 0,
     realized_return_pct: Number.isFinite(tradeFallbackReturnPct) ? tradeFallbackReturnPct : null,
-    trade_count: tradeCount,
+    trade_count: closedForPeriod.length,
     win_rate: Number.isFinite(winRate) ? winRate : null,
     computed_at: nowIso,
     updated_at: nowIso,
@@ -818,7 +943,91 @@ function computeLeaderboardStatForUser(db, username, periodKey) {
   const reason = computeEligibilityReason(settings, stat);
   stat.eligible = reason === null;
   stat.ineligibility_reason = reason;
-  return stat;
+
+  const diagnostics = {
+    period_key: periodKey,
+    period_start: startKey,
+    period_end: endKey,
+    selected_leaderboard_source: selectedSource,
+    requested_leaderboard_source: sourceResolution.requested,
+    auto_selected: sourceResolution.isAuto,
+    auto_selection_reason: sourceResolution.autoReason,
+    available_sources: sourceResolution.available,
+    ignored_sources: sourceResolution.ignored,
+    verification_status: settings.verification_status,
+    verification_source: settings.verification_source || null,
+    eligible: stat.eligible,
+    ineligibility_reason: stat.ineligibility_reason,
+    calculation_path: calculationPath,
+    return_pct: stat.return_pct,
+    realized_return_pct: stat.realized_return_pct,
+    trade_count: stat.trade_count,
+    win_rate: stat.win_rate,
+    formula: {
+      method: calculationPath,
+      explanation: ''
+    },
+    history_details: null,
+    trade_fallback_details: null,
+    included_trades: includeTrades ? includedTrades : undefined,
+    excluded_trades: includeTrades ? excludedTrades : undefined
+  };
+
+  if (calculationPath === 'history_based') {
+    const history = ensurePortfolioHistory(user);
+    const entries = listChronologicalEntries(history);
+    if (periodKey === 'ALL') {
+      const totals = computeNetDepositsTotals(user, history);
+      const snapshot = getCurrentPortfolioValue(user);
+      diagnostics.history_details = {
+        start_equity: Number(user.initialNetDeposits) || null,
+        end_equity: Number(snapshot.value) || null,
+        deposits_in_period: Number(totals.total) > 0 ? Number(totals.total) : 0,
+        withdrawals_in_period: Number(totals.total) < 0 ? Math.abs(Number(totals.total)) : 0,
+        net_cash_flow_adjustment: Number(totals.total) || 0,
+        formula_used: '(portfolio - net_deposits_total) / abs(net_deposits_total) * 100'
+      };
+    } else {
+      const priorEntries = entries.filter(entry => entry.date < startKey);
+      const periodEntries = entries.filter(entry => entry.date >= startKey);
+      const startEquity = priorEntries.length ? Number(priorEntries[priorEntries.length - 1].end) : null;
+      const endEquity = periodEntries.length ? Number(periodEntries[periodEntries.length - 1].end) : null;
+      const deposits = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+      const withdrawals = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+      diagnostics.history_details = {
+        start_equity: Number.isFinite(startEquity) ? startEquity : null,
+        end_equity: Number.isFinite(endEquity) ? endEquity : null,
+        deposits_in_period: deposits,
+        withdrawals_in_period: withdrawals,
+        net_cash_flow_adjustment: deposits - withdrawals,
+        formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
+      };
+    }
+  } else {
+    const realizedPnl = closedForPeriod.reduce((acc, trade) => acc + (Number(trade.realizedPnlGBP) || 0), 0);
+    const realizedBeforeStart = periodKey === 'ALL'
+      ? 0
+      : closedForFallback
+        .filter(t => t.closeDate < startKey)
+        .reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
+    const denominator = periodKey === 'ALL'
+      ? Math.abs(Number(computeNetDepositsTotals(user, ensurePortfolioHistory(user)).total) || 0)
+      : Math.max(1, Math.abs((Number(user.initialNetDeposits) || 0) + realizedBeforeStart));
+    diagnostics.trade_fallback_details = {
+      denominator_base: denominator,
+      base_capital_method: periodKey === 'ALL' ? 'abs(net_deposits_total)' : 'abs(initial_net_deposits + realized_pnl_before_period)',
+      realized_pnl_in_period: realizedPnl,
+      formula_used: '(realized_pnl_in_period / denominator_base) * 100'
+    };
+  }
+
+  diagnostics.formula.explanation = explainFormula(periodKey, calculationPath, diagnostics);
+  return { stat, diagnostics };
+}
+
+function computeLeaderboardStatForUser(db, username, periodKey) {
+  const built = buildLeaderboardStatDiagnostics(db, username, periodKey);
+  return built?.stat || null;
 }
 
 function upsertLeaderboardStat(db, stat) {
@@ -4538,6 +4747,11 @@ function isAdminUser(user, username) {
   return list.includes(username);
 }
 
+function canAccessDevtools(user, username) {
+  if (isAdminUser(user, username)) return true;
+  return username === 'mevs.0404@gmail.com' || username === 'dummy1';
+}
+
 function resolveInstrumentMapping(db, instrument, username) {
   const mappings = ensureInstrumentMappings(db);
   const sourceKey = computeSourceKey(instrument);
@@ -5904,7 +6118,7 @@ app.get('/devtools.html', auth, (req, res) => {
   if (req.user?.guest) {
     return res.status(403).send('Guests cannot perform this action. Please create an account.');
   }
-  if (req.username !== 'mevs.0404@gmail.com' && req.username !== 'dummy1') {
+  if (!canAccessDevtools(req.user, req.username)) {
     return res.status(403).send('Forbidden');
   }
   res.sendFile(path.join(__dirname,'devtools.html'));
@@ -6642,7 +6856,8 @@ const socialSettingsPatchSchema = z.object({
   show_pnl_percent: z.boolean().optional(),
   show_pnl_currency: z.boolean().optional(),
   show_position_size: z.boolean().optional(),
-  allow_friend_requests: z.boolean().optional()
+  allow_friend_requests: z.boolean().optional(),
+  leaderboard_data_source: z.enum(LEADERBOARD_DATA_SOURCE_VALUES).optional()
 });
 
 const tradeSharePatchSchema = z.object({
@@ -6664,6 +6879,13 @@ app.get('/api/social/me', auth, (req, res) => {
   const avatar = socialAvatarForUser(user);
   recomputeLeaderboardStatsForUser(db, req.username);
   saveDB(db);
+  const availableSources = getAvailableLeaderboardSources(flattenTrades(user, { GBP: 1 }));
+  const sourceOptions = [
+    { value: 'auto', label: 'Auto', available: true, reason: null },
+    { value: 'trading212', label: 'Trading 212', available: availableSources.includes('trading212'), reason: availableSources.includes('trading212') ? null : 'No Trading 212 trade data found' },
+    { value: 'ibkr', label: 'IBKR', available: availableSources.includes('ibkr'), reason: availableSources.includes('ibkr') ? null : 'No IBKR trade data found' },
+    { value: 'manual', label: 'Manual', available: availableSources.includes('manual'), reason: availableSources.includes('manual') ? null : 'No manual/platform trade data found' }
+  ];
   res.json({
     profile: {
       ...profile,
@@ -6671,6 +6893,7 @@ app.get('/api/social/me', auth, (req, res) => {
       avatar_initials: avatar.avatar_initials
     },
     settings,
+    leaderboard_data_source_options: sourceOptions,
     nickname_required: !nickname,
     nickname: nickname || ''
   });
@@ -6879,6 +7102,16 @@ app.put('/api/social/settings', auth, (req, res) => {
   const db = loadDB();
   if (!requireSocialNickname(db, req.username, res)) return;
   const settings = getSocialSettings(db, req.username);
+  if (updates.leaderboard_data_source) {
+    const user = db.users?.[req.username];
+    const availableSources = getAvailableLeaderboardSources(flattenTrades(user || {}, { GBP: 1 }));
+    if (updates.leaderboard_data_source !== 'auto' && !availableSources.includes(updates.leaderboard_data_source)) {
+      return res.status(400).json({
+        error: `Leaderboard data source '${updates.leaderboard_data_source}' is unavailable for this account.`,
+        available_sources: availableSources
+      });
+    }
+  }
   Object.assign(settings, updates);
   settings.updated_at = new Date().toISOString();
   logSocialEvent(db, { userId: req.username, actorUserId: req.username, eventType: 'social.settings_changed', entityType: 'social_settings', entityId: settings.id, metadata: updates });
@@ -6938,6 +7171,42 @@ app.get('/api/social/trades/feed', auth, async (req, res) => {
   saveDB(db);
   feed.sort((a, b) => (b.openDate || '').localeCompare(a.openDate || ''));
   res.json({ trades: feed });
+});
+
+app.get('/api/devtools/leaderboard-diagnostics', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (req.user?.guest) return res.status(403).json({ error: 'Guests cannot perform this action.' });
+  if (!canAccessDevtools(user, req.username)) return res.status(403).json({ error: 'Forbidden' });
+
+  ensureUserShape(user, req.username);
+  ensureSocialTables(db);
+  const settings = getSocialSettings(db, req.username);
+  const trades = flattenTrades(user, { GBP: 1 });
+  const availableSources = getAvailableLeaderboardSources(trades);
+  const sourceResolution = resolveLeaderboardDataSource(settings, availableSources);
+
+  const timeframe = {};
+  for (const period of LEADERBOARD_PERIOD_KEYS) {
+    const built = buildLeaderboardStatDiagnostics(db, req.username, period, { includeTrades: true });
+    if (!built) continue;
+    timeframe[period] = built.diagnostics;
+  }
+
+  saveDB(db);
+  res.json({
+    user_id: req.username,
+    selected_source: sourceResolution.selected,
+    requested_source: sourceResolution.requested,
+    auto_selected: sourceResolution.isAuto,
+    auto_selection_reason: sourceResolution.autoReason,
+    available_sources: sourceResolution.available,
+    ignored_sources: sourceResolution.ignored,
+    verification_status: settings.verification_status,
+    verification_source: settings.verification_source || null,
+    timeframe
+  });
 });
 
 app.get('/api/social/leaderboard', auth, (req, res) => {

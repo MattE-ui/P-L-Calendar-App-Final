@@ -229,6 +229,19 @@ async function loadIbkrPayloads() {
   }
 }
 
+
+async function loadLeaderboardDiagnostics() {
+  const el = document.getElementById('devtools-leaderboard-diagnostics');
+  if (!el) return;
+  try {
+    const data = await api('/api/devtools/leaderboard-diagnostics');
+    el.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    const message = e?.data?.error || e.message || 'Unable to load leaderboard diagnostics.';
+    el.textContent = message;
+  }
+}
+
 function bindNav() {
   const closeNav = setupNavDrawer();
   document.getElementById('calendar-btn')?.addEventListener('click', () => window.location.href = '/');
@@ -259,4 +272,5 @@ window.addEventListener('DOMContentLoaded', () => {
   loadHeroMetrics();
   loadTrading212Payloads();
   loadIbkrPayloads();
+  loadLeaderboardDiagnostics();
 });
