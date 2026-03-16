@@ -85,7 +85,7 @@ const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage')
 const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
 const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
 const AVATAR_DIRECTORY_RELATIVE = path.join('uploads', 'avatars');
-const AVATAR_DIRECTORY = path.join(__dirname, 'static', AVATAR_DIRECTORY_RELATIVE);
+const AVATAR_STORAGE_DIR = process.env.AVATAR_STORAGE_DIR || path.join(path.dirname(DB_PATH), AVATAR_DIRECTORY_RELATIVE);
 const AVATAR_PUBLIC_PREFIX = '/static/uploads/avatars/';
 const AVATAR_MAX_BYTES = Number(process.env.AVATAR_MAX_BYTES) || (2 * 1024 * 1024);
 const AVATAR_ALLOWED_TYPES = new Map([
@@ -122,7 +122,7 @@ function ensureDataStore() {
 }
 
 ensureDataStore();
-fs.mkdirSync(AVATAR_DIRECTORY, { recursive: true });
+fs.mkdirSync(AVATAR_STORAGE_DIR, { recursive: true });
 
 function isStrongPassword(password) {
   if (typeof password !== 'string' || password.length < 12) return false;
@@ -147,7 +147,12 @@ function avatarAbsolutePathFromPublic(raw) {
   if (!safePublic) return '';
   const filename = path.basename(safePublic);
   if (!filename) return '';
-  return path.join(AVATAR_DIRECTORY, filename);
+  return path.join(AVATAR_STORAGE_DIR, filename);
+}
+
+function avatarPathExists(publicPath) {
+  const absolute = avatarAbsolutePathFromPublic(publicPath);
+  return !!absolute && fs.existsSync(absolute);
 }
 
 function removeAvatarFile(publicPath) {
@@ -175,8 +180,9 @@ function computeAvatarInitials(rawNickname) {
 
 function socialAvatarForUser(user) {
   const avatarUrl = sanitizeAvatarPath(user?.avatarUrl || user?.avatar_url || '');
+  const safeAvatarUrl = avatarPathExists(avatarUrl) ? avatarUrl : '';
   return {
-    avatar_url: avatarUrl || '',
+    avatar_url: safeAvatarUrl,
     avatar_initials: computeAvatarInitials(getSocialNickname(user))
   };
 }
@@ -5798,6 +5804,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // static
+app.use(AVATAR_PUBLIC_PREFIX.replace(/\/$/, ''), express.static(AVATAR_STORAGE_DIR));
 app.use('/static', express.static(path.join(__dirname, 'static')));
 app.get('/serviceWorker.js', (req,res)=>{
   res.set('Content-Type','application/javascript').send(fs.readFileSync(path.join(__dirname,'serviceWorker.js'),'utf-8'));
