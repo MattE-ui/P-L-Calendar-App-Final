@@ -4898,6 +4898,13 @@ textarea {
   gap: 12px;
 }
 
+.social-leaderboard-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
 .social-period-filter {
   display: flex;
   flex-wrap: wrap;
@@ -4920,6 +4927,15 @@ textarea {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
   color: #96f5cc;
   background: rgba(11,191,122,0.12);
+}
+
+.social-mode-filter {
+  gap: 8px;
+}
+
+.social-mode-pill {
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 .social-list-row--leaderboard {
@@ -4968,6 +4984,10 @@ textarea {
 @media (max-width: 760px) {
   .social-leaderboard-header {
     flex-direction: column;
+  }
+
+  .social-leaderboard-controls {
+    align-items: flex-start;
   }
 
   .social-period-filter {

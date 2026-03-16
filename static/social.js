@@ -20,7 +20,9 @@ const SOCIAL_SETTING_KEYS = [
 ];
 
 const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
+const LEADERBOARD_MODES = ['trade', 'account'];
 const DEFAULT_LEADERBOARD_PERIOD = '30D';
+const DEFAULT_LEADERBOARD_MODE = 'trade';
 
 const DEFAULT_SOCIAL_SETTINGS = {
   leaderboard_enabled: false,
@@ -63,6 +65,7 @@ const socialState = {
   leaderboardError: '',
   leaderboardEntries: [],
   leaderboardPeriod: DEFAULT_LEADERBOARD_PERIOD,
+  leaderboardMode: DEFAULT_LEADERBOARD_MODE,
   leaderboardDataSourceOptions: []
 };
 
@@ -251,7 +254,10 @@ function normalizeLeaderboardEntry(entry = {}, rank = 0) {
     win_rate: Number(entry.win_rate),
     verification_status: verificationStatus,
     verification_source: entry.verification_source || null,
-    leaderboard_source: entry.leaderboard_source || null
+    leaderboard_source: entry.leaderboard_source || null,
+    leaderboard_mode: LEADERBOARD_MODES.includes(String(entry.leaderboard_mode || '').toLowerCase())
+      ? String(entry.leaderboard_mode).toLowerCase()
+      : DEFAULT_LEADERBOARD_MODE
   };
 }
 
@@ -265,6 +271,39 @@ function formatWinRate(value) {
   if (!Number.isFinite(value)) return '';
   const normalized = value <= 1 ? value * 100 : value;
   return `Win ${normalized.toFixed(0)}%`;
+}
+
+function modeLabel(mode) {
+  return mode === 'account' ? 'Account Performance' : 'Trade Performance';
+}
+
+function modeHelperText(mode) {
+  return mode === 'account'
+    ? 'Rankings based on account equity performance.'
+    : 'Rankings based on realized trade performance.';
+}
+
+function renderLeaderboardModes() {
+  const wrap = getEl('social-leaderboard-modes');
+  if (!wrap) return;
+  clearNode(wrap);
+
+  LEADERBOARD_MODES.forEach(mode => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'social-period-pill social-mode-pill';
+    if (mode === socialState.leaderboardMode) button.classList.add('is-active');
+    button.disabled = socialState.leaderboardLoading;
+    button.textContent = modeLabel(mode);
+    button.setAttribute('aria-pressed', mode === socialState.leaderboardMode ? 'true' : 'false');
+    button.addEventListener('click', () => {
+      if (socialState.leaderboardLoading || socialState.leaderboardMode === mode) return;
+      socialState.leaderboardMode = mode;
+      renderLeaderboardSection();
+      loadLeaderboard();
+    });
+    wrap.appendChild(button);
+  });
 }
 
 function renderLeaderboardFilters() {
@@ -296,7 +335,11 @@ function renderLeaderboardSection() {
   const errorEl = getEl('social-leaderboard-error');
   const emptyEl = getEl('social-leaderboard-empty');
 
+  renderLeaderboardModes();
   renderLeaderboardFilters();
+
+  const helperEl = getEl('social-leaderboard-helper');
+  if (helperEl) helperEl.textContent = modeHelperText(socialState.leaderboardMode);
 
   if (loadingEl) loadingEl.classList.toggle('hidden', !socialState.leaderboardLoading);
   if (errorEl) {
@@ -372,9 +415,13 @@ function renderLeaderboardSection() {
     }
 
     const stats = [];
-    if (Number.isFinite(entry.trade_count)) stats.push(`${entry.trade_count} trades`);
-    const winRateLabel = formatWinRate(entry.win_rate);
-    if (winRateLabel) stats.push(winRateLabel);
+    if (socialState.leaderboardMode === 'account') {
+      stats.push('Account performance');
+    } else {
+      if (Number.isFinite(entry.trade_count)) stats.push(`${entry.trade_count} trades`);
+      const winRateLabel = formatWinRate(entry.win_rate);
+      if (winRateLabel) stats.push(winRateLabel);
+    }
     if (stats.length) {
       const secondary = document.createElement('span');
       secondary.textContent = stats.join(' • ');
@@ -397,12 +444,18 @@ async function loadLeaderboard() {
     const period = LEADERBOARD_PERIODS.includes(socialState.leaderboardPeriod)
       ? socialState.leaderboardPeriod
       : DEFAULT_LEADERBOARD_PERIOD;
-    const response = await socialApi(`/api/social/leaderboard?period=${encodeURIComponent(period)}&verification=trusted`);
+    const mode = LEADERBOARD_MODES.includes(socialState.leaderboardMode)
+      ? socialState.leaderboardMode
+      : DEFAULT_LEADERBOARD_MODE;
+    const response = await socialApi(`/api/social/leaderboard?period=${encodeURIComponent(period)}&verification=trusted&mode=${encodeURIComponent(mode)}`);
     const entries = Array.isArray(response?.entries) ? response.entries : [];
     socialState.leaderboardEntries = entries
       .map((entry, index) => normalizeLeaderboardEntry(entry, index))
       .filter(Boolean);
     socialState.leaderboardPeriod = typeof response?.period === 'string' ? response.period.toUpperCase() : period;
+    socialState.leaderboardMode = LEADERBOARD_MODES.includes(String(response?.mode || '').toLowerCase())
+      ? String(response.mode).toLowerCase()
+      : mode;
   } catch (error) {
     socialState.leaderboardEntries = [];
     socialState.leaderboardError = error?.message || 'Please try again in a moment.';
