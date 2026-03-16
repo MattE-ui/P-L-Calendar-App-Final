@@ -85,7 +85,7 @@ test('leader can create group, add friend, and member receives alert for qualify
 
   const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
   assert.equal(inviteUnread.res.status, 200);
-  assert.equal(inviteUnread.data.notifications[0].type, 'invite');
+  assert.equal(inviteUnread.data.notifications[0].type, 'trade_group_invite');
   const acceptInvite = await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
   assert.equal(acceptInvite.res.status, 200);
 
@@ -105,7 +105,7 @@ test('leader can create group, add friend, and member receives alert for qualify
   const unread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
   assert.equal(unread.res.status, 200);
   assert.equal(unread.data.notifications.length, 1);
-  assert.equal(unread.data.notifications[0].type, 'alert');
+  assert.equal(unread.data.notifications[0].type, 'trade_group_alert');
   assert.equal(unread.data.notifications[0].ticker, 'NVDA');
 
   const alerts = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}/alerts`);

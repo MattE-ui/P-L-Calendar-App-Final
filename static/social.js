@@ -823,12 +823,21 @@ async function postGroupAnnouncement(event) {
 async function deleteSelectedGroup() {
   if (!socialState.selectedTradeGroupId) return;
   if (!window.confirm('Delete this trade group? This will close access for all members.')) return;
+  const deletingId = socialState.selectedTradeGroupId;
+  socialState.tradeGroups = socialState.tradeGroups.filter(group => group.id !== deletingId);
+  socialState.selectedTradeGroupId = '';
+  socialState.selectedTradeGroupMembers = [];
+  socialState.selectedTradeGroupPendingInvites = [];
+  socialState.selectedTradeGroupPositions = [];
+  socialState.selectedTradeGroupAlerts = [];
+  socialState.selectedTradeGroupRole = '';
+  renderTradeGroupSection();
   try {
-    await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}`, { method: 'DELETE' });
-    socialState.selectedTradeGroupId = '';
+    await socialApi(`/api/social/trade-groups/${encodeURIComponent(deletingId)}`, { method: 'DELETE' });
     await loadTradeGroups();
+    window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT));
   } catch (_error) {
-    // non-blocking
+    await loadTradeGroups();
   }
 }
 
@@ -840,18 +849,9 @@ async function loadTradeGroupNotifications() {
   } catch (_error) {
     socialState.unreadTradeGroupNotifications = [];
   }
-  const firstInvite = socialState.unreadTradeGroupNotifications.find(item => item.type === 'invite');
+  const firstInvite = socialState.unreadTradeGroupNotifications.find(item => item.type === 'trade_group_invite');
   if (firstInvite) {
-    setFeedback(feedback, `Group invite from ${firstInvite.leader_nickname} to ${firstInvite.group_name}.`, 'muted');
-    const accept = window.confirm('Accept pending trade group invite? Cancel to decline.');
-    const endpoint = accept ? 'accept' : 'decline';
-    try {
-      await socialApi(`/api/social/trade-groups/invites/${encodeURIComponent(firstInvite.invite_id)}/${endpoint}`, { method: 'POST' });
-      await socialApi(`/api/social/trade-groups/notifications/${encodeURIComponent(firstInvite.notification_id)}/read`, { method: 'POST' });
-      await loadTradeGroups();
-    } catch (_error) {
-      // ignore
-    }
+    setFeedback(feedback, `Group invite from ${firstInvite.leader_nickname} to ${firstInvite.group_name}. Respond from the header banner.`, 'muted');
   }
 }
 
