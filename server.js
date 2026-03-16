@@ -571,11 +571,12 @@ const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
 const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
-const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement'];
+const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined'];
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
   alert: 'trade_group_alert',
   invite: 'trade_group_invite',
-  announcement: 'trade_group_announcement'
+  announcement: 'trade_group_announcement',
+  member_joined: 'trade_group_member_joined'
 };
 
 function normalizeTradeGroupNotificationType(type) {
@@ -7628,6 +7629,31 @@ app.get('/api/social/trade-groups', auth, (req, res) => {
   res.json({ groups });
 });
 
+app.get('/api/social/trade-groups/invites/pending', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const pendingInvites = db.tradeGroupInvites
+    .filter(invite => invite.invitee_user_id === req.username && invite.status === 'pending')
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .map(invite => {
+      const group = db.tradeGroups.find(item => item.id === invite.group_id && item.is_active !== false);
+      if (!group) return null;
+      const inviterIdentity = socialIdentityForUser(db, invite.inviter_user_id);
+      return {
+        invite_id: invite.id,
+        group_id: group.id,
+        group_name: group.name,
+        created_at: invite.created_at,
+        leader_nickname: inviterIdentity.nickname || 'Unknown trader',
+        leader_avatar_url: inviterIdentity.avatar_url,
+        leader_avatar_initials: inviterIdentity.avatar_initials
+      };
+    })
+    .filter(Boolean);
+  saveDB(db);
+  res.json({ invites: pendingInvites });
+});
+
 app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
   const db = loadDB();
   ensureSocialTables(db);
@@ -7794,6 +7820,13 @@ app.post('/api/social/trade-groups/invites/:inviteId/accept', auth, (req, res) =
     });
   }
   cancelPendingInviteNotifications(db, invite.id);
+  createTradeGroupNotification(db, {
+    userId: group.leader_user_id,
+    groupId: group.id,
+    type: 'trade_group_member_joined',
+    inviteId: invite.id,
+    dedupeKey: `member-joined:${invite.id}`
+  });
   saveDB(db);
   res.json({ ok: true });
 });
@@ -7995,6 +8028,23 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
       }
 
       if (!isTradeGroupMember(db, group.id, req.username)) return null;
+
+      if (normalizedType === 'trade_group_member_joined') {
+        const invite = db.tradeGroupInvites.find(item => item.id === notification.invite_id);
+        if (!invite || invite.group_id !== group.id || invite.status !== 'accepted') return null;
+        const joinedIdentity = socialIdentityForUser(db, invite.invitee_user_id);
+        return {
+          notification_id: notification.id,
+          type: 'trade_group_member_joined',
+          invite_id: invite.id,
+          group_id: group.id,
+          group_name: group.name,
+          created_at: invite.responded_at || invite.created_at,
+          leader_nickname: joinedIdentity.nickname || 'Unknown trader',
+          leader_avatar_url: joinedIdentity.avatar_url,
+          leader_avatar_initials: joinedIdentity.avatar_initials
+        };
+      }
 
       if (normalizedType === 'trade_group_announcement') {
         const announcement = db.tradeGroupAnnouncements.find(item => item.id === notification.announcement_id);
