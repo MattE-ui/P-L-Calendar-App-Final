@@ -571,7 +571,18 @@ const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
 const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
-const TRADE_GROUP_NOTIFICATION_TYPES = ['alert', 'invite', 'announcement'];
+const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement'];
+const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
+  alert: 'trade_group_alert',
+  invite: 'trade_group_invite',
+  announcement: 'trade_group_announcement'
+};
+
+function normalizeTradeGroupNotificationType(type) {
+  if (!type) return '';
+  if (TRADE_GROUP_NOTIFICATION_TYPES.includes(type)) return type;
+  return LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP[type] || '';
+}
 
 function getTradeGroupsLedByUser(db, username) {
   ensureSocialTables(db);
@@ -630,13 +641,14 @@ function sanitizeTradeGroupMemberRow(db, member) {
 
 
 function createTradeGroupNotification(db, { userId, groupId, type, alertId = null, inviteId = null, announcementId = null, dedupeKey = '' }) {
-  if (!TRADE_GROUP_NOTIFICATION_TYPES.includes(type)) return null;
+  const normalizedType = normalizeTradeGroupNotificationType(type);
+  if (!normalizedType) return null;
   ensureSocialTables(db);
   if (dedupeKey) {
     const duplicate = db.tradeGroupNotifications.find(notification => (
       notification.user_id === userId
       && notification.group_id === groupId
-      && notification.type === type
+      && normalizeTradeGroupNotificationType(notification.type) === normalizedType
       && notification.dedupe_key === dedupeKey
       && !notification.is_read
     ));
@@ -647,7 +659,7 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     id: crypto.randomUUID(),
     user_id: userId,
     group_id: groupId,
-    type,
+    type: normalizedType,
     alert_id: alertId,
     invite_id: inviteId,
     announcement_id: announcementId,
@@ -662,7 +674,7 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
 function cancelPendingInviteNotifications(db, inviteId) {
   ensureSocialTables(db);
   db.tradeGroupNotifications.forEach(notification => {
-    if (notification.invite_id === inviteId && notification.type === 'invite' && !notification.is_read) {
+    if (notification.invite_id === inviteId && normalizeTradeGroupNotificationType(notification.type) === 'trade_group_invite' && !notification.is_read) {
       notification.is_read = true;
       notification.read_at = new Date().toISOString();
     }
@@ -752,7 +764,7 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
       const created = createTradeGroupNotification(db, {
         userId: member.user_id,
         groupId: group.id,
-        type: 'alert',
+        type: 'trade_group_alert',
         alertId: alert.id,
         dedupeKey: `alert:${alert.id}`
       });
@@ -7717,7 +7729,7 @@ app.post('/api/social/trade-groups/:groupId/members', auth, (req, res) => {
   createTradeGroupNotification(db, {
     userId: friendUserId,
     groupId: group.id,
-    type: 'invite',
+    type: 'trade_group_invite',
     inviteId: invite.id,
     dedupeKey: `invite:${invite.id}`
   });
@@ -7828,10 +7840,25 @@ app.delete('/api/social/trade-groups/:groupId', auth, (req, res) => {
   const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
   if (!group) return res.status(404).json({ error: 'Trade group not found.' });
   if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only leader can close group.' });
+  const nowIso = new Date().toISOString();
   group.is_active = false;
-  group.deleted_at = new Date().toISOString();
+  group.deleted_at = nowIso;
   db.tradeGroupMembers.forEach(member => {
-    if (member.group_id === group.id) member.status = 'removed';
+    if (member.group_id === group.id) {
+      member.status = 'removed';
+    }
+  });
+  db.tradeGroupInvites.forEach(invite => {
+    if (invite.group_id === group.id && invite.status === 'pending') {
+      invite.status = 'cancelled';
+      invite.responded_at = nowIso;
+    }
+  });
+  db.tradeGroupNotifications.forEach(notification => {
+    if (notification.group_id === group.id && !notification.is_read) {
+      notification.is_read = true;
+      notification.read_at = nowIso;
+    }
   });
   saveDB(db);
   res.json({ ok: true });
@@ -7876,7 +7903,7 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
       createTradeGroupNotification(db, {
         userId: member.user_id,
         groupId: group.id,
-        type: 'announcement',
+        type: 'trade_group_announcement',
         announcementId: announcement.id,
         dedupeKey: `announcement:${announcement.id}:${member.user_id}`
       });
@@ -7945,16 +7972,18 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
     .filter(notification => notification.user_id === req.username && !notification.is_read)
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
     .map(notification => {
+      const normalizedType = normalizeTradeGroupNotificationType(notification.type);
+      if (!normalizedType) return null;
       const group = db.tradeGroups.find(item => item.id === notification.group_id && item.is_active !== false);
       if (!group) return null;
 
-      if (notification.type === 'invite') {
+      if (normalizedType === 'trade_group_invite') {
         const invite = db.tradeGroupInvites.find(item => item.id === notification.invite_id);
         if (!invite || invite.status !== 'pending' || invite.invitee_user_id !== req.username) return null;
         const inviterIdentity = socialIdentityForUser(db, invite.inviter_user_id);
         return {
           notification_id: notification.id,
-          type: 'invite',
+          type: 'trade_group_invite',
           invite_id: invite.id,
           group_id: group.id,
           group_name: group.name,
@@ -7967,13 +7996,13 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
 
       if (!isTradeGroupMember(db, group.id, req.username)) return null;
 
-      if (notification.type === 'announcement') {
+      if (normalizedType === 'trade_group_announcement') {
         const announcement = db.tradeGroupAnnouncements.find(item => item.id === notification.announcement_id);
-        if (!announcement) return null;
+        if (!announcement || announcement.group_id !== group.id) return null;
         const leaderIdentity = socialIdentityForUser(db, announcement.leader_user_id);
         return {
           notification_id: notification.id,
-          type: 'announcement',
+          type: 'trade_group_announcement',
           announcement_id: announcement.id,
           group_id: group.id,
           group_name: group.name,
@@ -7985,12 +8014,13 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
         };
       }
 
+      if (normalizedType !== 'trade_group_alert') return null;
       const alert = db.tradeGroupAlerts.find(item => item.id === notification.alert_id);
-      if (!alert) return null;
+      if (!alert || alert.group_id !== group.id) return null;
       const leaderIdentity = socialIdentityForUser(db, alert.leader_user_id);
       return {
         notification_id: notification.id,
-        type: 'alert',
+        type: 'trade_group_alert',
         alert_id: alert.id,
         group_id: group.id,
         group_name: group.name,

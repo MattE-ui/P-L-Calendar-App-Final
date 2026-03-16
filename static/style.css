@@ -4486,6 +4486,14 @@ textarea {
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border) 72%);
 }
 
+
+#social-group-name,
+#social-group-announcement-input,
+#social-group-friend-select {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .social-request-group {
   display: grid;
   gap: 6px;

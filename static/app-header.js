@@ -405,6 +405,24 @@
     refreshTradeGroupNotifications().finally(renderFromSharedState);
   }
 
+  async function respondToTradeGroupInvite(notification, action) {
+    if (!notification?.invite_id || state.actionBusy) return;
+    state.actionBusy = true;
+    try {
+      await api(`/api/social/trade-groups/invites/${encodeURIComponent(notification.invite_id)}/${action}`, { method: 'POST' });
+      await dismissTradeGroupNotification(notification.notification_id);
+      window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT));
+      if (window.socialRequestSync && typeof window.socialRequestSync.refresh === 'function') {
+        await window.socialRequestSync.refresh(`trade-group-invite-${action}`);
+      }
+    } catch (_error) {
+      // keep unobtrusive; polling will reconcile state
+    } finally {
+      state.actionBusy = false;
+      refreshTradeGroupNotifications().finally(renderFromSharedState);
+    }
+  }
+
   function renderTradeGroupNotification(notification) {
     createAlertShell();
     const shell = document.getElementById('global-friend-request-alert');
@@ -412,15 +430,24 @@
     state.activeBanner = { type: 'trade-group', id: notification.notification_id };
     shell.classList.remove('is-leaving');
     shell.classList.remove('hidden');
+
+    const type = notification?.type;
+    const isInvite = type === 'trade_group_invite';
+    const isAnnouncement = type === 'trade_group_announcement';
+    const isAlert = type === 'trade_group_alert';
+
+    const title = isInvite
+      ? 'Trade group invite'
+      : (isAnnouncement ? 'Trade group announcement' : 'Trade group alert');
+
     shell.innerHTML = `
-      <div class="social-global-alert__title">Trade group alert</div>
+      <div class="social-global-alert__title">${title}</div>
       <div class="social-global-alert__body"></div>
-      <div class="social-global-alert__actions">
-        <button type="button" class="primary" data-social-alert-action="open">Open</button>
-        <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
-      </div>
+      <div class="social-global-alert__actions"></div>
     `;
+
     const body = shell.querySelector('.social-global-alert__body');
+    const actions = shell.querySelector('.social-global-alert__actions');
     if (body) {
       body.appendChild(createBannerIdentityNode({
         counterparty_nickname: notification.leader_nickname,
@@ -428,16 +455,45 @@
         counterparty_avatar_initials: notification.leader_avatar_initials
       }));
       const text = document.createElement('span');
-      text.textContent = `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
+      if (isInvite) {
+        text.textContent = `invited you to join ${notification.group_name}.`;
+      } else if (isAnnouncement) {
+        text.textContent = `${notification.group_name}: ${notification.text || 'New announcement.'}`;
+      } else if (isAlert && notification.ticker) {
+        text.textContent = `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
+      } else {
+        text.textContent = `${notification.group_name}: New trade group activity.`;
+      }
       body.appendChild(text);
     }
-    shell.querySelector('[data-social-alert-action="open"]')?.addEventListener('click', async () => {
-      await dismissTradeGroupNotification(notification.notification_id);
-      window.location.href = `/social.html?group=${encodeURIComponent(notification.group_id)}`;
-    });
-    shell.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
-      await dismissTradeGroupNotification(notification.notification_id);
-    });
+
+    if (actions) {
+      if (isInvite) {
+        actions.innerHTML = `
+          <button type="button" class="primary" data-social-alert-action="accept">Accept</button>
+          <button type="button" class="ghost" data-social-alert-action="decline">Decline</button>
+          <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
+        `;
+        actions.querySelector('[data-social-alert-action="accept"]')?.addEventListener('click', () => respondToTradeGroupInvite(notification, 'accept'));
+        actions.querySelector('[data-social-alert-action="decline"]')?.addEventListener('click', () => respondToTradeGroupInvite(notification, 'decline'));
+        actions.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
+          await dismissTradeGroupNotification(notification.notification_id);
+        });
+      } else {
+        actions.innerHTML = `
+          <button type="button" class="primary" data-social-alert-action="open">Open</button>
+          <button type="button" class="ghost" data-social-alert-action="dismiss">Dismiss</button>
+        `;
+        actions.querySelector('[data-social-alert-action="open"]')?.addEventListener('click', async () => {
+          await dismissTradeGroupNotification(notification.notification_id);
+          window.location.href = `/social.html?group=${encodeURIComponent(notification.group_id)}`;
+        });
+        actions.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
+          await dismissTradeGroupNotification(notification.notification_id);
+        });
+      }
+    }
+
     scheduleAutoDismiss('trade-group', notification.notification_id);
   }
 
