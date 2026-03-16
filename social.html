@@ -316,7 +316,14 @@
           <div id="social-trade-groups-list" class="social-list"></div>
         </section>
 
-        <section class="social-friends-block" aria-labelledby="social-trade-group-detail-title">
+        <section class="social-friends-block" aria-labelledby="social-trade-group-invitations-title">
+          <header class="social-friends-block-header">
+            <h3 id="social-trade-group-invitations-title">Pending Invitations</h3>
+          </header>
+          <div id="social-trade-group-invitations" class="social-list"></div>
+        </section>
+
+        <section id="social-trade-group-detail-panel" class="social-friends-block" aria-labelledby="social-trade-group-detail-title">
           <header class="social-friends-block-header">
             <h3 id="social-trade-group-detail-title">Group Detail</h3>
           </header>
@@ -326,7 +333,7 @@
             <div class="social-subpanel-head">
               <h4>Members</h4>
             </div>
-            <form id="social-group-add-member-form" class="social-add-friend-form" novalidate>
+            <form id="social-group-add-member-form" class="social-add-friend-form social-leader-only" novalidate>
               <div class="social-add-friend-shell">
                 <div class="social-add-friend-row">
                   <select id="social-group-friend-select" name="friend_user_id"></select>
@@ -336,10 +343,14 @@
               </div>
             </form>
             <div id="social-trade-group-members" class="social-list"></div>
-            <div class="social-subpanel-head"><h4>Pending Invites</h4></div>
-            <div id="social-trade-group-pending-invites" class="social-list"></div>
-            <div class="social-subpanel-head"><h4>Leader Announcement</h4></div>
-            <form id="social-group-announcement-form" class="social-add-friend-form" novalidate>
+            <div id="social-group-leader-pending-wrap" class="social-leader-only">
+              <div class="social-subpanel-head"><h4>Pending Invites</h4></div>
+              <div id="social-trade-group-pending-invites" class="social-list"></div>
+            </div>
+            <div id="social-group-leader-announcement-wrap" class="social-leader-only">
+              <div class="social-subpanel-head"><h4>Leader Announcement</h4></div>
+            </div>
+            <form id="social-group-announcement-form" class="social-add-friend-form social-leader-only" novalidate>
               <div class="social-add-friend-shell">
                 <div class="social-add-friend-row">
                   <input id="social-group-announcement-input" name="text" type="text" maxlength="500" placeholder="Market plan update..." autocomplete="off">
@@ -352,7 +363,7 @@
             <div id="social-trade-group-positions" class="social-list"></div>
             <div class="social-subpanel-head social-subpanel-head--alerts"><h4>Recent Activity</h4></div>
             <div id="social-trade-group-alerts" class="social-list"></div>
-            <div class="social-add-friend-row" style="margin-top:8px;">
+            <div id="social-group-delete-wrap" class="social-add-friend-row social-leader-only" style="margin-top:8px;">
               <button id="social-group-delete-btn" class="danger outline" type="button">Delete group</button>
             </div>
           </div>

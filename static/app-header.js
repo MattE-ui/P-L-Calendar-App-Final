@@ -435,10 +435,13 @@
     const isInvite = type === 'trade_group_invite';
     const isAnnouncement = type === 'trade_group_announcement';
     const isAlert = type === 'trade_group_alert';
+    const isMemberJoined = type === 'trade_group_member_joined';
 
     const title = isInvite
       ? 'Trade group invite'
-      : (isAnnouncement ? 'Trade group announcement' : 'Trade group alert');
+      : (isAnnouncement
+        ? `${notification.group_name || 'Trade group'} announcement`
+        : (isMemberJoined ? 'Group membership update' : 'Trade group alert'));
 
     shell.innerHTML = `
       <div class="social-global-alert__title">${title}</div>
@@ -458,7 +461,9 @@
       if (isInvite) {
         text.textContent = `invited you to join ${notification.group_name}.`;
       } else if (isAnnouncement) {
-        text.textContent = `${notification.group_name}: ${notification.text || 'New announcement.'}`;
+        text.textContent = notification.text || 'New announcement.';
+      } else if (isMemberJoined) {
+        text.textContent = `joined ${notification.group_name || 'your trade group'}.`;
       } else if (isAlert && notification.ticker) {
         text.textContent = `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
       } else {
