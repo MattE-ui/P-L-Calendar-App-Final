@@ -66,8 +66,21 @@ const socialState = {
   leaderboardEntries: [],
   leaderboardPeriod: DEFAULT_LEADERBOARD_PERIOD,
   leaderboardMode: DEFAULT_LEADERBOARD_MODE,
-  leaderboardDataSourceOptions: []
+  leaderboardDataSourceOptions: [],
+  tradeGroupsLoading: false,
+  tradeGroups: [],
+  selectedTradeGroupId: '',
+  selectedTradeGroupMembers: [],
+  selectedTradeGroupAlerts: [],
+  createGroupBusy: false,
+  eligibleTradeGroupFriends: []
 };
+
+
+const initialGroupId = new URLSearchParams(window.location.search).get('group') || '';
+if (initialGroupId) {
+  socialState.selectedTradeGroupId = initialGroupId;
+}
 
 const TRANSIENT_FEEDBACK_TTL_MS = 15000;
 const feedbackTimers = new WeakMap();
@@ -579,6 +592,230 @@ function renderFriendSection() {
       row.appendChild(actionWrap);
       friendsEl?.appendChild(row);
     });
+  }
+}
+
+
+function renderTradeGroupSection() {
+  const listEl = getEl('social-trade-groups-list');
+  const membersEl = getEl('social-trade-group-members');
+  const alertsEl = getEl('social-trade-group-alerts');
+  const headingEl = getEl('social-group-detail-heading');
+  const friendSelect = getEl('social-group-friend-select');
+  const addMemberBtn = getEl('social-group-add-member-btn');
+  if (listEl) listEl.innerHTML = '';
+  if (membersEl) membersEl.innerHTML = '';
+  if (alertsEl) alertsEl.innerHTML = '';
+  if (headingEl) headingEl.textContent = 'Select a group to view members and alerts.';
+
+  const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [];
+  if (!groups.length) {
+    listEl?.appendChild(createEmptyState('No trade groups yet', 'Create a private group to start sending leader alerts.'));
+    membersEl?.appendChild(createEmptyState('No group selected'));
+    alertsEl?.appendChild(createEmptyState('No alerts yet'));
+    return;
+  }
+
+  groups.forEach(group => {
+    const row = document.createElement('article');
+    row.className = 'social-list-row social-list-row--friend';
+    const leader = group?.leader || {};
+    row.appendChild(createIdentityRow(group.name || 'Unnamed group', `${group.member_count || 0} members`, group.role === 'leader' ? 'Leader' : 'Member', {
+      avatar_url: leader.avatar_url,
+      avatar_initials: leader.avatar_initials
+    }));
+    const openBtn = createActionButton('Open', 'ghost');
+    openBtn.disabled = socialState.tradeGroupsLoading;
+    openBtn.addEventListener('click', () => loadTradeGroupDetail(group.id));
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'social-row-actions';
+    actionWrap.appendChild(openBtn);
+    row.appendChild(actionWrap);
+    listEl?.appendChild(row);
+  });
+
+  if (!socialState.selectedTradeGroupId) {
+    membersEl?.appendChild(createEmptyState('No group selected'));
+    alertsEl?.appendChild(createEmptyState('No alerts yet'));
+    return;
+  }
+
+  const selected = groups.find(group => group.id === socialState.selectedTradeGroupId);
+  if (selected && headingEl) headingEl.textContent = `${selected.name} • ${selected.role === 'leader' ? 'Leader view' : 'Member view'}`;
+  if (friendSelect) {
+    friendSelect.innerHTML = '';
+    const friends = Array.isArray(socialState.eligibleTradeGroupFriends) ? socialState.eligibleTradeGroupFriends : [];
+    if (!selected || selected.role !== 'leader') {
+      friendSelect.disabled = true;
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Leader only';
+      friendSelect.appendChild(option);
+      if (addMemberBtn) addMemberBtn.disabled = true;
+    } else if (!friends.length) {
+      friendSelect.disabled = true;
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No eligible friends';
+      friendSelect.appendChild(option);
+      if (addMemberBtn) addMemberBtn.disabled = true;
+    } else {
+      friendSelect.disabled = false;
+      friends.forEach(friend => {
+        const option = document.createElement('option');
+        option.value = friend.friend_user_id;
+        option.textContent = friend.nickname || 'Unknown trader';
+        friendSelect.appendChild(option);
+      });
+      if (addMemberBtn) addMemberBtn.disabled = false;
+    }
+  }
+
+  const members = Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [];
+  if (!members.length) {
+    membersEl?.appendChild(createEmptyState('No active members'));
+  } else {
+    members.forEach(member => {
+      const row = document.createElement('article');
+      row.className = 'social-list-row social-list-row--friend';
+      row.appendChild(createIdentityRow(member.nickname || 'Unknown trader', '', member.role === 'leader' ? 'Leader' : 'Member', {
+        avatar_url: member.avatar_url,
+        avatar_initials: member.avatar_initials
+      }));
+      if (selected && selected.role === 'leader' && member.role !== 'leader') {
+        const removeBtn = createActionButton('Remove', 'danger outline');
+        removeBtn.addEventListener('click', async () => {
+          try {
+            await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members/${encodeURIComponent(member.user_id)}`, { method: 'DELETE' });
+            await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+          } catch (_error) {
+            // non-blocking
+          }
+        });
+        const actionWrap = document.createElement('div');
+        actionWrap.className = 'social-row-actions';
+        actionWrap.appendChild(removeBtn);
+        row.appendChild(actionWrap);
+      }
+      membersEl?.appendChild(row);
+    });
+  }
+
+  const alerts = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
+  if (!alerts.length) {
+    alertsEl?.appendChild(createEmptyState('No alerts yet', 'New qualifying leader trades will appear here.'));
+  } else {
+    alerts.forEach(alert => {
+      const row = document.createElement('article');
+      row.className = 'social-list-row social-list-row--request';
+      const ts = alert.created_at ? new Date(alert.created_at).toLocaleString() : '';
+      row.appendChild(createIdentityRow(alert.leader_nickname || 'Leader', `${ts}`, `${alert.ticker} · Risk ${Number(alert.risk_pct || 0).toFixed(2)}%`, {
+        avatar_url: alert.leader_avatar_url,
+        avatar_initials: alert.leader_avatar_initials
+      }));
+      const meta = document.createElement('div');
+      meta.className = 'helper';
+      meta.textContent = `Entry ${Number(alert.entry_price || 0).toFixed(2)} • Stop ${Number(alert.stop_price || 0).toFixed(2)}`;
+      row.appendChild(meta);
+      alertsEl?.appendChild(row);
+    });
+  }
+}
+
+async function loadTradeGroups() {
+  socialState.tradeGroupsLoading = true;
+  try {
+    const response = await socialApi('/api/social/trade-groups');
+    socialState.tradeGroups = Array.isArray(response?.groups) ? response.groups : [];
+    if (!socialState.selectedTradeGroupId && socialState.tradeGroups[0]?.id) {
+      socialState.selectedTradeGroupId = socialState.tradeGroups[0].id;
+      await loadTradeGroupDetail(socialState.selectedTradeGroupId, { rerenderList: false });
+      return;
+    }
+    renderTradeGroupSection();
+  } catch (_error) {
+    renderTradeGroupSection();
+  } finally {
+    socialState.tradeGroupsLoading = false;
+  }
+}
+
+async function loadTradeGroupDetail(groupId, opts = {}) {
+  if (!groupId) return;
+  try {
+    const response = await socialApi(`/api/social/trade-groups/${encodeURIComponent(groupId)}`);
+    socialState.selectedTradeGroupId = groupId;
+    socialState.selectedTradeGroupMembers = Array.isArray(response?.members) ? response.members : [];
+    socialState.selectedTradeGroupAlerts = Array.isArray(response?.alerts) ? response.alerts : [];
+    if (response?.group?.role === 'leader') {
+      try {
+        const eligibleResponse = await socialApi(`/api/social/trade-groups/${encodeURIComponent(groupId)}/eligible-friends`);
+        socialState.eligibleTradeGroupFriends = Array.isArray(eligibleResponse?.eligible) ? eligibleResponse.eligible : [];
+      } catch (_error) {
+        socialState.eligibleTradeGroupFriends = [];
+      }
+    } else {
+      socialState.eligibleTradeGroupFriends = [];
+    }
+  } catch (_error) {
+    socialState.selectedTradeGroupMembers = [];
+    socialState.selectedTradeGroupAlerts = [];
+  }
+  if (opts.rerenderList !== false) renderTradeGroupSection();
+  else renderTradeGroupSection();
+}
+
+
+async function addTradeGroupMember(event) {
+  event.preventDefault();
+  if (!socialState.selectedTradeGroupId) return;
+  const select = getEl('social-group-friend-select');
+  const feedback = getEl('social-group-member-feedback');
+  const friendUserId = String(select?.value || '').trim();
+  if (!friendUserId) {
+    setFeedback(feedback, 'Select a friend to add.', 'error');
+    return;
+  }
+  try {
+    await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ friend_user_id: friendUserId })
+    });
+    setFeedback(feedback, 'Member added.', 'success');
+    await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+  } catch (error) {
+    setFeedback(feedback, error?.message || 'Unable to add member.', 'error');
+  }
+}
+
+async function createTradeGroup(event) {
+  event.preventDefault();
+  if (socialState.createGroupBusy || socialState.isGuest || socialState.nicknameRequired) return;
+  const input = getEl('social-group-name');
+  const feedback = getEl('social-group-feedback');
+  const name = String(input?.value || '').trim();
+  if (!name) {
+    setFeedback(feedback, 'Enter a group name.', 'error');
+    return;
+  }
+  socialState.createGroupBusy = true;
+  const btn = getEl('social-create-group-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    await socialApi('/api/social/trade-groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (input) input.value = '';
+    setFeedback(feedback, 'Trade group created.', 'success');
+    await loadTradeGroups();
+  } catch (error) {
+    setFeedback(feedback, error?.message || 'Unable to create trade group.', 'error');
+  } finally {
+    socialState.createGroupBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Create'; }
   }
 }
 
@@ -1136,6 +1373,8 @@ function bindActions() {
   getEl('social-copy-code-btn')?.addEventListener('click', copyFriendCode);
   bindSettingsChangeTracking();
   bindFriendActions();
+  getEl('social-create-group-form')?.addEventListener('submit', createTradeGroup);
+  getEl('social-group-add-member-form')?.addEventListener('submit', addTradeGroupMember);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1144,7 +1383,8 @@ document.addEventListener('DOMContentLoaded', () => {
   Promise.allSettled([
     loadSocialData(),
     loadLeaderboard(),
-    loadFriendData()
+    loadFriendData(),
+    loadTradeGroups()
   ]).finally(() => {
     // Start polling after initial section loads settle so one failure does not block others.
     startFriendPolling();
@@ -1154,6 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!document.hidden && !socialState.isGuest && !socialState.nicknameRequired) {
       loadFriendData();
       loadLeaderboard();
+      loadTradeGroups();
     }
   });
   window.addEventListener(SOCIAL_SYNC_EVENT, (event) => {
