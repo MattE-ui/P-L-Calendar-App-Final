@@ -715,6 +715,7 @@ function canBePlatformVerified(user) {
 function computeEligibilityReason(settings, stats) {
   if (!settings.leaderboard_enabled) return 'leaderboard_disabled';
   if (settings.verification_status === 'none') return 'unverified';
+  if (!Number.isFinite(Number(stats.return_pct))) return 'return_unavailable';
   if (stats.trade_count < 3) return 'insufficient_trades';
   return null;
 }
@@ -780,58 +781,177 @@ function dateKeyFromDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function computeHistoryPeriodReturnPct(user, periodKey) {
+
+function computeHistoryPeriodReturnDetails(user, periodKey) {
   const history = ensurePortfolioHistory(user);
   const entries = listChronologicalEntries(history);
-  if (!entries.length) return null;
+  if (!entries.length) {
+    return { returnPct: null, reason: 'missing_history_entries', details: null };
+  }
 
   if (periodKey === 'ALL') {
-    const totals = computeNetDepositsTotals(user, history);
-    const portfolioSnapshot = getCurrentPortfolioValue(user);
-    const netDeposits = Number(totals.total);
-    const portfolio = Number(portfolioSnapshot.value);
-    if (!Number.isFinite(netDeposits) || !Number.isFinite(portfolio) || netDeposits === 0) return null;
-    return ((portfolio - netDeposits) / Math.abs(netDeposits)) * 100;
+    if (entries.length < 2) {
+      return { returnPct: null, reason: 'insufficient_history_points', details: null };
+    }
+    const startEquity = Number(entries[0].end);
+    const endEquity = Number(entries[entries.length - 1].end);
+    if (!Number.isFinite(startEquity) || startEquity <= 0 || !Number.isFinite(endEquity)) {
+      return { returnPct: null, reason: 'invalid_history_equity', details: null };
+    }
+    const inPeriod = entries.slice(1);
+    const deposits = inPeriod.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+    const withdrawals = inPeriod.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+    const netFlows = deposits - withdrawals;
+    const pnl = endEquity - startEquity - netFlows;
+    return {
+      returnPct: (pnl / Math.abs(startEquity)) * 100,
+      reason: null,
+      details: {
+        start_equity: startEquity,
+        end_equity: endEquity,
+        deposits_in_period: deposits,
+        withdrawals_in_period: withdrawals,
+        net_cash_flow_adjustment: netFlows,
+        formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
+      }
+    };
   }
 
   const startKey = dateKeyFromDate(periodStartDate(periodKey));
-  if (!startKey) return null;
+  if (!startKey) return { returnPct: null, reason: 'invalid_period_start', details: null };
   const priorEntries = entries.filter(entry => entry.date < startKey);
   const periodEntries = entries.filter(entry => entry.date >= startKey);
-  if (!priorEntries.length || !periodEntries.length) return null;
+  if (!priorEntries.length || !periodEntries.length) {
+    return { returnPct: null, reason: 'insufficient_history_window', details: null };
+  }
 
   const startEquity = Number(priorEntries[priorEntries.length - 1].end);
   const endEquity = Number(periodEntries[periodEntries.length - 1].end);
-  if (!Number.isFinite(startEquity) || !Number.isFinite(endEquity) || startEquity === 0) return null;
-  const netFlows = periodEntries.reduce((sum, entry) => sum + (Number(entry.cashIn) || 0) - (Number(entry.cashOut) || 0), 0);
+  if (!Number.isFinite(startEquity) || startEquity <= 0 || !Number.isFinite(endEquity)) {
+    return { returnPct: null, reason: 'invalid_history_equity', details: null };
+  }
+  const deposits = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+  const withdrawals = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+  const netFlows = deposits - withdrawals;
   const pnl = endEquity - startEquity - netFlows;
-  return (pnl / Math.abs(startEquity)) * 100;
+  return {
+    returnPct: (pnl / Math.abs(startEquity)) * 100,
+    reason: null,
+    details: {
+      start_equity: startEquity,
+      end_equity: endEquity,
+      deposits_in_period: deposits,
+      withdrawals_in_period: withdrawals,
+      net_cash_flow_adjustment: netFlows,
+      formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
+    }
+  };
 }
 
-function computeTradeFallbackReturnPct(trades, user, periodKey) {
-  const startKey = dateKeyFromDate(periodStartDate(periodKey));
-  const closeDateFor = trade => (typeof trade.closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.closeDate) ? trade.closeDate : null);
-  const closedWithDate = trades.filter(t => t.status === 'closed' && Number.isFinite(Number(t.realizedPnlGBP)) && closeDateFor(t));
-  const inWindow = periodKey === 'ALL'
-    ? closedWithDate
-    : closedWithDate.filter(t => closeDateFor(t) >= startKey);
-  const realizedPnl = inWindow.reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
+function getTradeCapitalBasis(trade) {
+  const candidates = [
+    { method: 'entry_value_field', value: Number(trade.entryValue) },
+    { method: 'position_gbp', value: Number(trade.positionGBP) },
+    {
+      method: 'entry_x_total_entered_qty',
+      value: Number(trade.entry) * Number(trade.totalEnteredQuantity ?? trade.enteredUnits ?? trade.initialSizeUnits)
+    },
+    {
+      method: 'avg_entry_x_total_entered_qty',
+      value: Number(trade.avgEntryPrice) * Number(trade.totalEnteredQuantity ?? trade.enteredUnits ?? trade.initialSizeUnits)
+    },
+    {
+      method: 'entry_x_position_size',
+      value: Number(trade.entry) * Number(trade.sizeUnits ?? trade.quantity ?? trade.units ?? trade.shares)
+    }
+  ];
 
-  if (periodKey === 'ALL') {
-    const totals = computeNetDepositsTotals(user, ensurePortfolioHistory(user));
-    const denominator = Math.abs(Number(totals.total));
-    if (Number.isFinite(denominator) && denominator > 0) {
-      return (realizedPnl / denominator) * 100;
+  for (const candidate of candidates) {
+    const value = Math.abs(Number(candidate.value));
+    if (Number.isFinite(value) && value > 0) {
+      return { value, method: candidate.method };
     }
   }
+  return { value: null, method: null };
+}
 
-  const realizedBeforeStart = periodKey === 'ALL'
-    ? 0
-    : closedWithDate
-      .filter(t => closeDateFor(t) < startKey)
-      .reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
-  const baselineCapital = Math.max(1, Math.abs((Number(user.initialNetDeposits) || 0) + realizedBeforeStart));
-  return (realizedPnl / baselineCapital) * 100;
+function computeTradeDeployedReturnDetails(trades = []) {
+  const realizedPnl = trades.reduce((acc, trade) => acc + (Number(trade.realizedPnlGBP) || 0), 0);
+  const capitalBreakdown = [];
+  let denominator = 0;
+  let validCapitalTradeCount = 0;
+  for (const trade of trades) {
+    const basis = getTradeCapitalBasis(trade);
+    if (Number.isFinite(basis.value) && basis.value > 0) {
+      denominator += basis.value;
+      validCapitalTradeCount += 1;
+    }
+    capitalBreakdown.push({
+      trade_id: trade.id || null,
+      capital_basis: Number.isFinite(basis.value) ? basis.value : null,
+      capital_basis_method: basis.method,
+      has_capital_basis: Number.isFinite(basis.value) && basis.value > 0
+    });
+  }
+
+  if (!trades.length) {
+    return {
+      returnPct: null,
+      reason: 'no_closed_trades_in_period',
+      details: {
+        denominator_base: null,
+        base_capital_method: 'sum(trade_capital_basis)',
+        realized_pnl_in_period: realizedPnl,
+        valid_capital_trade_count: 0,
+        capital_basis_breakdown: capitalBreakdown,
+        formula_used: '(realized_pnl_in_period / denominator_base) * 100'
+      }
+    };
+  }
+
+  if (!Number.isFinite(denominator) || denominator < 1) {
+    return {
+      returnPct: null,
+      reason: 'invalid_or_near_zero_denominator',
+      details: {
+        denominator_base: Number.isFinite(denominator) ? denominator : null,
+        base_capital_method: 'sum(trade_capital_basis)',
+        realized_pnl_in_period: realizedPnl,
+        valid_capital_trade_count: validCapitalTradeCount,
+        capital_basis_breakdown: capitalBreakdown,
+        formula_used: '(realized_pnl_in_period / denominator_base) * 100'
+      }
+    };
+  }
+
+  const returnPct = (realizedPnl / denominator) * 100;
+  if (!Number.isFinite(returnPct) || Math.abs(returnPct) > 10000) {
+    return {
+      returnPct: null,
+      reason: 'absurd_return_guard_triggered',
+      details: {
+        denominator_base: denominator,
+        base_capital_method: 'sum(trade_capital_basis)',
+        realized_pnl_in_period: realizedPnl,
+        valid_capital_trade_count: validCapitalTradeCount,
+        capital_basis_breakdown: capitalBreakdown,
+        formula_used: '(realized_pnl_in_period / denominator_base) * 100'
+      }
+    };
+  }
+
+  return {
+    returnPct,
+    reason: null,
+    details: {
+      denominator_base: denominator,
+      base_capital_method: 'sum(trade_capital_basis)',
+      realized_pnl_in_period: realizedPnl,
+      valid_capital_trade_count: validCapitalTradeCount,
+      capital_basis_breakdown: capitalBreakdown,
+      formula_used: '(realized_pnl_in_period / denominator_base) * 100'
+    }
+  };
 }
 
 function explainFormula(periodKey, path, diagnostics = {}) {
@@ -840,8 +960,11 @@ function explainFormula(periodKey, path, diagnostics = {}) {
     const end = diagnostics?.period_end || currentDateKey();
     return `Using portfolio history from ${start} to ${end}, adjusted for net deposits and withdrawals.`;
   }
-  if (path === 'trade_fallback') {
-    return 'Using closed trades in the selected window with realized PnL divided by computed baseline capital.';
+  if (path === 'trade_deployed_capital') {
+    return 'Using closed trades in the selected window with realized PnL divided by deployed trade capital.';
+  }
+  if (path === 'return_unavailable') {
+    return 'No trustworthy denominator was available for this period, so return was withheld.';
   }
   return `Using ${path} leaderboard methodology.`;
 }
@@ -866,6 +989,7 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
   const pushTradeView = (trade, reason, included) => {
     const realized = Number(trade.realizedPnlGBP);
     const pct = Number(trade.pnlPct ?? trade.returnPct);
+    const capitalBasis = getTradeCapitalBasis(trade);
     const row = {
       trade_id: trade.id || null,
       ticker: trade.displayTicker || trade.displaySymbol || trade.symbol || null,
@@ -876,6 +1000,8 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
       entry_value: Number.isFinite(Number(trade.entry)) && Number.isFinite(Number(trade.sizeUnits))
         ? Number(trade.entry) * Number(trade.sizeUnits)
         : (Number.isFinite(Number(trade.entryValue)) ? Number(trade.entryValue) : null),
+      capital_basis: Number.isFinite(capitalBasis.value) ? capitalBasis.value : null,
+      capital_basis_method: capitalBasis.method,
       realized_pnl: Number.isFinite(realized) ? realized : null,
       pnl_pct: Number.isFinite(pct) ? pct : null,
       counted_toward_trade_count: included,
@@ -918,21 +1044,25 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
   const winners = closedForPeriod.filter(t => Number(t.realizedPnlGBP) > 0).length;
   const winRate = closedForPeriod.length ? (winners / closedForPeriod.length) * 100 : null;
 
-  const historyBasedReturnPct = selectedSource === 'manual'
-    ? computeHistoryPeriodReturnPct(user, periodKey)
-    : null;
-  const tradeFallbackReturnPct = computeTradeFallbackReturnPct(closedForFallback, user, periodKey);
-  const usingHistory = Number.isFinite(historyBasedReturnPct);
-  const resolvedReturnPct = usingHistory ? historyBasedReturnPct : tradeFallbackReturnPct;
-  const calculationPath = usingHistory ? 'history_based' : 'trade_fallback';
+  const historyResult = computeHistoryPeriodReturnDetails(user, periodKey);
+  const tradeResult = computeTradeDeployedReturnDetails(closedForPeriod);
+  const usingHistory = Number.isFinite(historyResult.returnPct);
+  const usingTradeDeployed = !usingHistory && Number.isFinite(tradeResult.returnPct);
+  const resolvedReturnPct = usingHistory
+    ? historyResult.returnPct
+    : (usingTradeDeployed ? tradeResult.returnPct : null);
+  const calculationPath = usingHistory
+    ? 'history_based'
+    : (usingTradeDeployed ? 'trade_deployed_capital' : 'return_unavailable');
 
   const nowIso = new Date().toISOString();
   const stat = {
     user_id: username,
     period_key: periodKey,
+    leaderboard_source: selectedSource,
     verification_status: settings.verification_status,
-    return_pct: Number.isFinite(resolvedReturnPct) ? resolvedReturnPct : 0,
-    realized_return_pct: Number.isFinite(tradeFallbackReturnPct) ? tradeFallbackReturnPct : null,
+    return_pct: Number.isFinite(resolvedReturnPct) ? resolvedReturnPct : null,
+    realized_return_pct: Number.isFinite(tradeResult.returnPct) ? tradeResult.returnPct : null,
     trade_count: closedForPeriod.length,
     win_rate: Number.isFinite(winRate) ? winRate : null,
     computed_at: nowIso,
@@ -967,58 +1097,27 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, options = {}) 
       method: calculationPath,
       explanation: ''
     },
+    unavailable_reason: null,
     history_details: null,
     trade_fallback_details: null,
+    trade_return_details: null,
     included_trades: includeTrades ? includedTrades : undefined,
     excluded_trades: includeTrades ? excludedTrades : undefined
   };
 
   if (calculationPath === 'history_based') {
-    const history = ensurePortfolioHistory(user);
-    const entries = listChronologicalEntries(history);
-    if (periodKey === 'ALL') {
-      const totals = computeNetDepositsTotals(user, history);
-      const snapshot = getCurrentPortfolioValue(user);
-      diagnostics.history_details = {
-        start_equity: Number(user.initialNetDeposits) || null,
-        end_equity: Number(snapshot.value) || null,
-        deposits_in_period: Number(totals.total) > 0 ? Number(totals.total) : 0,
-        withdrawals_in_period: Number(totals.total) < 0 ? Math.abs(Number(totals.total)) : 0,
-        net_cash_flow_adjustment: Number(totals.total) || 0,
-        formula_used: '(portfolio - net_deposits_total) / abs(net_deposits_total) * 100'
-      };
-    } else {
-      const priorEntries = entries.filter(entry => entry.date < startKey);
-      const periodEntries = entries.filter(entry => entry.date >= startKey);
-      const startEquity = priorEntries.length ? Number(priorEntries[priorEntries.length - 1].end) : null;
-      const endEquity = periodEntries.length ? Number(periodEntries[periodEntries.length - 1].end) : null;
-      const deposits = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
-      const withdrawals = periodEntries.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
-      diagnostics.history_details = {
-        start_equity: Number.isFinite(startEquity) ? startEquity : null,
-        end_equity: Number.isFinite(endEquity) ? endEquity : null,
-        deposits_in_period: deposits,
-        withdrawals_in_period: withdrawals,
-        net_cash_flow_adjustment: deposits - withdrawals,
-        formula_used: '(end_equity - start_equity - net_cash_flows) / abs(start_equity) * 100'
-      };
-    }
+    diagnostics.history_details = historyResult.details;
+    diagnostics.trade_return_details = tradeResult.details;
+    diagnostics.trade_fallback_details = tradeResult.details;
+  } else if (calculationPath === 'trade_deployed_capital') {
+    diagnostics.history_details = historyResult.details;
+    diagnostics.trade_return_details = tradeResult.details;
+    diagnostics.trade_fallback_details = tradeResult.details;
   } else {
-    const realizedPnl = closedForPeriod.reduce((acc, trade) => acc + (Number(trade.realizedPnlGBP) || 0), 0);
-    const realizedBeforeStart = periodKey === 'ALL'
-      ? 0
-      : closedForFallback
-        .filter(t => t.closeDate < startKey)
-        .reduce((acc, t) => acc + (Number(t.realizedPnlGBP) || 0), 0);
-    const denominator = periodKey === 'ALL'
-      ? Math.abs(Number(computeNetDepositsTotals(user, ensurePortfolioHistory(user)).total) || 0)
-      : Math.max(1, Math.abs((Number(user.initialNetDeposits) || 0) + realizedBeforeStart));
-    diagnostics.trade_fallback_details = {
-      denominator_base: denominator,
-      base_capital_method: periodKey === 'ALL' ? 'abs(net_deposits_total)' : 'abs(initial_net_deposits + realized_pnl_before_period)',
-      realized_pnl_in_period: realizedPnl,
-      formula_used: '(realized_pnl_in_period / denominator_base) * 100'
-    };
+    diagnostics.unavailable_reason = historyResult.reason || tradeResult.reason || 'no_trustworthy_method';
+    diagnostics.history_details = historyResult.details;
+    diagnostics.trade_return_details = tradeResult.details;
+    diagnostics.trade_fallback_details = tradeResult.details;
   }
 
   diagnostics.formula.explanation = explainFormula(periodKey, calculationPath, diagnostics);
@@ -7252,10 +7351,15 @@ app.get('/api/social/leaderboard', auth, (req, res) => {
         ineligibility_reason: s.ineligibility_reason,
         last_updated_at: s.updated_at,
         verification_status: settings.verification_status,
-        verification_source: settings.verification_source || null
+        verification_source: settings.verification_source || null,
+        leaderboard_source: s.leaderboard_source || null
       };
     })
-    .sort((a, b) => (Number(b.return_pct) || 0) - (Number(a.return_pct) || 0));
+    .sort((a, b) => {
+      const aVal = Number.isFinite(Number(a.return_pct)) ? Number(a.return_pct) : -Infinity;
+      const bVal = Number.isFinite(Number(b.return_pct)) ? Number(b.return_pct) : -Infinity;
+      return bVal - aVal;
+    });
 
   saveDB(db);
   res.json({ period: selectedPeriod, verification, entries });

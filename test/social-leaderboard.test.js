@@ -61,9 +61,9 @@ function resetDatabase() {
         },
         tradeJournal: {
           [openOld]: [
-            { id: 't1', status: 'closed', entry: 100, closePrice: 140, sizeUnits: 1, closeDate: closeA, currency: 'GBP' },
-            { id: 't2', status: 'closed', entry: 100, closePrice: 130, sizeUnits: 1, closeDate: closeB, currency: 'GBP' },
-            { id: 't3', status: 'closed', entry: 100, closePrice: 130, sizeUnits: 1, closeDate: closeC, currency: 'GBP' }
+            { id: 't1', status: 'closed', entry: 100, closePrice: 140, sizeUnits: 1, closeDate: closeA, currency: 'GBP', source: 'trading212' },
+            { id: 't2', status: 'closed', entry: 100, closePrice: 130, sizeUnits: 1, closeDate: closeB, currency: 'GBP', source: 'trading212' },
+            { id: 't3', status: 'closed', entry: 100, closePrice: 130, sizeUnits: 1, closeDate: closeC, currency: 'GBP', source: 'trading212' }
           ]
         }
       }
@@ -110,7 +110,7 @@ test.after(() => {
   fs.rmSync(path.join(path.dirname(DATA_FILE), 'uploads'), { recursive: true, force: true });
 });
 
-test('leaderboard includes persisted avatar and computes 7D return from history window', async () => {
+test('leaderboard includes persisted avatar and computes 7D return from deployed trade capital with source metadata', async () => {
   const { res, data } = await authedFetch('/api/social/leaderboard?period=7D&verification=trusted');
   assert.equal(res.status, 200);
   assert.equal(data.period, '7D');
@@ -121,5 +121,6 @@ test('leaderboard includes persisted avatar and computes 7D return from history 
   assert.equal(entry.avatar_url, '/static/uploads/avatars/leader.png');
   assert.equal(entry.avatar_initials, 'LO');
   assert.equal(entry.trade_count, 3);
-  assert.equal(Math.round(entry.return_pct * 100) / 100, 10);
+  assert.equal(Math.round(entry.return_pct * 100) / 100, 33.33);
+  assert.equal(entry.leaderboard_source, 'trading212');
 });

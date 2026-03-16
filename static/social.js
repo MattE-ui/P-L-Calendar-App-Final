@@ -250,7 +250,8 @@ function normalizeLeaderboardEntry(entry = {}, rank = 0) {
     trade_count: Number(entry.trade_count),
     win_rate: Number(entry.win_rate),
     verification_status: verificationStatus,
-    verification_source: entry.verification_source || null
+    verification_source: entry.verification_source || null,
+    leaderboard_source: entry.leaderboard_source || null
   };
 }
 
@@ -364,9 +365,9 @@ function renderLeaderboardSection() {
     statusBadge.textContent = verification.label;
     meta.appendChild(statusBadge);
 
-    if (verification.sourceLabel) {
+    if (entry.leaderboard_source) {
       const source = document.createElement('span');
-      source.textContent = verification.sourceLabel.replace(/^Source:\s*/, '');
+      source.textContent = formatVerificationSource(entry.leaderboard_source);
       meta.appendChild(source);
     }
 
