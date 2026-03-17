@@ -558,6 +558,10 @@ function ensureSocialTables(db) {
     db.tradeGroupAnnouncements = [];
     mutated = true;
   }
+  if (!Array.isArray(db.tradeGroupPendingAlerts)) {
+    db.tradeGroupPendingAlerts = [];
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -572,6 +576,8 @@ const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
 const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined'];
+const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, Number(process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS) || 30000);
+const pendingTradeGroupAlertTimers = new Map();
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
   alert: 'trade_group_alert',
   invite: 'trade_group_invite',
@@ -702,9 +708,11 @@ function buildGroupCurrentPositions(db, group) {
       const gainLossPct = direction === 'short'
         ? ((entry - livePrice) / entry) * 100
         : ((livePrice - entry) / entry) * 100;
+      const mappedTrade = applyInstrumentMappingToTrade(trade, db, group.leader_user_id) || trade;
+      const ticker = resolveCanonicalTickerForTrade(mappedTrade);
       positions.push({
         id: trade.id,
-        ticker: String(trade.symbol || '').trim().toUpperCase(),
+        ticker,
         entry_price: entry,
         stop_price: stop,
         risk_pct: riskPct,
@@ -720,9 +728,39 @@ function buildGroupCurrentPositions(db, group) {
     .slice(0, 50);
 }
 
+function resolveCanonicalTickerForTrade(trade) {
+  if (!trade || typeof trade !== 'object') return '';
+  const mappedTicker = typeof trade.displayTicker === 'string' ? trade.displayTicker.trim().toUpperCase() : '';
+  if (mappedTicker) return mappedTicker;
+  const internalTicker = typeof trade.displaySymbol === 'string' ? trade.displaySymbol.trim().toUpperCase() : '';
+  if (internalTicker) return internalTicker;
+  const canonicalStoredTicker = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
+  if (canonicalStoredTicker) return canonicalStoredTicker;
+  const rawTicker = normalizeTrading212Symbol(normalizeTrading212TickerValue(trade.trading212Ticker || ''));
+  return rawTicker || '';
+}
+
+function buildTradeGroupAlertPayload(db, leaderUsername, trade, { requireStopAndRisk = true } = {}) {
+  const mappedTrade = applyInstrumentMappingToTrade(trade, db, leaderUsername) || trade;
+  const ticker = resolveCanonicalTickerForTrade(mappedTrade);
+  const entry = Number(trade.entry);
+  const stop = Number(trade.stop);
+  const riskPct = Number(trade.riskPct);
+  if (!ticker || !Number.isFinite(entry) || entry <= 0) return null;
+  if (requireStopAndRisk && (!Number.isFinite(stop) || stop <= 0 || !Number.isFinite(riskPct) || riskPct <= 0)) return null;
+  return {
+    ticker,
+    entry_price: entry,
+    stop_price: Number.isFinite(stop) && stop > 0 ? stop : null,
+    risk_pct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : null,
+    direction: trade.direction === 'short' ? 'short' : 'long',
+    risk_amount_gbp: Number.isFinite(Number(trade.riskAmountGBP)) ? Number(trade.riskAmountGBP) : null
+  };
+}
+
 function isQualifyingTradeForGroupAlert(trade) {
   if (!trade || typeof trade !== 'object') return false;
-  const ticker = typeof trade.symbol === 'string' ? trade.symbol.trim() : '';
+  const ticker = resolveCanonicalTickerForTrade(trade);
   const entry = Number(trade.entry);
   const stop = Number(trade.stop);
   const riskPct = Number(trade.riskPct);
@@ -738,6 +776,8 @@ function isQualifyingTradeForGroupAlert(trade) {
 function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
   ensureSocialTables(db);
   if (!isQualifyingTradeForGroupAlert(trade)) return { alertsCreated: 0, notificationsCreated: 0 };
+  const payload = buildTradeGroupAlertPayload(db, leaderUsername, trade, { requireStopAndRisk: true });
+  if (!payload) return { alertsCreated: 0, notificationsCreated: 0 };
   const groups = getTradeGroupsLedByUser(db, leaderUsername);
   if (!groups.length) return { alertsCreated: 0, notificationsCreated: 0 };
   const nowIso = new Date().toISOString();
@@ -751,10 +791,12 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
       group_id: group.id,
       leader_user_id: leaderUsername,
       source_trade_id: trade.id,
-      ticker: String(trade.symbol || '').trim().toUpperCase(),
-      entry_price: Number(trade.entry),
-      stop_price: Number(trade.stop),
-      risk_pct: Number(trade.riskPct),
+      ticker: payload.ticker,
+      entry_price: payload.entry_price,
+      stop_price: payload.stop_price,
+      risk_pct: payload.risk_pct,
+      direction: payload.direction,
+      risk_amount_gbp: payload.risk_amount_gbp,
       created_at: nowIso
     };
     db.tradeGroupAlerts.push(alert);
@@ -773,6 +815,136 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
     }
   }
   return { alertsCreated, notificationsCreated };
+}
+
+function createTrading212PendingAlertKey(leaderUsername, groupId, trade) {
+  const brokerPositionKey = String(trade?.trading212PositionKey || trade?.trading212Id || trade?.trading212Ticker || trade?.symbol || '').trim();
+  const openedAt = String(trade?.createdAt || trade?.created_at || '').trim();
+  return `${leaderUsername}|${groupId}|trading212|${brokerPositionKey}|${openedAt}`;
+}
+
+function schedulePendingTradeGroupAlertTimer(pendingId, delayMs) {
+  if (!pendingId) return;
+  const existing = pendingTradeGroupAlertTimers.get(pendingId);
+  if (existing) clearTimeout(existing);
+  const handle = setTimeout(() => {
+    pendingTradeGroupAlertTimers.delete(pendingId);
+    const db = loadDB();
+    ensureSocialTables(db);
+    const changed = processPendingTrading212GroupAlerts(db, { pendingId, now: new Date() });
+    if (changed) saveDB(db);
+  }, Math.max(0, Number(delayMs) || 0));
+  pendingTradeGroupAlertTimers.set(pendingId, handle);
+}
+
+function scheduleTrading212TradeGroupAlertsForNewPosition(db, leaderUsername, trade, detectedAt = new Date()) {
+  ensureSocialTables(db);
+  const groups = getTradeGroupsLedByUser(db, leaderUsername);
+  if (!groups.length) return 0;
+  const detectedIso = detectedAt.toISOString();
+  const scheduledFor = new Date(detectedAt.getTime() + TRADE_GROUP_BROKER_ALERT_DELAY_MS).toISOString();
+  let created = 0;
+  for (const group of groups) {
+    const dedupeKey = createTrading212PendingAlertKey(leaderUsername, group.id, trade);
+    const alreadySent = db.tradeGroupPendingAlerts.find(item => item.group_id === group.id && item.dedupe_key === dedupeKey && item.status === 'sent');
+    const alreadyPending = db.tradeGroupPendingAlerts.find(item => item.group_id === group.id && item.dedupe_key === dedupeKey && item.status === 'pending');
+    if (alreadySent || alreadyPending) {
+      console.info(`[TradeGroup][T212] duplicate suppressed leader=${leaderUsername} group=${group.id} key=${dedupeKey}`);
+      continue;
+    }
+    const pending = {
+      id: crypto.randomUUID(),
+      leader_user_id: leaderUsername,
+      group_id: group.id,
+      broker_source: 'trading212',
+      broker_position_key: String(trade?.trading212PositionKey || trade?.trading212Id || trade?.trading212Ticker || trade?.symbol || '').trim(),
+      dedupe_key: dedupeKey,
+      first_detected_at: detectedIso,
+      scheduled_for: scheduledFor,
+      status: 'pending',
+      linked_trade_id: trade?.id || null,
+      created_at: detectedIso,
+      updated_at: detectedIso
+    };
+    db.tradeGroupPendingAlerts.push(pending);
+    schedulePendingTradeGroupAlertTimer(pending.id, Date.parse(scheduledFor) - Date.now());
+    created += 1;
+    console.info(`[TradeGroup][T212] delayed group alert scheduled leader=${leaderUsername} group=${group.id} pending=${pending.id}`);
+  }
+  return created;
+}
+
+function processPendingTrading212GroupAlerts(db, { now = new Date(), pendingId = null } = {}) {
+  ensureSocialTables(db);
+  const nowMs = now.getTime();
+  let mutated = false;
+  for (const pending of db.tradeGroupPendingAlerts) {
+    if (pending.status !== 'pending') continue;
+    if (pendingId && pending.id !== pendingId) continue;
+    const scheduledMs = Date.parse(pending.scheduled_for || '');
+    if (!Number.isFinite(scheduledMs) || scheduledMs > nowMs) continue;
+    const user = db.users?.[pending.leader_user_id];
+    const group = db.tradeGroups.find(item => item.id === pending.group_id && item.is_active !== false);
+    const trades = Object.values(ensureTradeJournal(user || {})).flat().filter(Boolean);
+    const linkedTrade = trades.find(trade => trade.id === pending.linked_trade_id);
+    const isOpen = linkedTrade && linkedTrade.status !== 'closed' && !Number.isFinite(Number(linkedTrade.closePrice));
+    if (!group || !user || !isOpen) {
+      pending.status = 'cancelled';
+      pending.updated_at = new Date(nowMs).toISOString();
+      mutated = true;
+      console.info(`[TradeGroup][T212] delayed group alert cancelled pending=${pending.id}`);
+      continue;
+    }
+    const duplicate = db.tradeGroupAlerts.find(alert => alert.group_id === group.id && alert.pending_dedupe_key === pending.dedupe_key);
+    if (duplicate) {
+      pending.status = 'sent';
+      pending.alert_id = duplicate.id;
+      pending.updated_at = new Date(nowMs).toISOString();
+      mutated = true;
+      console.info(`[TradeGroup][T212] duplicate suppressed pending=${pending.id}`);
+      continue;
+    }
+    const payload = buildTradeGroupAlertPayload(db, pending.leader_user_id, linkedTrade, { requireStopAndRisk: false });
+    if (!payload) {
+      pending.status = 'failed';
+      pending.updated_at = new Date(nowMs).toISOString();
+      mutated = true;
+      continue;
+    }
+    const alert = {
+      id: crypto.randomUUID(),
+      group_id: group.id,
+      leader_user_id: pending.leader_user_id,
+      source_trade_id: linkedTrade.id,
+      pending_dedupe_key: pending.dedupe_key,
+      ticker: payload.ticker,
+      entry_price: payload.entry_price,
+      stop_price: payload.stop_price,
+      risk_pct: payload.risk_pct,
+      direction: payload.direction,
+      risk_amount_gbp: payload.risk_amount_gbp,
+      created_at: new Date(nowMs).toISOString()
+    };
+    db.tradeGroupAlerts.push(alert);
+    const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
+      .filter(member => member.user_id !== pending.leader_user_id);
+    for (const member of activeMembers) {
+      createTradeGroupNotification(db, {
+        userId: member.user_id,
+        groupId: group.id,
+        type: 'trade_group_alert',
+        alertId: alert.id,
+        dedupeKey: `alert:${alert.id}`
+      });
+    }
+    pending.status = 'sent';
+    pending.alert_id = alert.id;
+    pending.updated_at = new Date(nowMs).toISOString();
+    pending.sent_at = alert.created_at;
+    mutated = true;
+    console.info(`[TradeGroup][T212] delayed group alert emitted pending=${pending.id} alert=${alert.id}`);
+  }
+  return mutated;
 }
 
 function defaultSocialProfile(username, friendCode) {
@@ -6251,6 +6423,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         });
         recalculateTradeRiskFromImportedStop(trade, user, rates);
         journal[normalizedDate].push(trade);
+        console.info(`[TradeGroup][T212] new leader position detected leader=${username} trade=${trade.id} brokerKey=${trade.trading212PositionKey || trade.trading212Id || trade.trading212Ticker || trade.symbol || ''}`);
+        scheduleTrading212TradeGroupAlertsForNewPosition(db, username, trade, new Date());
         positionsMutated = true;
       }
     } else if (fulfilled.length) {
@@ -6286,6 +6460,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     } else {
       cfg.lastStatus = { ok: true, status: 200 };
     }
+    processPendingTrading212GroupAlerts(db, { now: new Date() });
     saveDB(db);
   } catch (e) {
     cfg.lastSyncAt = new Date().toISOString();
@@ -6333,6 +6508,18 @@ function scheduleTrading212Job(username, user) {
     syncTrading212ForUser(username, new Date());
   }, T212_SYNC_INTERVAL_MS);
   trading212Jobs.set(username, { type: 'interval', handle });
+}
+
+function bootstrapPendingTradeGroupAlertSchedules() {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const nowMs = Date.now();
+  for (const pending of db.tradeGroupPendingAlerts) {
+    if (pending.status !== 'pending') continue;
+    const scheduledMs = Date.parse(pending.scheduled_for || '');
+    const delayMs = Number.isFinite(scheduledMs) ? Math.max(0, scheduledMs - nowMs) : 0;
+    schedulePendingTradeGroupAlertTimer(pending.id, delayMs);
+  }
 }
 
 async function fetchIbkrAuthStatus() {
@@ -11598,6 +11785,7 @@ app.get('/api/analytics/streaks', auth, async (req, res) => {
 });
 
 function bootstrapTrading212Schedules() {
+  bootstrapPendingTradeGroupAlertSchedules();
   const db = loadDB();
   let mutated = false;
   for (const [username, user] of Object.entries(db.users || {})) {
@@ -11653,6 +11841,11 @@ module.exports = {
   buildIbkrActivePositionSummaries,
   updateIbkrLivePositions,
   applyIbkrHeartbeat,
+  buildGroupCurrentPositions,
+  resolveCanonicalTickerForTrade,
+  createTradeGroupAlertsForNewTrade,
+  scheduleTrading212TradeGroupAlertsForNewPosition,
+  processPendingTrading212GroupAlerts,
   carryForwardTradingAccountDayValues,
   createIbkrConnectorKey,
   findIbkrConnectorKeyOwner,

@@ -5,8 +5,16 @@ const assert = require('node:assert');
 
 process.env.DATA_FILE = path.join(__dirname, 'data-trade-groups-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
+process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS = '5';
 
-const { app, saveDB, loadDB } = require('../server');
+const {
+  app,
+  saveDB,
+  loadDB,
+  buildGroupCurrentPositions,
+  scheduleTrading212TradeGroupAlertsForNewPosition,
+  processPendingTrading212GroupAlerts
+} = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
 const leader = 'leader';
@@ -176,4 +184,134 @@ test('leader can post announcement, delete alert, and close group', async () => 
   assert.equal(closeGroup.res.status, 200);
   const memberView = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}`);
   assert.equal(memberView.res.status, 404);
+});
+
+
+test('group current positions prefer mapped ticker and fallback to raw symbol', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-map', leader_user_id: leader, name: 'Map Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [{ id: 'm1', group_id: 'g-map', user_id: leader, role: 'leader', status: 'active', joined_at: now }];
+  db.instrumentMappings = [{
+    id: 1,
+    status: 'active',
+    source: 'TRADING212',
+    source_key: 'TRADING212|ISIN:US-MAPPED-1',
+    scope: 'user',
+    user_id: leader,
+    canonical_ticker: 'MAPPED',
+    canonical_name: 'Mapped Inc'
+  }];
+  db.users[leader].tradeJournal = {
+    '2024-04': [{
+      id: 't-mapped',
+      source: 'trading212',
+      symbol: 'RAWBAD',
+      trading212Ticker: 'RAWBAD_US_EQ',
+      trading212Isin: 'US-MAPPED-1',
+      currency: 'USD',
+      entry: 100,
+      stop: 95,
+      riskPct: 1,
+      lastSyncPrice: 101,
+      status: 'open',
+      createdAt: now
+    }, {
+      id: 't-fallback',
+      source: 'trading212',
+      symbol: 'RAWTICK',
+      trading212Ticker: 'RAWTICK_US_EQ',
+      currency: 'USD',
+      entry: 50,
+      stop: 45,
+      riskPct: 1,
+      lastSyncPrice: 52,
+      status: 'open',
+      createdAt: now
+    }]
+  };
+  saveDB(db);
+
+  const positions = buildGroupCurrentPositions(loadDB(), db.tradeGroups[0]);
+  assert.equal(positions.find(p => p.id === 't-mapped').ticker, 'MAPPED');
+  assert.equal(positions.find(p => p.id === 't-fallback').ticker, 'RAWTICK');
+});
+
+test('new Trading212 position schedules delayed alert, dedupes, and emits enriched stop', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-t212', leader_user_id: leader, name: 'T212 Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gm-l', group_id: 'g-t212', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gm-m', group_id: 'g-t212', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  const createdAt = new Date('2024-04-01T00:00:00.000Z').toISOString();
+  const trade = {
+    id: 't212-open-1',
+    source: 'trading212',
+    symbol: 'RAW1',
+    trading212Id: 'pos-1',
+    trading212PositionKey: 'acc:pos-1',
+    createdAt,
+    entry: 100,
+    riskPct: 0,
+    status: 'open'
+  };
+  db.users[leader].tradeJournal = { '2024-04-01': [trade] };
+  saveDB(db);
+
+  let working = loadDB();
+  scheduleTrading212TradeGroupAlertsForNewPosition(working, leader, trade, new Date('2024-04-01T00:00:00.000Z'));
+  scheduleTrading212TradeGroupAlertsForNewPosition(working, leader, trade, new Date('2024-04-01T00:00:01.000Z'));
+  assert.equal(working.tradeGroupPendingAlerts.length, 1);
+
+  working.users[leader].tradeJournal['2024-04-01'][0].stop = 95;
+  working.users[leader].tradeJournal['2024-04-01'][0].riskPct = 1;
+  processPendingTrading212GroupAlerts(working, { now: new Date('2024-04-01T00:00:40.000Z') });
+  assert.equal(working.tradeGroupAlerts.length, 1);
+  assert.equal(working.tradeGroupAlerts[0].stop_price, 95);
+  assert.equal(working.tradeGroupPendingAlerts[0].status, 'sent');
+});
+
+test('Trading212 delayed alerts send best effort without stop and cancel when position closes early', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-best-effort', leader_user_id: leader, name: 'T212 Group 2', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'g2-l', group_id: 'g-best-effort', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'g2-m', group_id: 'g-best-effort', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  const createdAt = new Date('2024-04-01T01:00:00.000Z').toISOString();
+  const stillOpen = {
+    id: 't212-open-2',
+    source: 'trading212',
+    symbol: 'RAW2',
+    trading212Id: 'pos-2',
+    trading212PositionKey: 'acc:pos-2',
+    createdAt,
+    entry: 55,
+    status: 'open'
+  };
+  const closes = {
+    id: 't212-open-3',
+    source: 'trading212',
+    symbol: 'RAW3',
+    trading212Id: 'pos-3',
+    trading212PositionKey: 'acc:pos-3',
+    createdAt,
+    entry: 66,
+    status: 'closed',
+    closePrice: 67
+  };
+  db.users[leader].tradeJournal = { '2024-04-01': [stillOpen, closes] };
+
+  scheduleTrading212TradeGroupAlertsForNewPosition(db, leader, stillOpen, new Date('2024-04-01T01:00:00.000Z'));
+  scheduleTrading212TradeGroupAlertsForNewPosition(db, leader, closes, new Date('2024-04-01T01:00:00.000Z'));
+  processPendingTrading212GroupAlerts(db, { now: new Date('2024-04-01T01:00:40.000Z') });
+
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  assert.equal(db.tradeGroupAlerts[0].ticker, 'RAW2');
+  assert.equal(db.tradeGroupAlerts[0].stop_price, null);
+  const cancelled = db.tradeGroupPendingAlerts.find(item => item.linked_trade_id === 't212-open-3');
+  assert.equal(cancelled.status, 'cancelled');
 });
