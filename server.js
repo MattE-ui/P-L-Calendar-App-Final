@@ -706,7 +706,135 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     created_at: nowIso
   };
   db.tradeGroupNotifications.push(notification);
+  console.info('[TradeGroup][Notifications] In-app banner notification created.', {
+    notificationId: notification.id,
+    userId,
+    groupId,
+    type: normalizedType,
+    alertId,
+    inviteId,
+    announcementId,
+    dedupeKey: dedupeKey || null
+  });
   return notification;
+}
+
+function summarizeTradeGroupAnnouncementText(text, maxLength = 140) {
+  const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return 'A new trading group announcement is available.';
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildTradeGroupNotificationPushContext(db, notification, { group = null } = {}) {
+  if (!notification) return null;
+  ensureSocialTables(db);
+  const normalizedType = normalizeTradeGroupNotificationType(notification.type);
+  const resolvedGroup = group || db.tradeGroups.find((item) => item.id === notification.group_id && item.is_active !== false);
+  if (!resolvedGroup) return null;
+  const fallbackLink = `/social.html?group=${encodeURIComponent(resolvedGroup.id)}`;
+  if (normalizedType === 'trade_group_alert') {
+    const alert = db.tradeGroupAlerts.find((item) => item.id === notification.alert_id);
+    const ticker = String(alert?.ticker || '').trim().toUpperCase();
+    return {
+      eventType: 'trade_group_alert',
+      context: {
+        groupId: resolvedGroup.id,
+        groupName: resolvedGroup.name,
+        body: ticker
+          ? `${resolvedGroup.name}: new trade alert for ${ticker}.`
+          : `${resolvedGroup.name}: a new trade alert is available.`,
+        link: fallbackLink,
+        tag: `trade-group-alert:${resolvedGroup.id}:${notification.alert_id || notification.id}`
+      }
+    };
+  }
+  if (normalizedType === 'trade_group_announcement') {
+    const announcement = db.tradeGroupAnnouncements.find((item) => item.id === notification.announcement_id);
+    return {
+      eventType: 'trade_group_announcement',
+      context: {
+        groupId: resolvedGroup.id,
+        groupName: resolvedGroup.name,
+        announcementText: summarizeTradeGroupAnnouncementText(announcement?.text || ''),
+        link: fallbackLink,
+        tag: `trade-group-announcement:${resolvedGroup.id}:${notification.announcement_id || notification.id}`
+      }
+    };
+  }
+  if (normalizedType === 'trade_group_invite') {
+    return {
+      eventType: 'trade_group_invite',
+      context: {
+        groupId: resolvedGroup.id,
+        groupName: resolvedGroup.name,
+        link: fallbackLink,
+        tag: `trade-group-invite:${resolvedGroup.id}:${notification.invite_id || notification.id}`
+      }
+    };
+  }
+  if (normalizedType === 'trade_group_member_joined') {
+    const invite = db.tradeGroupInvites.find((item) => item.id === notification.invite_id);
+    const joinedIdentity = socialIdentityForUser(db, invite?.invitee_user_id || '');
+    return {
+      eventType: 'trade_group_member_joined',
+      context: {
+        groupId: resolvedGroup.id,
+        groupName: resolvedGroup.name,
+        joinedNickname: joinedIdentity?.nickname || '',
+        link: fallbackLink,
+        tag: `trade-group-member-joined:${resolvedGroup.id}:${notification.invite_id || notification.id}`
+      }
+    };
+  }
+  return null;
+}
+
+function triggerPushForTradeGroupNotification(db, notification, { group = null } = {}) {
+  const pushConfig = buildTradeGroupNotificationPushContext(db, notification, { group });
+  if (!pushConfig) {
+    console.info('[TradeGroup][Notifications] No push mapping for in-app notification.', {
+      notificationId: notification?.id || null,
+      userId: notification?.user_id || null,
+      groupId: notification?.group_id || null,
+      type: notification?.type || null
+    });
+    return;
+  }
+  console.info('[TradeGroup][Notifications] Push event created from in-app notification.', {
+    notificationId: notification.id,
+    userId: notification.user_id,
+    groupId: notification.group_id,
+    eventType: pushConfig.eventType
+  });
+  sendNotificationEvent(db, {
+    userId: notification.user_id,
+    eventType: pushConfig.eventType,
+    context: pushConfig.context
+  })
+    .then((log) => {
+      const targeted = Array.isArray(log?.deliveries) ? log.deliveries.length : 0;
+      const successCount = Array.isArray(log?.deliveries) ? log.deliveries.filter((entry) => entry?.ok).length : 0;
+      console.info('[TradeGroup][Notifications] Push send attempted for trade-group in-app notification.', {
+        notificationId: notification.id,
+        userId: notification.user_id,
+        groupId: notification.group_id,
+        eventType: pushConfig.eventType,
+        targetedDevices: targeted,
+        successfulDeliveries: successCount
+      });
+      saveDB(db);
+    })
+    .catch((error) => {
+      console.warn('[TradeGroup][Notifications] Push send failed for trade-group in-app notification.', {
+        notificationId: notification.id,
+        userId: notification.user_id,
+        groupId: notification.group_id,
+        eventType: pushConfig.eventType,
+        message: error?.message || String(error)
+      });
+      saveDB(db);
+    });
 }
 
 function cancelPendingInviteNotifications(db, inviteId) {
@@ -842,7 +970,10 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
         alertId: alert.id,
         dedupeKey: `alert:${alert.id}`
       });
-      if (created) notificationsCreated += 1;
+      if (created) {
+        notificationsCreated += 1;
+        triggerPushForTradeGroupNotification(db, created, { group });
+      }
     }
   }
   return { alertsCreated, notificationsCreated };
@@ -960,13 +1091,14 @@ function processPendingTrading212GroupAlerts(db, { now = new Date(), pendingId =
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== pending.leader_user_id);
     for (const member of activeMembers) {
-      createTradeGroupNotification(db, {
+      const created = createTradeGroupNotification(db, {
         userId: member.user_id,
         groupId: group.id,
         type: 'trade_group_alert',
         alertId: alert.id,
         dedupeKey: `alert:${alert.id}`
       });
+      if (created) triggerPushForTradeGroupNotification(db, created, { group });
     }
     pending.status = 'sent';
     pending.alert_id = alert.id;
@@ -2000,8 +2132,40 @@ function buildNotificationEvent(type, context = {}) {
     leader_new_position: () => ({
       ...base, category: 'tradeGroupAlerts', title: 'New leader position', body: `${context.leader || 'Group leader'} opened a new position in ${context.groupName || 'your trading group'}.`, link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
+    trade_group_alert: () => ({
+      ...base,
+      category: 'tradeGroupAlerts',
+      title: `${context.groupName || 'Trade group'} alert`,
+      body: context.body || 'A new group alert is available.',
+      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
     trade_group_alert_banner: () => ({
-      ...base, category: 'tradeGroupAlerts', title: `${context.groupName || 'Trade group'} alert`, body: context.body || 'A new group alert is available.', link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      ...base,
+      category: 'tradeGroupAlerts',
+      title: `${context.groupName || 'Trade group'} alert`,
+      body: context.body || 'A new group alert is available.',
+      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
+    trade_group_announcement: () => ({
+      ...base,
+      category: 'tradeGroupAlerts',
+      title: `${context.groupName || 'Trading group'} announcement`,
+      body: context.announcementText || context.body || 'A new group announcement is available.',
+      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
+    trade_group_invite: () => ({
+      ...base,
+      category: 'tradeGroupAlerts',
+      title: 'Trading group invite',
+      body: `You were invited to join ${context.groupName || 'a trading group'}.`,
+      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
+    trade_group_member_joined: () => ({
+      ...base,
+      category: 'tradeGroupAlerts',
+      title: `${context.groupName || 'Trading group'} update`,
+      body: `${context.joinedNickname || 'A member'} joined your trading group.`,
+      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     broker_sync_failed: () => ({
       ...base, category: 'brokerSyncFailures', title: 'Broker sync failed', body: context.body || 'Broker integration sync failed. Review settings.', link: context.link || '/profile.html#integration-section', requireInteraction: true
@@ -8917,13 +9081,14 @@ app.post('/api/social/trade-groups/:groupId/members', auth, (req, res) => {
     responded_at: null
   };
   db.tradeGroupInvites.push(invite);
-  createTradeGroupNotification(db, {
+  const createdInviteNotification = createTradeGroupNotification(db, {
     userId: friendUserId,
     groupId: group.id,
     type: 'trade_group_invite',
     inviteId: invite.id,
     dedupeKey: `invite:${invite.id}`
   });
+  if (createdInviteNotification) triggerPushForTradeGroupNotification(db, createdInviteNotification, { group });
   logSocialEvent(db, {
     userId: friendUserId,
     actorUserId: req.username,
@@ -8985,13 +9150,14 @@ app.post('/api/social/trade-groups/invites/:inviteId/accept', auth, (req, res) =
     });
   }
   cancelPendingInviteNotifications(db, invite.id);
-  createTradeGroupNotification(db, {
+  const createdMemberJoinedNotification = createTradeGroupNotification(db, {
     userId: group.leader_user_id,
     groupId: group.id,
     type: 'trade_group_member_joined',
     inviteId: invite.id,
     dedupeKey: `member-joined:${invite.id}`
   });
+  if (createdMemberJoinedNotification) triggerPushForTradeGroupNotification(db, createdMemberJoinedNotification, { group });
   saveDB(db);
   res.json({ ok: true });
 });
@@ -9098,13 +9264,14 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
   getTradeGroupMembers(db, group.id, { status: 'active' })
     .filter(member => member.user_id !== req.username)
     .forEach(member => {
-      createTradeGroupNotification(db, {
+      const createdNotification = createTradeGroupNotification(db, {
         userId: member.user_id,
         groupId: group.id,
         type: 'trade_group_announcement',
         announcementId: announcement.id,
         dedupeKey: `announcement:${announcement.id}:${member.user_id}`
       });
+      if (createdNotification) triggerPushForTradeGroupNotification(db, createdNotification, { group });
     });
   saveDB(db);
   res.status(201).json({ announcement });
