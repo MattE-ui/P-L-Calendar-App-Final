@@ -2630,6 +2630,21 @@ function hasValidNotificationConfig(configPayload) {
   return required.every((key) => typeof cfg[key] === 'string' && cfg[key].trim().length > 0);
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 async function ensureFirebaseMessagingReady(configPayload) {
   if (notificationState.messaging) {
     return notificationState.messaging;
@@ -2781,10 +2796,31 @@ async function registerNotificationToken({ force = false } = {}) {
     setNotificationDebugState('service worker registration started');
     notificationDebug('Service worker registration found/created: started');
     const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js');
+    if (!serviceWorkerRegistration) {
+      throw new Error('Service worker registration failed.');
+    }
     setNotificationDebugState('service worker registration found/created');
     notificationDebug('Service worker registration completed', { scope: serviceWorkerRegistration.scope });
     const swReady = await navigator.serviceWorker.ready;
+    if (!swReady) {
+      throw new Error('Service worker ready state unavailable.');
+    }
     notificationDebug('Service worker ready', { scope: swReady?.scope || serviceWorkerRegistration.scope });
+    const vapidKeyString = (configPayload?.config?.vapidKey || '').trim();
+    notificationDebug('VAPID key string length before conversion', { length: vapidKeyString.length });
+    const vapidKeyUint8Array = urlBase64ToUint8Array(vapidKeyString);
+    notificationDebug('VAPID key Uint8Array length after conversion', { length: vapidKeyUint8Array.length });
+    setNotificationDebugState('push subscription preflight started');
+    const existingSubscription = await swReady.pushManager.getSubscription();
+    if (existingSubscription) {
+      notificationDebug('PushManager subscription already exists', { endpoint: existingSubscription.endpoint || '' });
+    } else {
+      await swReady.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidKeyUint8Array
+      });
+      notificationDebug('PushManager subscription succeeded');
+    }
     setNotificationDebugState('Firebase app initialization started');
     const messaging = await ensureFirebaseMessagingReady(configPayload);
     setNotificationDebugState('Firebase app initialized');
@@ -2801,7 +2837,7 @@ async function registerNotificationToken({ force = false } = {}) {
     setNotificationDebugState('getToken started');
     notificationDebug('getToken started', { permission: Notification.permission, force });
     const token = await messaging.getToken({
-      vapidKey: configPayload.config.vapidKey,
+      vapidKey: vapidKeyString,
       serviceWorkerRegistration: swReady
     });
     if (!token) {
