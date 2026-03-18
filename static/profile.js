@@ -83,6 +83,8 @@ const notificationState = {
   firebaseInitPromise: null,
   messaging: null,
   registerInFlight: false,
+  lastStep: 'idle',
+  lastError: '',
   categories: {
     criticalRiskAlerts: true,
     tradeAlerts: true,
@@ -2666,8 +2668,20 @@ function setNotificationMessage(status = '', error = '') {
   if (errorEl) errorEl.textContent = error;
 }
 
+function setNotificationDebugState(step = 'idle', error = '') {
+  notificationState.lastStep = step;
+  notificationState.lastError = error || '';
+  const stepEl = document.getElementById('notification-debug-step');
+  const errorEl = document.getElementById('notification-debug-error');
+  if (stepEl) stepEl.textContent = step;
+  if (errorEl) {
+    errorEl.textContent = notificationState.lastError ? ` · Error: ${notificationState.lastError}` : '';
+  }
+}
+
 function notificationDebug(step, details = {}) {
   console.info(`[Notifications] ${step}`, details);
+  setNotificationDebugState(step, details?.error || '');
 }
 
 function renderNotificationControls() {
@@ -2717,10 +2731,12 @@ function renderNotificationDevices(devices) {
 }
 
 async function loadNotificationDevices() {
+  setNotificationDebugState('refresh devices request started');
   notificationDebug('Device list refresh started');
   const payload = await api('/api/notifications/devices');
   renderNotificationDevices(payload.devices || []);
   renderNotificationControls();
+  setNotificationDebugState('refresh devices request completed');
   notificationDebug('Device list refresh completed', { count: Array.isArray(payload.devices) ? payload.devices.length : 0 });
 }
 
@@ -2742,22 +2758,31 @@ async function registerNotificationToken({ force = false } = {}) {
     return;
   }
   try {
-    notificationDebug('Permission state before token flow', { permission: Notification.permission });
+    notificationDebug('current Notification.permission', { permission: Notification.permission });
+    setNotificationDebugState('config fetch started');
     const configPayload = notificationState.config || await api('/api/notifications/config');
     notificationState.config = configPayload;
+    setNotificationDebugState('config fetched successfully');
     notificationDebug('Config loaded', {
       supported: !!configPayload?.supported,
       missingKeys: Array.isArray(configPayload?.missingKeys) ? configPayload.missingKeys : []
     });
     if (!configPayload?.supported || !hasValidNotificationConfig(configPayload)) {
       setNotificationMessage('', 'Server-side notification configuration is incomplete.');
+      setNotificationDebugState('config invalid', 'Server-side notification configuration is incomplete.');
       return;
     }
-    notificationDebug('Service worker registration started');
+    setNotificationDebugState('service worker registration started');
+    notificationDebug('Service worker registration found/created: started');
     const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js');
+    setNotificationDebugState('service worker registration found/created');
     notificationDebug('Service worker registration completed', { scope: serviceWorkerRegistration.scope });
+    setNotificationDebugState('Firebase app initialization started');
     const messaging = await ensureFirebaseMessagingReady(configPayload);
+    setNotificationDebugState('Firebase app initialized');
+    notificationDebug('Firebase app initialized');
     const swReady = await navigator.serviceWorker.ready;
+    notificationDebug('messaging initialized', { hasMessaging: !!messaging });
     if (force && typeof messaging.deleteToken === 'function') {
       try {
         notificationDebug('Force re-register requested: deleting existing token before getToken');
@@ -2766,12 +2791,19 @@ async function registerNotificationToken({ force = false } = {}) {
         notificationDebug('Token delete failed before re-register; continuing', { error: deleteError?.message || String(deleteError) });
       }
     }
+    setNotificationDebugState('getToken started');
     notificationDebug('getToken started', { permission: Notification.permission, force });
     const token = await messaging.getToken({
       vapidKey: configPayload.config.vapidKey,
       serviceWorkerRegistration: swReady
     });
-    notificationDebug('getToken finished', { hasToken: !!token, tokenLength: token?.length || 0 });
+    if (!token) {
+      setNotificationDebugState('getToken returned empty', 'Unable to fetch a push token.');
+      notificationDebug('getToken returned empty', { tokenLength: token?.length || 0 });
+    } else {
+      setNotificationDebugState('getToken succeeded');
+      notificationDebug('getToken succeeded', { tokenLength: token?.length || 0 });
+    }
     if (!token) {
       setNotificationMessage('', 'Unable to fetch a push token. Try again.');
       return;
@@ -2784,20 +2816,40 @@ async function registerNotificationToken({ force = false } = {}) {
       userAgent: navigator.userAgent,
       permissionState: Notification.permission,
       installedAsPwa: !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone),
+      preferences: notificationState.categories,
       categories: notificationState.categories,
       isActive: true
     };
-    notificationDebug('Register API request started', { deviceId: payload.deviceId, permissionState: payload.permissionState });
-    await api('/api/notifications/devices/register', {
+    setNotificationDebugState('register-device API request started');
+    notificationDebug('Register API request started', { endpoint: '/api/notifications/devices/register', deviceId: payload.deviceId, permissionState: payload.permissionState });
+    const registerResponse = await fetch('/api/notifications/devices/register', {
+      credentials: 'include',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    notificationDebug('Register API request completed', { ok: true });
+    let registerBody = {};
+    try {
+      registerBody = await registerResponse.json();
+    } catch (e) {
+      registerBody = { error: 'Unable to parse register-device JSON response.' };
+    }
+    notificationDebug('register-device API response status/body', {
+      status: registerResponse.status,
+      ok: registerResponse.ok,
+      body: registerBody
+    });
+    if (!registerResponse.ok) {
+      const registerError = registerBody?.error || 'Device registration failed.';
+      setNotificationDebugState('register-device API failed', registerError);
+      throw Object.assign(new Error(registerError), { data: registerBody });
+    }
+    setNotificationDebugState('register-device API response received');
     setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
     await loadNotificationDevices();
   } catch (error) {
-    notificationDebug('Registration flow failed', { error: error?.message || String(error) });
+    notificationDebug('Registration flow failed', { error: error?.data?.error || error?.message || String(error) });
+    setNotificationDebugState('registration flow failed', error?.data?.error || error?.message || 'Notification registration failed.');
     setNotificationMessage('', error?.data?.error || error?.message || 'Notification registration failed.');
   } finally {
     notificationState.registerInFlight = false;
@@ -3014,9 +3066,10 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.getElementById('notification-enable-btn')?.addEventListener('click', async () => {
+    setNotificationDebugState('Enable notifications click handler entered');
     notificationDebug('Enable button clicked');
     try {
-      notificationDebug('Permission state before prompt', { permission: Notification.permission });
+      notificationDebug('current Notification.permission', { permission: Notification.permission });
       if (Notification.permission === 'default') {
         const permission = await Notification.requestPermission();
         notificationDebug('Permission state after prompt', { permission });
@@ -3035,6 +3088,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.getElementById('notification-reregister-btn')?.addEventListener('click', async () => {
+    setNotificationDebugState('Re-register token click handler entered');
     notificationDebug('Re-register button clicked');
     try {
       await registerNotificationToken({ force: true });
@@ -3054,6 +3108,7 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.getElementById('notification-save-prefs-btn')?.addEventListener('click', async () => {
+    setNotificationDebugState('Save preferences click handler entered');
     if (!notificationState.activeDeviceId) {
       setNotificationMessage('', 'Enable notifications first for this device.');
       return;
@@ -3070,6 +3125,7 @@ window.addEventListener('DOMContentLoaded', () => {
     notificationState.categories = categories;
     const isActive = !!document.getElementById('notif-master-enabled')?.checked;
     try {
+      notificationDebug('Save preferences API request started', { deviceId: notificationState.activeDeviceId });
       await api(`/api/notifications/devices/${encodeURIComponent(notificationState.activeDeviceId)}/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -3079,22 +3135,28 @@ window.addEventListener('DOMContentLoaded', () => {
           permissionState: Notification.permission
         })
       });
+      notificationDebug('Save preferences API request completed', { ok: true });
       setNotificationMessage('Notification preferences saved.', '');
       await loadNotificationDevices();
     } catch (error) {
-      setNotificationMessage('', 'Unable to save notification preferences.');
+      notificationDebug('Save preferences failed', { error: error?.data?.error || error?.message || String(error) });
+      setNotificationMessage('', error?.data?.error || 'Unable to save notification preferences.');
     }
   });
   document.getElementById('notification-test-btn')?.addEventListener('click', async () => {
+    setNotificationDebugState('Send test notification click handler entered');
     notificationDebug('Test notification button clicked', { deviceId: notificationState.activeDeviceId || null });
     try {
+      notificationDebug('Send test API request started', { endpoint: '/api/notifications/test' });
       await api('/api/notifications/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId: notificationState.activeDeviceId || undefined })
       });
+      notificationDebug('Send test API request completed', { ok: true });
       setNotificationMessage('Push test sent to registered device(s). Check your OS notification tray.', '');
     } catch (error) {
+      notificationDebug('Send test notification failed', { error: error?.data?.error || error?.message || String(error) });
       setNotificationMessage('', error?.data?.error || 'Test notification failed.');
     }
   });

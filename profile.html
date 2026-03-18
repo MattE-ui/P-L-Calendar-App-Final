@@ -439,8 +439,14 @@
         <button id="notification-save-prefs-btn" class="ghost" type="button">Save preferences</button>
         <button id="notification-test-btn" class="ghost" type="button">Send test notification</button>
       </div>
+      <div class="helper">Test notification checks delivery to currently saved server-side devices only; it is not a substitute for successful registration.</div>
       <div id="notification-status" class="status-line"></div>
       <div id="notification-error" class="error"></div>
+      <div id="notification-debug-panel" class="helper">
+        <strong>Registration debug:</strong>
+        <span id="notification-debug-step">idle</span>
+        <span id="notification-debug-error"></span>
+      </div>
       <div id="notification-devices-list" class="investor-mini-list"></div>
       <div id="notification-ios-onboarding" class="helper is-hidden">
         iPhone/iPad web push requires Veracity installed as a Home Screen app.<br>
