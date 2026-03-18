@@ -677,6 +677,41 @@ function sanitizeTradeGroupMemberRow(db, member) {
   };
 }
 
+const ANNOUNCEMENT_PIPELINE_SEND_DEDUPE_WINDOW_MS = 30 * 60 * 1000;
+const announcementPipelineStageCounters = new Map();
+
+function nextAnnouncementStageCount(stage, { correlationId = '', announcementId = '', recipientUserId = '', deviceRowId = '' } = {}) {
+  const key = `${stage}|${correlationId || 'none'}|${announcementId || 'none'}|${recipientUserId || 'none'}|${deviceRowId || 'none'}`;
+  const next = (announcementPipelineStageCounters.get(key) || 0) + 1;
+  announcementPipelineStageCounters.set(key, next);
+  return next;
+}
+
+function logAnnouncementPipelineStage(stage, {
+  correlationId = null,
+  announcementId = null,
+  recipientUserId = null,
+  deviceRowId = null,
+  tokenFingerprint = null,
+  sourceHandler = null,
+  details = {}
+} = {}) {
+  const at = new Date().toISOString();
+  const stageCount = nextAnnouncementStageCount(stage, { correlationId, announcementId, recipientUserId, deviceRowId });
+  console.info('[TradeGroup][AnnouncementPipeline][Stage]', {
+    stage,
+    stageCount,
+    at,
+    correlationId: correlationId || null,
+    announcementId: announcementId || null,
+    recipientUserId: recipientUserId || null,
+    deviceRowId: deviceRowId || null,
+    tokenFingerprint: tokenFingerprint || null,
+    sourceHandler: sourceHandler || null,
+    ...details
+  });
+}
+
 
 function createTradeGroupNotification(db, { userId, groupId, type, alertId = null, inviteId = null, announcementId = null, dedupeKey = '', correlationId = '' }) {
   const normalizedType = normalizeTradeGroupNotificationType(type);
@@ -727,6 +762,18 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     dedupeKey: dedupeKey || null,
     correlationId: correlationId || null
   });
+  if (normalizedType === 'trade_group_announcement') {
+    logAnnouncementPipelineStage('2.in_app_banner_notification_created', {
+      correlationId: correlationId || null,
+      announcementId: announcementId || null,
+      recipientUserId: userId,
+      sourceHandler: 'server.js#createTradeGroupNotification',
+      details: {
+        notificationId: notification.id,
+        groupId
+      }
+    });
+  }
   return notification;
 }
 
@@ -823,6 +870,19 @@ function triggerPushForTradeGroupNotification(db, notification, { group = null }
     eventType: pushConfig.eventType,
     correlationId: pushConfig.context?.correlationId || notification.correlation_id || null
   });
+  if (pushConfig.eventType === 'trade_group_announcement') {
+    logAnnouncementPipelineStage('3.push_event_created', {
+      correlationId: pushConfig.context?.correlationId || notification.correlation_id || null,
+      announcementId: notification.announcement_id || pushConfig.context?.announcementId || null,
+      recipientUserId: notification.user_id || null,
+      sourceHandler: 'server.js#triggerPushForTradeGroupNotification',
+      details: {
+        notificationId: notification.id,
+        groupId: notification.group_id || null,
+        eventType: pushConfig.eventType
+      }
+    });
+  }
   sendNotificationEvent(db, {
     userId: notification.user_id,
     eventType: pushConfig.eventType,
@@ -2429,6 +2489,18 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     && (!criticalOnly || category === 'criticalRiskAlerts')
     && !!item.categories?.[category]);
   if (eventType === 'trade_group_announcement') {
+    logAnnouncementPipelineStage('5.candidate_devices_resolved', {
+      correlationId,
+      announcementId: context?.announcementId || null,
+      recipientUserId: userId,
+      sourceHandler: 'server.js#sendNotificationEvent',
+      details: {
+        candidateDeviceCount: eligibleDevices.length,
+        eventId: payload.eventId
+      }
+    });
+  }
+  if (eventType === 'trade_group_announcement') {
     console.info('[TradeGroup][AnnouncementRecipientRowsBeforeSend]', {
       announcementId: context?.announcementId || null,
       eventId: context?.eventId || null,
@@ -2440,6 +2512,21 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     });
   }
   eligibleDevices.forEach((device) => {
+    if (eventType === 'trade_group_announcement') {
+      logAnnouncementPipelineStage('5.candidate_devices_resolved', {
+        correlationId,
+        announcementId: context?.announcementId || null,
+        recipientUserId: userId,
+        deviceRowId: device.id,
+        tokenFingerprint: fingerprintToken(device.token),
+        sourceHandler: 'server.js#sendNotificationEvent',
+        details: {
+          platform: device.platform || null,
+          browser: device.browser || null,
+          finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+        }
+      });
+    }
     console.info('[Notifications][SendCandidate]', {
       eventType,
       recipientUserId: userId,
@@ -2463,6 +2550,21 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   for (const device of eligibleDevices) {
     const tokenKey = fingerprintToken(device.token);
     if (tokenKey && seenTokens.has(tokenKey)) {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('6.final_deduped_targets_resolved', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: tokenKey,
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            selected: false,
+            reason: 'duplicate-token',
+            finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+          }
+        });
+      }
       console.info('[Notifications] Skipping duplicate target prior to send.', {
         eventType,
         userId,
@@ -2490,6 +2592,21 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     }
     const identityKey = normalizeDeviceTargetIdentity(device);
     if (identityKey && seenIdentities.has(identityKey)) {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('6.final_deduped_targets_resolved', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            selected: false,
+            reason: 'duplicate-normalized-identity',
+            finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+          }
+        });
+      }
       console.info('[Notifications] Skipping duplicate target prior to send.', {
         eventType,
         userId,
@@ -2517,6 +2634,21 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     }
     const physicalTargetKey = buildFinalPhysicalTargetKey(device);
     if (physicalTargetKey && seenPhysicalTargets.has(physicalTargetKey)) {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('6.final_deduped_targets_resolved', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            selected: false,
+            reason: 'duplicate-physical-target-key',
+            finalPhysicalTargetKey: physicalTargetKey
+          }
+        });
+      }
       console.info('[Notifications] Skipping duplicate target prior to send.', {
         eventType,
         userId,
@@ -2546,6 +2678,19 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     if (identityKey) seenIdentities.add(identityKey);
     if (physicalTargetKey) seenPhysicalTargets.add(physicalTargetKey);
     if (eventType === 'trade_group_announcement') {
+      logAnnouncementPipelineStage('6.final_deduped_targets_resolved', {
+        correlationId,
+        announcementId: context?.announcementId || null,
+        recipientUserId: userId,
+        deviceRowId: device.id,
+        tokenFingerprint: fingerprintToken(device.token),
+        sourceHandler: 'server.js#sendNotificationEvent',
+        details: {
+          selected: true,
+          reason: 'selected-after-dedupe',
+          finalPhysicalTargetKey: physicalTargetKey
+        }
+      });
       console.info('[TradeGroup][AnnouncementFinalTarget]', {
         announcementId: context?.announcementId || null,
         recipientUserId: userId,
@@ -2563,8 +2708,20 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     }
     dedupedDevices.push(device);
   }
+  if (eventType === 'trade_group_announcement') {
+    logAnnouncementPipelineStage('6.final_deduped_targets_resolved', {
+      correlationId,
+      announcementId: context?.announcementId || null,
+      recipientUserId: userId,
+      sourceHandler: 'server.js#sendNotificationEvent',
+      details: {
+        finalTargetCount: dedupedDevices.length,
+        eventId: payload.eventId
+      }
+    });
+  }
   const nowIso = new Date().toISOString();
-  const dedupeWindowMs = 2 * 60 * 1000;
+  const dedupeWindowMs = ANNOUNCEMENT_PIPELINE_SEND_DEDUPE_WINDOW_MS;
   const log = {
     id: crypto.randomUUID(),
     userId,
@@ -2585,13 +2742,23 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     attemptedAt: nowIso,
     deliveries: []
   };
+  db.notificationEvents.push(log);
+  if (eventType === 'trade_group_announcement') {
+    logAnnouncementPipelineStage('4.notification_event_persisted', {
+      correlationId,
+      announcementId: context?.announcementId || null,
+      recipientUserId: userId,
+      sourceHandler: 'server.js#sendNotificationEvent',
+      details: {
+        eventLogId: log.id,
+        deliveriesPersisted: log.deliveries.length,
+        persistedAt: nowIso
+      }
+    });
+  }
   for (const device of dedupedDevices) {
-    const dedupeKey = [
-      eventType,
-      context?.announcementId || context?.eventId || payload.tag || '',
-      userId,
-      buildPushTargetKey(device)
-    ].join(':');
+    const finalPhysicalTarget = buildFinalPhysicalTargetKey(device) || buildPushTargetKey(device);
+    const dedupeKey = `hard:${correlationId}:${userId}:${finalPhysicalTarget || 'unknown_target'}`;
     const existingDedupe = db.notificationPushDedupe.find((item) => item.key === dedupeKey);
     const nowTs = Date.now();
     const shouldSkipForDedupe = existingDedupe && (nowTs - Date.parse(existingDedupe.sentAt || 0)) < dedupeWindowMs;
@@ -2613,6 +2780,22 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
       });
     }
     if (shouldSkipForDedupe) {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('7.actual_provider_send_invoked', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            invoked: false,
+            skipped: true,
+            reason: 'hard_dedupe_gate',
+            dedupeKey
+          }
+        });
+      }
       log.deliveries.push({
         deviceId: device.id,
         ok: true,
@@ -2624,7 +2807,36 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
       continue;
     }
     try {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('7.actual_provider_send_invoked', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            invoked: true,
+            skipped: false,
+            dedupeKey
+          }
+        });
+      }
       const messageId = await sendNotificationToDevice(db, device, payload);
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('8.provider_response_returned', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            ok: !!messageId,
+            messageId: messageId || null
+          }
+        });
+      }
       if (!messageId) {
         log.deliveries.push({
           deviceId: device.id,
@@ -2646,11 +2858,27 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
           announcementId: context?.announcementId || null,
           recipientUserId: userId,
           deviceId: device.id,
+          finalPhysicalTarget,
           normalizedTarget: buildPushTargetKey(device),
           sentAt: new Date().toISOString()
         });
       }
     } catch (error) {
+      if (eventType === 'trade_group_announcement') {
+        logAnnouncementPipelineStage('8.provider_response_returned', {
+          correlationId,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          tokenFingerprint: fingerprintToken(device.token),
+          sourceHandler: 'server.js#sendNotificationEvent',
+          details: {
+            ok: false,
+            error: error?.message || String(error),
+            code: String(error?.code || '')
+          }
+        });
+      }
       device.lastErrorAt = new Date().toISOString();
       device.updatedAt = device.lastErrorAt;
       const code = String(error?.code || '');
@@ -2671,7 +2899,6 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   }
   const cutoffTs = Date.now() - (24 * 60 * 60 * 1000);
   db.notificationPushDedupe = db.notificationPushDedupe.filter((item) => Date.parse(item.sentAt || 0) >= cutoffTs);
-  db.notificationEvents.push(log);
   console.info('[Notifications][Pipeline] Notification event persisted.', {
     correlationId,
     eventLogId: log.id,
@@ -9858,6 +10085,16 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
     announcementId: announcement.id,
     groupId: group.id,
     leaderUserId: req.username
+  });
+  logAnnouncementPipelineStage('1.announcement_created', {
+    correlationId,
+    announcementId: announcement.id,
+    recipientUserId: null,
+    sourceHandler: 'server.js#POST /api/social/trade-groups/:groupId/announcements',
+    details: {
+      groupId: group.id,
+      leaderUserId: req.username
+    }
   });
   getTradeGroupMembers(db, group.id, { status: 'active' })
     .filter(member => member.user_id !== req.username)
