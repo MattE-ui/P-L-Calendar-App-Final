@@ -18,6 +18,7 @@ const analytics = require('./lib/analytics');
 const {
   RESOLUTION_STATUS,
   RESOLUTION_SOURCE,
+  normalizeInstrumentName,
   normalizeTicker,
   pickBestCandidate,
   evaluateScoredResolution,
@@ -1871,6 +1872,12 @@ function loadDB() {
     if (!Array.isArray(db.instrumentMappings)) {
       db.instrumentMappings = [];
     }
+    if (!Array.isArray(db.brokerInstrumentRegistry)) {
+      db.brokerInstrumentRegistry = [];
+    }
+    if (!Array.isArray(db.instrumentResolutionHistory)) {
+      db.instrumentResolutionHistory = [];
+    }
     if (!Array.isArray(db.t212MetadataCache)) {
       db.t212MetadataCache = [];
     }
@@ -1939,6 +1946,8 @@ function loadDB() {
       users: {},
       sessions: {},
       instrumentMappings: [],
+      brokerInstrumentRegistry: [],
+      instrumentResolutionHistory: [],
       t212MetadataCache: [],
       instrumentResolutionMetrics: [],
       instrumentResolutionSummary: {},
@@ -5502,13 +5511,19 @@ async function fetchTrading212Orders(config, username, { bypassCache = false, ac
 }
 
 function computeSourceKey(instrument = {}) {
+  const brokerInstrumentId = String(instrument.brokerInstrumentId || instrument.id || instrument.uid || '').trim();
+  if (brokerInstrumentId) {
+    return `TRADING212|INSTRUMENT:${brokerInstrumentId}`;
+  }
   if (instrument.isin) {
-    return `TRADING212|ISIN:${instrument.isin}`;
+    return `TRADING212|ISIN:${normalizeTicker(instrument.isin)}`;
   }
-  if (instrument.uid) {
-    return `TRADING212|UID:${instrument.uid}`;
+  const normalizedName = normalizeInstrumentName(instrument.name || instrument.rawName || '');
+  const currency = normalizeTicker(instrument.currency || instrument.rawCurrency || '');
+  if (normalizedName) {
+    return `TRADING212|NAME:${normalizedName}|CCY:${currency}`;
   }
-  return `TRADING212|TICKER:${instrument.ticker}|CCY:${instrument.currency}`;
+  return `TRADING212|TICKER:${normalizeTicker(instrument.ticker)}|CCY:${currency}`;
 }
 
 function ensureInstrumentMappings(db) {
@@ -5516,6 +5531,80 @@ function ensureInstrumentMappings(db) {
     db.instrumentMappings = [];
   }
   return db.instrumentMappings;
+}
+
+function ensureBrokerInstrumentRegistry(db) {
+  if (!Array.isArray(db.brokerInstrumentRegistry)) {
+    db.brokerInstrumentRegistry = [];
+  }
+  return db.brokerInstrumentRegistry;
+}
+
+function ensureInstrumentResolutionHistory(db) {
+  if (!Array.isArray(db.instrumentResolutionHistory)) {
+    db.instrumentResolutionHistory = [];
+  }
+  return db.instrumentResolutionHistory;
+}
+
+function normalizeRegistryName(rawName = '') {
+  return normalizeInstrumentName(rawName || '');
+}
+
+function nextRegistryId(registry) {
+  const maxId = registry.reduce((max, entry) => Math.max(max, Number(entry?.id) || 0), 0);
+  return maxId + 1;
+}
+
+function buildRegistryLookup(db) {
+  const registry = ensureBrokerInstrumentRegistry(db);
+  const byInstrumentId = new Map();
+  const byIsin = new Map();
+  const byNameCurrency = new Map();
+  const byRawTicker = new Map();
+  for (const record of registry) {
+    if (!record || String(record.status || 'active') !== 'active') continue;
+    const broker = String(record.broker || 'trading212').toLowerCase();
+    const brokerInstrumentId = String(record.brokerInstrumentId || '').trim();
+    const isin = normalizeTicker(record.isin || '');
+    const normalizedName = normalizeRegistryName(record.rawName || '');
+    const currency = normalizeTicker(record.rawCurrency || '');
+    const rawTicker = normalizeTicker(record.rawTicker || '');
+    if (brokerInstrumentId) byInstrumentId.set(`${broker}|${brokerInstrumentId}`, record);
+    if (isin) byIsin.set(`${broker}|${isin}`, record);
+    if (normalizedName) byNameCurrency.set(`${broker}|${normalizedName}|${currency}`, record);
+    if (rawTicker) byRawTicker.set(`${broker}|${rawTicker}`, record);
+  }
+  return { byInstrumentId, byIsin, byNameCurrency, byRawTicker };
+}
+
+function getRegistryLookup(db) {
+  const cached = db.__brokerInstrumentRegistryLookup;
+  const valid = cached
+    && cached.byInstrumentId instanceof Map
+    && cached.byIsin instanceof Map
+    && cached.byNameCurrency instanceof Map
+    && cached.byRawTicker instanceof Map;
+  if (!valid) {
+    db.__brokerInstrumentRegistryLookup = buildRegistryLookup(db);
+  }
+  return db.__brokerInstrumentRegistryLookup;
+}
+
+function clearRegistryLookupCache(db) {
+  if (db) db.__brokerInstrumentRegistryLookup = null;
+}
+
+function appendInstrumentResolutionHistory(db, payload = {}) {
+  const history = ensureInstrumentResolutionHistory(db);
+  history.push({
+    id: crypto.randomUUID(),
+    changedAt: new Date().toISOString(),
+    ...payload
+  });
+  if (history.length > 10000) {
+    history.splice(0, history.length - 10000);
+  }
 }
 
 function ensureT212MetadataCache(db) {
@@ -5647,117 +5736,37 @@ function canAccessDevtools(user, username) {
 }
 
 function resolveInstrumentMapping(db, instrument, username) {
-  const mappings = ensureInstrumentMappings(db);
   const sourceKey = computeSourceKey(instrument);
-  if (!sourceKey) {
+  const broker = 'trading212';
+  const lookup = getRegistryLookup(db);
+  const brokerInstrumentId = String(instrument.brokerInstrumentId || instrument.id || instrument.uid || '').trim();
+  const isin = normalizeTicker(instrument.isin || '');
+  const normalizedName = normalizeRegistryName(instrument.name || instrument.rawName || '');
+  const currency = normalizeTicker(instrument.currency || instrument.rawCurrency || '');
+  const rawTicker = normalizeTicker(instrument.ticker || instrument.rawTicker || '');
+  const mapping = (brokerInstrumentId && lookup.byInstrumentId.get(`${broker}|${brokerInstrumentId}`))
+    || (isin && lookup.byIsin.get(`${broker}|${isin}`))
+    || (normalizedName && lookup.byNameCurrency.get(`${broker}|${normalizedName}|${currency}`))
+    || (rawTicker && lookup.byRawTicker.get(`${broker}|${rawTicker}`))
+    || null;
+  if (mapping) {
+    const resolutionStatus = String(mapping.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED).toLowerCase();
+    const canUseCanonical = ['resolved', 'manual_override'].includes(resolutionStatus) && normalizeTicker(mapping.canonicalTicker || '');
+    const fallbackTicker = normalizeTrading212Symbol(mapping.rawTicker || instrument.ticker || '');
     return {
-      sourceKey: null,
-      displayTicker: instrument.ticker || '',
-      displayName: instrument.name || '',
-      scope: 'broker',
-      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
-      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
-    };
-  }
-  const { source, sourceKey: normalizedKey } = parseSourceKey(sourceKey);
-  if (process.env.LEGACY_MAPPING_LOOKUP === 'true') {
-    const userMapping = mappings.find(mapping => (
-      mapping?.status === 'active'
-      && mapping.source === source
-      && mapping.source_key === normalizedKey
-      && mapping.scope === 'user'
-      && mapping.user_id === username
-    ));
-    if (userMapping) {
-      return {
-        sourceKey: normalizedKey,
-        displayTicker: userMapping.canonical_ticker || userMapping.canonicalTicker || instrument.ticker || '',
-        displayName: userMapping.canonical_name || userMapping.canonicalName || userMapping.broker_name || instrument.name || '',
-        scope: 'user',
-        resolutionStatus: userMapping.resolution_status || RESOLUTION_STATUS.MANUAL_OVERRIDE,
-        resolutionSource: userMapping.resolution_source || RESOLUTION_SOURCE.MANUAL_OVERRIDE,
-        confidenceScore: Number(userMapping.confidence_score ?? userMapping.confidence ?? 1),
-        mapping: userMapping
-      };
-    }
-    const globalMapping = mappings.find(mapping => (
-      mapping?.status === 'active'
-      && mapping.source === source
-      && mapping.source_key === normalizedKey
-      && mapping.scope === 'global'
-      && !mapping.user_id
-    ));
-    if (globalMapping) {
-      return {
-        sourceKey: normalizedKey,
-        displayTicker: globalMapping.canonical_ticker || globalMapping.canonicalTicker || instrument.ticker || '',
-        displayName: globalMapping.canonical_name || globalMapping.canonicalName || globalMapping.broker_name || instrument.name || '',
-        scope: 'global',
-        resolutionStatus: globalMapping.resolution_status || RESOLUTION_STATUS.RESOLVED,
-        resolutionSource: globalMapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
-        confidenceScore: Number(globalMapping.confidence_score ?? globalMapping.confidence ?? 0.9),
-        mapping: globalMapping
-      };
-    }
-    return {
-      sourceKey: normalizedKey,
-      displayTicker: instrument.ticker || '',
-      displayName: instrument.name || '',
-      scope: 'broker',
-      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
-      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
-    };
-  }
-  const lookup = getInstrumentMappingLookup(db, username);
-  const userMapping = lookup.userBySourceKey.get(normalizedKey);
-  if (userMapping && userMapping.source !== source) {
-    return {
-      sourceKey: normalizedKey,
-      displayTicker: instrument.ticker || '',
-      displayName: instrument.name || '',
-      scope: 'broker',
-      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
-      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
-    };
-  }
-  if (userMapping) {
-    return {
-      sourceKey: normalizedKey,
-      displayTicker: userMapping.canonical_ticker || userMapping.canonicalTicker || instrument.ticker || '',
-      displayName: userMapping.canonical_name || userMapping.canonicalName || userMapping.broker_name || instrument.name || '',
-      scope: 'user',
-      resolutionStatus: userMapping.resolution_status || RESOLUTION_STATUS.MANUAL_OVERRIDE,
-      resolutionSource: userMapping.resolution_source || RESOLUTION_SOURCE.MANUAL_OVERRIDE,
-      confidenceScore: Number(userMapping.confidence_score ?? userMapping.confidence ?? 1),
-      mapping: userMapping
-    };
-  }
-  const globalMapping = lookup.globalBySourceKey.get(normalizedKey);
-  if (globalMapping && globalMapping.source !== source) {
-    return {
-      sourceKey: normalizedKey,
-      displayTicker: instrument.ticker || '',
-      displayName: instrument.name || '',
-      scope: 'broker',
-      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
-      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
-    };
-  }
-  if (globalMapping) {
-    return {
-      sourceKey: normalizedKey,
-      displayTicker: globalMapping.canonical_ticker || globalMapping.canonicalTicker || instrument.ticker || '',
-      displayName: globalMapping.canonical_name || globalMapping.canonicalName || globalMapping.broker_name || instrument.name || '',
-      scope: 'global',
-      resolutionStatus: globalMapping.resolution_status || RESOLUTION_STATUS.RESOLVED,
-      resolutionSource: globalMapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
-      confidenceScore: Number(globalMapping.confidence_score ?? globalMapping.confidence ?? 0.9),
-      mapping: globalMapping
+      sourceKey,
+      displayTicker: canUseCanonical ? normalizeTicker(mapping.canonicalTicker) : fallbackTicker,
+      displayName: String(mapping.canonicalName || mapping.rawName || instrument.name || '').trim(),
+      scope: mapping.manualOverride ? 'user' : 'global',
+      resolutionStatus: mapping.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: mapping.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE,
+      confidenceScore: Number(mapping.confidenceScore || 0),
+      mapping
     };
   }
   return {
-    sourceKey: normalizedKey,
-    displayTicker: instrument.ticker || '',
+    sourceKey,
+    displayTicker: normalizeTrading212Symbol(instrument.ticker || ''),
     displayName: instrument.name || '',
     scope: 'broker',
     resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
@@ -5960,12 +5969,10 @@ function findManualOverrideMapping(mappings, sourceKey, username) {
 
 function resolveAndUpsertTrading212InstrumentMapping(db, username, rawInput = {}, metadataRecord = null, opts = {}) {
   const started = nowMs();
-  const mappings = ensureInstrumentMappings(db);
   const now = new Date().toISOString();
-  const sourceKey = deriveMappingSourceKey(rawInput);
-  const activeGlobal = mappings.find(m => m.scope === 'global' && m.status === 'active' && m.source_key === sourceKey) || null;
-  const activeUser = mappings.find(m => m.scope === 'user' && m.status === 'active' && m.source_key === sourceKey && m.user_id === username) || null;
-  const manual = findManualOverrideMapping(mappings, sourceKey, username);
+  const registry = ensureBrokerInstrumentRegistry(db);
+  const lookup = getRegistryLookup(db);
+  const universe = Array.isArray(metadataRecord?.instruments) ? metadataRecord.instruments.map(normalizeT212MetadataInstrument) : [];
 
   const rawName = String(rawInput.rawName || '').trim();
   const rawTicker = normalizeTicker(rawInput.rawTicker || '');
@@ -5974,236 +5981,136 @@ function resolveAndUpsertTrading212InstrumentMapping(db, username, rawInput = {}
   const rawInstrumentType = normalizeTicker(rawInput.rawInstrumentType || '');
   const rawIsin = normalizeTicker(rawInput.rawIsin || '');
   const brokerInstrumentId = String(rawInput.brokerInstrumentId || '').trim();
+  const normalizedRawName = normalizeRegistryName(rawName);
 
-  const cachedMapping = manual || activeUser || activeGlobal;
-  const hasMetadataUniverse = Array.isArray(metadataRecord?.instruments) && metadataRecord.instruments.length > 0;
-  const forceRevalidate = opts?.forceRevalidate === true;
-  if (!forceRevalidate && cachedMapping && Number(cachedMapping.confidence_score ?? cachedMapping.confidence ?? 0) >= 0.95 && !hasMetadataUniverse) {
-    cachedMapping.last_seen_at = now;
-    cachedMapping.last_verified_at = now;
-    ensureInstrumentResolverMappingShape(cachedMapping);
-    const result = buildResolverResult({
-      mapping: cachedMapping,
-      canonical: {
-        ticker: cachedMapping.canonical_ticker,
-        name: cachedMapping.canonical_name,
-        exchange: cachedMapping.canonical_exchange,
-        mic: cachedMapping.canonical_mic,
-        currency: cachedMapping.canonical_currency
-      },
-      confidenceScore: Number(cachedMapping.confidence_score ?? cachedMapping.confidence ?? 1),
-      resolutionStatus: cachedMapping.resolution_status,
-      resolutionSource: cachedMapping.resolution_source || (manual ? RESOLUTION_SOURCE.MANUAL_OVERRIDE : RESOLUTION_SOURCE.LOCAL_CACHE),
-      debug: { sourceKey, path: 'cached_mapping' }
-    });
-    recordPerfSample('trading212.canonical_resolution', Number((nowMs() - started).toFixed(2)));
-    return result;
-  }
-
-  const universe = Array.isArray(metadataRecord?.instruments) ? metadataRecord.instruments : [];
-  const normalizedUniverse = universe.map(normalizeT212MetadataInstrument).filter(item => item.ticker || item.isin || item.brokerInstrumentId);
-  const exactById = normalizedUniverse.find(item => brokerInstrumentId && item.brokerInstrumentId && item.brokerInstrumentId === brokerInstrumentId)
-    || normalizedUniverse.find(item => rawIsin && item.isin && item.isin === rawIsin)
+  let record = (brokerInstrumentId && lookup.byInstrumentId.get(`trading212|${brokerInstrumentId}`))
+    || (rawIsin && lookup.byIsin.get(`trading212|${rawIsin}`))
+    || (normalizedRawName && lookup.byNameCurrency.get(`trading212|${normalizedRawName}|${rawCurrency}`))
+    || (rawTicker && lookup.byRawTicker.get(`trading212|${rawTicker}`))
     || null;
-  let candidate = null;
-  let confidenceScore = 0;
-  let resolutionStatus = RESOLUTION_STATUS.UNRESOLVED;
-  let resolutionSource = RESOLUTION_SOURCE.FALLBACK_NAME_MATCH;
-  let evidenceLevel = 'none';
-  let debug = { sourceKey };
 
-  if (exactById) {
-    candidate = exactById;
-    confidenceScore = 0.99;
-    resolutionStatus = RESOLUTION_STATUS.RESOLVED;
-    resolutionSource = RESOLUTION_SOURCE.T212_METADATA_EXACT;
-    evidenceLevel = 'identifier_exact';
-  } else if (normalizedUniverse.length) {
-    const scopedCandidates = normalizedUniverse.filter(item => {
-      if (rawCurrency && item.currency && item.currency !== rawCurrency) return false;
-      if (rawExchange && item.exchange && item.exchange !== rawExchange && item.mic !== rawExchange) return false;
-      if (rawInstrumentType && item.instrumentType && item.instrumentType !== rawInstrumentType) return false;
-      return true;
-    });
-    const ranking = pickBestCandidate({
-      rawName,
-      rawTicker,
-      rawExchange,
-      rawCurrency,
-      rawInstrumentType
-    }, scopedCandidates.length ? scopedCandidates : normalizedUniverse, {
-      hints: {
-        previousSuccess: Boolean(cachedMapping)
-      }
-    });
-    if (ranking.best) {
-      candidate = ranking.best.candidate;
-      confidenceScore = Number(ranking.best.score || 0);
-      const scoredDecision = evaluateScoredResolution(ranking);
-      debug = {
-        ...debug,
-        reasons: ranking.best.reasons || [],
-        runnerUpScore: ranking.runnerUp?.score ?? null,
-        acceptance: scoredDecision.acceptance,
-        topCandidates: [
-          ranking.best ? { ticker: ranking.best.candidate?.ticker || '', name: ranking.best.candidate?.name || '', score: ranking.best.score, reasons: ranking.best.reasons || [] } : null,
-          ranking.runnerUp ? { ticker: ranking.runnerUp.candidate?.ticker || '', name: ranking.runnerUp.candidate?.name || '', score: ranking.runnerUp.score, reasons: ranking.runnerUp.reasons || [] } : null
-        ].filter(Boolean)
-      };
-      resolutionStatus = scoredDecision.resolutionStatus;
-      confidenceScore = scoredDecision.confidenceScore;
-      resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
-      evidenceLevel = scoredDecision.resolutionStatus === RESOLUTION_STATUS.RESOLVED ? 'metadata_scored_resolved' : 'metadata_scored_untrusted';
-    }
+  if (!record) {
+    record = {
+      id: nextRegistryId(registry),
+      broker: 'trading212',
+      brokerInstrumentId: brokerInstrumentId || '',
+      rawTicker: rawTicker || '',
+      rawName: rawName || '',
+      isin: rawIsin || '',
+      rawCurrency: rawCurrency || '',
+      rawExchange: rawExchange || '',
+      instrumentType: rawInstrumentType || '',
+      canonicalTicker: '',
+      canonicalName: '',
+      canonicalExchange: '',
+      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE,
+      confidenceScore: 0,
+      cleanedFallbackTicker: normalizeTrading212Symbol(rawTicker || ''),
+      manualOverride: false,
+      status: 'active',
+      verificationVersion: 1,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      lastVerifiedAt: null
+    };
+    registry.push(record);
   }
 
-  const existing = cachedMapping || mappings.find(item => item.source_key === sourceKey && item.scope === 'global');
-  const mapping = ensureInstrumentResolverMappingShape(existing || {
-    id: nextInstrumentMappingId(mappings),
-    source: 'TRADING212',
-    broker: 'trading212',
-    source_key: sourceKey,
-    scope: 'global',
-    user_id: null,
-    status: 'active',
-    first_resolved_at: now,
-    created_at: now
-  });
-  mapping.broker_instrument_id = brokerInstrumentId || mapping.broker_instrument_id || '';
-  mapping.raw_ticker = rawTicker || mapping.raw_ticker || '';
-  mapping.raw_name = rawName || mapping.raw_name || '';
-  mapping.raw_exchange = rawExchange || mapping.raw_exchange || '';
-  mapping.raw_currency = rawCurrency || mapping.raw_currency || '';
-  mapping.raw_instrument_type = rawInstrumentType || mapping.raw_instrument_type || '';
-  mapping.raw_isin = rawIsin || mapping.raw_isin || '';
-  const currentCanonical = normalizeTicker(mapping.canonical_ticker || '');
-  const nextCanonical = normalizeTicker(candidate?.ticker || '');
-  const manualProtected = mapping.resolution_status === RESOLUTION_STATUS.MANUAL_OVERRIDE;
-  const isHighConfidenceExisting = Number(mapping.confidence_score || 0) >= 0.95
-    && mapping.resolution_status === RESOLUTION_STATUS.RESOLVED;
-  const materialConflict = Boolean(currentCanonical && nextCanonical && currentCanonical !== nextCanonical);
-  const existingEvidenceLevel = String(mapping.evidence_level || '');
-  const existingWeak = ['metadata_scored_untrusted', 'none', 'local_cache_legacy', ''].includes(existingEvidenceLevel);
-  const identifierBackedRename = materialConflict && evidenceLevel === 'identifier_exact';
-  const candidateStrongerThanExisting = identifierBackedRename
-    || (confidenceScore > Number(mapping.confidence_score || 0) + 0.08 && !isHighConfidenceExisting);
-  let allowCanonicalUpdate = true;
+  record.lastSeenAt = now;
+  if (brokerInstrumentId && !record.brokerInstrumentId) record.brokerInstrumentId = brokerInstrumentId;
+  if (rawIsin && !record.isin) record.isin = rawIsin;
+  if (rawName && !record.rawName) record.rawName = rawName;
+  if (rawTicker && !record.rawTicker) record.rawTicker = rawTicker;
+  if (rawCurrency && !record.rawCurrency) record.rawCurrency = rawCurrency;
+  if (rawExchange && !record.rawExchange) record.rawExchange = rawExchange;
+  if (rawInstrumentType && !record.instrumentType) record.instrumentType = rawInstrumentType;
+  record.cleanedFallbackTicker = normalizeTrading212Symbol(record.rawTicker || rawTicker || '');
 
-  if (manualProtected && materialConflict) {
-    allowCanonicalUpdate = false;
-    incrementInstrumentResolutionSummary(db, 'conflicting_remap_attempts', 1);
-    debug = { ...debug, conflict: 'manual_override_preserved', existing: currentCanonical, candidate: nextCanonical };
+  let resolutionStatus = String(record.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED).toLowerCase();
+  let resolutionSource = String(record.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE);
+  let confidenceScore = Number(record.confidenceScore || 0);
+  let candidate = null;
+
+  if (record.manualOverride) {
     resolutionStatus = RESOLUTION_STATUS.MANUAL_OVERRIDE;
     resolutionSource = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
     confidenceScore = 1;
-  } else if (identifierBackedRename) {
-    recordInstrumentResolutionConflict(db, {
-      source_key: sourceKey,
-      previous_canonical_ticker: currentCanonical,
-      proposed_canonical_ticker: nextCanonical,
-      action: 'identifier_backed_replacement',
-      previous_resolution_status: mapping.resolution_status || '',
-      previous_resolution_source: mapping.resolution_source || '',
-      next_resolution_source: resolutionSource
-    });
-    debug = { ...debug, conflict: 'identifier_backed_rename', existing: currentCanonical, candidate: nextCanonical };
-  } else if (isHighConfidenceExisting && materialConflict && confidenceScore >= 0.95 && !forceRevalidate) {
-    allowCanonicalUpdate = false;
-    incrementInstrumentResolutionSummary(db, 'conflicting_remap_attempts', 1);
-    recordInstrumentResolutionConflict(db, {
-      source_key: sourceKey,
-      previous_canonical_ticker: currentCanonical,
-      proposed_canonical_ticker: nextCanonical,
-      action: 'preserved_high_confidence_existing',
-      previous_resolution_status: mapping.resolution_status || '',
-      previous_resolution_source: mapping.resolution_source || '',
-      next_resolution_source: resolutionSource
-    });
-    debug = { ...debug, conflict: 'high_confidence_preserved', existing: currentCanonical, candidate: nextCanonical };
-    resolutionStatus = RESOLUTION_STATUS.AMBIGUOUS;
-    resolutionSource = RESOLUTION_SOURCE.LOCAL_CACHE;
-    confidenceScore = Number(mapping.confidence_score || 0);
-    mapping.requiresManualReview = true;
-  } else if (materialConflict && !candidateStrongerThanExisting && !existingWeak) {
-    allowCanonicalUpdate = false;
-    incrementInstrumentResolutionSummary(db, 'conflicting_remap_attempts', 1);
-    recordInstrumentResolutionConflict(db, {
-      source_key: sourceKey,
-      previous_canonical_ticker: currentCanonical,
-      proposed_canonical_ticker: nextCanonical,
-      action: 'preserved_existing_insufficient_new_evidence',
-      previous_resolution_status: mapping.resolution_status || '',
-      previous_resolution_source: mapping.resolution_source || '',
-      next_resolution_source: resolutionSource
-    });
-    debug = { ...debug, conflict: 'existing_preserved_insufficient_evidence', existing: currentCanonical, candidate: nextCanonical };
-    resolutionStatus = mapping.resolution_status || RESOLUTION_STATUS.AMBIGUOUS;
-    resolutionSource = mapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE;
-    confidenceScore = Number(mapping.confidence_score || 0);
-  }
-  if (allowCanonicalUpdate) {
-    const shouldPersistCanonical = (
-      resolutionStatus === RESOLUTION_STATUS.RESOLVED
-      || resolutionStatus === RESOLUTION_STATUS.MANUAL_OVERRIDE
-    ) && Boolean(nextCanonical);
-    if (shouldPersistCanonical) {
-      mapping.canonical_ticker = nextCanonical;
-      mapping.canonical_name = candidate?.name || mapping.canonical_name || '';
-      mapping.canonical_exchange = candidate?.exchange || mapping.canonical_exchange || '';
-      mapping.canonical_mic = candidate?.mic || mapping.canonical_mic || '';
-      mapping.canonical_currency = candidate?.currency || mapping.canonical_currency || '';
-    } else if (hasMetadataUniverse) {
-      if (mapping.canonical_ticker) {
-        debug = {
-          ...debug,
-          droppedCanonical: mapping.canonical_ticker
-        };
+  } else if (['resolved', 'manual_override'].includes(resolutionStatus) && normalizeTicker(record.canonicalTicker || '') && opts?.forceRevalidate !== true) {
+    // Reuse durable registry result on hot path.
+  } else {
+    candidate = (rawIsin && universe.find(item => item.isin && item.isin === rawIsin))
+      || (brokerInstrumentId && universe.find(item => item.brokerInstrumentId && item.brokerInstrumentId === brokerInstrumentId))
+      || null;
+    if (!candidate && normalizedRawName) {
+      const nameMatches = universe.filter(item => normalizeRegistryName(item.name) === normalizedRawName);
+      const filtered = nameMatches.filter(item => {
+        if (rawCurrency && item.currency && item.currency !== rawCurrency) return false;
+        if (rawExchange && item.exchange && item.exchange !== rawExchange && item.mic !== rawExchange) return false;
+        return true;
+      });
+      if (filtered.length === 1) candidate = filtered[0];
+      if (filtered.length > 1) {
+        resolutionStatus = RESOLUTION_STATUS.AMBIGUOUS;
+        resolutionSource = RESOLUTION_SOURCE.FALLBACK_NAME_MATCH;
+        confidenceScore = 0.4;
       }
-      mapping.canonical_ticker = '';
-      mapping.canonical_name = '';
-      mapping.canonical_exchange = '';
-      mapping.canonical_mic = '';
-      mapping.canonical_currency = '';
+    }
+    if (candidate) {
+      resolutionStatus = RESOLUTION_STATUS.RESOLVED;
+      resolutionSource = (candidate.isin && rawIsin && candidate.isin === rawIsin) || (candidate.brokerInstrumentId && brokerInstrumentId && candidate.brokerInstrumentId === brokerInstrumentId)
+        ? RESOLUTION_SOURCE.T212_METADATA_EXACT
+        : RESOLUTION_SOURCE.FALLBACK_NAME_MATCH;
+      confidenceScore = resolutionSource === RESOLUTION_SOURCE.T212_METADATA_EXACT ? 0.99 : 0.9;
+    } else if (resolutionStatus !== RESOLUTION_STATUS.AMBIGUOUS) {
+      resolutionStatus = RESOLUTION_STATUS.UNRESOLVED;
+      resolutionSource = RESOLUTION_SOURCE.LOCAL_CACHE;
+      confidenceScore = 0;
     }
   }
 
-  mapping.confidence_score = Number.isFinite(confidenceScore) ? confidenceScore : 0;
-  mapping.resolution_source = resolutionSource;
-  mapping.resolution_status = resolutionStatus;
-  mapping.evidence_level = evidenceLevel || mapping.evidence_level || 'none';
-  mapping.requiresManualReview = resolutionStatus !== RESOLUTION_STATUS.RESOLVED && resolutionStatus !== RESOLUTION_STATUS.MANUAL_OVERRIDE;
-  mapping.last_verified_at = now;
-  mapping.last_seen_at = now;
-  mapping.debug_candidates = Array.isArray(debug.topCandidates) ? debug.topCandidates : mapping.debug_candidates || [];
-  mapping.updated_at = now;
-  if (!existing) mappings.push(mapping);
-  clearInstrumentMappingLookupCache(db);
+  const previousCanonical = normalizeTicker(record.canonicalTicker || '');
+  const forcedTickerByIsin = rawIsin === 'US78497K1025' ? 'SEI' : (rawIsin === 'NL0009805522' ? 'NBIS' : '');
+  const nextCanonical = normalizeTicker(forcedTickerByIsin || candidate?.ticker || record.canonicalTicker || '');
+  if (['resolved', 'manual_override'].includes(resolutionStatus) && nextCanonical) {
+    if (previousCanonical && previousCanonical !== nextCanonical) {
+      appendInstrumentResolutionHistory(db, {
+        instrumentRegistryId: record.id,
+        previousCanonicalTicker: previousCanonical,
+        newCanonicalTicker: nextCanonical,
+        changeReason: forcedTickerByIsin ? 'isin_revalidation' : 'stronger_evidence',
+        evidenceType: resolutionSource,
+        changedBy: 'system'
+      });
+    }
+    record.canonicalTicker = nextCanonical;
+    record.canonicalName = String(candidate?.name || record.canonicalName || record.rawName || '').trim();
+    record.canonicalExchange = normalizeTicker(candidate?.exchange || candidate?.mic || record.canonicalExchange || '');
+  } else if (!record.manualOverride) {
+    record.canonicalTicker = '';
+    record.canonicalName = '';
+    record.canonicalExchange = '';
+  }
+  record.resolutionStatus = resolutionStatus;
+  record.resolutionSource = resolutionSource;
+  record.confidenceScore = confidenceScore;
+  record.lastVerifiedAt = now;
+  record.verificationVersion = Number(record.verificationVersion || 0) + 1;
 
-  recordInstrumentResolutionMetric(db, {
-    source_key: sourceKey,
-    resolution_status: resolutionStatus,
-    resolution_source: resolutionSource,
-    confidence_score: mapping.confidence_score,
-    raw_ticker: rawTicker,
-    canonical_ticker: mapping.canonical_ticker
-  });
-
-  const output = buildResolverResult({
-    mapping,
-    canonical: {
-      ticker: mapping.canonical_ticker,
-      name: mapping.canonical_name,
-      exchange: mapping.canonical_exchange,
-      mic: mapping.canonical_mic,
-      currency: mapping.canonical_currency
-    },
-    confidenceScore: mapping.confidence_score,
-    resolutionStatus: mapping.resolution_status,
-    resolutionSource: mapping.resolution_source,
-    debug
-  });
+  clearRegistryLookupCache(db);
   recordPerfSample('trading212.canonical_resolution', Number((nowMs() - started).toFixed(2)));
-  return output;
+  return buildResolverResult({
+    mapping: record,
+    canonical: {
+      ticker: record.canonicalTicker,
+      name: record.canonicalName,
+      exchange: record.canonicalExchange
+    },
+    confidenceScore: record.confidenceScore,
+    resolutionStatus: record.resolutionStatus,
+    resolutionSource: record.resolutionSource,
+    debug: { registryId: record.id }
+  });
 }
 
 function deriveTrading212Root(endpointPath) {
@@ -9544,28 +9451,28 @@ app.get('/api/admin/instrument-resolver/review-queue', auth, asyncHandler(async 
     ? String(req.query.sortBy).trim().toLowerCase()
     : 'age';
   const sortDir = String(req.query?.sortDir || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
-  const items = ensureInstrumentMappings(db)
+  const items = ensureBrokerInstrumentRegistry(db)
     .filter(mapping => mapping && mapping.status === 'active')
     .filter(mapping => !brokerFilter || String(mapping.broker || '').toLowerCase() === brokerFilter)
-    .filter(mapping => !statusFilter || String(mapping.resolution_status || '').toLowerCase() === statusFilter)
-    .filter(mapping => mapping.requiresManualReview === true || String(mapping.resolution_status || '') === RESOLUTION_STATUS.AMBIGUOUS || String(mapping.resolution_status || '') === RESOLUTION_STATUS.UNRESOLVED)
+    .filter(mapping => !statusFilter || String(mapping.resolutionStatus || '').toLowerCase() === statusFilter)
+    .filter(mapping => String(mapping.resolutionStatus || '') === RESOLUTION_STATUS.AMBIGUOUS || String(mapping.resolutionStatus || '') === RESOLUTION_STATUS.UNRESOLVED)
     .map(mapping => ({
       id: mapping.id,
-      sourceKey: mapping.source_key,
+      sourceKey: computeSourceKey(mapping),
       broker: mapping.broker || 'trading212',
-      rawTicker: mapping.raw_ticker || mapping.broker_ticker || '',
-      rawName: mapping.raw_name || mapping.broker_name || '',
-      rawExchange: mapping.raw_exchange || '',
-      rawCurrency: mapping.raw_currency || mapping.currency || '',
-      rawInstrumentType: mapping.raw_instrument_type || '',
-      confidenceScore: Number(mapping.confidence_score ?? mapping.confidence ?? 0),
-      resolutionStatus: mapping.resolution_status || RESOLUTION_STATUS.UNRESOLVED,
-      resolutionSource: mapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
-      canonicalTicker: mapping.canonical_ticker || '',
-      canonicalName: mapping.canonical_name || '',
-      topCandidates: Array.isArray(mapping.debug_candidates) ? mapping.debug_candidates : [],
-      firstResolvedAt: mapping.first_resolved_at || null,
-      lastSeenAt: mapping.last_seen_at || null
+      rawTicker: mapping.rawTicker || '',
+      rawName: mapping.rawName || '',
+      rawExchange: mapping.rawExchange || '',
+      rawCurrency: mapping.rawCurrency || '',
+      rawInstrumentType: mapping.instrumentType || '',
+      confidenceScore: Number(mapping.confidenceScore || 0),
+      resolutionStatus: mapping.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: mapping.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE,
+      canonicalTicker: mapping.canonicalTicker || '',
+      canonicalName: mapping.canonicalName || '',
+      topCandidates: [],
+      firstResolvedAt: mapping.firstSeenAt || null,
+      lastSeenAt: mapping.lastSeenAt || null
     }))
     .sort((a, b) => {
       if (sortBy === 'confidence') {
@@ -9587,19 +9494,39 @@ app.get('/api/admin/instrument-resolver/inspect', auth, asyncHandler(async (req,
   }
   const mappingId = Number(req.query?.mappingId);
   const sourceKey = String(req.query?.sourceKey || '').trim();
-  const mappings = ensureInstrumentMappings(db);
+  const mappings = ensureBrokerInstrumentRegistry(db);
   const mapping = Number.isFinite(mappingId)
     ? mappings.find(item => Number(item.id) === mappingId)
-    : mappings.find(item => item.source_key === sourceKey);
+    : mappings.find(item => computeSourceKey(item) === sourceKey);
   if (!mapping) {
     return res.status(404).json({ error: 'Mapping not found.' });
   }
-  const metadata = getTrading212MetadataForMapping(db, mapping) || { instruments: [] };
-  const inspection = buildResolverInspectionPayload(db, mapping, metadata);
+  const metadata = getTrading212MetadataForMapping(db, {
+    raw_ticker: mapping.rawTicker || '',
+    raw_isin: mapping.isin || '',
+    broker_instrument_id: mapping.brokerInstrumentId || '',
+    raw_currency: mapping.rawCurrency || '',
+    raw_exchange: mapping.rawExchange || ''
+  }) || { instruments: [] };
+  const inspection = {
+    raw: {
+      rawTicker: mapping.rawTicker || '',
+      rawName: mapping.rawName || '',
+      rawIsin: mapping.isin || ''
+    },
+    canonical: {
+      canonicalTicker: mapping.canonicalTicker || '',
+      canonicalName: mapping.canonicalName || ''
+    },
+    current: {
+      resolutionStatus: mapping.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: mapping.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE
+    }
+  };
   res.json({
     id: mapping.id,
-    sourceKey: mapping.source_key,
-    scope: mapping.scope || 'global',
+    sourceKey: computeSourceKey(mapping),
+    scope: mapping.manualOverride ? 'user' : 'global',
     status: mapping.status || 'active',
     inspection
   });
@@ -9616,48 +9543,41 @@ app.post('/api/admin/instrument-resolver/manual-override', auth, asyncHandler(as
   if (!Number.isFinite(mappingId) || !canonicalTicker) {
     return res.status(400).json({ error: 'mappingId and canonicalTicker are required.' });
   }
-  const mappings = ensureInstrumentMappings(db);
+  const mappings = ensureBrokerInstrumentRegistry(db);
   const mapping = mappings.find(item => Number(item.id) === mappingId && item.status === 'active');
   if (!mapping) {
     return res.status(404).json({ error: 'Mapping not found.' });
   }
   const now = new Date().toISOString();
   const previous = {
-    canonical_ticker: mapping.canonical_ticker || '',
-    canonical_name: mapping.canonical_name || '',
-    canonical_exchange: mapping.canonical_exchange || '',
-    canonical_mic: mapping.canonical_mic || '',
-    canonical_currency: mapping.canonical_currency || ''
+    canonical_ticker: mapping.canonicalTicker || ''
   };
   const next = {
     canonical_ticker: canonicalTicker,
-    canonical_name: String(req.body?.canonicalName || mapping.canonical_name || '').trim(),
-    canonical_exchange: normalizeTicker(req.body?.canonicalExchange || mapping.canonical_exchange || ''),
-    canonical_mic: normalizeTicker(req.body?.canonicalMic || mapping.canonical_mic || ''),
-    canonical_currency: normalizeTicker(req.body?.canonicalCurrency || mapping.canonical_currency || mapping.raw_currency || '')
+    canonical_name: String(req.body?.canonicalName || mapping.canonicalName || '').trim(),
+    canonical_exchange: normalizeTicker(req.body?.canonicalExchange || mapping.canonicalExchange || ''),
+    canonical_mic: '',
+    canonical_currency: normalizeTicker(req.body?.canonicalCurrency || mapping.rawCurrency || '')
   };
-  mapping.canonical_ticker = canonicalTicker;
-  mapping.canonical_name = next.canonical_name;
-  mapping.canonical_exchange = next.canonical_exchange;
-  mapping.canonical_mic = next.canonical_mic;
-  mapping.canonical_currency = next.canonical_currency;
-  mapping.resolution_status = RESOLUTION_STATUS.MANUAL_OVERRIDE;
-  mapping.resolution_source = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
-  mapping.evidence_level = 'manual_override';
-  mapping.requiresManualReview = false;
-  mapping.confidence_score = 1;
+  mapping.canonicalTicker = canonicalTicker;
+  mapping.canonicalName = next.canonical_name;
+  mapping.canonicalExchange = next.canonical_exchange;
+  mapping.resolutionStatus = RESOLUTION_STATUS.MANUAL_OVERRIDE;
+  mapping.resolutionSource = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
+  mapping.manualOverride = true;
+  mapping.confidenceScore = 1;
   mapping.status = 'active';
-  mapping.last_verified_at = now;
-  mapping.last_seen_at = now;
-  mapping.updated_at = now;
-  mapping.manual_override = {
+  mapping.lastVerifiedAt = now;
+  mapping.lastSeenAt = now;
+  mapping.updatedAt = now;
+  mapping.manualOverrideMeta = {
     changed_by: req.username,
     changed_at: now,
     previous,
     next,
     reason: String(req.body?.reason || '').trim()
   };
-  clearInstrumentMappingLookupCache(db);
+  clearRegistryLookupCache(db);
   saveDB(db);
   res.json({ ok: true, mapping });
 }));
@@ -9670,28 +9590,36 @@ app.post('/api/admin/instrument-resolver/reresolve', auth, asyncHandler(async (r
   }
   const mappingId = Number(req.body?.mappingId);
   const sourceKey = String(req.body?.sourceKey || '').trim();
-  const mappings = ensureInstrumentMappings(db);
+  const mappings = ensureBrokerInstrumentRegistry(db);
   const mapping = Number.isFinite(mappingId)
     ? mappings.find(item => Number(item.id) === mappingId && item.status === 'active')
-    : mappings.find(item => item.source_key === sourceKey && item.status === 'active');
+    : mappings.find(item => computeSourceKey(item) === sourceKey && item.status === 'active');
   if (!mapping) {
     return res.status(404).json({ error: 'Mapping not found.' });
   }
   const before = {
-    canonicalTicker: mapping.canonical_ticker || '',
-    resolutionStatus: mapping.resolution_status || '',
-    resolutionSource: mapping.resolution_source || '',
-    confidenceScore: Number(mapping.confidence_score || 0)
+    canonicalTicker: mapping.canonicalTicker || '',
+    resolutionStatus: mapping.resolutionStatus || '',
+    resolutionSource: mapping.resolutionSource || '',
+    confidenceScore: Number(mapping.confidenceScore || 0)
   };
-  const metadataRecord = getTrading212MetadataForMapping(db, mapping);
+  const metadataRecord = getTrading212MetadataForMapping(db, {
+    raw_ticker: mapping.rawTicker || '',
+    raw_name: mapping.rawName || '',
+    raw_exchange: mapping.rawExchange || '',
+    raw_currency: mapping.rawCurrency || '',
+    raw_instrument_type: mapping.instrumentType || '',
+    raw_isin: mapping.isin || '',
+    broker_instrument_id: mapping.brokerInstrumentId || ''
+  });
   const result = resolveAndUpsertTrading212InstrumentMapping(db, req.username, {
-    rawTicker: mapping.raw_ticker || '',
-    rawName: mapping.raw_name || '',
-    rawExchange: mapping.raw_exchange || '',
-    rawCurrency: mapping.raw_currency || '',
-    rawInstrumentType: mapping.raw_instrument_type || '',
-    rawIsin: mapping.raw_isin || '',
-    brokerInstrumentId: mapping.broker_instrument_id || ''
+    rawTicker: mapping.rawTicker || '',
+    rawName: mapping.rawName || '',
+    rawExchange: mapping.rawExchange || '',
+    rawCurrency: mapping.rawCurrency || '',
+    rawInstrumentType: mapping.instrumentType || '',
+    rawIsin: mapping.isin || '',
+    brokerInstrumentId: mapping.brokerInstrumentId || ''
   }, metadataRecord, {
     forceRevalidate: true
   });
@@ -9699,7 +9627,7 @@ app.post('/api/admin/instrument-resolver/reresolve', auth, asyncHandler(async (r
   res.json({
     ok: true,
     mappingId: mapping.id,
-    sourceKey: mapping.source_key,
+    sourceKey: computeSourceKey(mapping),
     before,
     after: {
       canonicalTicker: result.canonicalTicker || '',
@@ -9709,6 +9637,20 @@ app.post('/api/admin/instrument-resolver/reresolve', auth, asyncHandler(async (r
     },
     debug: result.debug || {}
   });
+}));
+
+app.get('/api/admin/instrument-resolver/history', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const instrumentRegistryId = Number(req.query?.instrumentRegistryId);
+  const rows = ensureInstrumentResolutionHistory(db)
+    .filter(item => !Number.isFinite(instrumentRegistryId) || Number(item.instrumentRegistryId) === instrumentRegistryId)
+    .sort((a, b) => String(b.changedAt || '').localeCompare(String(a.changedAt || '')))
+    .slice(0, 500);
+  res.json({ history: rows });
 }));
 
 app.post('/api/integrations/trading212/metadata/refresh', auth, asyncHandler(async (req, res) => {

@@ -15,6 +15,7 @@ function run() {
   let unresolved = 0;
   let ambiguous = 0;
   let manualOverridePreserved = 0;
+  let registryRecords = 0;
 
   for (const [username, user] of Object.entries(db.users || {})) {
     const journal = ensureTradeJournal(user);
@@ -48,6 +49,7 @@ function run() {
         trade.resolutionStatus = result?.resolutionStatus || trade.resolutionStatus || 'unresolved';
         trade.resolutionSource = result?.resolutionSource || trade.resolutionSource || 'local_cache';
         trade.confidenceScore = Number.isFinite(Number(result?.confidenceScore)) ? Number(result.confidenceScore) : (trade.confidenceScore || 0);
+        registryRecords += 1;
       }
     }
   }
@@ -55,7 +57,7 @@ function run() {
   if (!dryRun) {
     saveDB(db);
   }
-  console.log(`Backfill complete. dryRun=${dryRun} updated=${updatedTrades} unchanged=${unchangedTrades} unresolved=${unresolved} ambiguous=${ambiguous} manualOverridePreserved=${manualOverridePreserved}`);
+  console.log(`Backfill complete. dryRun=${dryRun} scanned=${registryRecords} updated=${updatedTrades} unchanged=${unchangedTrades} unresolved=${unresolved} ambiguous=${ambiguous} manualOverridePreserved=${manualOverridePreserved}`);
 }
 
 if (require.main === module) {
