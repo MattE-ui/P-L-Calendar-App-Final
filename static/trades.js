@@ -23,7 +23,8 @@ const state = {
   currency: 'GBP',
   portfolioGBP: 0,
   isAdmin: false,
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  isTradesLoading: true
 };
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
@@ -91,7 +92,10 @@ function formatPercent(value) {
 
 function getTradeDisplaySymbol(trade) {
   if (!trade) return '—';
-  return trade.displayTicker || trade.displaySymbol || trade.symbol || '—';
+  const candidate = trade.displayTicker || trade.displaySymbol || trade.canonicalTicker || trade.symbol || trade.trading212Ticker || '';
+  const normalized = String(candidate || '').trim().toUpperCase();
+  if (!normalized) return '—';
+  return normalized.replace(/_([A-Z]{2,6})_([A-Z]{2,6})$/i, '');
 }
 
 function shouldShowMappingBadge(trade) {
@@ -380,11 +384,17 @@ function toggleOptionsFields() {
 }
 
 async function loadTrades() {
+  state.isTradesLoading = true;
+  renderTrades();
   readFilters();
   const query = toQuery(state.filters);
-  const res = await api(`/api/trades${query}`);
-  state.trades = Array.isArray(res.trades) ? res.trades : [];
-  renderTrades();
+  try {
+    const res = await api(`/api/trades${query}`);
+    state.trades = Array.isArray(res.trades) ? res.trades : [];
+  } finally {
+    state.isTradesLoading = false;
+    renderTrades();
+  }
 }
 
 function renderTrades() {
@@ -393,6 +403,17 @@ function renderTrades() {
   const pill = document.querySelector('#trade-count-pill');
   if (!tbody) return;
   tbody.innerHTML = '';
+  if (state.isTradesLoading) {
+    if (empty) empty.classList.add('is-hidden');
+    if (pill) pill.textContent = 'Loading trades…';
+    for (let i = 0; i < 6; i += 1) {
+      const tr = document.createElement('tr');
+      tr.className = 'loading-skeleton';
+      tr.innerHTML = '<td colspan="9"><div class="skeleton-line"></div><div class="skeleton-line short"></div></td>';
+      tbody.appendChild(tr);
+    }
+    return;
+  }
   if (!state.trades.length) {
     if (empty) empty.classList.remove('is-hidden');
     if (pill) pill.textContent = '0 trades';

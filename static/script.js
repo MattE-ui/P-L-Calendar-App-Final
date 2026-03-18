@@ -42,7 +42,9 @@ const state = {
   manualStopOverride: false,
   lastUserInteractionAt: 0,
   hasPendingBackgroundRender: false,
-  backgroundRefreshInFlight: false
+  backgroundRefreshInFlight: false,
+  isDashboardLoading: true,
+  isActiveTradesLoading: true
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -432,7 +434,10 @@ function normalizeTradeRecords(trades) {
 
 function getTradeDisplaySymbol(trade) {
   if (!trade) return '—';
-  return trade.displayTicker || trade.displaySymbol || trade.symbol || '—';
+  const candidate = trade.displayTicker || trade.displaySymbol || trade.canonicalTicker || trade.symbol || trade.trading212Ticker || '';
+  const normalized = String(candidate || '').trim().toUpperCase();
+  if (!normalized) return '—';
+  return normalized.replace(/_([A-Z]{2,6})_([A-Z]{2,6})$/i, '');
 }
 
 function shouldShowMappingBadge(trade) {
@@ -983,6 +988,18 @@ function renderActiveTrades() {
   const openLossEl = $('#open-loss-potential-display');
   const openLossCard = $('#open-loss-potential-card');
   if (!list) return;
+  if (state.isActiveTradesLoading) {
+    list.innerHTML = '';
+    for (let i = 0; i < 3; i += 1) {
+      const pill = document.createElement('div');
+      pill.className = 'trade-pill loading-skeleton';
+      pill.innerHTML = '<div class="skeleton-line"></div><div class="skeleton-line short"></div>';
+      list.appendChild(pill);
+    }
+    if (empty) empty.classList.add('is-hidden');
+    if (showAll) showAll.disabled = true;
+    return;
+  }
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
@@ -2982,16 +2999,25 @@ async function saveUiPrefs() {
 }
 
 async function loadData() {
-  try {
-    state.data = await api('/api/pl');
-  } catch (e) {
-    if (e?.message !== 'Profile incomplete') {
-      console.error('Failed to load profit data', e);
+  state.isDashboardLoading = true;
+  state.isActiveTradesLoading = true;
+  renderActiveTrades();
+  const [plRes, portfolioRes, activeRes] = await Promise.allSettled([
+    api('/api/pl'),
+    api('/api/portfolio'),
+    api('/api/trades/active')
+  ]);
+  if (plRes.status === 'fulfilled') {
+    state.data = plRes.value;
+  } else {
+    if (plRes.reason?.message !== 'Profile incomplete') {
+      console.error('Failed to load profit data', plRes.reason);
     }
     state.data = {};
   }
   try {
-    const res = await api('/api/portfolio');
+    const res = portfolioRes.status === 'fulfilled' ? portfolioRes.value : null;
+    if (!res) throw portfolioRes.reason;
     const portfolioVal = Number(res?.portfolio);
     state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
     const baselineVal = Number(res?.initialNetDeposits);
@@ -3015,21 +3041,25 @@ async function loadData() {
   }
   computeLifetimeMetrics();
   try {
-    const activeRes = await api('/api/trades/active');
-    state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
-    if (Number.isFinite(activeRes?.liveOpenPnl)) {
-      state.liveOpenPnlGBP = activeRes.liveOpenPnl;
+    const activePayload = activeRes.status === 'fulfilled' ? activeRes.value : null;
+    if (!activePayload) throw activeRes.reason;
+    state.activeTrades = Array.isArray(activePayload?.trades) ? activePayload.trades : [];
+    if (Number.isFinite(activePayload?.liveOpenPnl)) {
+      state.liveOpenPnlGBP = activePayload.liveOpenPnl;
       state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     }
-    state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
-      ? activeRes.openLossPotential
+    state.openLossPotentialGBP = Number.isFinite(activePayload?.openLossPotential)
+      ? activePayload.openLossPotential
       : 0;
-    state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
-    state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    state.liveOpenPnlMode = activePayload?.liveOpenPnlMode || 'computed';
+    state.liveOpenPnlCurrency = activePayload?.liveOpenPnlCurrency || 'GBP';
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
     state.openLossPotentialGBP = 0;
+  } finally {
+    state.isActiveTradesLoading = false;
+    state.isDashboardLoading = false;
   }
 }
 

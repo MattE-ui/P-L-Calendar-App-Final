@@ -244,3 +244,25 @@ test('persists and lists fully closed execution-leg trades', async () => {
   assert.equal(trade.totalExitedQuantity, 3);
   assert.equal(trade.openQuantity, 0);
 });
+
+test('trade list payload exposes displayTicker contract fields', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 10,
+      stop: 9,
+      riskPct: 1,
+      date: '2024-06-01',
+      symbol: 'RCAT_US_EQ'
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const list = await authedFetch('/api/trades');
+  const trade = list.data.trades.find(t => t.id === create.data.trade.id);
+  assert.ok(trade);
+  assert.equal(trade.displayTicker, 'RCAT_US_EQ');
+  assert.equal(trade.isCanonical, false);
+  assert.equal(trade.requiresManualReview, true);
+  assert.ok(Object.prototype.hasOwnProperty.call(trade, 'rawTicker'));
+});
