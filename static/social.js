@@ -768,6 +768,16 @@ function renderTradeGroupSection() {
     if (item.type === 'announcement') {
       row.appendChild(createIdentityRow(item.leader_nickname || 'Leader', item.created_at ? new Date(item.created_at).toLocaleString() : '', 'Announcement', { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }));
       const meta = document.createElement('div'); meta.className = 'helper'; meta.textContent = item.text || ''; row.appendChild(meta);
+      if (isLeader) {
+        const delBtn = createActionButton('Delete', 'danger outline');
+        delBtn.addEventListener('click', async () => {
+          try {
+            await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/announcements/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+            await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+          } catch (_e) {}
+        });
+        const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(delBtn); row.appendChild(actionWrap);
+      }
     } else {
       row.appendChild(createIdentityRow(item.leader_nickname || 'Leader', item.created_at ? new Date(item.created_at).toLocaleString() : '', `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`, { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }));
       const meta = document.createElement('div'); meta.className = 'helper'; meta.textContent = `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`; row.appendChild(meta);
