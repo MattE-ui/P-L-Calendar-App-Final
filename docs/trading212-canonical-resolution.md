@@ -8,6 +8,7 @@ The canonical ticker flow is now backend-first and centered around a resolver pi
 - Position ingestion calls `resolveAndUpsertTrading212InstrumentMapping` before creating/updating journal trades.
 - Resolver stores durable records in `db.instrumentMappings` with raw broker fields + canonical fields + status/source/confidence timestamps.
 - Trades persist canonical resolution fields (`canonicalTicker`, `resolutionStatus`, `resolutionSource`, `confidenceScore`, `requiresManualReview`) so all downstream consumers can use server-derived canonical identifiers.
+- Shared selector `getDisplayInstrumentIdentity(record)` enforces canonical-first rendering and explicit unresolved fallback behavior.
 
 ## Resolution order
 
@@ -34,6 +35,7 @@ Admin tooling endpoints:
 
 - `GET /api/admin/instrument-resolver/review-queue`
 - `POST /api/admin/instrument-resolver/manual-override`
+- `GET /api/admin/instrument-resolver/metrics`
 
 Manual overrides set:
 
@@ -55,3 +57,4 @@ They are treated as highest priority and are not overwritten by automatic flows.
 - Metadata endpoint variants differ by Trading 212 environment/account setup; code tries multiple endpoint candidates.
 - Ambiguous symbols with weak metadata can remain unresolved until manual review.
 - Backfill script does not force live metadata fetches; it primarily uses cached mappings and stored raw fields.
+- Legacy reconciliation still includes some symbol-based matching heuristics for backward compatibility.
