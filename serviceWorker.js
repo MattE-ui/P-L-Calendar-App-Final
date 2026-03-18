@@ -23,8 +23,9 @@ const DEFAULT_NOTIFICATION_ICON = '/static/Veracity-notification-logo.png';
 let messaging = null;
 const CANONICAL_RENDER_HANDLER = 'push:event';
 const HARD_RENDER_DEDUPE_MS = 5 * 60 * 1000;
-const EMERGENCY_ANNOUNCEMENT_DEDUPE_MS = 30 * 1000;
+const EMERGENCY_ANNOUNCEMENT_DEDUPE_MS = 60 * 1000;
 const recentRenderedNotifications = new Map();
+const recentAnnouncementRenderKeys = new Map();
 
 function hasFcmConfig() {
   return !!(FCM_CONFIG && FCM_CONFIG.apiKey && FCM_CONFIG.projectId && FCM_CONFIG.messagingSenderId && FCM_CONFIG.appId);
@@ -34,6 +35,11 @@ function cleanupRecentNotificationKeys(nowTs = Date.now()) {
   for (const [key, seenAt] of recentRenderedNotifications.entries()) {
     if ((nowTs - seenAt) > HARD_RENDER_DEDUPE_MS) {
       recentRenderedNotifications.delete(key);
+    }
+  }
+  for (const [key, seenAt] of recentAnnouncementRenderKeys.entries()) {
+    if ((nowTs - seenAt) > HARD_RENDER_DEDUPE_MS) {
+      recentAnnouncementRenderKeys.delete(key);
     }
   }
 }
@@ -133,6 +139,34 @@ async function showNotificationWithGuard({ source, payload, options }) {
     announcementId: descriptor.announcementId,
     recipientUserId: descriptor.recipientUserId
   };
+  const announcementRenderKeys = descriptor.type === 'trade_group_announcement'
+    ? [descriptor.correlationId, descriptor.announcementId].filter(Boolean)
+    : [];
+  if (announcementRenderKeys.length) {
+    let matchedAnnouncementKey = null;
+    let announcementAgeMs = null;
+    for (const key of announcementRenderKeys) {
+      const seenAt = recentAnnouncementRenderKeys.get(key);
+      if (!seenAt) continue;
+      matchedAnnouncementKey = key;
+      announcementAgeMs = now - seenAt;
+      break;
+    }
+    if (matchedAnnouncementKey && announcementAgeMs <= EMERGENCY_ANNOUNCEMENT_DEDUPE_MS) {
+      logSwPipelineStage('11.service_worker_dedupe_skip', {
+        sourceHandler: source,
+        descriptor,
+        skipped: true,
+        details: {
+          reason: 'announcement_repeat_within_60s',
+          announcementRenderKey: matchedAnnouncementKey,
+          duplicateAgeMs: announcementAgeMs,
+          message: 'ANNOUNCEMENT REPEAT SUPPRESSED'
+        }
+      });
+      return;
+    }
+  }
   if (duplicateWithinWindow) {
     const duplicateAgeMs = now - alreadySeenAt;
     if (descriptor.type === 'trade_group_announcement' && duplicateAgeMs <= EMERGENCY_ANNOUNCEMENT_DEDUPE_MS) {
@@ -166,6 +200,9 @@ async function showNotificationWithGuard({ source, payload, options }) {
     return;
   }
   recentRenderedNotifications.set(descriptor.dedupeKey, now);
+  if (announcementRenderKeys.length) {
+    announcementRenderKeys.forEach((key) => recentAnnouncementRenderKeys.set(key, now));
+  }
   logSwPipelineStage('11.service_worker_dedupe_skip', {
     sourceHandler: source,
     descriptor,
@@ -179,6 +216,9 @@ async function showNotificationWithGuard({ source, payload, options }) {
     descriptor,
     skipped: false
   });
+  if (descriptor.type === 'trade_group_announcement' && descriptor.announcementId) {
+    options.tag = `trade-group-announcement:${descriptor.announcementId}`;
+  }
   console.info('[SW][NotificationRender] Rendering notification.', {
     ...logBase,
     skipped: false
@@ -295,7 +335,7 @@ self.addEventListener('push', (event) => {
     icon: payload.icon || payload.notification?.icon || DEFAULT_NOTIFICATION_ICON,
     badge: payload.badge || payload.notification?.badge || DEFAULT_NOTIFICATION_ICON,
     image: payload.image || undefined,
-    tag: payload.tag || 'veracity-alert',
+    tag: payload.tag || payload.notification?.tag || payload?.data?.tag || 'veracity-alert',
     requireInteraction: !!payload.requireInteraction,
     data: payload.data || { link: '/' },
     actions: Array.isArray(payload.actions) ? payload.actions : []
