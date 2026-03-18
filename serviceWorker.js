@@ -21,9 +21,84 @@ const PRECACHE_URLS = [
 const FCM_CONFIG = __FCM_CONFIG__;
 const DEFAULT_NOTIFICATION_ICON = '/static/Veracity-notification-logo.png';
 let messaging = null;
+const RECENT_NOTIFICATION_DEDUPE_MS = 30 * 1000;
+const recentRenderedNotifications = new Map();
 
 function hasFcmConfig() {
   return !!(FCM_CONFIG && FCM_CONFIG.apiKey && FCM_CONFIG.projectId && FCM_CONFIG.messagingSenderId && FCM_CONFIG.appId);
+}
+
+function cleanupRecentNotificationKeys(nowTs = Date.now()) {
+  for (const [key, seenAt] of recentRenderedNotifications.entries()) {
+    if ((nowTs - seenAt) > RECENT_NOTIFICATION_DEDUPE_MS) {
+      recentRenderedNotifications.delete(key);
+    }
+  }
+}
+
+function stablePayloadHash(input) {
+  const text = String(input || '');
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return String(hash >>> 0);
+}
+
+function extractNotificationDescriptor(payload = {}, fallbackTitle = 'Veracity Trading Suite') {
+  const notification = payload?.notification || {};
+  const data = payload?.data || {};
+  const title = notification.title || payload.title || data.title || fallbackTitle;
+  const body = notification.body || payload.body || data.body || 'New Veracity notification';
+  const correlationId = data.correlationId || payload.correlationId || '';
+  const announcementId = data.announcementId || payload.announcementId || '';
+  const recipientUserId = data.userId || payload.userId || '';
+  const dedupeBase = correlationId
+    || `${announcementId}:${recipientUserId}:${stablePayloadHash(`${title}|${body}`)}`;
+  const dedupeKey = `render:${dedupeBase || stablePayloadHash(JSON.stringify(payload || {}))}`;
+  return {
+    title,
+    body,
+    dedupeKey,
+    correlationId: correlationId || null,
+    eventId: data.eventId || payload.eventId || null,
+    announcementId: announcementId || null,
+    recipientUserId: recipientUserId || null
+  };
+}
+
+async function showNotificationWithGuard({ source, payload, options }) {
+  const now = Date.now();
+  cleanupRecentNotificationKeys(now);
+  const descriptor = extractNotificationDescriptor(payload);
+  const alreadySeenAt = recentRenderedNotifications.get(descriptor.dedupeKey);
+  const duplicateWithinWindow = !!alreadySeenAt && (now - alreadySeenAt) <= RECENT_NOTIFICATION_DEDUPE_MS;
+  const logBase = {
+    timestamp: new Date(now).toISOString(),
+    sourceHandler: source,
+    title: descriptor.title,
+    body: descriptor.body,
+    dedupeKey: descriptor.dedupeKey,
+    correlationId: descriptor.correlationId,
+    eventId: descriptor.eventId,
+    announcementId: descriptor.announcementId,
+    recipientUserId: descriptor.recipientUserId
+  };
+  if (duplicateWithinWindow) {
+    console.info('[SW][NotificationRender] Duplicate render skipped.', {
+      ...logBase,
+      skipped: true,
+      reason: 'recent-render-dedupe',
+      firstSeenAt: new Date(alreadySeenAt).toISOString()
+    });
+    return;
+  }
+  recentRenderedNotifications.set(descriptor.dedupeKey, now);
+  console.info('[SW][NotificationRender] Rendering notification.', {
+    ...logBase,
+    skipped: false
+  });
+  await self.registration.showNotification(descriptor.title, options);
 }
 
 if (hasFcmConfig()) {
@@ -46,7 +121,7 @@ if (hasFcmConfig()) {
           link: data.link || payload?.fcmOptions?.link || '/'
         }
       };
-      self.registration.showNotification(notification.title || data.title || 'Veracity Trading Suite', options);
+      return showNotificationWithGuard({ source: 'firebase.onBackgroundMessage', payload, options });
     });
   } catch (error) {
     console.warn('[SW] Unable to initialize Firebase messaging:', error);
@@ -140,7 +215,7 @@ self.addEventListener('push', (event) => {
     data: payload.data || { link: '/' },
     actions: Array.isArray(payload.actions) ? payload.actions : []
   };
-  event.waitUntil(self.registration.showNotification(payload.title || 'Veracity Trading Suite', options));
+  event.waitUntil(showNotificationWithGuard({ source: 'push:event', payload, options }));
 });
 
 self.addEventListener('notificationclick', (event) => {

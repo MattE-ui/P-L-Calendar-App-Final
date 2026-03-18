@@ -678,7 +678,7 @@ function sanitizeTradeGroupMemberRow(db, member) {
 }
 
 
-function createTradeGroupNotification(db, { userId, groupId, type, alertId = null, inviteId = null, announcementId = null, dedupeKey = '' }) {
+function createTradeGroupNotification(db, { userId, groupId, type, alertId = null, inviteId = null, announcementId = null, dedupeKey = '', correlationId = '' }) {
   const normalizedType = normalizeTradeGroupNotificationType(type);
   if (!normalizedType) return null;
   ensureSocialTables(db);
@@ -711,6 +711,7 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     invite_id: inviteId,
     announcement_id: announcementId,
     dedupe_key: dedupeKey || '',
+    correlation_id: correlationId || '',
     is_read: false,
     created_at: nowIso
   };
@@ -723,7 +724,8 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     alertId,
     inviteId,
     announcementId,
-    dedupeKey: dedupeKey || null
+    dedupeKey: dedupeKey || null,
+    correlationId: correlationId || null
   });
   return notification;
 }
@@ -765,6 +767,7 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
       context: {
         eventId: `trade_group_announcement:${notification.announcement_id || notification.id}`,
         source: 'triggerPushForTradeGroupNotification',
+        correlationId: notification.correlation_id || `corr:${notification.id}`,
         groupId: resolvedGroup.id,
         groupName: resolvedGroup.name,
         announcementId: notification.announcement_id || null,
@@ -817,12 +820,16 @@ function triggerPushForTradeGroupNotification(db, notification, { group = null }
     notificationId: notification.id,
     userId: notification.user_id,
     groupId: notification.group_id,
-    eventType: pushConfig.eventType
+    eventType: pushConfig.eventType,
+    correlationId: pushConfig.context?.correlationId || notification.correlation_id || null
   });
   sendNotificationEvent(db, {
     userId: notification.user_id,
     eventType: pushConfig.eventType,
-    context: pushConfig.context
+    context: {
+      ...pushConfig.context,
+      invocationSource: 'server.js#triggerPushForTradeGroupNotification'
+    }
   })
     .then((log) => {
       const targeted = Array.isArray(log?.deliveries) ? log.deliveries.length : 0;
@@ -2136,6 +2143,9 @@ function upsertNotificationDevice(db, payload) {
   ensureNotificationTables(db);
   const nowIso = new Date().toISOString();
   const existing = resolveDeviceRecord(db, payload);
+  const existingTokenFingerprint = existing ? fingerprintToken(existing.token) : '';
+  const incomingTokenFingerprint = fingerprintToken(payload.token);
+  const wasInactive = existing ? existing.isActive === false : false;
   const mergedCategories = normalizeNotificationCategories(payload.categories || existing?.categories);
   const next = {
     id: existing?.id || crypto.randomUUID(),
@@ -2164,6 +2174,24 @@ function upsertNotificationDevice(db, payload) {
   } else {
     db.notificationDevices.push(next);
   }
+  const action = !existing
+    ? 'token_created'
+    : (existingTokenFingerprint !== incomingTokenFingerprint
+      ? 'token_refreshed'
+      : (wasInactive && next.isActive !== false ? 'current_device_reenabled' : 'token_updated'));
+  console.info('[Notifications][DeviceLifecycle] Device token lifecycle event.', {
+    action,
+    userId: payload.userId,
+    deviceRowId: next.id,
+    deviceId: next.deviceId || null,
+    platform: next.platform || null,
+    browser: next.browser || null,
+    previousTokenFingerprint: existingTokenFingerprint || null,
+    tokenFingerprint: incomingTokenFingerprint || null,
+    tokenSuffix: String(payload.token || '').slice(-8) || '',
+    normalizedTargetIdentity: normalizeDeviceTargetIdentity(next),
+    isActive: next.isActive !== false
+  });
   // Deactivate duplicate token/device rows for same user.
   db.notificationDevices.forEach((item) => {
     if (item.id === next.id) return;
@@ -2209,10 +2237,19 @@ async function sendNotificationToDevice(db, device, payload) {
   }
   ensureFirebaseAdmin();
   console.info('[Notifications] Sending Firebase push notification.', {
-    deviceId: device.id,
-    userId: device.userId,
+    correlationId: payload?.data?.correlationId || payload?.correlationId || null,
+    eventId: payload?.data?.eventId || null,
+    announcementId: payload?.data?.announcementId || null,
+    groupId: payload?.data?.groupId || null,
+    recipientUserId: device.userId,
+    targetDeviceRowId: device.id,
     tokenPreview: redactToken(device.token),
-    tokenFingerprint: fingerprintToken(device.token)
+    tokenFingerprint: fingerprintToken(device.token),
+    platform: device.platform || null,
+    browser: device.browser || null,
+    normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
+    invocationSource: payload?.invocationSource || payload?.source || 'server.js#sendNotificationToDevice',
+    skipped: false
   });
   const message = {
     token: device.token,
@@ -2243,16 +2280,24 @@ async function sendNotificationToDevice(db, device, payload) {
     device.lastSentAt = sentAt;
     device.updatedAt = sentAt;
     console.info('[Notifications] Firebase push sent successfully.', {
-      deviceId: device.id,
-      userId: device.userId,
+      correlationId: payload?.data?.correlationId || payload?.correlationId || null,
+      eventId: payload?.data?.eventId || null,
+      announcementId: payload?.data?.announcementId || null,
+      groupId: payload?.data?.groupId || null,
+      recipientUserId: device.userId,
+      targetDeviceRowId: device.id,
       tokenFingerprint: fingerprintToken(device.token),
-      messageId
+      providerMessageId: messageId
     });
     return messageId;
   } catch (error) {
     console.error('[Notifications] Firebase push send failed.', {
-      deviceId: device.id,
-      userId: device.userId,
+      correlationId: payload?.data?.correlationId || payload?.correlationId || null,
+      eventId: payload?.data?.eventId || null,
+      announcementId: payload?.data?.announcementId || null,
+      groupId: payload?.data?.groupId || null,
+      recipientUserId: device.userId,
+      targetDeviceRowId: device.id,
       tokenFingerprint: fingerprintToken(device.token),
       code: error?.code || null,
       message: error?.message || String(error),
@@ -2345,7 +2390,11 @@ function buildNotificationEvent(type, context = {}) {
     data: {
       type,
       link: built.link,
-      userId: context.userId || ''
+      userId: context.userId || '',
+      groupId: context.groupId || '',
+      announcementId: context.announcementId || '',
+      eventId: context.eventId || '',
+      correlationId: context.correlationId || ''
     }
   };
 }
@@ -2353,11 +2402,26 @@ function buildNotificationEvent(type, context = {}) {
 async function sendNotificationEvent(db, { userId, eventType, context = {}, onlyDeviceId = null, criticalOnly = false }) {
   ensureNotificationTables(db);
   cleanupDuplicateNotificationDevices(db, { userId });
-  const payload = buildNotificationEvent(eventType, { ...context, userId });
+  const correlationId = String(context?.correlationId || `${eventType}:${crypto.randomUUID()}`);
+  const payload = buildNotificationEvent(eventType, { ...context, userId, correlationId });
   if (!payload) {
     throw new Error(`Unsupported notification event type: ${eventType}`);
   }
+  payload.correlationId = correlationId;
+  payload.eventId = String(context?.eventId || `${eventType}:${context?.announcementId || crypto.randomUUID()}`);
+  payload.groupId = context?.groupId || '';
+  payload.announcementId = context?.announcementId || '';
+  payload.invocationSource = String(context?.invocationSource || context?.source || 'server.js#sendNotificationEvent');
   const category = payload.category;
+  console.info('[Notifications][Pipeline] Push event creation requested.', {
+    correlationId,
+    eventType,
+    eventId: payload.eventId,
+    announcementId: context?.announcementId || null,
+    groupId: context?.groupId || null,
+    recipientUserId: userId,
+    invocationSource: payload.invocationSource
+  });
   const eligibleDevices = db.notificationDevices.filter((item) => item.userId === userId
     && item.isActive
     && item.permissionState === 'granted'
@@ -2512,9 +2576,11 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     targetDeviceId: onlyDeviceId || null,
     source: String(context?.source || ''),
     context: {
+      correlationId,
       groupId: context?.groupId || null,
       announcementId: context?.announcementId || null,
-      eventId: context?.eventId || null
+      eventId: payload.eventId,
+      invocationSource: payload.invocationSource
     },
     attemptedAt: nowIso,
     deliveries: []
@@ -2537,7 +2603,7 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         recipientUserId: userId,
         targetDeviceId: device.id,
         notificationType: eventType,
-        source: context?.source || 'sendNotificationEvent',
+        source: payload.invocationSource,
         normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
         tokenFingerprint: fingerprintToken(device.token),
         tokenSuffix: String(device.token || '').slice(-8) || '',
@@ -2570,7 +2636,7 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         });
         continue;
       }
-      log.deliveries.push({ deviceId: device.id, ok: true, messageId, at: new Date().toISOString() });
+      log.deliveries.push({ deviceId: device.id, ok: true, messageId, providerMessageId: messageId, at: new Date().toISOString() });
       if (existingDedupe) {
         existingDedupe.sentAt = new Date().toISOString();
       } else {
@@ -2606,6 +2672,18 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   const cutoffTs = Date.now() - (24 * 60 * 60 * 1000);
   db.notificationPushDedupe = db.notificationPushDedupe.filter((item) => Date.parse(item.sentAt || 0) >= cutoffTs);
   db.notificationEvents.push(log);
+  console.info('[Notifications][Pipeline] Notification event persisted.', {
+    correlationId,
+    eventLogId: log.id,
+    eventType,
+    eventId: payload.eventId,
+    announcementId: context?.announcementId || null,
+    groupId: context?.groupId || null,
+    recipientUserId: userId,
+    attemptedDeliveries: log.deliveries.length,
+    executedSends: log.deliveries.filter((entry) => entry.ok && !entry.skipped).length,
+    skippedSends: log.deliveries.filter((entry) => entry.skipped).length
+  });
   return log;
 }
 
@@ -8854,7 +8932,9 @@ app.post('/api/notifications/devices/register', auth, (req, res) => {
       recordId: record.id,
       platform: record.platform,
       browser: record.browser,
-      permissionState: record.permissionState
+      permissionState: record.permissionState,
+      tokenFingerprint: fingerprintToken(record.token),
+      normalizedTargetIdentity: normalizeDeviceTargetIdentity(record)
     });
     return res.json({ ok: true, device: record });
   } catch (error) {
@@ -8883,6 +8963,15 @@ app.put('/api/notifications/devices/:id/preferences', auth, (req, res) => {
   if (parsed.data.permissionState) device.permissionState = parsed.data.permissionState;
   device.updatedAt = new Date().toISOString();
   saveDB(db);
+  console.info('[Notifications][DeviceLifecycle] Device preference update persisted.', {
+    action: device.isActive === false ? 'current_device_removed' : 'current_device_reenabled',
+    userId: req.username,
+    deviceRowId: device.id,
+    permissionState: device.permissionState,
+    isActive: device.isActive !== false,
+    tokenFingerprint: fingerprintToken(device.token),
+    normalizedTargetIdentity: normalizeDeviceTargetIdentity(device)
+  });
   res.json({ ok: true, device });
 });
 
@@ -8895,6 +8984,13 @@ app.post('/api/notifications/devices/:id/disable', auth, (req, res) => {
   device.revokedAt = new Date().toISOString();
   device.updatedAt = device.revokedAt;
   saveDB(db);
+  console.info('[Notifications][DeviceLifecycle] Device disabled.', {
+    action: 'token_deleted',
+    userId: req.username,
+    deviceRowId: device.id,
+    tokenFingerprint: fingerprintToken(device.token),
+    normalizedTargetIdentity: normalizeDeviceTargetIdentity(device)
+  });
   res.json({ ok: true });
 });
 
@@ -8911,7 +9007,7 @@ function removeNotificationDeviceForUser(db, userId, deviceRowId) {
       authUserId: userId,
       targetDeviceId: deviceRowId,
       ownershipCheckPassed: false,
-      action: 'device_removed',
+      action: 'current_device_removed',
       at: nowIso
     });
     return { ok: true, removed: false, alreadyInactive: false };
@@ -8932,7 +9028,7 @@ function removeNotificationDeviceForUser(db, userId, deviceRowId) {
     beforeIsActive: alreadyInactive ? false : true,
     afterIsActive: device.isActive,
     afterState: notificationDeviceDebugShape(device),
-    action: 'device_removed',
+    action: 'current_device_removed',
     at: nowIso,
     alreadyInactive
   });
@@ -9748,6 +9844,7 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
   const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
   if (!group) return res.status(404).json({ error: 'Trade group not found.' });
   if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only leader can post announcements.' });
+  const correlationId = `announcement:${crypto.randomUUID()}`;
   const announcement = {
     id: crypto.randomUUID(),
     group_id: group.id,
@@ -9756,6 +9853,12 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
     created_at: new Date().toISOString()
   };
   db.tradeGroupAnnouncements.push(announcement);
+  console.info('[TradeGroup][AnnouncementPipeline] Announcement created.', {
+    correlationId,
+    announcementId: announcement.id,
+    groupId: group.id,
+    leaderUserId: req.username
+  });
   getTradeGroupMembers(db, group.id, { status: 'active' })
     .filter(member => member.user_id !== req.username)
     .forEach(member => {
@@ -9764,7 +9867,8 @@ app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => 
         groupId: group.id,
         type: 'trade_group_announcement',
         announcementId: announcement.id,
-        dedupeKey: `announcement:${announcement.id}:${member.user_id}`
+        dedupeKey: `announcement:${announcement.id}:${member.user_id}`,
+        correlationId
       });
       if (createdNotification) triggerPushForTradeGroupNotification(db, createdNotification, { group });
     });
