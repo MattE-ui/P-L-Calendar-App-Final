@@ -2694,6 +2694,11 @@ function notificationDebug(step, details = {}) {
   setNotificationDebugState(step, details?.error || '');
 }
 
+function tokenSuffix(token) {
+  const raw = typeof token === 'string' ? token.trim() : '';
+  return raw ? raw.slice(-8) : '';
+}
+
 function installRawPushSubscribeProbe() {
   if (notificationState.rawPushSubscribeProbeInstalled) return;
   if (!window.PushManager || !window.PushManager.prototype || typeof window.PushManager.prototype.subscribe !== 'function') return;
@@ -2773,9 +2778,19 @@ async function unsubscribeCurrentPushSubscription() {
   try {
     const registration = await navigator.serviceWorker.getRegistration('/serviceWorker.js');
     const subscription = await registration?.pushManager?.getSubscription?.();
-    if (subscription) await subscription.unsubscribe();
+    if (subscription) {
+      await subscription.unsubscribe();
+      console.info('[Notifications][DeviceLifecycle][Client] Web push subscription deleted for current device.', {
+        action: 'token_deleted',
+        deviceId: notificationState.deviceId || null
+      });
+    }
     if (notificationState.messaging && typeof notificationState.messaging.deleteToken === 'function') {
       await notificationState.messaging.deleteToken();
+      console.info('[Notifications][DeviceLifecycle][Client] Firebase token deleted for current device.', {
+        action: 'token_deleted',
+        deviceId: notificationState.deviceId || null
+      });
     }
   } catch (error) {
     notificationDebug('Current-device unsubscribe attempt failed', { error: error?.message || String(error) });
@@ -2805,6 +2820,11 @@ async function removeNotificationDevice(deviceRowId) {
     if (target.deviceId === notificationState.deviceId) {
       localStorage.setItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY, 'true');
       notificationState.activeDeviceId = '';
+      console.info('[Notifications][DeviceLifecycle][Client] Current device removed by user.', {
+        action: 'current_device_removed',
+        deviceId: notificationState.deviceId || null,
+        deviceRowId
+      });
       await unsubscribeCurrentPushSubscription();
     }
     notificationState.lastDeleteActionResult = `success (removed=${deleteResponse?.removed ? 'yes' : 'no'})`;
@@ -2937,6 +2957,11 @@ async function registerNotificationToken({ force = false, triggerSource = 'unkno
     } else {
       setNotificationDebugState('getToken succeeded');
       notificationDebug('getToken succeeded', { tokenLength: token?.length || 0 });
+      console.info('[Notifications][DeviceLifecycle][Client] Token acquired from Firebase getToken.', {
+        action: force ? 'token_refreshed' : 'token_created',
+        deviceId: notificationState.deviceId || null,
+        tokenSuffix: tokenSuffix(token)
+      });
     }
     if (!token) {
       setNotificationMessage('', 'Unable to fetch a push token. Try again.');
@@ -2979,6 +3004,13 @@ async function registerNotificationToken({ force = false, triggerSource = 'unkno
       throw Object.assign(new Error(registerError), { data: registerBody });
     }
     setNotificationDebugState('register-device API response received');
+    console.info('[Notifications][DeviceLifecycle][Client] Device register API succeeded.', {
+      action: force ? 'token_refreshed' : 'current_device_reenabled',
+      deviceId: payload.deviceId || null,
+      tokenSuffix: tokenSuffix(token),
+      platform: payload.platform,
+      browser: payload.browser
+    });
     setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
     await loadNotificationDevices();
     notificationDebug('Registration completed', { force });
