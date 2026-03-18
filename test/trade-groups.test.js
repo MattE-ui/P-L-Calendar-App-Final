@@ -215,6 +215,96 @@ test('leader can post/delete announcement, delete alert, and close group', async
   assert.equal(memberView.res.status, 404);
 });
 
+test('announcement push targets one active device after duplicate token cleanup', async () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.notificationDevices = [
+    {
+      id: 'dup-device-1',
+      userId: member,
+      deviceId: 'iphone-1',
+      platform: 'ios',
+      browser: 'safari',
+      userAgent: 'Mobile Safari',
+      token: 'token-shared-1',
+      providerType: 'fcm-web',
+      permissionState: 'granted',
+      isActive: true,
+      installedAsPwa: true,
+      categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
+      createdAt: now,
+      updatedAt: now,
+      lastSeenAt: now,
+      lastSentAt: null,
+      lastErrorAt: null,
+      lastRegistrationAt: now,
+      lastReceivedAt: null,
+      revokedAt: null
+    },
+    {
+      id: 'dup-device-2',
+      userId: member,
+      deviceId: 'iphone-2',
+      platform: 'ios',
+      browser: 'safari',
+      userAgent: 'Mobile Safari',
+      token: 'token-shared-1',
+      providerType: 'fcm-web',
+      permissionState: 'granted',
+      isActive: true,
+      installedAsPwa: true,
+      categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
+      createdAt: now,
+      updatedAt: now,
+      lastSeenAt: now,
+      lastSentAt: null,
+      lastErrorAt: null,
+      lastRegistrationAt: now,
+      lastReceivedAt: null,
+      revokedAt: null
+    }
+  ];
+  saveDB(db);
+
+  const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Dedup Group' })
+  });
+  assert.equal(created.res.status, 201);
+  const groupId = created.data.group.id;
+  await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ friend_user_id: member })
+  });
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
+
+  const announcement = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/announcements`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'Single push please' })
+  });
+  assert.equal(announcement.res.status, 201);
+
+  const sent = await waitFor(() => {
+    const current = loadDB();
+    return Array.isArray(current.notificationEvents)
+      && current.notificationEvents.some((item) => item.eventType === 'trade_group_announcement' && item.userId === member);
+  });
+  assert.equal(sent, true);
+
+  const after = loadDB();
+  const announcementEvent = after.notificationEvents.find((item) => item.eventType === 'trade_group_announcement' && item.userId === member);
+  assert.ok(announcementEvent);
+  assert.equal(announcementEvent.deliveries.length, 1);
+
+  const activeRows = after.notificationDevices.filter((item) => item.userId === member && item.isActive);
+  assert.equal(activeRows.length, 1);
+  assert.equal(activeRows[0].token, 'token-shared-1');
+});
+
 
 test('group current positions prefer mapped ticker and fallback to raw symbol', () => {
   const db = loadDB();

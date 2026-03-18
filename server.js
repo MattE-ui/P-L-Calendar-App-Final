@@ -690,7 +690,16 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
       && notification.dedupe_key === dedupeKey
       && !notification.is_read
     ));
-    if (duplicate) return duplicate;
+    if (duplicate) {
+      console.info('[TradeGroup][Notifications] Existing in-app notification matched dedupe key; skipping create.', {
+        userId,
+        groupId,
+        type: normalizedType,
+        dedupeKey,
+        notificationId: duplicate.id
+      });
+      return null;
+    }
   }
   const nowIso = new Date().toISOString();
   const notification = {
@@ -754,8 +763,11 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
     return {
       eventType: 'trade_group_announcement',
       context: {
+        eventId: `trade_group_announcement:${notification.announcement_id || notification.id}`,
+        source: 'triggerPushForTradeGroupNotification',
         groupId: resolvedGroup.id,
         groupName: resolvedGroup.name,
+        announcementId: notification.announcement_id || null,
         announcementText: summarizeTradeGroupAnnouncementText(announcement?.text || ''),
         link: fallbackLink,
         tag: `trade-group-announcement:${resolvedGroup.id}:${notification.announcement_id || notification.id}`
@@ -1917,6 +1929,7 @@ function normalizeNotificationCategories(raw) {
 function ensureNotificationTables(db) {
   if (!Array.isArray(db.notificationDevices)) db.notificationDevices = [];
   if (!Array.isArray(db.notificationEvents)) db.notificationEvents = [];
+  if (!Array.isArray(db.notificationPushDedupe)) db.notificationPushDedupe = [];
 }
 
 function getNotificationConfig() {
@@ -1980,6 +1993,67 @@ function resolveDeviceRecord(db, { userId, deviceId, token }) {
     && ((deviceId && item.deviceId === deviceId) || (token && item.token === token)));
 }
 
+function selectMostRecentDeviceRecord(current, candidate) {
+  if (!current) return candidate;
+  const currentTs = Date.parse(current.updatedAt || current.lastRegistrationAt || current.createdAt || 0) || 0;
+  const candidateTs = Date.parse(candidate.updatedAt || candidate.lastRegistrationAt || candidate.createdAt || 0) || 0;
+  if (candidateTs >= currentTs) return candidate;
+  return current;
+}
+
+function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
+  ensureNotificationTables(db);
+  const nowIso = new Date().toISOString();
+  const duplicateIndexes = new Set();
+
+  const byToken = new Map();
+  const byUserDevice = new Map();
+  for (const item of db.notificationDevices) {
+    if (!item) continue;
+    if (item.isActive === false) continue;
+    const tokenKey = String(item.token || '').trim();
+    const deviceKey = String(item.deviceId || '').trim();
+    if (tokenKey) {
+      const key = tokenKey.toLowerCase();
+      byToken.set(key, selectMostRecentDeviceRecord(byToken.get(key), item));
+    }
+    if (item.userId && deviceKey) {
+      const key = `${item.userId}::${deviceKey.toLowerCase()}`;
+      byUserDevice.set(key, selectMostRecentDeviceRecord(byUserDevice.get(key), item));
+    }
+  }
+
+  db.notificationDevices.forEach((item, index) => {
+    if (!item || item.isActive === false) return;
+    if (userId && item.userId !== userId) return;
+    const tokenKey = String(item.token || '').trim().toLowerCase();
+    const deviceKey = String(item.deviceId || '').trim().toLowerCase();
+    if (tokenKey) {
+      const winner = byToken.get(tokenKey);
+      if (winner && winner.id !== item.id) duplicateIndexes.add(index);
+    }
+    if (item.userId && deviceKey) {
+      const winner = byUserDevice.get(`${item.userId}::${deviceKey}`);
+      if (winner && winner.id !== item.id) duplicateIndexes.add(index);
+    }
+  });
+
+  duplicateIndexes.forEach((index) => {
+    const item = db.notificationDevices[index];
+    if (!item || item.isActive === false) return;
+    item.isActive = false;
+    item.revokedAt ||= nowIso;
+    item.updatedAt = nowIso;
+    console.info('[Notifications] Deactivated duplicate device row.', {
+      deviceRowId: item.id,
+      userId: item.userId,
+      deviceId: item.deviceId || null,
+      token: item.token || null,
+      reason: 'duplicate-token-or-device'
+    });
+  });
+}
+
 function upsertNotificationDevice(db, payload) {
   ensureNotificationTables(db);
   const nowIso = new Date().toISOString();
@@ -2022,6 +2096,7 @@ function upsertNotificationDevice(db, payload) {
       item.updatedAt = nowIso;
     }
   });
+  cleanupDuplicateNotificationDevices(db, { userId: payload.userId });
   return next;
 }
 
@@ -2198,18 +2273,30 @@ function buildNotificationEvent(type, context = {}) {
 
 async function sendNotificationEvent(db, { userId, eventType, context = {}, onlyDeviceId = null, criticalOnly = false }) {
   ensureNotificationTables(db);
+  cleanupDuplicateNotificationDevices(db, { userId });
   const payload = buildNotificationEvent(eventType, { ...context, userId });
   if (!payload) {
     throw new Error(`Unsupported notification event type: ${eventType}`);
   }
   const category = payload.category;
-  const devices = db.notificationDevices.filter((item) => item.userId === userId
+  const eligibleDevices = db.notificationDevices.filter((item) => item.userId === userId
     && item.isActive
     && item.permissionState === 'granted'
     && (!onlyDeviceId || item.id === onlyDeviceId)
     && (!criticalOnly || category === 'criticalRiskAlerts')
     && !!item.categories?.[category]);
+  const dedupedDevices = [];
+  const seenTargets = new Set();
+  for (const device of eligibleDevices) {
+    const dedupeTarget = `${String(device.token || '').trim().toLowerCase()}::${String(device.deviceId || '').trim().toLowerCase()}`;
+    if (seenTargets.has(dedupeTarget)) {
+      continue;
+    }
+    seenTargets.add(dedupeTarget);
+    dedupedDevices.push(device);
+  }
   const nowIso = new Date().toISOString();
+  const dedupeWindowMs = 2 * 60 * 1000;
   const log = {
     id: crypto.randomUUID(),
     userId,
@@ -2219,10 +2306,48 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     body: payload.body,
     link: payload.link,
     targetDeviceId: onlyDeviceId || null,
+    source: String(context?.source || ''),
+    context: {
+      groupId: context?.groupId || null,
+      announcementId: context?.announcementId || null,
+      eventId: context?.eventId || null
+    },
     attemptedAt: nowIso,
     deliveries: []
   };
-  for (const device of devices) {
+  for (const device of dedupedDevices) {
+    const dedupeKey = [
+      eventType,
+      context?.announcementId || context?.eventId || payload.tag || '',
+      userId,
+      device.id
+    ].join(':');
+    const existingDedupe = db.notificationPushDedupe.find((item) => item.key === dedupeKey);
+    const nowTs = Date.now();
+    const shouldSkipForDedupe = existingDedupe && (nowTs - Date.parse(existingDedupe.sentAt || 0)) < dedupeWindowMs;
+    if (eventType === 'trade_group_announcement') {
+      console.info('[TradeGroup][AnnouncementPushAttempt]', {
+        eventId: context?.eventId || `trade_group_announcement:${context?.announcementId || 'unknown'}`,
+        announcementId: context?.announcementId || null,
+        groupId: context?.groupId || null,
+        recipientUserId: userId,
+        targetDeviceId: device.id,
+        notificationType: eventType,
+        source: context?.source || 'sendNotificationEvent',
+        skipped: !!shouldSkipForDedupe
+      });
+    }
+    if (shouldSkipForDedupe) {
+      log.deliveries.push({
+        deviceId: device.id,
+        ok: true,
+        skipped: true,
+        reason: 'event-device-deduped',
+        dedupeKey,
+        at: new Date().toISOString()
+      });
+      continue;
+    }
     try {
       const messageId = await sendNotificationToDevice(db, device, payload);
       if (!messageId) {
@@ -2237,6 +2362,18 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         continue;
       }
       log.deliveries.push({ deviceId: device.id, ok: true, messageId, at: new Date().toISOString() });
+      if (existingDedupe) {
+        existingDedupe.sentAt = new Date().toISOString();
+      } else {
+        db.notificationPushDedupe.push({
+          key: dedupeKey,
+          eventType,
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceId: device.id,
+          sentAt: new Date().toISOString()
+        });
+      }
     } catch (error) {
       device.lastErrorAt = new Date().toISOString();
       device.updatedAt = device.lastErrorAt;
@@ -2256,6 +2393,8 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
       });
     }
   }
+  const cutoffTs = Date.now() - (24 * 60 * 60 * 1000);
+  db.notificationPushDedupe = db.notificationPushDedupe.filter((item) => Date.parse(item.sentAt || 0) >= cutoffTs);
   db.notificationEvents.push(log);
   return log;
 }
