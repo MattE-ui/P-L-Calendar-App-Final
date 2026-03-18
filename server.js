@@ -20,6 +20,7 @@ const {
   RESOLUTION_SOURCE,
   normalizeTicker,
   pickBestCandidate,
+  evaluateScoredResolution,
   buildResolverResult
 } = require('./services/instrumentResolver');
 
@@ -90,6 +91,7 @@ const socialCodeLookupRateLimit = new Map();
 const socialCodeRegenRateLimit = new Map();
 const unresolvedInstrumentWarnings = new Set();
 const perfSampleCache = new Map();
+const activeTradesComputationCache = new Map();
 
 function nowMs() {
   return Number(process.hrtime.bigint()) / 1e6;
@@ -126,6 +128,43 @@ function recordPerfSample(bucket, durationMs) {
   sample.avgMs = Number((sample.totalMs / sample.count).toFixed(2));
   sample.updatedAt = new Date().toISOString();
   perfSampleCache.set(key, sample);
+}
+
+function shouldIncludePerfBreakdown(req) {
+  const queryFlag = String(req?.query?.debugPerf || '').toLowerCase();
+  if (['1', 'true', 'yes'].includes(queryFlag)) return true;
+  const headerFlag = String(req?.headers?.['x-debug-perf'] || '').toLowerCase();
+  return ['1', 'true', 'yes'].includes(headerFlag);
+}
+
+function createPerfBreakdown(req, endpoint) {
+  const started = nowMs();
+  const include = shouldIncludePerfBreakdown(req);
+  const steps = [];
+  return {
+    step(name, fn) {
+      const stepStarted = nowMs();
+      const out = fn();
+      if (out && typeof out.then === 'function') {
+        return out.then(result => {
+          steps.push({ name, durationMs: Number((nowMs() - stepStarted).toFixed(2)) });
+          return result;
+        });
+      }
+      steps.push({ name, durationMs: Number((nowMs() - stepStarted).toFixed(2)) });
+      return out;
+    },
+    add(name, durationMs) {
+      if (!Number.isFinite(durationMs)) return;
+      steps.push({ name, durationMs: Number(Number(durationMs).toFixed(2)) });
+    },
+    finalize() {
+      const totalMs = Number((nowMs() - started).toFixed(2));
+      return include
+        ? { endpoint, totalMs, steps }
+        : { endpoint, durationMs: totalMs };
+    }
+  };
 }
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
@@ -801,6 +840,7 @@ function getDisplayInstrumentIdentity(record = {}) {
       displayTicker: canonicalTicker,
       displayName,
       canonicalTicker,
+      cleanedFallbackTicker: '',
       rawTicker,
       requiresManualReview: false,
       ticker: canonicalTicker,
@@ -813,7 +853,8 @@ function getDisplayInstrumentIdentity(record = {}) {
   }
 
   const cleanedRawTicker = normalizeTrading212Symbol(rawTicker);
-  const unresolvedTicker = fallbackTicker || cleanedRawTicker || '';
+  const cleanedFallbackTicker = fallbackTicker || cleanedRawTicker || '';
+  const unresolvedTicker = cleanedFallbackTicker;
   const unresolvedName = rawName || fallbackName;
   const unresolvedExchange = rawExchange || canonicalExchange;
   const warnKey = `${unresolvedTicker}|${unresolvedName}|${normalizedStatus}`;
@@ -826,6 +867,7 @@ function getDisplayInstrumentIdentity(record = {}) {
     displayTicker: unresolvedTicker,
     displayName: unresolvedName || '',
     canonicalTicker: canonicalTicker || '',
+    cleanedFallbackTicker,
     rawTicker,
     requiresManualReview,
     ticker: unresolvedTicker || '',
@@ -1995,6 +2037,7 @@ function cleanupExpiredGuests(db, now = new Date()) {
 }
 
 function auth(req, res, next) {
+  const started = nowMs();
   const token = req.cookies?.auth_token;
   if (!token) return res.status(401).json({ error: 'Unauthenticated' });
   const db = loadDB();
@@ -2017,6 +2060,8 @@ function auth(req, res, next) {
   req.username = username;
   req.user = user;
   req.isGuest = !!user.guest;
+  req.db = db;
+  req._authDurationMs = Number((nowMs() - started).toFixed(2));
   next();
 }
 
@@ -5637,6 +5682,7 @@ function applyInstrumentMappingToTrade(trade, db, username) {
       resolutionSource: baseIdentity.resolutionSource || trade.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE,
       isCanonical: baseIdentity.isCanonical === true,
       requiresManualReview: baseIdentity.requiresManualReview === true,
+      cleanedFallbackTicker: baseIdentity.cleanedFallbackTicker || '',
       rawTicker: baseIdentity.rawTicker || '',
       brokerTicker: trade.symbol || ''
     };
@@ -5661,6 +5707,7 @@ function applyInstrumentMappingToTrade(trade, db, username) {
     resolutionSource: resolved.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE,
     confidenceScore: Number.isFinite(Number(resolved.confidenceScore)) ? Number(resolved.confidenceScore) : undefined,
     sourceKey: resolved.sourceKey,
+    cleanedFallbackTicker: displayTicker,
     brokerTicker: instrument.ticker || trade.symbol || '',
     rawTicker: instrument.ticker || trade.trading212Ticker || ''
   };
@@ -5687,6 +5734,71 @@ function normalizeT212MetadataInstrument(item = {}) {
     brokerInstrumentId,
     isActive,
     raw: item
+  };
+}
+
+function buildResolverInspectionPayload(db, mapping = {}, metadataRecord = null) {
+  const rawInput = {
+    rawTicker: mapping.raw_ticker || mapping.broker_ticker || '',
+    rawName: mapping.raw_name || mapping.broker_name || '',
+    rawExchange: mapping.raw_exchange || '',
+    rawCurrency: mapping.raw_currency || mapping.currency || '',
+    rawInstrumentType: mapping.raw_instrument_type || '',
+    rawIsin: mapping.raw_isin || mapping.isin || '',
+    brokerInstrumentId: mapping.broker_instrument_id || ''
+  };
+  const universe = Array.isArray(metadataRecord?.instruments) ? metadataRecord.instruments : [];
+  const normalizedUniverse = universe.map(normalizeT212MetadataInstrument).filter(item => item.ticker || item.isin || item.brokerInstrumentId);
+  const ranking = pickBestCandidate({
+    rawName: rawInput.rawName,
+    rawTicker: rawInput.rawTicker,
+    rawExchange: rawInput.rawExchange,
+    rawCurrency: rawInput.rawCurrency,
+    rawInstrumentType: rawInput.rawInstrumentType
+  }, normalizedUniverse, {
+    hints: {
+      previousSuccess: Boolean(mapping?.canonical_ticker)
+    }
+  });
+  const scoredDecision = evaluateScoredResolution(ranking);
+  const status = String(mapping.resolution_status || '').toLowerCase();
+  const canonicalTicker = normalizeTicker(mapping.canonical_ticker || '');
+  const cleanedRawTicker = normalizeTrading212Symbol(rawInput.rawTicker || '');
+  const likelyCleanedArtifact = Boolean(canonicalTicker)
+    && canonicalTicker === cleanedRawTicker
+    && status !== RESOLUTION_STATUS.MANUAL_OVERRIDE
+    && !String(mapping.resolution_source || '').includes('exact');
+  return {
+    raw: rawInput,
+    canonical: {
+      canonicalTicker,
+      canonicalName: mapping.canonical_name || '',
+      canonicalExchange: mapping.canonical_exchange || '',
+      canonicalMic: mapping.canonical_mic || '',
+      canonicalCurrency: mapping.canonical_currency || ''
+    },
+    display: {
+      displayTicker: canonicalTicker || cleanedRawTicker || rawInput.rawTicker || '',
+      cleanedFallbackTicker: cleanedRawTicker || ''
+    },
+    current: {
+      resolutionStatus: status || RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: mapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
+      confidenceScore: Number(mapping.confidence_score ?? mapping.confidence ?? 0)
+    },
+    scoring: {
+      acceptedByPolicy: scoredDecision.acceptance,
+      policyStatus: scoredDecision.resolutionStatus,
+      policyConfidenceScore: scoredDecision.confidenceScore,
+      topCandidates: [
+        ranking.best ? { ticker: ranking.best.candidate?.ticker || '', name: ranking.best.candidate?.name || '', score: ranking.best.score, reasons: ranking.best.reasons || [] } : null,
+        ranking.runnerUp ? { ticker: ranking.runnerUp.candidate?.ticker || '', name: ranking.runnerUp.candidate?.name || '', score: ranking.runnerUp.score, reasons: ranking.runnerUp.reasons || [] } : null
+      ].filter(Boolean)
+    },
+    diagnostics: {
+      likelyCanonicalMarketTicker: Boolean(canonicalTicker) && !likelyCleanedArtifact && ['resolved', 'manual_override'].includes(status),
+      likelyCleanedBrokerArtifact: likelyCleanedArtifact
+    }
   };
 }
 
@@ -5808,28 +5920,21 @@ function resolveAndUpsertTrading212InstrumentMapping(db, username, rawInput = {}
     });
     if (ranking.best) {
       candidate = ranking.best.candidate;
-      confidenceScore = ranking.best.score;
+      confidenceScore = Number(ranking.best.score || 0);
+      const scoredDecision = evaluateScoredResolution(ranking);
       debug = {
         ...debug,
         reasons: ranking.best.reasons || [],
         runnerUpScore: ranking.runnerUp?.score ?? null,
+        acceptance: scoredDecision.acceptance,
         topCandidates: [
           ranking.best ? { ticker: ranking.best.candidate?.ticker || '', name: ranking.best.candidate?.name || '', score: ranking.best.score, reasons: ranking.best.reasons || [] } : null,
           ranking.runnerUp ? { ticker: ranking.runnerUp.candidate?.ticker || '', name: ranking.runnerUp.candidate?.name || '', score: ranking.runnerUp.score, reasons: ranking.runnerUp.reasons || [] } : null
         ].filter(Boolean)
       };
-      if (ranking.best.score >= 0.95) {
-        resolutionStatus = RESOLUTION_STATUS.RESOLVED;
-        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
-      } else if (ranking.best.score >= 0.8) {
-        resolutionStatus = RESOLUTION_STATUS.RESOLVED;
-        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
-      } else if (ranking.runnerUp && Math.abs(ranking.best.score - ranking.runnerUp.score) < 0.08) {
-        resolutionStatus = RESOLUTION_STATUS.AMBIGUOUS;
-        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
-      } else {
-        resolutionStatus = RESOLUTION_STATUS.UNRESOLVED;
-      }
+      resolutionStatus = scoredDecision.resolutionStatus;
+      confidenceScore = scoredDecision.confidenceScore;
+      resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
     }
   }
 
@@ -5873,11 +5978,29 @@ function resolveAndUpsertTrading212InstrumentMapping(db, username, rawInput = {}
     confidenceScore = Number(mapping.confidence_score || 0);
     mapping.requiresManualReview = true;
   } else {
-    mapping.canonical_ticker = nextCanonical || mapping.canonical_ticker || '';
-    mapping.canonical_name = candidate?.name || mapping.canonical_name || '';
-    mapping.canonical_exchange = candidate?.exchange || mapping.canonical_exchange || '';
-    mapping.canonical_mic = candidate?.mic || mapping.canonical_mic || '';
-    mapping.canonical_currency = candidate?.currency || mapping.canonical_currency || '';
+    const shouldPersistCanonical = (
+      resolutionStatus === RESOLUTION_STATUS.RESOLVED
+      || resolutionStatus === RESOLUTION_STATUS.MANUAL_OVERRIDE
+    ) && Boolean(nextCanonical);
+    if (shouldPersistCanonical) {
+      mapping.canonical_ticker = nextCanonical;
+      mapping.canonical_name = candidate?.name || mapping.canonical_name || '';
+      mapping.canonical_exchange = candidate?.exchange || mapping.canonical_exchange || '';
+      mapping.canonical_mic = candidate?.mic || mapping.canonical_mic || '';
+      mapping.canonical_currency = candidate?.currency || mapping.canonical_currency || '';
+    } else if (hasMetadataUniverse) {
+      if (mapping.canonical_ticker) {
+        debug = {
+          ...debug,
+          droppedCanonical: mapping.canonical_ticker
+        };
+      }
+      mapping.canonical_ticker = '';
+      mapping.canonical_name = '';
+      mapping.canonical_exchange = '';
+      mapping.canonical_mic = '';
+      mapping.canonical_currency = '';
+    }
   }
 
   mapping.confidence_score = Number.isFinite(confidenceScore) ? confidenceScore : 0;
@@ -7901,18 +8024,31 @@ app.get('/api/master/investors/:id/preview-token', requireMasterAuth, requireMas
 
 // --- user data ---
 app.get('/api/portfolio', auth, async (req,res)=>{
-  const db = loadDB();
+  const perf = createPerfBreakdown(req, '/api/portfolio');
+  perf.add('auth', req._authDurationMs || 0);
+  const db = req.db || await perf.step('db.load', () => loadDB());
   const user = db.users[req.username];
-  const mutated = ensureUserShape(user, req.username);
-  const history = ensurePortfolioHistory(user);
-  const normalized = normalizePortfolioHistory(user);
-  const totals = computeNetDepositsTotals(user, history);
-  const anchors = refreshAnchors(user, history);
-  const rates = await fetchRates();
-  const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
-  const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const mutated = await perf.step('user.shape', () => ensureUserShape(user, req.username));
+  const history = await perf.step('history.ensure', () => ensurePortfolioHistory(user));
+  const normalized = await perf.step('history.normalize', () => normalizePortfolioHistory(user));
+  const totals = await perf.step('portfolio.totals', () => computeNetDepositsTotals(user, history));
+  const anchors = await perf.step('portfolio.anchors', () => refreshAnchors(user, history));
+  const rates = await perf.step('fx.rates.fetch', () => fetchRates());
+  const cachedActive = activeTradesComputationCache.get(String(user?.username || '').trim());
+  const hasWarmActiveCache = cachedActive && cachedActive.expiresAt > Date.now();
+  const activeSnapshot = await perf.step(
+    hasWarmActiveCache ? 'active_trades.summary.cached' : 'active_trades.summary.fast',
+    () => hasWarmActiveCache
+      ? getOrBuildActiveTrades(user, rates, { includeTrades: false })
+      : buildFastActiveTradeSummary(user, rates)
+  );
+  const { activeTradesCount, liveOpenPnlGBP, openLossPotentialGBP } = activeSnapshot;
+  const portfolioSnapshot = await perf.step('portfolio.snapshot', () => getCurrentPortfolioValue(user));
   const livePortfolio = portfolioSnapshot.value;
-  if (mutated || normalized || anchors.mutated) saveDB(db);
+  if (mutated || normalized || anchors.mutated) await perf.step('db.save', () => saveDB(db));
+  const performance = perf.finalize();
+  recordPerfSample('/api/portfolio', performance.durationMs || performance.totalMs || 0);
+  res.set('X-Endpoint-Duration-Ms', String(performance.durationMs || performance.totalMs || 0));
   res.json({
     portfolio: portfolioSnapshot.value,
     portfolioSource: portfolioSnapshot.source,
@@ -7924,8 +8060,9 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     liveOpenPnl: liveOpenPnlGBP,
     openLossPotential: openLossPotentialGBP,
     livePortfolio,
-    activeTrades: trades.length,
-    isGuest: !!user.guest
+    activeTrades: Number(activeTradesCount) || 0,
+    isGuest: !!user.guest,
+    performance
   });
 });
 
@@ -9274,6 +9411,32 @@ app.get('/api/admin/instrument-resolver/review-queue', auth, asyncHandler(async 
       return sortDir === 'asc' ? aTs - bTs : bTs - aTs;
     });
   res.json({ queue: items });
+}));
+
+app.get('/api/admin/instrument-resolver/inspect', auth, asyncHandler(async (req, res) => {
+  const db = req.db || loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const mappingId = Number(req.query?.mappingId);
+  const sourceKey = String(req.query?.sourceKey || '').trim();
+  const mappings = ensureInstrumentMappings(db);
+  const mapping = Number.isFinite(mappingId)
+    ? mappings.find(item => Number(item.id) === mappingId)
+    : mappings.find(item => item.source_key === sourceKey);
+  if (!mapping) {
+    return res.status(404).json({ error: 'Mapping not found.' });
+  }
+  const metadata = getTrading212MetadataForMapping(db, mapping) || { instruments: [] };
+  const inspection = buildResolverInspectionPayload(db, mapping, metadata);
+  res.json({
+    id: mapping.id,
+    sourceKey: mapping.source_key,
+    scope: mapping.scope || 'global',
+    status: mapping.status || 'active',
+    inspection
+  });
 }));
 
 app.post('/api/admin/instrument-resolver/manual-override', auth, asyncHandler(async (req, res) => {
@@ -10767,30 +10930,42 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
 
 // profits endpoints
 app.get('/api/pl', auth, (req,res)=>{
+  const perf = createPerfBreakdown(req, '/api/pl');
+  perf.add('auth', req._authDurationMs || 0);
   const { year, month } = req.query;
-  const db = loadDB();
+  const db = req.db || perf.step('db.load', () => loadDB());
   const user = db.users[req.username];
-  ensureUserShape(user, req.username);
+  perf.step('user.shape', () => ensureUserShape(user, req.username));
   if (!user.profileComplete) {
     return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
   }
-  const history = ensurePortfolioHistory(user);
-  let mutated = normalizePortfolioHistory(user);
-  const journal = ensureTradeJournal(user);
-  if (normalizeTradeJournal(user)) mutated = true;
-  const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
+  const history = perf.step('history.ensure', () => ensurePortfolioHistory(user));
+  let mutated = perf.step('history.normalize', () => normalizePortfolioHistory(user));
+  const journal = perf.step('journal.ensure', () => ensureTradeJournal(user));
+  if (perf.step('journal.normalize', () => normalizeTradeJournal(user))) mutated = true;
+  const { baseline, mutated: anchorMutated } = perf.step('portfolio.anchors', () => refreshAnchors(user, history));
   if (anchorMutated) mutated = true;
-  const snapshots = buildSnapshots(history, baseline, journal);
+  const snapshots = perf.step('snapshots.build', () => buildSnapshots(history, baseline, journal));
   Object.values(snapshots).forEach(month => {
     Object.values(month || {}).forEach(entry => {
       if (!entry || !Array.isArray(entry.trades)) return;
       entry.trades = entry.trades.map(trade => applyInstrumentMappingToTrade({ ...trade }, db, req.username));
     });
   });
-  if (mutated) saveDB(db);
+  if (mutated) perf.step('db.save', () => saveDB(db));
+  const performance = perf.finalize();
+  recordPerfSample('/api/pl', performance.durationMs || performance.totalMs || 0);
+  res.set('X-Endpoint-Duration-Ms', String(performance.durationMs || performance.totalMs || 0));
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
-    return res.json(snapshots[key] || {});
+    const payload = snapshots[key] || {};
+    if (shouldIncludePerfBreakdown(req) && payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      payload.performance = performance;
+    }
+    return res.json(payload);
+  }
+  if (shouldIncludePerfBreakdown(req)) {
+    snapshots.performance = performance;
   }
   res.json(snapshots);
 });
@@ -11329,7 +11504,8 @@ async function fetchDailyLow(symbol, dateKey = null) {
   return low;
 }
 
-async function buildActiveTrades(user, rates = {}) {
+async function buildActiveTrades(user, rates = {}, opts = {}) {
+  const includeTrades = opts.includeTrades !== false;
   const journal = ensureTradeJournal(user);
   const trades = [];
   let liveOpenPnlGBP = 0;
@@ -11457,7 +11633,8 @@ async function buildActiveTrades(user, rates = {}) {
       const entryValueGBP = Number.isFinite(entry) && Number.isFinite(sizeUnits)
         ? convertToGBP(entry * sizeUnits, tradeCurrency, rates)
         : null;
-      enriched.push({
+      if (includeTrades) {
+        enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
         displaySymbol: trade.displaySymbol,
@@ -11493,6 +11670,7 @@ async function buildActiveTrades(user, rates = {}) {
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
         note: trade.note
       });
+      }
       continue;
     }
     const positionCurrency = Number.isFinite(livePrice) ? livePrice * sizeUnits : null;
@@ -11554,6 +11732,7 @@ async function buildActiveTrades(user, rates = {}) {
       : (Number.isFinite(portfolioCurrencyAtCalc) && portfolioCurrencyAtCalc > 0 && Number.isFinite(riskAmountCurrency)
         ? (riskAmountCurrency / portfolioCurrencyAtCalc) * 100
         : null);
+    if (includeTrades) {
       enriched.push({
         id: trade.id,
         symbol: quoteSymbol || symbol,
@@ -11591,9 +11770,11 @@ async function buildActiveTrades(user, rates = {}) {
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
         note: trade.note
       });
+    }
   }
   return {
-    trades: enriched,
+    trades: includeTrades ? enriched : [],
+    activeTradesCount: trades.length,
     liveOpenPnlGBP,
     openLossPotentialGBP,
     liveOpenPnlMode: providerTrades > 0 && manualTrades === 0 ? 'provider' : 'computed',
@@ -11601,16 +11782,93 @@ async function buildActiveTrades(user, rates = {}) {
   };
 }
 
+async function getOrBuildActiveTrades(user, rates = {}, opts = {}) {
+  const username = String(user?.username || '').trim();
+  const includeTrades = opts.includeTrades !== false;
+  if (!username) {
+    return buildActiveTrades(user, rates, { includeTrades });
+  }
+  const key = username;
+  const now = Date.now();
+  const existing = activeTradesComputationCache.get(key);
+  if (existing && existing.expiresAt > now) {
+    if (existing.promise) {
+      const result = await existing.promise;
+      return includeTrades ? result : { ...result, trades: [] };
+    }
+    return includeTrades ? existing.result : { ...existing.result, trades: [] };
+  }
+  const promise = buildActiveTrades(user, rates, { includeTrades: true })
+    .then((result) => {
+      activeTradesComputationCache.set(key, {
+        expiresAt: Date.now() + 5000,
+        result
+      });
+      return result;
+    })
+    .catch((error) => {
+      activeTradesComputationCache.delete(key);
+      throw error;
+    });
+  activeTradesComputationCache.set(key, {
+    expiresAt: now + 5000,
+    promise
+  });
+  const result = await promise;
+  return includeTrades ? result : { ...result, trades: [] };
+}
+
+function buildFastActiveTradeSummary(user, rates = {}) {
+  const journal = ensureTradeJournal(user);
+  let activeTradesCount = 0;
+  let liveOpenPnlGBP = 0;
+  let openLossPotentialGBP = 0;
+  for (const items of Object.values(journal || {})) {
+    for (const trade of (items || [])) {
+      if (!trade || trade.status === 'closed' || Number.isFinite(Number(trade.closePrice))) continue;
+      activeTradesCount += 1;
+      const tradeCurrency = trade.currency || 'GBP';
+      const direction = trade.direction === 'short' ? 'short' : 'long';
+      const entry = Number(trade.entry);
+      const sizeUnits = Number(trade.sizeUnits);
+      let unrealizedGBP = null;
+      const syncPpl = parseTradingNumber(trade.ppl);
+      if ((trade.source === 'ibkr' || trade.ibkrPositionId) && Number.isFinite(syncPpl)) {
+        unrealizedGBP = convertToGBP(syncPpl, tradeCurrency, rates);
+      } else if (Number.isFinite(Number(trade.lastSyncPrice)) && Number.isFinite(entry) && Number.isFinite(sizeUnits)) {
+        const live = Number(trade.lastSyncPrice);
+        const pnl = direction === 'short' ? (entry - live) * sizeUnits : (live - entry) * sizeUnits;
+        unrealizedGBP = convertToGBP(pnl, tradeCurrency, rates);
+      }
+      if (Number.isFinite(unrealizedGBP)) {
+        liveOpenPnlGBP += unrealizedGBP;
+        const guaranteedPnlGBP = computeGuaranteedPnl(trade, rates);
+        if (Number.isFinite(guaranteedPnlGBP)) {
+          const potentialDropGBP = unrealizedGBP - guaranteedPnlGBP;
+          if (potentialDropGBP > 0) openLossPotentialGBP -= potentialDropGBP;
+        }
+      }
+    }
+  }
+  return {
+    trades: [],
+    activeTradesCount,
+    liveOpenPnlGBP,
+    openLossPotentialGBP
+  };
+}
+
 app.get('/api/trades', auth, async (req, res) => {
-  const requestStart = nowMs();
-  const db = withTiming('db.load.trades', { endpoint: '/api/trades' }, () => loadDB());
+  const perf = createPerfBreakdown(req, '/api/trades');
+  perf.add('auth', req._authDurationMs || 0);
+  const db = req.db || await perf.step('db.load', () => loadDB());
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user, req.username);
-  normalizeTradeJournal(user);
-  const rates = await withTiming('fx.rates.fetch', { endpoint: '/api/trades' }, () => fetchRates());
-  const trades = withTiming('trades.flatten_map', { endpoint: '/api/trades' }, () => flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username)));
-  const filtered = withTiming('trades.filter_sort', { endpoint: '/api/trades' }, () => filterTrades(trades, req.query || {})
+  await perf.step('user.shape', () => ensureUserShape(user, req.username));
+  await perf.step('journal.normalize', () => normalizeTradeJournal(user));
+  const rates = await perf.step('quote_fetch.fx_rates', () => fetchRates());
+  const trades = await perf.step('db_query.flatten_trades', () => flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username)));
+  const filtered = await perf.step('transform.filter_sort_serialize', () => filterTrades(trades, req.query || {})
     .sort((a, b) => {
       const aDate = a.openDate || '';
       const bDate = b.openDate || '';
@@ -11629,10 +11887,10 @@ app.get('/api/trades', auth, async (req, res) => {
         requiresManualReview: identity.requiresManualReview === true
       };
     }));
-  const durationMs = Number((nowMs() - requestStart).toFixed(2));
-  recordPerfSample('/api/trades', durationMs);
-  res.set('X-Endpoint-Duration-Ms', String(durationMs));
-  res.json({ trades: filtered, performance: { endpoint: '/api/trades', durationMs } });
+  const performance = perf.finalize();
+  recordPerfSample('/api/trades', performance.durationMs || performance.totalMs || 0);
+  res.set('X-Endpoint-Duration-Ms', String(performance.durationMs || performance.totalMs || 0));
+  res.json({ trades: filtered, performance });
 });
 
 app.get('/api/trades/export', auth, async (req, res) => {
@@ -12245,18 +12503,18 @@ app.get('/api/rates', auth, async (req,res)=>{
 });
 
 app.get('/api/trades/active', auth, async (req, res) => {
-  const requestStart = nowMs();
-  const db = withTiming('db.load.active_trades', { endpoint: '/api/trades/active' }, () => loadDB());
+  const perf = createPerfBreakdown(req, '/api/trades/active');
+  perf.add('auth', req._authDurationMs || 0);
+  const db = req.db || await perf.step('db.load', () => loadDB());
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user, req.username);
-  const rates = await withTiming('fx.rates.fetch', { endpoint: '/api/trades/active' }, () => fetchRates());
-  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await withTiming(
+  await perf.step('user.shape', () => ensureUserShape(user, req.username));
+  const rates = await perf.step('quote_fetch.fx_rates', () => fetchRates());
+  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await perf.step(
     'active_trades.build',
-    { endpoint: '/api/trades/active' },
-    () => buildActiveTrades(user, rates)
+    () => getOrBuildActiveTrades(user, rates, { includeTrades: true })
   );
-  const mappedTrades = withTiming('active_trades.map_identity', { endpoint: '/api/trades/active' }, () => trades.map(trade => {
+  const mappedTrades = await perf.step('canonical_resolution_and_serialization', () => trades.map(trade => {
     const mapped = applyInstrumentMappingToTrade(trade, db, req.username);
     const identity = getDisplayInstrumentIdentity(mapped);
     return {
@@ -12270,16 +12528,16 @@ app.get('/api/trades/active', auth, async (req, res) => {
       requiresManualReview: identity.requiresManualReview === true
     };
   }));
-  const durationMs = Number((nowMs() - requestStart).toFixed(2));
-  recordPerfSample('/api/trades/active', durationMs);
-  res.set('X-Endpoint-Duration-Ms', String(durationMs));
+  const performance = perf.finalize();
+  recordPerfSample('/api/trades/active', performance.durationMs || performance.totalMs || 0);
+  res.set('X-Endpoint-Duration-Ms', String(performance.durationMs || performance.totalMs || 0));
   res.json({
     trades: mappedTrades,
     liveOpenPnl: liveOpenPnlGBP,
     openLossPotential: openLossPotentialGBP,
     liveOpenPnlMode,
     liveOpenPnlCurrency,
-    performance: { endpoint: '/api/trades/active', durationMs }
+    performance
   });
 });
 

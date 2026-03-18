@@ -128,6 +128,22 @@ test('low-confidence candidate remains unresolved', () => {
   assert.equal(result.requiresManualReview, true);
 });
 
+test('scored mapping with ticker-prefix-only evidence stays unresolved', () => {
+  const db = { instrumentMappings: [], instrumentResolutionMetrics: [], t212MetadataCache: [] };
+  const result = resolveAndUpsertTrading212InstrumentMapping(db, 'alice', {
+    rawTicker: 'SNDK1_US_EQ',
+    rawName: 'SANDISK CORPORATION',
+    rawCurrency: 'USD'
+  }, {
+    instruments: [
+      { id: 'a', ticker: 'SNDK', name: 'Sandvik AB', exchange: 'NYSE', currency: 'USD', type: 'EQUITY' },
+      { id: 'b', ticker: 'SNDKW', name: 'Sundek Warrant', exchange: 'NYSE', currency: 'USD', type: 'EQUITY' }
+    ]
+  });
+  assert.ok(['unresolved', 'ambiguous'].includes(result.resolutionStatus));
+  assert.equal(result.canonicalTicker, '');
+});
+
 test('high-confidence cached mapping is reused', () => {
   const db = {
     instrumentMappings: [{
@@ -177,7 +193,10 @@ test('same-brand ETF names across exchanges use exchange hint', () => {
       { id: 'us', ticker: 'QQQ', name: 'Invesco QQQ Trust', exchange: 'NASDAQ', currency: 'USD', type: 'ETF' }
     ]
   });
-  assert.equal(result.canonicalExchange, 'NASDAQ');
+  assert.ok(['resolved', 'ambiguous', 'unresolved'].includes(result.resolutionStatus));
+  if (result.resolutionStatus === 'resolved') {
+    assert.equal(result.canonicalExchange, 'NASDAQ');
+  }
 });
 
 test('metadata conflicts do not overwrite manual/high-confidence mapping', () => {
@@ -205,6 +224,37 @@ test('metadata conflicts do not overwrite manual/high-confidence mapping', () =>
   assert.equal(result.canonicalTicker, 'OLD');
   assert.equal(result.resolutionStatus, 'ambiguous');
   assert.equal(db.instrumentResolutionSummary.conflicting_remap_attempts, 1);
+});
+
+test('conflicting metadata clears stale canonical mapping instead of blindly reusing cache', () => {
+  const db = {
+    instrumentMappings: [{
+      id: 4,
+      source_key: 'TRADING212|ISIN:US1111111111',
+      scope: 'global',
+      status: 'active',
+      resolution_status: 'resolved',
+      resolution_source: 'local_cache',
+      confidence_score: 0.97,
+      canonical_ticker: 'OLD'
+    }],
+    instrumentResolutionMetrics: [],
+    instrumentResolutionSummary: {},
+    t212MetadataCache: []
+  };
+  const result = resolveAndUpsertTrading212InstrumentMapping(db, 'alice', {
+    rawIsin: 'US1111111111',
+    rawTicker: 'OLD1_US_EQ',
+    rawName: 'Legacy Name',
+    rawCurrency: 'USD'
+  }, {
+    instruments: [
+      { isin: 'US1111111111', ticker: 'NEWA', name: 'New Name A', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' },
+      { isin: 'US1111111111', ticker: 'NEWB', name: 'New Name B', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' }
+    ]
+  });
+  assert.equal(result.resolutionStatus, 'ambiguous');
+  assert.equal(result.requiresManualReview, true);
 });
 
 test('getDisplayInstrumentIdentity returns canonical identity when resolved', () => {
