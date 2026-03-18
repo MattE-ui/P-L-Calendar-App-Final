@@ -8,6 +8,14 @@ const STATIC_ASSETS = [
   '/static/profile.js',
   '/static/transactions.js'
 ];
+const PRECACHE_URLS = [
+  '/index.html',
+  '/login.html',
+  '/signup.html',
+  '/profile.html',
+  '/transactions.html',
+  ...STATIC_ASSETS
+];
 
 const FCM_CONFIG = __FCM_CONFIG__;
 let messaging = null;
@@ -46,7 +54,21 @@ if (hasFcmConfig()) {
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(['/', '/index.html', '/login.html', '/signup.html', '/profile.html', '/transactions.html', ...STATIC_ASSETS]);
+      console.info('[SW] Install started');
+      for (const url of PRECACHE_URLS) {
+        try {
+          const response = await fetch(url, { cache: 'no-store' });
+          if (!response || !response.ok) {
+            console.warn('[SW] Skipping cache (bad response):', url, response?.status);
+            continue;
+          }
+          await cache.put(url, response.clone());
+          console.info('[SW] Cached asset:', url);
+        } catch (error) {
+          console.warn('[SW] Skipping cache (fetch failed):', url, error);
+        }
+      }
+      console.info('[SW] Install completed');
     })
   );
   self.skipWaiting();

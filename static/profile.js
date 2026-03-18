@@ -2783,11 +2783,12 @@ async function registerNotificationToken({ force = false } = {}) {
     const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js');
     setNotificationDebugState('service worker registration found/created');
     notificationDebug('Service worker registration completed', { scope: serviceWorkerRegistration.scope });
+    const swReady = await navigator.serviceWorker.ready;
+    notificationDebug('Service worker ready', { scope: swReady?.scope || serviceWorkerRegistration.scope });
     setNotificationDebugState('Firebase app initialization started');
     const messaging = await ensureFirebaseMessagingReady(configPayload);
     setNotificationDebugState('Firebase app initialized');
     notificationDebug('Firebase app initialized');
-    const swReady = await navigator.serviceWorker.ready;
     notificationDebug('messaging initialized', { hasMessaging: !!messaging });
     if (force && typeof messaging.deleteToken === 'function') {
       try {
