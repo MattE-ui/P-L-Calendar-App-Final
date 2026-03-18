@@ -79,6 +79,10 @@ const notificationState = {
   deviceId: '',
   activeDeviceId: '',
   permission: 'default',
+  scriptLoadPromise: null,
+  firebaseInitPromise: null,
+  messaging: null,
+  registerInFlight: false,
   categories: {
     criticalRiskAlerts: true,
     tradeAlerts: true,
@@ -2585,18 +2589,74 @@ function detectBrowserName() {
 }
 
 async function loadFirebaseMessagingCompat() {
-  if (window.firebase?.messaging) return window.firebase.messaging();
+  if (notificationState.scriptLoadPromise) {
+    await notificationState.scriptLoadPromise;
+    return;
+  }
   const injectScript = src => new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === 'true') {
+        resolve();
+        return;
+      }
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error(`Failed loading ${src}`)), { once: true });
+      return;
+    }
     const script = document.createElement('script');
     script.src = src;
     script.async = true;
-    script.onload = resolve;
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    };
     script.onerror = reject;
     document.head.appendChild(script);
   });
-  await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
-  await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
-  return window.firebase.messaging();
+  notificationState.scriptLoadPromise = (async () => {
+    await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+    await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
+    console.info('[Notifications] Firebase compat scripts loaded.');
+  })();
+  await notificationState.scriptLoadPromise;
+}
+
+function hasValidNotificationConfig(configPayload) {
+  const cfg = configPayload?.config || {};
+  const required = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId', 'vapidKey'];
+  return required.every((key) => typeof cfg[key] === 'string' && cfg[key].trim().length > 0);
+}
+
+async function ensureFirebaseMessagingReady(configPayload) {
+  if (notificationState.messaging) {
+    return notificationState.messaging;
+  }
+  if (notificationState.firebaseInitPromise) {
+    return notificationState.firebaseInitPromise;
+  }
+  notificationState.firebaseInitPromise = (async () => {
+    await loadFirebaseMessagingCompat();
+    if (!window.firebase) {
+      throw new Error('Firebase SDK failed to load.');
+    }
+    const config = configPayload?.config || {};
+    if (!hasValidNotificationConfig(configPayload)) {
+      throw new Error('Notification config is incomplete.');
+    }
+    const app = (Array.isArray(window.firebase.apps) && window.firebase.apps.length)
+      ? window.firebase.apps[0]
+      : window.firebase.initializeApp(config);
+    console.info('[Notifications] Firebase app initialized.', { initializedApps: window.firebase.apps?.length || 0, projectId: config.projectId || 'unknown' });
+    notificationState.messaging = window.firebase.messaging(app);
+    console.info('[Notifications] Firebase messaging initialized.');
+    return notificationState.messaging;
+  })().catch((error) => {
+    notificationState.firebaseInitPromise = null;
+    notificationState.messaging = null;
+    throw error;
+  });
+  return notificationState.firebaseInitPromise;
 }
 
 function setNotificationMessage(status = '', error = '') {
@@ -2659,51 +2719,66 @@ async function loadNotificationDevices() {
 }
 
 async function registerNotificationToken({ force = false } = {}) {
+  if (notificationState.registerInFlight) {
+    console.info('[Notifications] Token request skipped because one is already running.');
+    return;
+  }
+  notificationState.registerInFlight = true;
   if (!notificationState.supported) {
     setNotificationMessage('', 'Notifications are not supported in this browser.');
+    notificationState.registerInFlight = false;
     return;
   }
   if (Notification.permission === 'denied') {
     setNotificationMessage('', 'Browser permission is denied. Re-enable notifications in browser settings first.');
+    notificationState.registerInFlight = false;
     return;
   }
-  const configPayload = notificationState.config || await api('/api/notifications/config');
-  notificationState.config = configPayload;
-  if (!configPayload?.supported) {
-    setNotificationMessage('', 'Server-side notification configuration is incomplete.');
-    return;
+  try {
+    const configPayload = notificationState.config || await api('/api/notifications/config');
+    notificationState.config = configPayload;
+    console.info('[Notifications] Config loaded.', {
+      supported: !!configPayload?.supported,
+      missingKeys: Array.isArray(configPayload?.missingKeys) ? configPayload.missingKeys : []
+    });
+    if (!configPayload?.supported || !hasValidNotificationConfig(configPayload)) {
+      setNotificationMessage('', 'Server-side notification configuration is incomplete.');
+      return;
+    }
+    await navigator.serviceWorker.register('/serviceWorker.js');
+    const messaging = await ensureFirebaseMessagingReady(configPayload);
+    const serviceWorkerRegistration = await navigator.serviceWorker.ready;
+    console.info('[Notifications] Token request started.');
+    const token = await messaging.getToken({
+      vapidKey: configPayload.config.vapidKey,
+      serviceWorkerRegistration
+    });
+    console.info('[Notifications] Token request finished.', { hasToken: !!token });
+    if (!token) {
+      setNotificationMessage('', 'Unable to fetch a push token. Try again.');
+      return;
+    }
+    const payload = {
+      deviceId: notificationState.deviceId,
+      token,
+      platform: getNotificationPlatform(),
+      browser: detectBrowserName(),
+      userAgent: navigator.userAgent,
+      permissionState: Notification.permission,
+      installedAsPwa: !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone),
+      categories: notificationState.categories,
+      isActive: true
+    };
+    await api('/api/notifications/devices/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
+    await loadNotificationDevices();
+  } finally {
+    notificationState.registerInFlight = false;
   }
-  await navigator.serviceWorker.register('/serviceWorker.js');
-  const messaging = await loadFirebaseMessagingCompat();
-  if (!window.firebase.apps.length) {
-    window.firebase.initializeApp(configPayload.config);
-  }
-  const token = await messaging.getToken({
-    vapidKey: configPayload.config.vapidKey,
-    serviceWorkerRegistration: await navigator.serviceWorker.ready
-  });
-  if (!token) {
-    setNotificationMessage('', 'Unable to fetch a push token. Try again.');
-    return;
-  }
-  const payload = {
-    deviceId: notificationState.deviceId,
-    token,
-    platform: getNotificationPlatform(),
-    browser: detectBrowserName(),
-    userAgent: navigator.userAgent,
-    permissionState: Notification.permission,
-    installedAsPwa: !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone),
-    categories: notificationState.categories,
-    isActive: true
-  };
-  await api('/api/notifications/devices/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
-  await loadNotificationDevices();
 }
 
 async function initNotificationSettings() {
@@ -2715,6 +2790,10 @@ async function initNotificationSettings() {
   if (!notificationState.supported) return;
   try {
     notificationState.config = await api('/api/notifications/config');
+    console.info('[Notifications] Config preload completed.', {
+      supported: !!notificationState.config?.supported,
+      missingKeys: Array.isArray(notificationState.config?.missingKeys) ? notificationState.config.missingKeys : []
+    });
     await loadNotificationDevices();
   } catch (error) {
     setNotificationMessage('', 'Unable to load notification settings.');
