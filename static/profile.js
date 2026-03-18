@@ -86,6 +86,9 @@ const notificationState = {
   deviceList: [],
   lastStep: 'idle',
   lastError: '',
+  lastDeleteActionResult: 'none',
+  autoReregisterDetected: false,
+  lastRegisterTriggerSource: 'none',
   categories: {
     criticalRiskAlerts: true,
     tradeAlerts: true,
@@ -2680,6 +2683,10 @@ function setNotificationDebugState(step = 'idle', error = '') {
   if (errorEl) {
     errorEl.textContent = notificationState.lastError ? ` · Error: ${notificationState.lastError}` : '';
   }
+  const extraEl = document.getElementById('notification-debug-delete');
+  if (extraEl) {
+    extraEl.textContent = `Delete result: ${notificationState.lastDeleteActionResult || 'none'} · Auto re-register detected: ${notificationState.autoReregisterDetected ? 'Yes' : 'No'} · Last register trigger: ${notificationState.lastRegisterTriggerSource || 'none'}`;
+  }
 }
 
 function notificationDebug(step, details = {}) {
@@ -2781,19 +2788,34 @@ async function removeNotificationDevice(deviceRowId) {
     setNotificationMessage('', 'Device not found in current list.');
     return;
   }
+  notificationDebug('Remove device button clicked', {
+    deviceRowId,
+    targetDeviceId: target.deviceId || null,
+    isCurrentDevice: target.deviceId === notificationState.deviceId
+  });
   const confirmed = window.confirm('Stop notifications on this device?');
+  notificationDebug('Remove device confirmation prompt result', { deviceRowId, confirmed });
   if (!confirmed) return;
   try {
-    await api(`/api/notifications/device/${encodeURIComponent(deviceRowId)}`, { method: 'DELETE' });
+    notificationState.lastDeleteActionResult = 'delete request started';
+    setNotificationDebugState('delete request started');
+    notificationDebug('Remove device API request started', { endpoint: `/api/notifications/device/${encodeURIComponent(deviceRowId)}`, deviceRowId });
+    const deleteResponse = await api(`/api/notifications/device/${encodeURIComponent(deviceRowId)}`, { method: 'DELETE' });
+    notificationDebug('Remove device API response received', { deviceRowId, response: deleteResponse });
     if (target.deviceId === notificationState.deviceId) {
       localStorage.setItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY, 'true');
       notificationState.activeDeviceId = '';
       await unsubscribeCurrentPushSubscription();
     }
+    notificationState.lastDeleteActionResult = `success (removed=${deleteResponse?.removed ? 'yes' : 'no'})`;
     setNotificationMessage('Device removed from notifications.', '');
     await loadNotificationDevices();
   } catch (error) {
+    notificationState.lastDeleteActionResult = `failed (${error?.data?.error || error?.message || 'unknown error'})`;
     setNotificationMessage('', error?.data?.error || 'Unable to remove this device.');
+    notificationDebug('Remove device API request failed', { deviceRowId, error: error?.data?.error || error?.message || String(error) });
+  } finally {
+    setNotificationDebugState('delete flow completed');
   }
 }
 
@@ -2801,14 +2823,22 @@ async function loadNotificationDevices() {
   setNotificationDebugState('refresh devices request started');
   notificationDebug('Device list refresh started');
   const payload = await api('/api/notifications/devices');
+  notificationDebug('Device list refresh payload', { devices: payload.devices || [] });
   renderNotificationDevices(payload.devices || []);
   renderNotificationControls();
   setNotificationDebugState('refresh devices request completed');
   notificationDebug('Device list refresh completed', { count: Array.isArray(payload.devices) ? payload.devices.length : 0 });
 }
 
-async function registerNotificationToken({ force = false } = {}) {
-  notificationDebug('Registration requested', { force });
+async function registerNotificationToken({ force = false, triggerSource = 'unknown' } = {}) {
+  notificationState.lastRegisterTriggerSource = triggerSource;
+  notificationDebug('Registration requested', { force, triggerSource });
+  if (localStorage.getItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY) === 'true' && triggerSource.startsWith('auto-')) {
+    notificationState.autoReregisterDetected = true;
+    notificationDebug('Auto re-register attempt blocked because current device was removed', { force, triggerSource });
+    setNotificationDebugState('auto re-register blocked');
+    return;
+  }
   if (notificationState.registerInFlight) {
     notificationDebug('Registration skipped: already in flight');
     return;
@@ -3191,7 +3221,7 @@ window.addEventListener('DOMContentLoaded', () => {
         notificationDebug('Permission prompt skipped', { permission: Notification.permission });
       }
       localStorage.removeItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY);
-      await registerNotificationToken();
+      await registerNotificationToken({ triggerSource: 'user-enable' });
     } catch (error) {
       notificationDebug('Enable button handler failed', { error: error?.message || String(error) });
       setNotificationMessage('', error?.message || 'Unable to enable notifications.');
@@ -3202,7 +3232,7 @@ window.addEventListener('DOMContentLoaded', () => {
     notificationDebug('Re-register button clicked');
     try {
       localStorage.removeItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY);
-      await registerNotificationToken({ force: true });
+      await registerNotificationToken({ force: true, triggerSource: 'user-reregister' });
     } catch (error) {
       notificationDebug('Re-register button handler failed', { error: error?.message || String(error) });
       setNotificationMessage('', error?.message || 'Unable to re-register token.');
