@@ -59,6 +59,9 @@ Module._load = function load(request, parent, isMain) {
       min() {
         return this;
       },
+      max() {
+        return this;
+      },
       safeParse(value) {
         const ok = check(value);
         return ok

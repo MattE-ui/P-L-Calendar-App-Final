@@ -1731,6 +1731,12 @@ function loadDB() {
     if (!Array.isArray(db.instrumentMappings)) {
       db.instrumentMappings = [];
     }
+    if (!Array.isArray(db.brokerInstrumentRegistry)) {
+      db.brokerInstrumentRegistry = [];
+    }
+    if (!Array.isArray(db.instrumentResolutionHistory)) {
+      db.instrumentResolutionHistory = [];
+    }
     if (!Array.isArray(db.brokerSnapshots)) {
       db.brokerSnapshots = [];
     }
@@ -1790,6 +1796,8 @@ function loadDB() {
       users: {},
       sessions: {},
       instrumentMappings: [],
+      brokerInstrumentRegistry: [],
+      instrumentResolutionHistory: [],
       brokerSnapshots: [],
       ibkrConnectorTokens: [],
       ibkrConnectorKeys: [],
@@ -5344,11 +5352,14 @@ async function fetchTrading212Orders(config, username, { bypassCache = false, ac
 }
 
 function computeSourceKey(instrument = {}) {
+  if (instrument.uid) {
+    return `TRADING212|UID:${instrument.uid}`;
+  }
   if (instrument.isin) {
     return `TRADING212|ISIN:${instrument.isin}`;
   }
-  if (instrument.uid) {
-    return `TRADING212|UID:${instrument.uid}`;
+  if (instrument.name) {
+    return `TRADING212|NAME:${normalizeTrading212Name(instrument.name)}|CCY:${String(instrument.currency || '').toUpperCase()}`;
   }
   return `TRADING212|TICKER:${instrument.ticker}|CCY:${instrument.currency}`;
 }
@@ -5358,6 +5369,280 @@ function ensureInstrumentMappings(db) {
     db.instrumentMappings = [];
   }
   return db.instrumentMappings;
+}
+
+const REGISTRY_RESOLUTION_STATUSES = new Set(['resolved', 'unresolved', 'ambiguous', 'manual_override']);
+const REGISTRY_RESOLUTION_SOURCES = new Set(['isin_lookup', 'name_lookup', 'manual_override', 'unresolved']);
+const KNOWN_TICKER_ALIASES = new Map([
+  ['SOI', { canonicalTicker: 'SEI', canonicalName: 'Solaris Energy Infrastructure', source: 'name_lookup', confidence: 0.7 }],
+  ['YNDX', { canonicalTicker: 'NBIS', canonicalName: 'Nebius Group', source: 'name_lookup', confidence: 0.7 }]
+]);
+
+function ensureInstrumentRegistry(db) {
+  if (!Array.isArray(db.brokerInstrumentRegistry)) {
+    db.brokerInstrumentRegistry = [];
+  }
+  if (!Array.isArray(db.instrumentResolutionHistory)) {
+    db.instrumentResolutionHistory = [];
+  }
+  return db.brokerInstrumentRegistry;
+}
+
+function nextBrokerInstrumentRegistryId(rows) {
+  return rows.reduce((max, row) => Math.max(max, Number(row?.id) || 0), 0) + 1;
+}
+
+function nextInstrumentResolutionHistoryId(rows) {
+  return rows.reduce((max, row) => Math.max(max, Number(row?.id) || 0), 0) + 1;
+}
+
+function normalizeRegistryStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return REGISTRY_RESOLUTION_STATUSES.has(normalized) ? normalized : 'unresolved';
+}
+
+function normalizeRegistrySource(source) {
+  const normalized = String(source || '').trim().toLowerCase();
+  return REGISTRY_RESOLUTION_SOURCES.has(normalized) ? normalized : 'unresolved';
+}
+
+function normalizeRegistryInput(instrument = {}) {
+  const rawName = String(instrument.rawName || instrument.name || '').trim();
+  const rawTicker = normalizeTrading212TickerValue(String(instrument.rawTicker || instrument.ticker || '').trim());
+  const brokerInstrumentId = String(instrument.brokerInstrumentId || instrument.uid || '').trim();
+  const isin = String(instrument.isin || '').trim().toUpperCase();
+  const rawCurrency = String(instrument.rawCurrency || instrument.currency || '').trim().toUpperCase();
+  return {
+    broker: String(instrument.broker || 'trading212').trim().toLowerCase(),
+    brokerInstrumentId,
+    rawTicker,
+    rawName,
+    normalizedRawName: normalizeTrading212Name(rawName),
+    isin,
+    rawCurrency,
+    rawExchange: String(instrument.rawExchange || instrument.exchange || '').trim().toUpperCase(),
+    instrumentType: String(instrument.instrumentType || '').trim().toLowerCase()
+  };
+}
+
+function getRegistryLookupKey(data) {
+  if (data.brokerInstrumentId) return `uid:${data.broker}|${data.brokerInstrumentId}`;
+  if (data.isin) return `isin:${data.broker}|${data.isin}`;
+  if (data.normalizedRawName) return `name:${data.broker}|${data.normalizedRawName}|${data.rawCurrency}`;
+  if (data.rawTicker) return `ticker:${data.broker}|${data.rawTicker}|${data.rawCurrency}`;
+  return '';
+}
+
+function findRegistryEntry(db, instrument = {}) {
+  const registry = ensureInstrumentRegistry(db);
+  const normalized = normalizeRegistryInput(instrument);
+  if (normalized.brokerInstrumentId) {
+    const byUid = registry.find(row => row.broker === normalized.broker && row.brokerInstrumentId === normalized.brokerInstrumentId);
+    if (byUid) return byUid;
+  }
+  if (normalized.isin) {
+    const byIsin = registry.find(row => row.broker === normalized.broker && row.isin === normalized.isin);
+    if (byIsin) return byIsin;
+  }
+  if (normalized.normalizedRawName) {
+    const byName = registry.find(row => row.broker === normalized.broker && row.normalizedRawName === normalized.normalizedRawName && row.rawCurrency === normalized.rawCurrency);
+    if (byName) return byName;
+  }
+  if (normalized.rawTicker) {
+    return registry.find(row => row.broker === normalized.broker && row.rawTicker === normalized.rawTicker && row.rawCurrency === normalized.rawCurrency) || null;
+  }
+  return null;
+}
+
+function addResolutionHistory(db, registryEntry, patch = {}, reason = '', changedBy = 'system') {
+  const history = Array.isArray(db.instrumentResolutionHistory) ? db.instrumentResolutionHistory : [];
+  db.instrumentResolutionHistory = history;
+  history.push({
+    id: nextInstrumentResolutionHistoryId(history),
+    instrumentRegistryId: registryEntry.id,
+    previousCanonicalTicker: registryEntry.canonicalTicker || '',
+    newCanonicalTicker: patch.canonicalTicker || '',
+    previousStatus: registryEntry.resolutionStatus || 'unresolved',
+    newStatus: patch.resolutionStatus || registryEntry.resolutionStatus || 'unresolved',
+    reason: String(reason || '').trim() || 'update',
+    changedAt: new Date().toISOString(),
+    changedBy: String(changedBy || 'system')
+  });
+}
+
+function upsertRegistryEntry(db, instrument = {}, options = {}) {
+  const registry = ensureInstrumentRegistry(db);
+  const normalized = normalizeRegistryInput(instrument);
+  const nowIso = new Date().toISOString();
+  let entry = findRegistryEntry(db, normalized);
+  if (entry) {
+    entry.lastSeenAt = nowIso;
+    if (normalized.rawTicker) entry.rawTicker = normalized.rawTicker;
+    if (normalized.rawName) entry.rawName = normalized.rawName;
+    if (normalized.normalizedRawName) entry.normalizedRawName = normalized.normalizedRawName;
+    if (normalized.isin) entry.isin = normalized.isin;
+    if (normalized.rawCurrency) entry.rawCurrency = normalized.rawCurrency;
+    if (normalized.rawExchange) entry.rawExchange = normalized.rawExchange;
+    if (normalized.instrumentType) entry.instrumentType = normalized.instrumentType;
+    if (normalized.brokerInstrumentId) entry.brokerInstrumentId = normalized.brokerInstrumentId;
+    return { entry, created: false };
+  }
+  entry = {
+    id: nextBrokerInstrumentRegistryId(registry),
+    broker: normalized.broker,
+    brokerInstrumentId: normalized.brokerInstrumentId,
+    rawTicker: normalized.rawTicker,
+    rawName: normalized.rawName,
+    normalizedRawName: normalized.normalizedRawName,
+    isin: normalized.isin,
+    rawCurrency: normalized.rawCurrency,
+    rawExchange: normalized.rawExchange,
+    instrumentType: normalized.instrumentType,
+    canonicalTicker: '',
+    canonicalName: '',
+    canonicalExchange: '',
+    resolutionStatus: normalizeRegistryStatus(options.resolutionStatus || 'unresolved'),
+    resolutionSource: normalizeRegistrySource(options.resolutionSource || 'unresolved'),
+    confidenceScore: 0,
+    manualOverride: false,
+    firstSeenAt: nowIso,
+    lastSeenAt: nowIso,
+    lastVerifiedAt: '',
+    notes: options.notes || '',
+    lookupKey: getRegistryLookupKey(normalized)
+  };
+  registry.push(entry);
+  return { entry, created: true };
+}
+
+function applyRegistryResolution(db, entry, resolution = {}, reason = 'resolver_update', changedBy = 'system') {
+  if (!entry) return entry;
+  const patch = {
+    canonicalTicker: String(resolution.canonicalTicker || '').trim().toUpperCase(),
+    canonicalName: String(resolution.canonicalName || '').trim(),
+    canonicalExchange: String(resolution.canonicalExchange || resolution.exchange || '').trim().toUpperCase(),
+    resolutionStatus: normalizeRegistryStatus(resolution.status),
+    resolutionSource: normalizeRegistrySource(resolution.resolutionSource),
+    confidenceScore: Number.isFinite(Number(resolution.confidenceScore)) ? Number(resolution.confidenceScore) : 0
+  };
+  const changed = (
+    entry.canonicalTicker !== patch.canonicalTicker
+    || entry.resolutionStatus !== patch.resolutionStatus
+    || entry.resolutionSource !== patch.resolutionSource
+    || Number(entry.confidenceScore || 0) !== patch.confidenceScore
+    || entry.canonicalName !== patch.canonicalName
+  );
+  if (changed) {
+    addResolutionHistory(db, entry, patch, reason, changedBy);
+  }
+  entry.canonicalTicker = patch.canonicalTicker;
+  entry.canonicalName = patch.canonicalName;
+  entry.canonicalExchange = patch.canonicalExchange;
+  entry.resolutionStatus = patch.resolutionStatus;
+  entry.resolutionSource = patch.resolutionSource;
+  entry.confidenceScore = patch.confidenceScore;
+  entry.lastVerifiedAt = new Date().toISOString();
+  return entry;
+}
+
+async function runYahooSearchLookup(query) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+  try {
+    const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
+    const response = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(2500) });
+    if (!response.ok) return [];
+    const payload = await response.json().catch(() => null);
+    const quotes = Array.isArray(payload?.quotes) ? payload.quotes : [];
+    return quotes
+      .map(item => ({
+        symbol: String(item?.symbol || '').trim().toUpperCase(),
+        shortname: String(item?.shortname || item?.longname || '').trim(),
+        exchange: String(item?.exchange || item?.exchDisp || '').trim().toUpperCase(),
+        type: String(item?.quoteType || '').trim().toUpperCase()
+      }))
+      .filter(item => !!item.symbol);
+  } catch (error) {
+    return [];
+  }
+}
+
+function chooseLookupCandidate(candidates = [], rawName = '') {
+  if (!candidates.length) return null;
+  const normalizedRawName = normalizeTrading212Name(rawName || '');
+  const filtered = candidates.filter(item => item.type === 'EQUITY' || item.type === 'ETF' || !item.type);
+  const scored = (filtered.length ? filtered : candidates).map(item => {
+    const normalizedCandidate = normalizeTrading212Name(item.shortname || '');
+    const nameExact = normalizedRawName && normalizedCandidate && normalizedRawName === normalizedCandidate;
+    const nameContains = normalizedRawName && normalizedCandidate
+      ? (normalizedCandidate.includes(normalizedRawName) || normalizedRawName.includes(normalizedCandidate))
+      : false;
+    const confidence = nameExact ? 0.92 : (nameContains ? 0.78 : 0.55);
+    return { ...item, confidence };
+  }).sort((a, b) => b.confidence - a.confidence);
+  if (scored.length > 1 && scored[0].confidence - scored[1].confidence < 0.1) return { ambiguous: true };
+  return scored[0];
+}
+
+async function lookupCanonicalInstrument(instrument = {}, db) {
+  const normalized = normalizeRegistryInput(instrument);
+  const alias = KNOWN_TICKER_ALIASES.get(normalizeTrading212Symbol(normalized.rawTicker || ''));
+  if (alias) {
+    return {
+      canonicalTicker: alias.canonicalTicker,
+      canonicalName: alias.canonicalName,
+      canonicalExchange: '',
+      confidenceScore: alias.confidence,
+      resolutionSource: alias.source,
+      status: alias.confidence >= 0.7 ? 'resolved' : 'ambiguous'
+    };
+  }
+  if (normalized.isin) {
+    const existing = ensureInstrumentRegistry(db).find(row => row.isin === normalized.isin && (row.resolutionStatus === 'resolved' || row.resolutionStatus === 'manual_override') && row.canonicalTicker);
+    if (existing) {
+      return {
+        canonicalTicker: existing.canonicalTicker,
+        canonicalName: existing.canonicalName,
+        canonicalExchange: existing.canonicalExchange,
+        confidenceScore: 0.98,
+        resolutionSource: 'isin_lookup',
+        status: existing.resolutionStatus === 'manual_override' ? 'manual_override' : 'resolved'
+      };
+    }
+    const isinCandidates = await runYahooSearchLookup(normalized.isin);
+    const chosenByIsin = chooseLookupCandidate(isinCandidates, normalized.rawName);
+    if (chosenByIsin?.ambiguous) {
+      return { canonicalTicker: '', canonicalName: '', confidenceScore: 0.4, resolutionSource: 'isin_lookup', status: 'ambiguous' };
+    }
+    if (chosenByIsin?.symbol) {
+      return {
+        canonicalTicker: chosenByIsin.symbol,
+        canonicalName: chosenByIsin.shortname || normalized.rawName,
+        canonicalExchange: chosenByIsin.exchange || '',
+        confidenceScore: chosenByIsin.confidence,
+        resolutionSource: 'isin_lookup',
+        status: chosenByIsin.confidence >= 0.7 ? 'resolved' : 'ambiguous'
+      };
+    }
+  }
+  if (normalized.rawName) {
+    const nameCandidates = await runYahooSearchLookup(normalized.rawName);
+    const chosenByName = chooseLookupCandidate(nameCandidates, normalized.rawName);
+    if (chosenByName?.ambiguous) {
+      return { canonicalTicker: '', canonicalName: '', confidenceScore: 0.35, resolutionSource: 'name_lookup', status: 'ambiguous' };
+    }
+    if (chosenByName?.symbol) {
+      return {
+        canonicalTicker: chosenByName.symbol,
+        canonicalName: chosenByName.shortname || normalized.rawName,
+        canonicalExchange: chosenByName.exchange || '',
+        confidenceScore: chosenByName.confidence,
+        resolutionSource: 'name_lookup',
+        status: chosenByName.confidence >= 0.7 ? 'resolved' : 'ambiguous'
+      };
+    }
+  }
+  return { canonicalTicker: '', canonicalName: '', canonicalExchange: '', confidenceScore: 0, resolutionSource: 'unresolved', status: 'unresolved' };
 }
 
 function parseSourceKey(sourceKey) {
@@ -5389,6 +5674,25 @@ function canAccessDevtools(user, username) {
 }
 
 function resolveInstrumentMapping(db, instrument, username) {
+  if ((instrument?.broker || 'trading212') === 'trading212') {
+    const registryEntry = findRegistryEntry(db, {
+      broker: 'trading212',
+      brokerInstrumentId: instrument.uid || '',
+      isin: instrument.isin || '',
+      rawName: instrument.name || '',
+      rawTicker: instrument.ticker || '',
+      rawCurrency: instrument.currency || ''
+    });
+    if (registryEntry && (registryEntry.resolutionStatus === 'resolved' || registryEntry.resolutionStatus === 'manual_override') && registryEntry.canonicalTicker) {
+      return {
+        sourceKey: registryEntry.lookupKey || computeSourceKey(instrument),
+        displayTicker: registryEntry.canonicalTicker,
+        displayName: registryEntry.canonicalName || instrument.name || '',
+        scope: registryEntry.resolutionStatus === 'manual_override' ? 'manual_override' : 'registry',
+        mapping: registryEntry
+      };
+    }
+  }
   const mappings = ensureInstrumentMappings(db);
   const sourceKey = computeSourceKey(instrument);
   if (!sourceKey) {
@@ -5445,6 +5749,7 @@ function buildInstrumentFromTrade(trade = {}) {
     trade.trading212Ticker ?? trade.symbol ?? ''
   );
   return {
+    broker: trade.source === 'ibkr' || trade.ibkrPositionId ? 'ibkr' : 'trading212',
     isin: trade.trading212Isin || '',
     uid: trade.trading212Id || '',
     ticker: brokerTicker,
@@ -5453,31 +5758,59 @@ function buildInstrumentFromTrade(trade = {}) {
   };
 }
 
-function applyInstrumentMappingToTrade(trade, db, username) {
-  if (!trade || typeof trade !== 'object') return trade;
-  const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
+function getDisplayInstrumentIdentity(record = {}, db, username = '') {
+  const isTrading212 = record.source === 'trading212' || record.trading212Id;
   if (!isTrading212) {
+    const fallback = record.displaySymbol || record.symbol || '';
     return {
-      ...trade,
-      displayTicker: trade.displaySymbol || trade.symbol || '',
-      displayName: trade.displayName || trade.trading212Name || '',
-      brokerTicker: trade.symbol || ''
+      displayTicker: fallback,
+      displayName: record.displayName || record.trading212Name || '',
+      canonicalTicker: fallback,
+      rawTicker: record.symbol || '',
+      resolutionStatus: 'resolved',
+      isCanonical: true,
+      mappingScope: null,
+      mappingId: null,
+      sourceKey: null
     };
   }
-  const instrument = buildInstrumentFromTrade(trade);
+  const instrument = buildInstrumentFromTrade(record);
   const resolved = resolveInstrumentMapping(db, instrument, username);
-  const fallbackTicker = trade.displaySymbol || trade.symbol || instrument.ticker || '';
+  const fallbackTicker = record.displaySymbol || record.symbol || instrument.ticker || '';
   const displayTicker = resolved.scope === 'broker'
     ? fallbackTicker
     : (resolved.displayTicker || fallbackTicker);
+  const resolutionStatus = resolved.scope === 'broker'
+    ? 'unresolved'
+    : (resolved.scope === 'manual_override' ? 'manual_override' : 'resolved');
   return {
-    ...trade,
     displayTicker,
-    displayName: resolved.displayName || trade.displayName || trade.trading212Name || '',
+    displayName: resolved.displayName || record.displayName || record.trading212Name || '',
+    canonicalTicker: resolved.scope === 'broker' ? '' : (resolved.displayTicker || ''),
+    rawTicker: instrument.ticker || record.symbol || '',
+    resolutionStatus,
+    isCanonical: resolutionStatus === 'resolved' || resolutionStatus === 'manual_override',
     mappingScope: resolved.scope === 'broker' ? null : resolved.scope,
     mappingId: resolved.mapping?.id,
-    sourceKey: resolved.sourceKey,
-    brokerTicker: instrument.ticker || trade.symbol || ''
+    sourceKey: resolved.sourceKey
+  };
+}
+
+function applyInstrumentMappingToTrade(trade, db, username) {
+  if (!trade || typeof trade !== 'object') return trade;
+  const identity = getDisplayInstrumentIdentity(trade, db, username);
+  return {
+    ...trade,
+    displayTicker: identity.displayTicker,
+    displaySymbol: identity.displayTicker || trade.displaySymbol || trade.symbol || '',
+    displayName: identity.displayName,
+    canonicalTicker: identity.canonicalTicker,
+    resolutionStatus: identity.resolutionStatus,
+    isCanonicalInstrument: identity.isCanonical,
+    mappingScope: identity.mappingScope,
+    mappingId: identity.mappingId,
+    sourceKey: identity.sourceKey,
+    brokerTicker: identity.rawTicker || trade.symbol || ''
   };
 }
 
@@ -6200,6 +6533,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const walletImpact = raw?.walletImpact || {};
         const rawName = instrument?.name ?? raw?.name ?? '';
         const rawIsin = instrument?.isin ?? raw?.isin ?? '';
+        const rawUid = String(instrument?.id ?? instrument?.uid ?? raw?.instrumentId ?? raw?.instrumentUid ?? raw?.id ?? '').trim();
         const rawTickerValue = normalizeTrading212TickerValue(
           raw?.ticker ??
           raw?.symbol ??
@@ -6210,6 +6544,34 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         );
         const symbol = normalizeTrading212Symbol(rawTickerValue);
         if (!symbol) continue;
+        const tradeCurrency = String(instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP').trim().toUpperCase() || 'GBP';
+        const rawExchange = String(instrument?.exchange ?? raw?.exchange ?? '').trim().toUpperCase();
+        const { entry: registryEntry, created: registryCreated } = upsertRegistryEntry(db, {
+          broker: 'trading212',
+          brokerInstrumentId: rawUid || '',
+          rawTicker: rawTickerValue,
+          rawName,
+          isin: rawIsin,
+          rawCurrency: tradeCurrency,
+          rawExchange,
+          instrumentType: String(instrument?.type ?? raw?.instrumentType ?? '').trim().toLowerCase()
+        });
+        if (registryEntry.manualOverride !== true && (registryCreated || !registryEntry.lastVerifiedAt)) {
+          const resolution = await lookupCanonicalInstrument({
+            broker: 'trading212',
+            brokerInstrumentId: rawUid || '',
+            rawTicker: rawTickerValue,
+            rawName,
+            isin: rawIsin,
+            rawCurrency: tradeCurrency,
+            rawExchange
+          }, db);
+          applyRegistryResolution(db, registryEntry, resolution, registryCreated ? 'first_seen_lookup' : 'revalidation', 'system');
+        }
+        const resolvedCanonicalTicker = (registryEntry.resolutionStatus === 'resolved' || registryEntry.resolutionStatus === 'manual_override')
+          ? String(registryEntry.canonicalTicker || '').trim().toUpperCase()
+          : '';
+        const resolvedSymbol = resolvedCanonicalTicker || symbol;
         const quantity = parseTradingNumber(
           raw?.quantity ??
           raw?.qty ??
@@ -6272,7 +6634,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         });
         const existingTradeEntry = exactTradeEntry || aggregateTradeEntry;
         const existingTrade = existingTradeEntry?.trade;
-        const resolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || symbol;
+        const effectiveResolvedSymbol = existingTrade?.displaySymbol || existingTrade?.symbol || resolvedSymbol;
         journal[normalizedDate] ||= [];
         const direction = quantity < 0 || String(raw?.side || '').toLowerCase() === 'short' ? 'short' : 'long';
         const stop = parseTradingNumber(
@@ -6284,11 +6646,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           raw?.trailingStopPrice
         );
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
         let lowStop = null;
         try {
-          const lowQuote = await fetchDailyLow(resolvedSymbol, tradeDateKey);
+          const lowQuote = await fetchDailyLow(effectiveResolvedSymbol, tradeDateKey);
           lowStop = Number(lowQuote?.low);
         } catch (e) {
           lowStop = null;
@@ -6348,7 +6709,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               createdAt: createdAtDate.toISOString(),
               entry: layerEntryPrice,
               sizeUnits: addedUnits,
-              symbol: resolvedSymbol,
+              symbol: effectiveResolvedSymbol,
               status: 'open',
               closeDate: undefined,
               closePrice: undefined,
@@ -6360,7 +6721,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             delete layeredTrade.realizedPnlCurrency;
             delete layeredTrade.rMultiple;
             updateTrading212LayerMetadata(layeredTrade, {
-              symbol: resolvedSymbol,
+              symbol: effectiveResolvedSymbol,
               trading212Id: layeredTrade.trading212Id,
               trading212PositionKey,
               accountId,
@@ -6389,7 +6750,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           : (Number.isFinite(lowStop) ? lowStop : undefined);
         const trade = normalizeTradeMeta({
           id: crypto.randomBytes(8).toString('hex'),
-          symbol: resolvedSymbol,
+          symbol: effectiveResolvedSymbol,
           currency: tradeCurrency,
           entry: entryPrice,
           stop: initialStop,
@@ -6418,6 +6779,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
           trading212Ticker: rawTickerValue || undefined,
+          trading212RegistryId: registryEntry.id,
+          canonicalTicker: resolvedCanonicalTicker || undefined,
+          canonicalName: registryEntry.canonicalName || undefined,
+          resolutionStatus: registryEntry.resolutionStatus || undefined,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
@@ -8592,6 +8957,22 @@ app.post('/api/instrument-mappings/user', auth, asyncHandler(async (req, res) =>
     };
     mappings.push(mapping);
   }
+  const { entry: registryEntry } = upsertRegistryEntry(db, {
+    broker: 'trading212',
+    brokerInstrumentId: uid,
+    rawTicker: brokerTicker,
+    rawName: brokerName,
+    isin,
+    rawCurrency: currency
+  });
+  registryEntry.manualOverride = true;
+  applyRegistryResolution(db, registryEntry, {
+    canonicalTicker,
+    canonicalName: canonicalName || brokerName,
+    status: 'manual_override',
+    resolutionSource: 'manual_override',
+    confidenceScore: 1
+  }, 'user_manual_override', req.username);
   saveDB(db);
   res.json(mapping);
 }));
@@ -8657,8 +9038,108 @@ app.post('/api/instrument-mappings/promote', auth, asyncHandler(async (req, res)
     };
     mappings.push(globalMapping);
   }
+  const sourceUid = String(sourceMapping.source_key || '').startsWith('TRADING212|UID:')
+    ? sourceMapping.source_key.slice('TRADING212|UID:'.length)
+    : '';
+  const { entry: registryEntry } = upsertRegistryEntry(db, {
+    broker: 'trading212',
+    brokerInstrumentId: sourceUid,
+    rawTicker: sourceMapping.broker_ticker || '',
+    rawName: sourceMapping.broker_name || '',
+    isin: sourceMapping.isin || '',
+    rawCurrency: sourceMapping.currency || ''
+  });
+  registryEntry.manualOverride = true;
+  applyRegistryResolution(db, registryEntry, {
+    canonicalTicker: sourceMapping.canonical_ticker,
+    canonicalName: sourceMapping.canonical_name || sourceMapping.broker_name || '',
+    status: 'manual_override',
+    resolutionSource: 'manual_override',
+    confidenceScore: 1
+  }, 'promoted_manual_override', req.username);
   saveDB(db);
   res.json(globalMapping);
+}));
+
+app.get('/api/admin/instrument-registry', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const statusFilter = String(req.query?.status || '').trim().toLowerCase();
+  const rows = ensureInstrumentRegistry(db)
+    .filter(row => !statusFilter || row.resolutionStatus === statusFilter)
+    .sort((a, b) => String(b.lastSeenAt || '').localeCompare(String(a.lastSeenAt || '')));
+  res.json({ rows });
+});
+
+app.get('/api/admin/instrument-registry/:id/history', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const registryId = Number(req.params.id);
+  if (!Number.isFinite(registryId)) return res.status(400).json({ error: 'Invalid registry id.' });
+  const history = (db.instrumentResolutionHistory || [])
+    .filter(item => Number(item.instrumentRegistryId) === registryId)
+    .sort((a, b) => String(b.changedAt || '').localeCompare(String(a.changedAt || '')));
+  res.json({ history });
+});
+
+app.post('/api/admin/instrument-registry/:id/override', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const registryId = Number(req.params.id);
+  const canonicalTicker = String(req.body?.canonicalTicker || '').trim().toUpperCase();
+  const canonicalName = String(req.body?.canonicalName || '').trim();
+  if (!Number.isFinite(registryId) || !canonicalTicker) {
+    return res.status(400).json({ error: 'Registry id and canonical ticker are required.' });
+  }
+  const row = ensureInstrumentRegistry(db).find(item => Number(item.id) === registryId);
+  if (!row) return res.status(404).json({ error: 'Registry row not found.' });
+  row.manualOverride = true;
+  applyRegistryResolution(db, row, {
+    canonicalTicker,
+    canonicalName: canonicalName || row.rawName,
+    status: 'manual_override',
+    resolutionSource: 'manual_override',
+    confidenceScore: 1
+  }, 'admin_manual_override', req.username);
+  saveDB(db);
+  res.json({ row });
+}));
+
+app.post('/api/admin/instrument-registry/:id/reresolve', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const registryId = Number(req.params.id);
+  if (!Number.isFinite(registryId)) return res.status(400).json({ error: 'Invalid registry id.' });
+  const row = ensureInstrumentRegistry(db).find(item => Number(item.id) === registryId);
+  if (!row) return res.status(404).json({ error: 'Registry row not found.' });
+  if (row.manualOverride === true && req.body?.force !== true) {
+    return res.status(409).json({ error: 'Manual override is active. Set force=true to re-resolve.' });
+  }
+  const resolution = await lookupCanonicalInstrument({
+    broker: row.broker,
+    brokerInstrumentId: row.brokerInstrumentId,
+    rawTicker: row.rawTicker,
+    rawName: row.rawName,
+    isin: row.isin,
+    rawCurrency: row.rawCurrency,
+    rawExchange: row.rawExchange,
+    instrumentType: row.instrumentType
+  }, db);
+  applyRegistryResolution(db, row, resolution, 'admin_reresolve', req.username);
+  saveDB(db);
+  res.json({ row });
 }));
 
 app.get('/api/transactions/prefs', auth, (req, res) => {
@@ -11849,7 +12330,13 @@ module.exports = {
   carryForwardTradingAccountDayValues,
   createIbkrConnectorKey,
   findIbkrConnectorKeyOwner,
-  exchangeIbkrConnectorToken
+  exchangeIbkrConnectorToken,
+  ensureInstrumentRegistry,
+  upsertRegistryEntry,
+  applyRegistryResolution,
+  lookupCanonicalInstrument,
+  getDisplayInstrumentIdentity,
+  findRegistryEntry
 };
 
 // global error handler
