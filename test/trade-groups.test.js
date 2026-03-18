@@ -75,6 +75,15 @@ async function authedFetch(token, pathName, options = {}) {
   return { res, data };
 }
 
+async function waitFor(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
 test('leader can create group, add friend, and member receives alert for qualifying new trade', async () => {
   const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
     method: 'POST',
@@ -120,6 +129,13 @@ test('leader can create group, add friend, and member receives alert for qualify
   assert.equal(alerts.res.status, 200);
   assert.equal(alerts.data.alerts.length, 1);
   assert.equal(alerts.data.alerts[0].risk_pct, 1);
+
+  const pushed = await waitFor(() => {
+    const current = loadDB();
+    return Array.isArray(current.notificationEvents)
+      && current.notificationEvents.some((item) => item.userId === member && item.eventType === 'trade_group_alert');
+  });
+  assert.equal(pushed, true);
 
   const db = loadDB();
   assert.equal(db.tradeGroupAlerts.length, 1);
@@ -171,6 +187,13 @@ test('leader can post announcement, delete alert, and close group', async () => 
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Risk off into CPI' })
   });
   assert.equal(announcement.res.status, 201);
+
+  const announcementPushed = await waitFor(() => {
+    const current = loadDB();
+    return Array.isArray(current.notificationEvents)
+      && current.notificationEvents.some((item) => item.userId === member && item.eventType === 'trade_group_announcement');
+  });
+  assert.equal(announcementPushed, true);
 
   await authedFetch(tokens.leader, '/api/trades', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: 100, stop: 95, riskPct: 1, symbol: 'MSFT', date: '2024-04-01' })
