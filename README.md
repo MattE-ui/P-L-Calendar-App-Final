@@ -17,6 +17,13 @@ This project provides a profit & loss tracking calendar with multi-scale views a
 - Track active trades with live market pricing (GBP/USD aware), show open PnL that rolls into your live portfolio total, and close trades with recorded fills.
 - Toggle between day, week, month, and year summaries.
 - View data in GBP or USD using exchange rates fetched from the Open ER API and cached on the server.
+- Browser push notifications with per-device preferences via Firebase Cloud Messaging (desktop, Android, and iOS/iPadOS Home Screen PWA context).
+
+## Web push notifications
+
+Push notifications are configured in the Profile page under **Notifications**. The implementation uses service workers + Notifications API + Firebase Cloud Messaging (FCM), with per-device subscriptions and category preferences.
+
+Setup and testing instructions live in [`docs/web-push-notifications.md`](docs/web-push-notifications.md).
 
 ## Getting Started
 1. Install Node.js 22.
