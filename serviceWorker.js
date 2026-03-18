@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pl-calendar-cache-v27';
+const CACHE_NAME = 'pl-calendar-cache-v28';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/style.css',
@@ -108,13 +108,14 @@ self.addEventListener('fetch', (event) => {
   if (!STATIC_ASSETS.includes(url.pathname)) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => {
+    fetch(request).then((resp) => {
+      const copy = resp.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+      return resp;
+    }).catch(async () => {
+      const cached = await caches.match(request);
       if (cached) return cached;
-      return fetch(request).then((resp) => {
-        const copy = resp.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return resp;
-      });
+      throw new Error(`Static asset unavailable: ${url.pathname}`);
     })
   );
 });
