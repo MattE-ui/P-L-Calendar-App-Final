@@ -8265,40 +8265,62 @@ app.get('/api/notifications/devices', auth, (req, res) => {
 });
 
 app.post('/api/notifications/devices/register', auth, (req, res) => {
+  console.info('[Notifications] Device register request received.', {
+    userId: req.username,
+    hasDeviceId: typeof req.body?.deviceId === 'string' && !!req.body.deviceId,
+    hasToken: typeof req.body?.token === 'string' && !!req.body.token,
+    tokenPreview: typeof req.body?.token === 'string' && req.body.token ? `${req.body.token.slice(0, 12)}…` : '',
+    platform: req.body?.platform || 'missing',
+    browser: req.body?.browser || 'missing',
+    permissionState: req.body?.permissionState || 'missing',
+    hasCategories: !!(req.body?.categories && typeof req.body.categories === 'object'),
+    hasPreferences: !!(req.body?.preferences && typeof req.body.preferences === 'object')
+  });
   const parsed = notificationDeviceRegisterSchema.safeParse(req.body || {});
   if (!parsed.success) {
     console.warn('[Notifications] Device register validation failed.', {
       userId: req.username,
       issues: parsed.error.issues?.map((issue) => ({ path: issue.path, message: issue.message })) || []
     });
-    return res.status(400).json({ error: 'Invalid notification device payload.', issues: parsed.error.issues });
+    return res.status(400).json({
+      error: 'Invalid notification device payload.',
+      issues: parsed.error.issues?.map((issue) => ({ path: issue.path, message: issue.message })) || []
+    });
   }
-  const db = loadDB();
-  ensureNotificationTables(db);
-  const payload = parsed.data;
-  const categories = normalizeNotificationCategories(req.body?.categories);
-  const record = upsertNotificationDevice(db, {
-    userId: req.username,
-    deviceId: payload.deviceId,
-    token: payload.token,
-    platform: payload.platform,
-    browser: payload.browser,
-    userAgent: payload.userAgent || req.headers['user-agent'] || '',
-    permissionState: payload.permissionState,
-    installedAsPwa: !!payload.installedAsPwa,
-    categories,
-    isActive: payload.isActive !== false
-  });
-  saveDB(db);
-  console.info('[Notifications] Device upserted.', {
-    userId: req.username,
-    deviceId: record.deviceId,
-    recordId: record.id,
-    platform: record.platform,
-    browser: record.browser,
-    permissionState: record.permissionState
-  });
-  res.json({ ok: true, device: record });
+  try {
+    const db = loadDB();
+    ensureNotificationTables(db);
+    const payload = parsed.data;
+    const categories = normalizeNotificationCategories(payload.categories || payload.preferences || req.body?.categories || req.body?.preferences);
+    const record = upsertNotificationDevice(db, {
+      userId: req.username,
+      deviceId: payload.deviceId,
+      token: payload.token,
+      platform: payload.platform,
+      browser: payload.browser,
+      userAgent: payload.userAgent || req.headers['user-agent'] || '',
+      permissionState: payload.permissionState,
+      installedAsPwa: !!payload.installedAsPwa,
+      categories,
+      isActive: payload.isActive !== false
+    });
+    saveDB(db);
+    console.info('[Notifications] Device upserted successfully.', {
+      userId: req.username,
+      deviceId: record.deviceId,
+      recordId: record.id,
+      platform: record.platform,
+      browser: record.browser,
+      permissionState: record.permissionState
+    });
+    return res.json({ ok: true, device: record });
+  } catch (error) {
+    console.error('[Notifications] Device upsert failed.', {
+      userId: req.username,
+      error: error?.message || String(error)
+    });
+    return res.status(500).json({ error: 'Failed to save notification device.' });
+  }
 });
 
 app.put('/api/notifications/devices/:id/preferences', auth, (req, res) => {
