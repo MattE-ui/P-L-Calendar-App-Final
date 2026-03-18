@@ -5357,8 +5357,8 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
         positionCurrency: entryValue * sizeUnits,
         riskAmountGBP: 0,
         positionGBP: convertToGBP(entryValue * sizeUnits, tradeCurrency, rates),
-        portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
-        portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
+        portfolioGBPAtCalc: getPortfolioGBPForRisk(user),
+        portfolioCurrencyAtCalc: convertGBPToCurrency(getPortfolioGBPForRisk(user), tradeCurrency, rates),
         createdAt: nowIso,
         direction,
         status: 'open',
@@ -5513,6 +5513,12 @@ function isFreshTimestamp(value, windowMs) {
   const ts = Date.parse(value);
   if (Number.isNaN(ts)) return false;
   return (Date.now() - ts) <= windowMs;
+}
+
+function getPortfolioGBPForRisk(user) {
+  const snapshot = getCurrentPortfolioValue(user);
+  const portfolioGBP = Number(snapshot?.value);
+  return Number.isFinite(portfolioGBP) && portfolioGBP >= 0 ? portfolioGBP : 0;
 }
 
 function getCurrentPortfolioValue(user) {
@@ -6581,7 +6587,7 @@ function recalculateTradeRiskFromImportedStop(trade, user, rates) {
   const tradeCurrency = trade.currency || 'GBP';
   const riskAmountCurrency = perUnitRisk * sizeUnits;
   const positionCurrency = entry * sizeUnits;
-  const portfolioGBP = Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : 0;
+  const portfolioGBP = getPortfolioGBPForRisk(user);
   const portfolioCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
   trade.perUnitRisk = perUnitRisk;
   trade.riskAmountCurrency = riskAmountCurrency;
@@ -7307,8 +7313,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           positionCurrency: entryPrice * sizeUnits,
           riskAmountGBP: 0,
           positionGBP: convertToGBP(entryPrice * sizeUnits, tradeCurrency, rates),
-          portfolioGBPAtCalc: Number.isFinite(user.portfolio) ? user.portfolio : 0,
-          portfolioCurrencyAtCalc: convertGBPToCurrency(Number.isFinite(user.portfolio) ? user.portfolio : 0, tradeCurrency, rates),
+          portfolioGBPAtCalc: getPortfolioGBPForRisk(user),
+          portfolioCurrencyAtCalc: convertGBPToCurrency(getPortfolioGBPForRisk(user), tradeCurrency, rates),
           createdAt: createdAtDate.toISOString(),
           direction,
           status: 'open',
@@ -12283,7 +12289,7 @@ app.post('/api/trades', auth, async (req, res) => {
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
   normalizeTradeJournal(user);
-  const portfolioGBP = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
+  const portfolioGBP = getPortfolioGBPForRisk(user);
   const portfolioInCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
   if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
     return res.status(400).json({ error: 'Add your portfolio value first' });
@@ -12549,7 +12555,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     if (!Number.isFinite(sizeUnits) || sizeUnits <= 0) {
       return res.status(400).json({ error: 'Enter a valid position size (units or contracts).' });
     }
-    const portfolioGBP = Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0;
+    const portfolioGBP = getPortfolioGBPForRisk(user);
     const portfolioCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
     if (!Number.isFinite(portfolioCurrency) || portfolioCurrency <= 0) {
       return res.status(400).json({ error: 'Add your portfolio value first' });
