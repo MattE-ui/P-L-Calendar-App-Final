@@ -9243,6 +9243,24 @@ app.delete('/api/social/trade-groups/:groupId/alerts/:alertId', auth, (req, res)
   res.json({ ok: true });
 });
 
+app.delete('/api/social/trade-groups/:groupId/announcements/:announcementId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  if (!requireSocialNickname(db, req.username, res)) return;
+  ensureSocialTables(db);
+  const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
+  if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+  if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only leader can delete announcements.' });
+  const before = db.tradeGroupAnnouncements.length;
+  db.tradeGroupAnnouncements = db.tradeGroupAnnouncements
+    .filter(item => !(item.group_id === group.id && item.id === req.params.announcementId));
+  if (db.tradeGroupAnnouncements.length === before) {
+    return res.status(404).json({ error: 'Announcement not found.' });
+  }
+  saveDB(db);
+  res.json({ ok: true });
+});
+
 app.post('/api/social/trade-groups/:groupId/announcements', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const parsed = tradeGroupAnnouncementCreateSchema.safeParse(req.body || {});

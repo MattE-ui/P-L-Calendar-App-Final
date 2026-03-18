@@ -172,7 +172,7 @@ test('does not create group alert when stop or risk is missing and blocks non-me
 });
 
 
-test('leader can post announcement, delete alert, and close group', async () => {
+test('leader can post/delete announcement, delete alert, and close group', async () => {
   const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Ops Group' })
   });
@@ -187,6 +187,7 @@ test('leader can post announcement, delete alert, and close group', async () => 
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Risk off into CPI' })
   });
   assert.equal(announcement.res.status, 201);
+  const announcementId = announcement.data.announcement.id;
 
   const announcementPushed = await waitFor(() => {
     const current = loadDB();
@@ -194,6 +195,11 @@ test('leader can post announcement, delete alert, and close group', async () => 
       && current.notificationEvents.some((item) => item.userId === member && item.eventType === 'trade_group_announcement');
   });
   assert.equal(announcementPushed, true);
+
+  const memberDeleteAnnouncement = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}/announcements/${announcementId}`, { method: 'DELETE' });
+  assert.equal(memberDeleteAnnouncement.res.status, 403);
+  const leaderDeleteAnnouncement = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/announcements/${announcementId}`, { method: 'DELETE' });
+  assert.equal(leaderDeleteAnnouncement.res.status, 200);
 
   await authedFetch(tokens.leader, '/api/trades', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry: 100, stop: 95, riskPct: 1, symbol: 'MSFT', date: '2024-04-01' })
