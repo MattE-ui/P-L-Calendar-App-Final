@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pl-calendar-cache-v29';
+const CACHE_NAME = 'pl-calendar-cache-v30';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/style.css',
