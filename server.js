@@ -2014,7 +2014,7 @@ function normalizeDeviceTargetIdentity(device) {
   const mobilePlatform = platform.includes('ios') || platform.includes('android') || platform.includes('mobile');
   if (mobilePlatform) {
     const platformFamily = platform.includes('ios') ? 'ios' : (platform.includes('android') ? 'android' : 'mobile');
-    return `mobile:${platformFamily}:${browser}`;
+    return `mobile:${platformFamily}`;
   }
   return `desktop:${platform || 'desktop'}:${browser}:${normalizedDeviceId || 'unknown'}`;
 }
@@ -2032,6 +2032,39 @@ function selectMostRecentDeviceRecord(current, candidate) {
   const candidateTs = Date.parse(candidate.updatedAt || candidate.lastRegistrationAt || candidate.createdAt || 0) || 0;
   if (candidateTs >= currentTs) return candidate;
   return current;
+}
+
+function getDeviceRecencyTs(device) {
+  return Date.parse(device?.updatedAt || device?.lastRegistrationAt || device?.createdAt || 0) || 0;
+}
+
+function buildFinalPhysicalTargetKey(device) {
+  const tokenKey = fingerprintToken(device?.token);
+  if (tokenKey) return `token:${tokenKey}`;
+  const normalizedIdentity = normalizeDeviceTargetIdentity(device);
+  if (normalizedIdentity.startsWith('mobile:')) return `mobile-identity:${normalizedIdentity}`;
+  const normalizedDeviceId = String(device?.deviceId || '').trim().toLowerCase();
+  if (normalizedDeviceId) return `desktop-device:${normalizedDeviceId}`;
+  return `identity:${normalizedIdentity || 'unknown'}`;
+}
+
+function notificationDeviceDebugShape(device) {
+  return {
+    id: device.id,
+    userId: device.userId,
+    deviceId: device.deviceId || null,
+    platform: device.platform || null,
+    browser: device.browser || null,
+    tokenFingerprint: fingerprintToken(device.token),
+    tokenPreview: redactToken(device.token),
+    isActive: device.isActive !== false,
+    createdAt: device.createdAt || null,
+    updatedAt: device.updatedAt || null,
+    lastRegistrationAt: device.lastRegistrationAt || null,
+    revokedAt: device.revokedAt || null,
+    normalizedIdentity: normalizeDeviceTargetIdentity(device),
+    finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+  };
 }
 
 function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
@@ -2331,6 +2364,17 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     && (!onlyDeviceId || item.id === onlyDeviceId)
     && (!criticalOnly || category === 'criticalRiskAlerts')
     && !!item.categories?.[category]);
+  if (eventType === 'trade_group_announcement') {
+    console.info('[TradeGroup][AnnouncementRecipientRowsBeforeSend]', {
+      announcementId: context?.announcementId || null,
+      eventId: context?.eventId || null,
+      recipientUserId: userId,
+      rows: db.notificationDevices
+        .filter((item) => item.userId === userId)
+        .sort((a, b) => getDeviceRecencyTs(b) - getDeviceRecencyTs(a))
+        .map(notificationDeviceDebugShape)
+    });
+  }
   eligibleDevices.forEach((device) => {
     console.info('[Notifications][SendCandidate]', {
       eventType,
@@ -2347,9 +2391,11 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
       normalizedTarget: buildPushTargetKey(device)
     });
   });
+  eligibleDevices.sort((a, b) => getDeviceRecencyTs(b) - getDeviceRecencyTs(a));
   const dedupedDevices = [];
   const seenTokens = new Set();
   const seenIdentities = new Set();
+  const seenPhysicalTargets = new Set();
   for (const device of eligibleDevices) {
     const tokenKey = fingerprintToken(device.token);
     if (tokenKey && seenTokens.has(tokenKey)) {
@@ -2360,6 +2406,22 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         reason: 'duplicate-token',
         tokenFingerprint: tokenKey
       });
+      if (eventType === 'trade_group_announcement') {
+        console.info('[TradeGroup][AnnouncementFinalTarget]', {
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          deviceId: device.deviceId || null,
+          platform: device.platform || null,
+          browser: device.browser || null,
+          normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
+          tokenFingerprint: tokenKey,
+          tokenSuffix: String(device.token || '').slice(-8) || '',
+          skipped: true,
+          reason: 'duplicate-token',
+          finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+        });
+      }
       continue;
     }
     const identityKey = normalizeDeviceTargetIdentity(device);
@@ -2371,10 +2433,70 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         reason: 'duplicate-normalized-identity',
         normalizedIdentity: identityKey
       });
+      if (eventType === 'trade_group_announcement') {
+        console.info('[TradeGroup][AnnouncementFinalTarget]', {
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          deviceId: device.deviceId || null,
+          platform: device.platform || null,
+          browser: device.browser || null,
+          normalizedTargetIdentity: identityKey,
+          tokenFingerprint: fingerprintToken(device.token),
+          tokenSuffix: String(device.token || '').slice(-8) || '',
+          skipped: true,
+          reason: 'duplicate-normalized-identity',
+          finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device)
+        });
+      }
+      continue;
+    }
+    const physicalTargetKey = buildFinalPhysicalTargetKey(device);
+    if (physicalTargetKey && seenPhysicalTargets.has(physicalTargetKey)) {
+      console.info('[Notifications] Skipping duplicate target prior to send.', {
+        eventType,
+        userId,
+        deviceRowId: device.id,
+        reason: 'duplicate-physical-target-key',
+        finalPhysicalTargetKey: physicalTargetKey
+      });
+      if (eventType === 'trade_group_announcement') {
+        console.info('[TradeGroup][AnnouncementFinalTarget]', {
+          announcementId: context?.announcementId || null,
+          recipientUserId: userId,
+          deviceRowId: device.id,
+          deviceId: device.deviceId || null,
+          platform: device.platform || null,
+          browser: device.browser || null,
+          normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
+          tokenFingerprint: fingerprintToken(device.token),
+          tokenSuffix: String(device.token || '').slice(-8) || '',
+          skipped: true,
+          reason: 'duplicate-physical-target-key',
+          finalPhysicalTargetKey: physicalTargetKey
+        });
+      }
       continue;
     }
     if (tokenKey) seenTokens.add(tokenKey);
     if (identityKey) seenIdentities.add(identityKey);
+    if (physicalTargetKey) seenPhysicalTargets.add(physicalTargetKey);
+    if (eventType === 'trade_group_announcement') {
+      console.info('[TradeGroup][AnnouncementFinalTarget]', {
+        announcementId: context?.announcementId || null,
+        recipientUserId: userId,
+        deviceRowId: device.id,
+        deviceId: device.deviceId || null,
+        platform: device.platform || null,
+        browser: device.browser || null,
+        normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
+        tokenFingerprint: fingerprintToken(device.token),
+        tokenSuffix: String(device.token || '').slice(-8) || '',
+        skipped: false,
+        reason: 'selected-after-dedupe',
+        finalPhysicalTargetKey: physicalTargetKey
+      });
+    }
     dedupedDevices.push(device);
   }
   const nowIso = new Date().toISOString();
@@ -2416,7 +2538,12 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         targetDeviceId: device.id,
         notificationType: eventType,
         source: context?.source || 'sendNotificationEvent',
-        skipped: !!shouldSkipForDedupe
+        normalizedTargetIdentity: normalizeDeviceTargetIdentity(device),
+        tokenFingerprint: fingerprintToken(device.token),
+        tokenSuffix: String(device.token || '').slice(-8) || '',
+        finalPhysicalTargetKey: buildFinalPhysicalTargetKey(device),
+        skipped: !!shouldSkipForDedupe,
+        reason: shouldSkipForDedupe ? 'event-device-deduped' : 'executed'
       });
     }
     if (shouldSkipForDedupe) {
@@ -8666,13 +8793,17 @@ app.get('/api/notifications/devices', auth, (req, res) => {
   const db = loadDB();
   ensureNotificationTables(db);
   const devices = db.notificationDevices
-    .filter((item) => item.userId === req.username)
+    .filter((item) => item.userId === req.username && item.isActive !== false)
     .map((item) => ({
       ...item,
       token: item.token ? `${item.token.slice(0, 12)}…` : ''
     }))
     .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
-  console.info('[Notifications] Device list requested.', { userId: req.username, count: devices.length });
+  console.info('[Notifications] Device list requested.', {
+    userId: req.username,
+    count: devices.length,
+    devices: devices.map(notificationDeviceDebugShape)
+  });
   res.json({ devices });
 });
 
@@ -8770,26 +8901,37 @@ app.post('/api/notifications/devices/:id/disable', auth, (req, res) => {
 function removeNotificationDeviceForUser(db, userId, deviceRowId) {
   ensureNotificationTables(db);
   const nowIso = new Date().toISOString();
+  console.info('[Notifications] Device delete request received.', {
+    authUserId: userId,
+    targetDeviceId: deviceRowId
+  });
   const device = db.notificationDevices.find((item) => item.id === deviceRowId && item.userId === userId);
   if (!device) {
     console.info('[Notifications] Device remove request was idempotent (row not found).', {
-      userId,
-      deviceId: deviceRowId,
+      authUserId: userId,
+      targetDeviceId: deviceRowId,
+      ownershipCheckPassed: false,
       action: 'device_removed',
       at: nowIso
     });
     return { ok: true, removed: false, alreadyInactive: false };
   }
+  console.info('[Notifications] Device delete ownership check passed.', {
+    authUserId: userId,
+    targetDeviceId: deviceRowId,
+    ownershipCheckPassed: true,
+    beforeState: notificationDeviceDebugShape(device)
+  });
   const alreadyInactive = device.isActive === false;
   device.isActive = false;
   device.revokedAt ||= nowIso;
   device.updatedAt = nowIso;
   console.info('[Notifications] Device removed.', {
-    userId,
-    deviceId: device.id,
-    platform: device.platform || null,
-    browser: device.browser || null,
-    tokenFingerprint: fingerprintToken(device.token),
+    authUserId: userId,
+    targetDeviceId: device.id,
+    beforeIsActive: alreadyInactive ? false : true,
+    afterIsActive: device.isActive,
+    afterState: notificationDeviceDebugShape(device),
     action: 'device_removed',
     at: nowIso,
     alreadyInactive
@@ -8801,6 +8943,11 @@ app.delete('/api/notifications/device/:deviceId', auth, (req, res) => {
   const db = loadDB();
   const result = removeNotificationDeviceForUser(db, req.username, req.params.deviceId);
   saveDB(db);
+  console.info('[Notifications] Device delete persisted to DB.', {
+    authUserId: req.username,
+    targetDeviceId: req.params.deviceId,
+    removed: !!result?.removed
+  });
   res.json(result);
 });
 
@@ -8808,7 +8955,73 @@ app.delete('/api/notifications/devices/:id', auth, (req, res) => {
   const db = loadDB();
   const result = removeNotificationDeviceForUser(db, req.username, req.params.id);
   saveDB(db);
+  console.info('[Notifications] Device delete persisted to DB.', {
+    authUserId: req.username,
+    targetDeviceId: req.params.id,
+    removed: !!result?.removed
+  });
   res.json(result);
+});
+
+app.get('/api/notifications/debug/devices', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const requestUser = req.username;
+  const candidateUserId = typeof req.query?.userId === 'string' ? req.query.userId.trim() : '';
+  const actingUser = db.users?.[requestUser];
+  const admin = isAdminUser(actingUser, requestUser);
+  const targetUserId = candidateUserId && admin ? candidateUserId : requestUser;
+  const includeInactive = String(req.query?.includeInactive || '').toLowerCase() === 'true' || String(req.query?.includeInactive || '') === '1';
+  const devices = db.notificationDevices
+    .filter((item) => item.userId === targetUserId && (includeInactive || item.isActive !== false))
+    .sort((a, b) => getDeviceRecencyTs(b) - getDeviceRecencyTs(a))
+    .map(notificationDeviceDebugShape);
+  console.info('[Notifications][DebugDump] Notification devices snapshot requested.', {
+    requestUserId: requestUser,
+    targetUserId,
+    isAdminRequest: admin,
+    includeInactive,
+    count: devices.length,
+    devices
+  });
+  res.json({ ok: true, targetUserId, includeInactive, devices });
+});
+
+app.post('/api/notifications/debug/cleanup-mobile', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const requestUser = req.username;
+  const candidateUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+  const actingUser = db.users?.[requestUser];
+  const admin = isAdminUser(actingUser, requestUser);
+  const targetUserId = candidateUserId && admin ? candidateUserId : requestUser;
+  const activeMobileRows = db.notificationDevices
+    .filter((item) => item.userId === targetUserId && item.isActive !== false && normalizeDeviceTargetIdentity(item).startsWith('mobile:'))
+    .sort((a, b) => getDeviceRecencyTs(b) - getDeviceRecencyTs(a));
+  const winners = new Map();
+  activeMobileRows.forEach((row) => {
+    const key = buildFinalPhysicalTargetKey(row);
+    if (!winners.has(key)) winners.set(key, row.id);
+  });
+  const nowIso = new Date().toISOString();
+  const deactivated = [];
+  activeMobileRows.forEach((row) => {
+    const key = buildFinalPhysicalTargetKey(row);
+    if (winners.get(key) === row.id) return;
+    row.isActive = false;
+    row.revokedAt ||= nowIso;
+    row.updatedAt = nowIso;
+    deactivated.push(notificationDeviceDebugShape(row));
+  });
+  saveDB(db);
+  console.info('[Notifications][Cleanup] Mobile stale rows cleanup executed.', {
+    requestUserId: requestUser,
+    targetUserId,
+    isAdminRequest: admin,
+    deactivatedCount: deactivated.length,
+    deactivated
+  });
+  res.json({ ok: true, targetUserId, deactivatedCount: deactivated.length, deactivated });
 });
 
 app.post('/api/notifications/devices/:id/received', auth, (req, res) => {
