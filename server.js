@@ -820,7 +820,7 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
         announcementId: notification.announcement_id || null,
         announcementText: summarizeTradeGroupAnnouncementText(announcement?.text || ''),
         link: fallbackLink,
-        tag: `trade-group-announcement:${resolvedGroup.id}:${notification.announcement_id || notification.id}`
+        tag: `trade-group-announcement:${notification.announcement_id || notification.id}`
       }
     };
   }
