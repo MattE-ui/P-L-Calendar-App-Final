@@ -2311,30 +2311,42 @@ async function sendNotificationToDevice(db, device, payload) {
     invocationSource: payload?.invocationSource || payload?.source || 'server.js#sendNotificationToDevice',
     skipped: false
   });
+  const baseData = Object.fromEntries(Object.entries(payload.data || {}).map(([key, value]) => [key, String(value)]));
+  const dataPayload = {
+    ...baseData,
+    title: String(payload.title || baseData.title || 'Veracity Trading Suite'),
+    body: String(payload.body || baseData.body || 'New Veracity notification'),
+    icon: String(payload.icon || baseData.icon || DEFAULT_NOTIFICATION_ICON),
+    badge: String(payload.badge || baseData.badge || DEFAULT_NOTIFICATION_ICON),
+    tag: String(payload.tag || baseData.tag || 'veracity-alert'),
+    requireInteraction: String(!!payload.requireInteraction),
+    link: String(payload.link || baseData.link || '/')
+  };
+  if (payload.image) {
+    dataPayload.image = String(payload.image);
+  }
+  if (Array.isArray(payload.actions) && payload.actions.length) {
+    dataPayload.actions = JSON.stringify(payload.actions);
+  }
   const message = {
     token: device.token,
-    notification: {
-      title: payload.title,
-      body: payload.body
-    },
     webpush: {
       headers: payload.requireInteraction ? { Urgency: 'high' } : undefined,
-      notification: {
-        title: payload.title,
-        body: payload.body,
-        icon: payload.icon || DEFAULT_NOTIFICATION_ICON,
-        badge: payload.badge || DEFAULT_NOTIFICATION_ICON,
-        image: payload.image || undefined,
-        tag: payload.tag || undefined,
-        requireInteraction: !!payload.requireInteraction,
-        actions: Array.isArray(payload.actions) ? payload.actions : undefined,
-        data: payload.data || {}
-      },
       fcmOptions: payload.link ? { link: payload.link } : undefined
     },
-    data: Object.fromEntries(Object.entries(payload.data || {}).map(([key, value]) => [key, String(value)]))
+    data: dataPayload
   };
   try {
+    console.info('[Notifications] DATA-ONLY PUSH SENT', {
+      correlationId: payload?.data?.correlationId || payload?.correlationId || null,
+      eventId: payload?.data?.eventId || null,
+      announcementId: payload?.data?.announcementId || null,
+      groupId: payload?.data?.groupId || null,
+      recipientUserId: device.userId,
+      targetDeviceRowId: device.id,
+      tokenFingerprint: fingerprintToken(device.token),
+      hasNotificationPayload: false
+    });
     const messageId = await firebaseAdmin.messaging().send(message);
     const sentAt = new Date().toISOString();
     device.lastSentAt = sentAt;
