@@ -217,7 +217,7 @@ test('leader can post/delete announcement, delete alert, and close group', async
 
 test('announcement push targets one active device after duplicate token cleanup', async () => {
   const db = loadDB();
-  const now = new Date().toISOString();
+  const now = Date.now();
   db.notificationDevices = [
     {
       id: 'dup-device-1',
@@ -232,12 +232,12 @@ test('announcement push targets one active device after duplicate token cleanup'
       isActive: true,
       installedAsPwa: true,
       categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
-      createdAt: now,
-      updatedAt: now,
-      lastSeenAt: now,
+      createdAt: new Date(now - 30000).toISOString(),
+      updatedAt: new Date(now - 30000).toISOString(),
+      lastSeenAt: new Date(now - 30000).toISOString(),
       lastSentAt: null,
       lastErrorAt: null,
-      lastRegistrationAt: now,
+      lastRegistrationAt: new Date(now - 30000).toISOString(),
       lastReceivedAt: null,
       revokedAt: null
     },
@@ -254,12 +254,34 @@ test('announcement push targets one active device after duplicate token cleanup'
       isActive: true,
       installedAsPwa: true,
       categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
-      createdAt: now,
-      updatedAt: now,
-      lastSeenAt: now,
+      createdAt: new Date(now - 20000).toISOString(),
+      updatedAt: new Date(now - 20000).toISOString(),
+      lastSeenAt: new Date(now - 20000).toISOString(),
       lastSentAt: null,
       lastErrorAt: null,
-      lastRegistrationAt: now,
+      lastRegistrationAt: new Date(now - 20000).toISOString(),
+      lastReceivedAt: null,
+      revokedAt: null
+    },
+    {
+      id: 'dup-device-3',
+      userId: member,
+      deviceId: 'iphone-3',
+      platform: 'ios-pwa',
+      browser: 'safari',
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1',
+      token: 'token-unique-mobile-3',
+      providerType: 'fcm-web',
+      permissionState: 'granted',
+      isActive: true,
+      installedAsPwa: false,
+      categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
+      createdAt: new Date(now - 10000).toISOString(),
+      updatedAt: new Date(now - 10000).toISOString(),
+      lastSeenAt: new Date(now - 10000).toISOString(),
+      lastSentAt: null,
+      lastErrorAt: null,
+      lastRegistrationAt: new Date(now - 10000).toISOString(),
       lastReceivedAt: null,
       revokedAt: null
     }
@@ -302,7 +324,51 @@ test('announcement push targets one active device after duplicate token cleanup'
 
   const activeRows = after.notificationDevices.filter((item) => item.userId === member && item.isActive);
   assert.equal(activeRows.length, 1);
-  assert.equal(activeRows[0].token, 'token-shared-1');
+  assert.equal(activeRows[0].id, 'dup-device-3');
+});
+
+test('notification device delete endpoint is idempotent soft-delete and blocks future sends', async () => {
+  const now = new Date().toISOString();
+  const db = loadDB();
+  db.notificationDevices = [{
+    id: 'remove-me',
+    userId: member,
+    deviceId: 'member-phone',
+    platform: 'ios-pwa',
+    browser: 'safari',
+    userAgent: 'Mobile Safari',
+    token: 'token-remove-me-12345678901234567890',
+    providerType: 'fcm-web',
+    permissionState: 'granted',
+    isActive: true,
+    installedAsPwa: true,
+    categories: { criticalRiskAlerts: true, tradeAlerts: true, tradeGroupAlerts: true, brokerSyncFailures: true, dailyRecap: true, socialInvestorNotifications: true },
+    createdAt: now,
+    updatedAt: now,
+    lastSeenAt: now,
+    lastSentAt: null,
+    lastErrorAt: null,
+    lastRegistrationAt: now,
+    lastReceivedAt: null,
+    revokedAt: null
+  }];
+  saveDB(db);
+
+  const removeRes = await authedFetch(tokens.member, '/api/notifications/device/remove-me', { method: 'DELETE' });
+  assert.equal(removeRes.res.status, 200);
+  assert.equal(removeRes.data.ok, true);
+
+  const removeAgainRes = await authedFetch(tokens.member, '/api/notifications/device/remove-me', { method: 'DELETE' });
+  assert.equal(removeAgainRes.res.status, 200);
+  assert.equal(removeAgainRes.data.ok, true);
+
+  const after = loadDB();
+  const removed = after.notificationDevices.find((item) => item.id === 'remove-me');
+  assert.ok(removed);
+  assert.equal(removed.isActive, false);
+
+  const testPush = await authedFetch(tokens.member, '/api/notifications/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(testPush.res.status, 400);
 });
 
 

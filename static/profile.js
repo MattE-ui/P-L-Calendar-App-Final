@@ -83,6 +83,7 @@ const notificationState = {
   firebaseInitPromise: null,
   messaging: null,
   registerInFlight: false,
+  deviceList: [],
   lastStep: 'idle',
   lastError: '',
   categories: {
@@ -95,6 +96,8 @@ const notificationState = {
     soundEnabled: true
   }
 };
+
+const NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY = 'veracity_notification_current_device_removed';
 
 const avatarEditorState = {
   open: false,
@@ -2742,18 +2745,55 @@ function renderNotificationControls() {
 function renderNotificationDevices(devices) {
   const container = document.getElementById('notification-devices-list');
   if (!container) return;
+  notificationState.deviceList = Array.isArray(devices) ? devices : [];
   if (!Array.isArray(devices) || !devices.length) {
     container.innerHTML = '<p class="helper">No registered notification devices yet.</p>';
     return;
   }
   container.innerHTML = devices.map((device) => {
     const marker = device.deviceId === notificationState.deviceId ? ' (this device)' : '';
-    return `<div class="notification-device-row"><strong>${device.platform}</strong> · ${device.browser}${marker}<br>Permission: ${device.permissionState} · Active: ${device.isActive ? 'Yes' : 'No'}<br>Last registration: ${device.lastRegistrationAt || '—'} · Last received: ${device.lastReceivedAt || '—'}</div>`;
+    return `<div class="notification-device-row"><strong>${device.platform}</strong> · ${device.browser}${marker}<br>Permission: ${device.permissionState} · Active: ${device.isActive ? 'Yes' : 'No'}<br>Last registration: ${device.lastRegistrationAt || '—'} · Last received: ${device.lastReceivedAt || '—'}<br><button class="ghost danger" type="button" data-notification-remove-device-id="${device.id}">Remove</button></div>`;
   }).join('');
   const mine = devices.find((device) => device.deviceId === notificationState.deviceId && device.isActive);
   notificationState.activeDeviceId = mine?.id || '';
   if (mine?.categories) {
     notificationState.categories = { ...notificationState.categories, ...mine.categories };
+  }
+}
+
+async function unsubscribeCurrentPushSubscription() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration('/serviceWorker.js');
+    const subscription = await registration?.pushManager?.getSubscription?.();
+    if (subscription) await subscription.unsubscribe();
+    if (notificationState.messaging && typeof notificationState.messaging.deleteToken === 'function') {
+      await notificationState.messaging.deleteToken();
+    }
+  } catch (error) {
+    notificationDebug('Current-device unsubscribe attempt failed', { error: error?.message || String(error) });
+  }
+}
+
+async function removeNotificationDevice(deviceRowId) {
+  const target = (notificationState.deviceList || []).find((item) => item.id === deviceRowId);
+  if (!target) {
+    setNotificationMessage('', 'Device not found in current list.');
+    return;
+  }
+  const confirmed = window.confirm('Stop notifications on this device?');
+  if (!confirmed) return;
+  try {
+    await api(`/api/notifications/device/${encodeURIComponent(deviceRowId)}`, { method: 'DELETE' });
+    if (target.deviceId === notificationState.deviceId) {
+      localStorage.setItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY, 'true');
+      notificationState.activeDeviceId = '';
+      await unsubscribeCurrentPushSubscription();
+    }
+    setNotificationMessage('Device removed from notifications.', '');
+    await loadNotificationDevices();
+  } catch (error) {
+    setNotificationMessage('', error?.data?.error || 'Unable to remove this device.');
   }
 }
 
@@ -3150,6 +3190,7 @@ window.addEventListener('DOMContentLoaded', () => {
       } else {
         notificationDebug('Permission prompt skipped', { permission: Notification.permission });
       }
+      localStorage.removeItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY);
       await registerNotificationToken();
     } catch (error) {
       notificationDebug('Enable button handler failed', { error: error?.message || String(error) });
@@ -3160,6 +3201,7 @@ window.addEventListener('DOMContentLoaded', () => {
     setNotificationDebugState('Re-register token click handler entered');
     notificationDebug('Re-register button clicked');
     try {
+      localStorage.removeItem(NOTIFICATION_REMOVED_CURRENT_DEVICE_KEY);
       await registerNotificationToken({ force: true });
     } catch (error) {
       notificationDebug('Re-register button handler failed', { error: error?.message || String(error) });
@@ -3175,6 +3217,13 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
       setNotificationMessage('', 'Unable to disable this device.');
     }
+  });
+  document.getElementById('notification-devices-list')?.addEventListener('click', async (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const deviceRowId = target.dataset.notificationRemoveDeviceId;
+    if (!deviceRowId) return;
+    await removeNotificationDevice(deviceRowId);
   });
   document.getElementById('notification-save-prefs-btn')?.addEventListener('click', async () => {
     setNotificationDebugState('Save preferences click handler entered');
