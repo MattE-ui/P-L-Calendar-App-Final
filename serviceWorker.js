@@ -330,15 +330,27 @@ self.addEventListener('push', (event) => {
   } catch (error) {
     payload = { title: 'Veracity Trading Suite', body: event.data.text() };
   }
+  const data = payload?.data || {};
+  let parsedActions = [];
+  if (Array.isArray(payload.actions)) {
+    parsedActions = payload.actions;
+  } else if (typeof data.actions === 'string' && data.actions.trim()) {
+    try {
+      const parsed = JSON.parse(data.actions);
+      if (Array.isArray(parsed)) parsedActions = parsed;
+    } catch (error) {
+      console.warn('[SW] Unable to parse actions from data-only payload.', error);
+    }
+  }
   const options = {
-    body: payload.body || payload.notification?.body || 'New Veracity notification',
-    icon: payload.icon || payload.notification?.icon || DEFAULT_NOTIFICATION_ICON,
-    badge: payload.badge || payload.notification?.badge || DEFAULT_NOTIFICATION_ICON,
-    image: payload.image || undefined,
-    tag: payload.tag || payload.notification?.tag || payload?.data?.tag || 'veracity-alert',
-    requireInteraction: !!payload.requireInteraction,
+    body: payload.body || payload.notification?.body || data.body || 'New Veracity notification',
+    icon: payload.icon || payload.notification?.icon || data.icon || DEFAULT_NOTIFICATION_ICON,
+    badge: payload.badge || payload.notification?.badge || data.badge || DEFAULT_NOTIFICATION_ICON,
+    image: payload.image || data.image || undefined,
+    tag: payload.tag || payload.notification?.tag || data.tag || 'veracity-alert',
+    requireInteraction: String(payload.requireInteraction ?? data.requireInteraction ?? '').toLowerCase() === 'true',
     data: payload.data || { link: '/' },
-    actions: Array.isArray(payload.actions) ? payload.actions : []
+    actions: parsedActions
   };
   event.waitUntil(showNotificationWithGuard({ source: 'push:event', payload, options }));
 });
