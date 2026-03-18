@@ -78,14 +78,31 @@ const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https
 const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
 const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
 const INTERNAL_NOTIFICATION_SECRET = process.env.INTERNAL_NOTIFICATION_SECRET || '';
-const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || '';
+const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
 const FCM_CLIENT_EMAIL = process.env.FCM_CLIENT_EMAIL || '';
 const FCM_PRIVATE_KEY = process.env.FCM_PRIVATE_KEY ? process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n') : '';
-const FCM_VAPID_KEY = process.env.FCM_VAPID_KEY || '';
-const FCM_APP_ID = process.env.FCM_APP_ID || '';
-const FCM_API_KEY = process.env.FCM_API_KEY || '';
-const FCM_AUTH_DOMAIN = process.env.FCM_AUTH_DOMAIN || '';
-const FCM_MESSAGING_SENDER_ID = process.env.FCM_MESSAGING_SENDER_ID || '';
+const FCM_VAPID_KEY = process.env.FCM_VAPID_KEY || process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '';
+const FCM_APP_ID = process.env.FCM_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '';
+const FCM_API_KEY = process.env.FCM_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
+const FCM_AUTH_DOMAIN = process.env.FCM_AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '';
+const FCM_MESSAGING_SENDER_ID = process.env.FCM_MESSAGING_SENDER_ID || process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '';
+
+const notificationPublicEnvPresence = {
+  apiKey: !!FCM_API_KEY,
+  authDomain: !!FCM_AUTH_DOMAIN,
+  projectId: !!FCM_PROJECT_ID,
+  messagingSenderId: !!FCM_MESSAGING_SENDER_ID,
+  appId: !!FCM_APP_ID,
+  vapidKey: !!FCM_VAPID_KEY
+};
+const missingNotificationPublicEnv = Object.entries(notificationPublicEnvPresence)
+  .filter(([, present]) => !present)
+  .map(([key]) => key);
+if (missingNotificationPublicEnv.length) {
+  console.warn(`[Notifications] Missing public web push env vars: ${missingNotificationPublicEnv.join(', ')}.`);
+} else {
+  console.info('[Notifications] All required public web push env vars are present.');
+}
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -1779,9 +1796,13 @@ function getNotificationConfig() {
   };
 }
 
+function missingNotificationConfigKeys(config = getNotificationConfig()) {
+  const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId', 'vapidKey'];
+  return requiredKeys.filter((key) => !config[key]);
+}
+
 function hasNotificationConfig() {
-  const cfg = getNotificationConfig();
-  return !!(cfg.apiKey && cfg.projectId && cfg.messagingSenderId && cfg.appId && cfg.vapidKey);
+  return missingNotificationConfigKeys().length === 0;
 }
 
 let fcmAccessTokenCache = { token: '', expiresAt: 0 };
@@ -8216,11 +8237,16 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
 
 app.get('/api/notifications/config', auth, (req, res) => {
   const config = getNotificationConfig();
+  const missing = missingNotificationConfigKeys(config);
+  if (missing.length) {
+    console.warn(`[Notifications] /api/notifications/config missing keys for ${req.username}: ${missing.join(', ')}.`);
+  }
   res.json({
-    supported: hasNotificationConfig(),
+    supported: missing.length === 0,
     config,
     serviceWorkerPath: '/serviceWorker.js',
-    provider: 'fcm'
+    provider: 'fcm',
+    missingKeys: missing
   });
 });
 

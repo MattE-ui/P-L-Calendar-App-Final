@@ -6,12 +6,12 @@ This project now supports production-style browser push notifications for deskto
 
 Client-visible Firebase config:
 
-- `FCM_API_KEY`
-- `FCM_AUTH_DOMAIN`
-- `FCM_PROJECT_ID`
-- `FCM_MESSAGING_SENDER_ID`
-- `FCM_APP_ID`
-- `FCM_VAPID_KEY`
+- `NEXT_PUBLIC_FIREBASE_API_KEY` (or `FCM_API_KEY`)
+- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` (or `FCM_AUTH_DOMAIN`)
+- `NEXT_PUBLIC_FIREBASE_PROJECT_ID` (or `FCM_PROJECT_ID`)
+- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` (or `FCM_MESSAGING_SENDER_ID`)
+- `NEXT_PUBLIC_FIREBASE_APP_ID` (or `FCM_APP_ID`)
+- `NEXT_PUBLIC_FIREBASE_VAPID_KEY` (or `FCM_VAPID_KEY`)
 
 Server-side Firebase Admin credentials (never expose to client):
 
