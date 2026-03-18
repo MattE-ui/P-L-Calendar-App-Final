@@ -5019,3 +5019,32 @@ textarea {
 .social-subpanel-head--alerts {
   margin-top: 10px;
 }
+
+#notification-settings-section .toggle-field {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.5rem 1rem;
+}
+
+#notification-device-meta {
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+#notification-devices-list {
+  margin-top: 0.75rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.notification-device-row {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(46, 204, 113, 0.25);
+  border-radius: 8px;
+  margin-bottom: 0.45rem;
+  background: rgba(12, 18, 22, 0.6);
+}
+
+.notification-device-row strong {
+  color: #8ef0b7;
+}
