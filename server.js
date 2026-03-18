@@ -1993,6 +1993,39 @@ function resolveDeviceRecord(db, { userId, deviceId, token }) {
     && ((deviceId && item.deviceId === deviceId) || (token && item.token === token)));
 }
 
+function redactToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return '';
+  if (raw.length <= 12) return `${raw.slice(0, 4)}…${raw.slice(-2)}`;
+  return `${raw.slice(0, 8)}…${raw.slice(-6)}`;
+}
+
+function fingerprintToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return '';
+  return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 12);
+}
+
+function normalizeDeviceTargetIdentity(device) {
+  if (!device || typeof device !== 'object') return '';
+  const platform = String(device.platform || '').trim().toLowerCase();
+  const browser = String(device.browser || '').trim().toLowerCase() || 'unknown';
+  const normalizedDeviceId = String(device.deviceId || '').trim().toLowerCase();
+  const mobilePlatform = platform.includes('ios') || platform.includes('android') || platform.includes('mobile');
+  if (mobilePlatform) {
+    const platformFamily = platform.includes('ios') ? 'ios' : (platform.includes('android') ? 'android' : 'mobile');
+    return `mobile:${platformFamily}:${browser}`;
+  }
+  return `desktop:${platform || 'desktop'}:${browser}:${normalizedDeviceId || 'unknown'}`;
+}
+
+function buildPushTargetKey(device) {
+  const tokenPart = fingerprintToken(device?.token);
+  const identityPart = normalizeDeviceTargetIdentity(device);
+  if (tokenPart) return `token:${tokenPart}`;
+  return `identity:${identityPart || 'unknown'}`;
+}
+
 function selectMostRecentDeviceRecord(current, candidate) {
   if (!current) return candidate;
   const currentTs = Date.parse(current.updatedAt || current.lastRegistrationAt || current.createdAt || 0) || 0;
@@ -2008,6 +2041,7 @@ function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
 
   const byToken = new Map();
   const byUserDevice = new Map();
+  const byUserMobileIdentity = new Map();
   for (const item of db.notificationDevices) {
     if (!item) continue;
     if (item.isActive === false) continue;
@@ -2020,6 +2054,11 @@ function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
     if (item.userId && deviceKey) {
       const key = `${item.userId}::${deviceKey.toLowerCase()}`;
       byUserDevice.set(key, selectMostRecentDeviceRecord(byUserDevice.get(key), item));
+    }
+    const identity = normalizeDeviceTargetIdentity(item);
+    if (item.userId && identity.startsWith('mobile:')) {
+      const key = `${item.userId}::${identity}`;
+      byUserMobileIdentity.set(key, selectMostRecentDeviceRecord(byUserMobileIdentity.get(key), item));
     }
   }
 
@@ -2036,6 +2075,11 @@ function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
       const winner = byUserDevice.get(`${item.userId}::${deviceKey}`);
       if (winner && winner.id !== item.id) duplicateIndexes.add(index);
     }
+    const identity = normalizeDeviceTargetIdentity(item);
+    if (item.userId && identity.startsWith('mobile:')) {
+      const winner = byUserMobileIdentity.get(`${item.userId}::${identity}`);
+      if (winner && winner.id !== item.id) duplicateIndexes.add(index);
+    }
   });
 
   duplicateIndexes.forEach((index) => {
@@ -2048,8 +2092,9 @@ function cleanupDuplicateNotificationDevices(db, { userId = null } = {}) {
       deviceRowId: item.id,
       userId: item.userId,
       deviceId: item.deviceId || null,
-      token: item.token || null,
-      reason: 'duplicate-token-or-device'
+      tokenFingerprint: fingerprintToken(item.token),
+      targetIdentity: normalizeDeviceTargetIdentity(item),
+      reason: 'duplicate-token-device-or-mobile-identity'
     });
   });
 }
@@ -2133,7 +2178,8 @@ async function sendNotificationToDevice(db, device, payload) {
   console.info('[Notifications] Sending Firebase push notification.', {
     deviceId: device.id,
     userId: device.userId,
-    token: device.token
+    tokenPreview: redactToken(device.token),
+    tokenFingerprint: fingerprintToken(device.token)
   });
   const message = {
     token: device.token,
@@ -2166,7 +2212,7 @@ async function sendNotificationToDevice(db, device, payload) {
     console.info('[Notifications] Firebase push sent successfully.', {
       deviceId: device.id,
       userId: device.userId,
-      token: device.token,
+      tokenFingerprint: fingerprintToken(device.token),
       messageId
     });
     return messageId;
@@ -2174,7 +2220,7 @@ async function sendNotificationToDevice(db, device, payload) {
     console.error('[Notifications] Firebase push send failed.', {
       deviceId: device.id,
       userId: device.userId,
-      token: device.token,
+      tokenFingerprint: fingerprintToken(device.token),
       code: error?.code || null,
       message: error?.message || String(error),
       stack: error?.stack || null
@@ -2285,14 +2331,50 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     && (!onlyDeviceId || item.id === onlyDeviceId)
     && (!criticalOnly || category === 'criticalRiskAlerts')
     && !!item.categories?.[category]);
+  eligibleDevices.forEach((device) => {
+    console.info('[Notifications][SendCandidate]', {
+      eventType,
+      recipientUserId: userId,
+      deviceRowId: device.id,
+      deviceId: device.deviceId || null,
+      platform: device.platform || null,
+      browser: device.browser || null,
+      tokenPreview: redactToken(device.token),
+      tokenFingerprint: fingerprintToken(device.token),
+      createdAt: device.createdAt || null,
+      updatedAt: device.updatedAt || null,
+      isActive: device.isActive !== false,
+      normalizedTarget: buildPushTargetKey(device)
+    });
+  });
   const dedupedDevices = [];
-  const seenTargets = new Set();
+  const seenTokens = new Set();
+  const seenIdentities = new Set();
   for (const device of eligibleDevices) {
-    const dedupeTarget = `${String(device.token || '').trim().toLowerCase()}::${String(device.deviceId || '').trim().toLowerCase()}`;
-    if (seenTargets.has(dedupeTarget)) {
+    const tokenKey = fingerprintToken(device.token);
+    if (tokenKey && seenTokens.has(tokenKey)) {
+      console.info('[Notifications] Skipping duplicate target prior to send.', {
+        eventType,
+        userId,
+        deviceRowId: device.id,
+        reason: 'duplicate-token',
+        tokenFingerprint: tokenKey
+      });
       continue;
     }
-    seenTargets.add(dedupeTarget);
+    const identityKey = normalizeDeviceTargetIdentity(device);
+    if (identityKey && seenIdentities.has(identityKey)) {
+      console.info('[Notifications] Skipping duplicate target prior to send.', {
+        eventType,
+        userId,
+        deviceRowId: device.id,
+        reason: 'duplicate-normalized-identity',
+        normalizedIdentity: identityKey
+      });
+      continue;
+    }
+    if (tokenKey) seenTokens.add(tokenKey);
+    if (identityKey) seenIdentities.add(identityKey);
     dedupedDevices.push(device);
   }
   const nowIso = new Date().toISOString();
@@ -2320,7 +2402,7 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
       eventType,
       context?.announcementId || context?.eventId || payload.tag || '',
       userId,
-      device.id
+      buildPushTargetKey(device)
     ].join(':');
     const existingDedupe = db.notificationPushDedupe.find((item) => item.key === dedupeKey);
     const nowTs = Date.now();
@@ -2371,6 +2453,7 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
           announcementId: context?.announcementId || null,
           recipientUserId: userId,
           deviceId: device.id,
+          normalizedTarget: buildPushTargetKey(device),
           sentAt: new Date().toISOString()
         });
       }
@@ -8684,14 +8767,48 @@ app.post('/api/notifications/devices/:id/disable', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+function removeNotificationDeviceForUser(db, userId, deviceRowId) {
+  ensureNotificationTables(db);
+  const nowIso = new Date().toISOString();
+  const device = db.notificationDevices.find((item) => item.id === deviceRowId && item.userId === userId);
+  if (!device) {
+    console.info('[Notifications] Device remove request was idempotent (row not found).', {
+      userId,
+      deviceId: deviceRowId,
+      action: 'device_removed',
+      at: nowIso
+    });
+    return { ok: true, removed: false, alreadyInactive: false };
+  }
+  const alreadyInactive = device.isActive === false;
+  device.isActive = false;
+  device.revokedAt ||= nowIso;
+  device.updatedAt = nowIso;
+  console.info('[Notifications] Device removed.', {
+    userId,
+    deviceId: device.id,
+    platform: device.platform || null,
+    browser: device.browser || null,
+    tokenFingerprint: fingerprintToken(device.token),
+    action: 'device_removed',
+    at: nowIso,
+    alreadyInactive
+  });
+  return { ok: true, removed: true, alreadyInactive, device };
+}
+
+app.delete('/api/notifications/device/:deviceId', auth, (req, res) => {
+  const db = loadDB();
+  const result = removeNotificationDeviceForUser(db, req.username, req.params.deviceId);
+  saveDB(db);
+  res.json(result);
+});
+
 app.delete('/api/notifications/devices/:id', auth, (req, res) => {
   const db = loadDB();
-  ensureNotificationTables(db);
-  const before = db.notificationDevices.length;
-  db.notificationDevices = db.notificationDevices.filter((item) => !(item.id === req.params.id && item.userId === req.username));
-  if (db.notificationDevices.length === before) return res.status(404).json({ error: 'Notification device not found.' });
+  const result = removeNotificationDeviceForUser(db, req.username, req.params.id);
   saveDB(db);
-  res.json({ ok: true });
+  res.json(result);
 });
 
 app.post('/api/notifications/devices/:id/received', auth, (req, res) => {
