@@ -2666,6 +2666,10 @@ function setNotificationMessage(status = '', error = '') {
   if (errorEl) errorEl.textContent = error;
 }
 
+function notificationDebug(step, details = {}) {
+  console.info(`[Notifications] ${step}`, details);
+}
+
 function renderNotificationControls() {
   const support = document.getElementById('notification-support-message');
   const permission = Notification?.permission || 'default';
@@ -2713,14 +2717,17 @@ function renderNotificationDevices(devices) {
 }
 
 async function loadNotificationDevices() {
+  notificationDebug('Device list refresh started');
   const payload = await api('/api/notifications/devices');
   renderNotificationDevices(payload.devices || []);
   renderNotificationControls();
+  notificationDebug('Device list refresh completed', { count: Array.isArray(payload.devices) ? payload.devices.length : 0 });
 }
 
 async function registerNotificationToken({ force = false } = {}) {
+  notificationDebug('Registration requested', { force });
   if (notificationState.registerInFlight) {
-    console.info('[Notifications] Token request skipped because one is already running.');
+    notificationDebug('Registration skipped: already in flight');
     return;
   }
   notificationState.registerInFlight = true;
@@ -2735,9 +2742,10 @@ async function registerNotificationToken({ force = false } = {}) {
     return;
   }
   try {
+    notificationDebug('Permission state before token flow', { permission: Notification.permission });
     const configPayload = notificationState.config || await api('/api/notifications/config');
     notificationState.config = configPayload;
-    console.info('[Notifications] Config loaded.', {
+    notificationDebug('Config loaded', {
       supported: !!configPayload?.supported,
       missingKeys: Array.isArray(configPayload?.missingKeys) ? configPayload.missingKeys : []
     });
@@ -2745,15 +2753,25 @@ async function registerNotificationToken({ force = false } = {}) {
       setNotificationMessage('', 'Server-side notification configuration is incomplete.');
       return;
     }
-    await navigator.serviceWorker.register('/serviceWorker.js');
+    notificationDebug('Service worker registration started');
+    const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js');
+    notificationDebug('Service worker registration completed', { scope: serviceWorkerRegistration.scope });
     const messaging = await ensureFirebaseMessagingReady(configPayload);
-    const serviceWorkerRegistration = await navigator.serviceWorker.ready;
-    console.info('[Notifications] Token request started.');
+    const swReady = await navigator.serviceWorker.ready;
+    if (force && typeof messaging.deleteToken === 'function') {
+      try {
+        notificationDebug('Force re-register requested: deleting existing token before getToken');
+        await messaging.deleteToken();
+      } catch (deleteError) {
+        notificationDebug('Token delete failed before re-register; continuing', { error: deleteError?.message || String(deleteError) });
+      }
+    }
+    notificationDebug('getToken started', { permission: Notification.permission, force });
     const token = await messaging.getToken({
       vapidKey: configPayload.config.vapidKey,
-      serviceWorkerRegistration
+      serviceWorkerRegistration: swReady
     });
-    console.info('[Notifications] Token request finished.', { hasToken: !!token });
+    notificationDebug('getToken finished', { hasToken: !!token, tokenLength: token?.length || 0 });
     if (!token) {
       setNotificationMessage('', 'Unable to fetch a push token. Try again.');
       return;
@@ -2769,13 +2787,18 @@ async function registerNotificationToken({ force = false } = {}) {
       categories: notificationState.categories,
       isActive: true
     };
+    notificationDebug('Register API request started', { deviceId: payload.deviceId, permissionState: payload.permissionState });
     await api('/api/notifications/devices/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    notificationDebug('Register API request completed', { ok: true });
     setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
     await loadNotificationDevices();
+  } catch (error) {
+    notificationDebug('Registration flow failed', { error: error?.message || String(error) });
+    setNotificationMessage('', error?.data?.error || error?.message || 'Notification registration failed.');
   } finally {
     notificationState.registerInFlight = false;
   }
@@ -2991,24 +3014,32 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.getElementById('notification-enable-btn')?.addEventListener('click', async () => {
+    notificationDebug('Enable button clicked');
     try {
+      notificationDebug('Permission state before prompt', { permission: Notification.permission });
       if (Notification.permission === 'default') {
         const permission = await Notification.requestPermission();
+        notificationDebug('Permission state after prompt', { permission });
         if (permission !== 'granted') {
           setNotificationMessage('', 'Notification permission was not granted.');
           renderNotificationControls();
           return;
         }
+      } else {
+        notificationDebug('Permission prompt skipped', { permission: Notification.permission });
       }
       await registerNotificationToken();
     } catch (error) {
+      notificationDebug('Enable button handler failed', { error: error?.message || String(error) });
       setNotificationMessage('', error?.message || 'Unable to enable notifications.');
     }
   });
   document.getElementById('notification-reregister-btn')?.addEventListener('click', async () => {
+    notificationDebug('Re-register button clicked');
     try {
       await registerNotificationToken({ force: true });
     } catch (error) {
+      notificationDebug('Re-register button handler failed', { error: error?.message || String(error) });
       setNotificationMessage('', error?.message || 'Unable to re-register token.');
     }
   });
@@ -3055,13 +3086,14 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.getElementById('notification-test-btn')?.addEventListener('click', async () => {
+    notificationDebug('Test notification button clicked', { deviceId: notificationState.activeDeviceId || null });
     try {
       await api('/api/notifications/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId: notificationState.activeDeviceId || undefined })
       });
-      setNotificationMessage('Test notification sent. Check your OS notification tray.', '');
+      setNotificationMessage('Push test sent to registered device(s). Check your OS notification tray.', '');
     } catch (error) {
       setNotificationMessage('', error?.data?.error || 'Test notification failed.');
     }

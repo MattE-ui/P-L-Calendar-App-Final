@@ -8260,12 +8260,17 @@ app.get('/api/notifications/devices', auth, (req, res) => {
       token: item.token ? `${item.token.slice(0, 12)}…` : ''
     }))
     .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
+  console.info('[Notifications] Device list requested.', { userId: req.username, count: devices.length });
   res.json({ devices });
 });
 
 app.post('/api/notifications/devices/register', auth, (req, res) => {
   const parsed = notificationDeviceRegisterSchema.safeParse(req.body || {});
   if (!parsed.success) {
+    console.warn('[Notifications] Device register validation failed.', {
+      userId: req.username,
+      issues: parsed.error.issues?.map((issue) => ({ path: issue.path, message: issue.message })) || []
+    });
     return res.status(400).json({ error: 'Invalid notification device payload.', issues: parsed.error.issues });
   }
   const db = loadDB();
@@ -8285,6 +8290,14 @@ app.post('/api/notifications/devices/register', auth, (req, res) => {
     isActive: payload.isActive !== false
   });
   saveDB(db);
+  console.info('[Notifications] Device upserted.', {
+    userId: req.username,
+    deviceId: record.deviceId,
+    recordId: record.id,
+    platform: record.platform,
+    browser: record.browser,
+    permissionState: record.permissionState
+  });
   res.json({ ok: true, device: record });
 });
 
@@ -8347,6 +8360,10 @@ app.post('/api/notifications/test', auth, asyncHandler(async (req, res) => {
   const db = loadDB();
   ensureNotificationTables(db);
   const targetDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : '';
+  const registeredDevices = db.notificationDevices.filter((item) => item.userId === req.username && item.isActive && item.permissionState === 'granted');
+  if (!registeredDevices.length) {
+    return res.status(400).json({ error: 'No active push-registered devices found. Enable notifications on this device first.' });
+  }
   const log = await sendNotificationEvent(db, {
     userId: req.username,
     eventType: 'trade_opened',
@@ -8358,6 +8375,15 @@ app.post('/api/notifications/test', auth, asyncHandler(async (req, res) => {
     },
     onlyDeviceId: targetDeviceId || null
   });
+  if (!log.deliveries.length) {
+    saveDB(db);
+    return res.status(400).json({ error: 'No eligible notification devices matched current filters/preferences.' });
+  }
+  const okDeliveries = log.deliveries.filter((entry) => entry.ok);
+  if (!okDeliveries.length) {
+    saveDB(db);
+    return res.status(502).json({ error: 'Push send attempted but failed for all targeted devices.', log });
+  }
   saveDB(db);
   res.json({ ok: true, log });
 }));
