@@ -21,7 +21,9 @@ const PRECACHE_URLS = [
 const FCM_CONFIG = __FCM_CONFIG__;
 const DEFAULT_NOTIFICATION_ICON = '/static/Veracity-notification-logo.png';
 let messaging = null;
-const RECENT_NOTIFICATION_DEDUPE_MS = 30 * 1000;
+const CANONICAL_RENDER_HANDLER = 'push:event';
+const HARD_RENDER_DEDUPE_MS = 5 * 60 * 1000;
+const EMERGENCY_ANNOUNCEMENT_DEDUPE_MS = 30 * 1000;
 const recentRenderedNotifications = new Map();
 
 function hasFcmConfig() {
@@ -30,7 +32,7 @@ function hasFcmConfig() {
 
 function cleanupRecentNotificationKeys(nowTs = Date.now()) {
   for (const [key, seenAt] of recentRenderedNotifications.entries()) {
-    if ((nowTs - seenAt) > RECENT_NOTIFICATION_DEDUPE_MS) {
+    if ((nowTs - seenAt) > HARD_RENDER_DEDUPE_MS) {
       recentRenderedNotifications.delete(key);
     }
   }
@@ -53,6 +55,7 @@ function extractNotificationDescriptor(payload = {}, fallbackTitle = 'Veracity T
   const correlationId = data.correlationId || payload.correlationId || '';
   const announcementId = data.announcementId || payload.announcementId || '';
   const recipientUserId = data.userId || payload.userId || '';
+  const type = data.type || payload.type || '';
   const dedupeBase = correlationId
     || `${announcementId}:${recipientUserId}:${stablePayloadHash(`${title}|${body}`)}`;
   const dedupeKey = `render:${dedupeBase || stablePayloadHash(JSON.stringify(payload || {}))}`;
@@ -63,16 +66,62 @@ function extractNotificationDescriptor(payload = {}, fallbackTitle = 'Veracity T
     correlationId: correlationId || null,
     eventId: data.eventId || payload.eventId || null,
     announcementId: announcementId || null,
-    recipientUserId: recipientUserId || null
+    recipientUserId: recipientUserId || null,
+    type: type || null
   };
+}
+
+function logSwPipelineStage(stage, {
+  sourceHandler,
+  descriptor,
+  skipped = false,
+  details = {}
+} = {}) {
+  console.info('[SW][NotificationPipeline]', {
+    stage,
+    at: new Date().toISOString(),
+    sourceHandler: sourceHandler || 'unknown',
+    correlationId: descriptor?.correlationId || null,
+    announcementId: descriptor?.announcementId || null,
+    recipientUserId: descriptor?.recipientUserId || null,
+    dedupeKey: descriptor?.dedupeKey || null,
+    skipped,
+    ...details
+  });
 }
 
 async function showNotificationWithGuard({ source, payload, options }) {
   const now = Date.now();
   cleanupRecentNotificationKeys(now);
   const descriptor = extractNotificationDescriptor(payload);
+  logSwPipelineStage('9.service_worker_handler_entered', {
+    sourceHandler: source,
+    descriptor,
+    skipped: false,
+    details: { notificationType: descriptor.type || null }
+  });
+  if (source !== CANONICAL_RENDER_HANDLER) {
+    logSwPipelineStage('11.service_worker_dedupe_skip', {
+      sourceHandler: source,
+      descriptor,
+      skipped: true,
+      details: {
+        reason: 'non_canonical_handler',
+        message: 'SECONDARY RENDER PATH SKIPPED'
+      }
+    });
+    return;
+  }
+  logSwPipelineStage('9.service_worker_handler_entered', {
+    sourceHandler: source,
+    descriptor,
+    skipped: false,
+    details: {
+      message: 'CANONICAL RENDER PATH USED'
+    }
+  });
   const alreadySeenAt = recentRenderedNotifications.get(descriptor.dedupeKey);
-  const duplicateWithinWindow = !!alreadySeenAt && (now - alreadySeenAt) <= RECENT_NOTIFICATION_DEDUPE_MS;
+  const duplicateWithinWindow = !!alreadySeenAt && (now - alreadySeenAt) <= HARD_RENDER_DEDUPE_MS;
   const logBase = {
     timestamp: new Date(now).toISOString(),
     sourceHandler: source,
@@ -85,6 +134,29 @@ async function showNotificationWithGuard({ source, payload, options }) {
     recipientUserId: descriptor.recipientUserId
   };
   if (duplicateWithinWindow) {
+    const duplicateAgeMs = now - alreadySeenAt;
+    if (descriptor.type === 'trade_group_announcement' && duplicateAgeMs <= EMERGENCY_ANNOUNCEMENT_DEDUPE_MS) {
+      logSwPipelineStage('11.service_worker_dedupe_skip', {
+        sourceHandler: source,
+        descriptor,
+        skipped: true,
+        details: {
+          reason: 'emergency_announcement_duplicate',
+          duplicateAgeMs,
+          message: 'EMERGENCY DUPLICATE SUPPRESSED'
+        }
+      });
+      return;
+    }
+    logSwPipelineStage('11.service_worker_dedupe_skip', {
+      sourceHandler: source,
+      descriptor,
+      skipped: true,
+      details: {
+        reason: 'hard_render_dedupe',
+        duplicateAgeMs
+      }
+    });
     console.info('[SW][NotificationRender] Duplicate render skipped.', {
       ...logBase,
       skipped: true,
@@ -94,6 +166,19 @@ async function showNotificationWithGuard({ source, payload, options }) {
     return;
   }
   recentRenderedNotifications.set(descriptor.dedupeKey, now);
+  logSwPipelineStage('11.service_worker_dedupe_skip', {
+    sourceHandler: source,
+    descriptor,
+    skipped: false,
+    details: {
+      reason: 'not_skipped'
+    }
+  });
+  logSwPipelineStage('10.service_worker_showNotification_called', {
+    sourceHandler: source,
+    descriptor,
+    skipped: false
+  });
   console.info('[SW][NotificationRender] Rendering notification.', {
     ...logBase,
     skipped: false
