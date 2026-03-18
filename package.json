@@ -21,6 +21,7 @@
     "bcrypt": "^5.1.1",
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
+    "firebase-admin": "^13.2.0",
     "dotenv": "^16.4.5",
     "nodemailer": "^6.9.11",
     "zod": "^3.23.8"
