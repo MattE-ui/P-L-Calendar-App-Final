@@ -2746,7 +2746,15 @@ async function registerNotificationToken({ force = false } = {}) {
     notificationDebug('Registration skipped: already in flight');
     return;
   }
+  notificationDebug('Registration started', { force });
   notificationState.registerInFlight = true;
+  const registrationTimeoutMs = 10000;
+  const registrationTimeoutId = setTimeout(() => {
+    if (!notificationState.registerInFlight) return;
+    notificationDebug('Registration timeout reached; auto-resetting in-flight flag', { timeoutMs: registrationTimeoutMs });
+    notificationState.registerInFlight = false;
+    notificationDebug('Registration flag reset', { reason: 'timeout' });
+  }, registrationTimeoutMs);
   try {
     if (!notificationState.supported) {
       setNotificationMessage('', 'Notifications are not supported in this browser.');
@@ -2845,12 +2853,16 @@ async function registerNotificationToken({ force = false } = {}) {
     setNotificationDebugState('register-device API response received');
     setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
     await loadNotificationDevices();
+    notificationDebug('Registration completed', { force });
   } catch (error) {
+    notificationDebug('Registration failed', { error: error?.data?.error || error?.message || String(error) });
     notificationDebug('Registration flow failed', { error: error?.data?.error || error?.message || String(error) });
     setNotificationDebugState('registration flow failed', error?.data?.error || error?.message || 'Notification registration failed.');
     setNotificationMessage('', error?.data?.error || error?.message || 'Notification registration failed.');
   } finally {
+    clearTimeout(registrationTimeoutId);
     notificationState.registerInFlight = false;
+    notificationDebug('Registration flag reset', { reason: 'finally' });
   }
 }
 
