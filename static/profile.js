@@ -2630,21 +2630,6 @@ function hasValidNotificationConfig(configPayload) {
   return required.every((key) => typeof cfg[key] === 'string' && cfg[key].trim().length > 0);
 }
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding)
-    .replace(/-/g, '+')
-    .replace(/_/g, '/');
-
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
-
 async function ensureFirebaseMessagingReady(configPayload) {
   if (notificationState.messaging) {
     return notificationState.messaging;
@@ -2807,20 +2792,6 @@ async function registerNotificationToken({ force = false } = {}) {
     }
     notificationDebug('Service worker ready', { scope: swReady?.scope || serviceWorkerRegistration.scope });
     const vapidKeyString = (configPayload?.config?.vapidKey || '').trim();
-    notificationDebug('VAPID key string length before conversion', { length: vapidKeyString.length });
-    const vapidKeyUint8Array = urlBase64ToUint8Array(vapidKeyString);
-    notificationDebug('VAPID key Uint8Array length after conversion', { length: vapidKeyUint8Array.length });
-    setNotificationDebugState('push subscription preflight started');
-    const existingSubscription = await swReady.pushManager.getSubscription();
-    if (existingSubscription) {
-      notificationDebug('PushManager subscription already exists', { endpoint: existingSubscription.endpoint || '' });
-    } else {
-      await swReady.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: vapidKeyUint8Array
-      });
-      notificationDebug('PushManager subscription succeeded');
-    }
     setNotificationDebugState('Firebase app initialization started');
     const messaging = await ensureFirebaseMessagingReady(configPayload);
     setNotificationDebugState('Firebase app initialized');
@@ -2836,10 +2807,24 @@ async function registerNotificationToken({ force = false } = {}) {
     }
     setNotificationDebugState('getToken started');
     notificationDebug('getToken started', { permission: Notification.permission, force });
-    const token = await messaging.getToken({
-      vapidKey: vapidKeyString,
-      serviceWorkerRegistration: swReady
+    notificationDebug('Using Firebase getToken registration path', {
+      vapidKeyLength: vapidKeyString.length,
+      serviceWorkerScope: swReady?.scope || serviceWorkerRegistration.scope
     });
+    let token = '';
+    try {
+      token = await messaging.getToken({
+        vapidKey: vapidKeyString,
+        serviceWorkerRegistration: swReady
+      });
+    } catch (tokenError) {
+      const sourceStack = tokenError?.stack || String(tokenError);
+      notificationDebug('Firebase getToken call failed', {
+        error: tokenError?.message || String(tokenError),
+        stack: sourceStack
+      });
+      throw tokenError;
+    }
     if (!token) {
       setNotificationDebugState('getToken returned empty', 'Unable to fetch a push token.');
       notificationDebug('getToken returned empty', { tokenLength: token?.length || 0 });
