@@ -75,11 +75,40 @@ const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WIND
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
 const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
+const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
+const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
+const INTERNAL_NOTIFICATION_SECRET = process.env.INTERNAL_NOTIFICATION_SECRET || '';
+const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
+const FCM_CLIENT_EMAIL = process.env.FCM_CLIENT_EMAIL || '';
+const FCM_PRIVATE_KEY = process.env.FCM_PRIVATE_KEY ? process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n') : '';
+const FCM_VAPID_KEY = process.env.FCM_VAPID_KEY || process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '';
+const FCM_APP_ID = process.env.FCM_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '';
+const FCM_API_KEY = process.env.FCM_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
+const FCM_AUTH_DOMAIN = process.env.FCM_AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '';
+const FCM_MESSAGING_SENDER_ID = process.env.FCM_MESSAGING_SENDER_ID || process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '';
+
+const notificationPublicEnvPresence = {
+  apiKey: !!FCM_API_KEY,
+  authDomain: !!FCM_AUTH_DOMAIN,
+  projectId: !!FCM_PROJECT_ID,
+  messagingSenderId: !!FCM_MESSAGING_SENDER_ID,
+  appId: !!FCM_APP_ID,
+  vapidKey: !!FCM_VAPID_KEY
+};
+const missingNotificationPublicEnv = Object.entries(notificationPublicEnvPresence)
+  .filter(([, present]) => !present)
+  .map(([key]) => key);
+if (missingNotificationPublicEnv.length) {
+  console.warn(`[Notifications] Missing public web push env vars: ${missingNotificationPublicEnv.join(', ')}.`);
+} else {
+  console.info('[Notifications] All required public web push env vars are present.');
+}
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
 const socialCodeLookupRateLimit = new Map();
 const socialCodeRegenRateLimit = new Map();
+const notificationTestRateLimit = new Map();
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
 const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
@@ -1719,6 +1748,334 @@ function checkIbkrRateLimit(key, res) {
   return true;
 }
 
+const NOTIFICATION_CATEGORIES = Object.freeze([
+  'criticalRiskAlerts',
+  'tradeAlerts',
+  'tradeGroupAlerts',
+  'socialInvestorNotifications',
+  'brokerSyncFailures',
+  'dailyRecap',
+  'soundEnabled'
+]);
+
+function defaultNotificationCategories() {
+  return {
+    criticalRiskAlerts: true,
+    tradeAlerts: true,
+    tradeGroupAlerts: true,
+    socialInvestorNotifications: true,
+    brokerSyncFailures: true,
+    dailyRecap: false,
+    soundEnabled: true
+  };
+}
+
+function normalizeNotificationCategories(raw) {
+  const defaults = defaultNotificationCategories();
+  if (!raw || typeof raw !== 'object') return defaults;
+  const normalized = { ...defaults };
+  for (const key of NOTIFICATION_CATEGORIES) {
+    if (typeof raw[key] === 'boolean') normalized[key] = raw[key];
+  }
+  return normalized;
+}
+
+function ensureNotificationTables(db) {
+  if (!Array.isArray(db.notificationDevices)) db.notificationDevices = [];
+  if (!Array.isArray(db.notificationEvents)) db.notificationEvents = [];
+}
+
+function getNotificationConfig() {
+  return {
+    apiKey: FCM_API_KEY,
+    authDomain: FCM_AUTH_DOMAIN,
+    projectId: FCM_PROJECT_ID,
+    messagingSenderId: FCM_MESSAGING_SENDER_ID,
+    appId: FCM_APP_ID,
+    vapidKey: FCM_VAPID_KEY
+  };
+}
+
+function missingNotificationConfigKeys(config = getNotificationConfig()) {
+  const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId', 'vapidKey'];
+  return requiredKeys.filter((key) => !config[key]);
+}
+
+function hasNotificationConfig() {
+  return missingNotificationConfigKeys().length === 0;
+}
+
+let fcmAccessTokenCache = { token: '', expiresAt: 0 };
+
+function base64Url(input) {
+  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function getFcmAccessToken() {
+  const now = Date.now();
+  if (fcmAccessTokenCache.token && fcmAccessTokenCache.expiresAt - now > 60 * 1000) {
+    return fcmAccessTokenCache.token;
+  }
+  if (!FCM_PROJECT_ID || !FCM_CLIENT_EMAIL || !FCM_PRIVATE_KEY) return '';
+  const iat = Math.floor(now / 1000);
+  const exp = iat + 3600;
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const claim = {
+    iss: FCM_CLIENT_EMAIL,
+    sub: FCM_CLIENT_EMAIL,
+    aud: 'https://oauth2.googleapis.com/token',
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    iat,
+    exp
+  };
+  const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(claim))}`;
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer.sign(FCM_PRIVATE_KEY, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const assertion = `${signingInput}.${signature}`;
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion
+    }).toString()
+  });
+  const tokenBody = await tokenRes.json();
+  if (!tokenRes.ok || !tokenBody.access_token) {
+    throw new Error(`Failed to obtain FCM access token: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`);
+  }
+  fcmAccessTokenCache = {
+    token: tokenBody.access_token,
+    expiresAt: now + ((Number(tokenBody.expires_in) || 3600) * 1000)
+  };
+  return fcmAccessTokenCache.token;
+}
+
+function detectBrowserFromUserAgent(userAgent) {
+  const ua = String(userAgent || '').toLowerCase();
+  if (ua.includes('edg/')) return 'edge';
+  if (ua.includes('opr/') || ua.includes('opera')) return 'opera';
+  if (ua.includes('chrome/') || ua.includes('crios/')) return 'chrome';
+  if (ua.includes('firefox/') || ua.includes('fxios/')) return 'firefox';
+  if (ua.includes('safari/') && !ua.includes('chrome/') && !ua.includes('crios/')) return 'safari';
+  return 'unknown';
+}
+
+function resolveDeviceRecord(db, { userId, deviceId, token }) {
+  return db.notificationDevices.find((item) => item.userId === userId
+    && ((deviceId && item.deviceId === deviceId) || (token && item.token === token)));
+}
+
+function upsertNotificationDevice(db, payload) {
+  ensureNotificationTables(db);
+  const nowIso = new Date().toISOString();
+  const existing = resolveDeviceRecord(db, payload);
+  const mergedCategories = normalizeNotificationCategories(payload.categories || existing?.categories);
+  const next = {
+    id: existing?.id || crypto.randomUUID(),
+    userId: payload.userId,
+    deviceId: payload.deviceId,
+    platform: payload.platform || 'unknown',
+    browser: payload.browser || detectBrowserFromUserAgent(payload.userAgent),
+    userAgent: payload.userAgent || '',
+    token: payload.token,
+    providerType: payload.providerType || 'fcm-web',
+    permissionState: payload.permissionState || 'default',
+    isActive: payload.isActive !== false,
+    installedAsPwa: !!payload.installedAsPwa,
+    categories: mergedCategories,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+    lastSeenAt: nowIso,
+    lastSentAt: existing?.lastSentAt || null,
+    lastErrorAt: existing?.lastErrorAt || null,
+    lastRegistrationAt: nowIso,
+    lastReceivedAt: existing?.lastReceivedAt || null,
+    revokedAt: payload.isActive === false ? nowIso : null
+  };
+  if (existing) {
+    Object.assign(existing, next);
+  } else {
+    db.notificationDevices.push(next);
+  }
+  // Deactivate duplicate token/device rows for same user.
+  db.notificationDevices.forEach((item) => {
+    if (item.id === next.id) return;
+    if (item.userId !== next.userId) return;
+    if ((item.deviceId && item.deviceId === next.deviceId) || item.token === next.token) {
+      item.isActive = false;
+      item.revokedAt ||= nowIso;
+      item.updatedAt = nowIso;
+    }
+  });
+  return next;
+}
+
+function checkNotificationTestRateLimit(req, res) {
+  const key = `${req.username}:${getClientIp(req)}`;
+  const now = Date.now();
+  const entry = notificationTestRateLimit.get(key) || { count: 0, resetAt: now + NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS };
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS;
+  }
+  entry.count += 1;
+  notificationTestRateLimit.set(key, entry);
+  if (entry.count > NOTIFICATION_TEST_RATE_LIMIT_MAX) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({ error: `Too many test notifications. Retry in ${retryAfter} seconds.` });
+    return false;
+  }
+  return true;
+}
+
+async function sendNotificationToDevice(db, device, payload) {
+  const accessToken = await getFcmAccessToken();
+  if (!accessToken || !FCM_PROJECT_ID) {
+    throw new Error('FCM HTTP v1 configuration is missing.');
+  }
+  const message = {
+    token: device.token,
+    notification: {
+      title: payload.title,
+      body: payload.body
+    },
+    webpush: {
+      headers: payload.requireInteraction ? { Urgency: 'high' } : undefined,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+        icon: payload.icon || '/static/icons/icon-192x192.png',
+        badge: payload.badge || '/static/icons/icon-192x192.png',
+        image: payload.image || undefined,
+        tag: payload.tag || undefined,
+        requireInteraction: !!payload.requireInteraction,
+        actions: Array.isArray(payload.actions) ? payload.actions : undefined,
+        data: payload.data || {}
+      },
+      fcmOptions: payload.link ? { link: payload.link } : undefined
+    },
+    data: Object.fromEntries(Object.entries(payload.data || {}).map(([key, value]) => [key, String(value)]))
+  };
+  const responseRaw = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ message })
+  });
+  const responseBody = await responseRaw.json().catch(() => ({}));
+  if (!responseRaw.ok) {
+    const error = new Error(responseBody?.error?.message || `FCM send failed (${responseRaw.status})`);
+    error.code = responseBody?.error?.status || '';
+    throw error;
+  }
+  device.lastSentAt = new Date().toISOString();
+  device.updatedAt = device.lastSentAt;
+  return responseBody?.name || 'sent';
+}
+
+function buildNotificationEvent(type, context = {}) {
+  const base = {
+    icon: '/static/icons/icon-192x192.png',
+    badge: '/static/icons/icon-192x192.png',
+    requireInteraction: false
+  };
+  const builders = {
+    missing_stop_loss_warning: () => ({
+      ...base, category: 'criticalRiskAlerts', title: 'Missing stop loss detected', body: `${context.symbol || 'An active trade'} has no stop loss set.`, link: context.link || '/trades.html?filter=active'
+    }),
+    risk_threshold_breached: () => ({
+      ...base, category: 'criticalRiskAlerts', title: 'Risk threshold breached', body: `${context.symbol || 'Trade'} risk exceeded your configured threshold.`, link: context.link || '/trades.html?filter=risk'
+    }),
+    trade_opened: () => ({
+      ...base, category: 'tradeAlerts', title: 'Trade opened', body: `${context.symbol || 'A trade'} was opened.`, link: context.link || `/trades.html${context.tradeId ? `?trade=${encodeURIComponent(context.tradeId)}` : ''}`
+    }),
+    trade_closed: () => ({
+      ...base, category: 'tradeAlerts', title: 'Trade closed', body: `${context.symbol || 'A trade'} was closed.`, link: context.link || `/trades.html${context.tradeId ? `?trade=${encodeURIComponent(context.tradeId)}` : ''}`
+    }),
+    leader_new_position: () => ({
+      ...base, category: 'tradeGroupAlerts', title: 'New leader position', body: `${context.leader || 'Group leader'} opened a new position in ${context.groupName || 'your trading group'}.`, link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
+    trade_group_alert_banner: () => ({
+      ...base, category: 'tradeGroupAlerts', title: `${context.groupName || 'Trade group'} alert`, body: context.body || 'A new group alert is available.', link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+    }),
+    broker_sync_failed: () => ({
+      ...base, category: 'brokerSyncFailures', title: 'Broker sync failed', body: context.body || 'Broker integration sync failed. Review settings.', link: context.link || '/profile.html#integration-section', requireInteraction: true
+    }),
+    broker_reconnected: () => ({
+      ...base, category: 'brokerSyncFailures', title: 'Broker reconnected', body: context.body || 'Broker integration is connected again.', link: context.link || '/profile.html#integration-section'
+    }),
+    investor_valuation_updated: () => ({
+      ...base, category: 'socialInvestorNotifications', title: 'Investor valuation updated', body: context.body || 'Investor valuation has been updated.', link: context.link || '/profile.html#investor-section'
+    }),
+    daily_recap_ready: () => ({
+      ...base, category: 'dailyRecap', title: 'Daily recap ready', body: context.body || 'Your daily recap is ready.', link: context.link || '/analytics.html?panel=daily-recap'
+    })
+  };
+  if (!builders[type]) return null;
+  const built = builders[type]();
+  return {
+    ...built,
+    type,
+    tag: context.tag || `veracity-${type}`,
+    data: {
+      type,
+      link: built.link,
+      userId: context.userId || ''
+    }
+  };
+}
+
+async function sendNotificationEvent(db, { userId, eventType, context = {}, onlyDeviceId = null, criticalOnly = false }) {
+  ensureNotificationTables(db);
+  const payload = buildNotificationEvent(eventType, { ...context, userId });
+  if (!payload) {
+    throw new Error(`Unsupported notification event type: ${eventType}`);
+  }
+  const category = payload.category;
+  const devices = db.notificationDevices.filter((item) => item.userId === userId
+    && item.isActive
+    && item.permissionState === 'granted'
+    && (!onlyDeviceId || item.id === onlyDeviceId)
+    && (!criticalOnly || category === 'criticalRiskAlerts')
+    && !!item.categories?.[category]);
+  const nowIso = new Date().toISOString();
+  const log = {
+    id: crypto.randomUUID(),
+    userId,
+    eventType,
+    category,
+    title: payload.title,
+    body: payload.body,
+    link: payload.link,
+    targetDeviceId: onlyDeviceId || null,
+    attemptedAt: nowIso,
+    deliveries: []
+  };
+  for (const device of devices) {
+    try {
+      const messageId = await sendNotificationToDevice(db, device, payload);
+      log.deliveries.push({ deviceId: device.id, ok: true, messageId, at: new Date().toISOString() });
+    } catch (error) {
+      device.lastErrorAt = new Date().toISOString();
+      device.updatedAt = device.lastErrorAt;
+      const code = String(error?.code || '');
+      if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+        device.isActive = false;
+        device.revokedAt = new Date().toISOString();
+      }
+      log.deliveries.push({ deviceId: device.id, ok: false, error: error?.message || String(error), code, at: new Date().toISOString() });
+    }
+  }
+  db.notificationEvents.push(log);
+  return log;
+}
+
 // --- helpers ---
 function loadDB() {
   try {
@@ -1765,6 +2122,7 @@ function loadDB() {
       db.investorInvites = [];
     }
     db.investorSessions ||= {};
+    ensureNotificationTables(db);
     ensureSocialTables(db);
     let mutated = reconcileIbkrTokenSecret(db);
     for (const [username, user] of Object.entries(db.users)) {
@@ -1808,6 +2166,8 @@ function loadDB() {
       masterValuations: [],
       investorInvites: [],
       investorSessions: {},
+      notificationDevices: [],
+      notificationEvents: [],
       socialProfiles: [],
       socialSettings: [],
       friendRequests: [],
@@ -7092,7 +7452,10 @@ app.use(cookieParser());
 app.use(AVATAR_PUBLIC_PREFIX.replace(/\/$/, ''), express.static(AVATAR_STORAGE_DIR));
 app.use('/static', express.static(path.join(__dirname, 'static')));
 app.get('/serviceWorker.js', (req,res)=>{
-  res.set('Content-Type','application/javascript').send(fs.readFileSync(path.join(__dirname,'serviceWorker.js'),'utf-8'));
+  const template = fs.readFileSync(path.join(__dirname,'serviceWorker.js'),'utf-8');
+  const fcmConfig = JSON.stringify(getNotificationConfig());
+  const body = template.replace('__FCM_CONFIG__', fcmConfig);
+  res.set('Content-Type','application/javascript').send(body);
 });
 app.get('/health', (req, res) => {
   res.json({ ok: true, uptime: process.uptime(), timestamp: new Date().toISOString() });
@@ -7330,8 +7693,18 @@ app.post('/api/login', async (req,res)=>{
 
 app.post('/api/logout', (req,res)=>{
   const token = req.cookies?.auth_token;
+  const deviceId = typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'] : '';
   if (token) {
     const db = loadDB();
+    ensureNotificationTables(db);
+    if (deviceId) {
+      const device = db.notificationDevices.find((item) => item.userId === db.sessions[token] && item.deviceId === deviceId && item.isActive);
+      if (device) {
+        device.isActive = false;
+        device.revokedAt = new Date().toISOString();
+        device.updatedAt = device.revokedAt;
+      }
+    }
     delete db.sessions[token];
     saveDB(db);
   }
@@ -7862,6 +8235,153 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   });
 }));
 
+app.get('/api/notifications/config', auth, (req, res) => {
+  const config = getNotificationConfig();
+  const missing = missingNotificationConfigKeys(config);
+  if (missing.length) {
+    console.warn(`[Notifications] /api/notifications/config missing keys for ${req.username}: ${missing.join(', ')}.`);
+  }
+  res.json({
+    supported: missing.length === 0,
+    config,
+    serviceWorkerPath: '/serviceWorker.js',
+    provider: 'fcm',
+    missingKeys: missing
+  });
+});
+
+app.get('/api/notifications/devices', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const devices = db.notificationDevices
+    .filter((item) => item.userId === req.username)
+    .map((item) => ({
+      ...item,
+      token: item.token ? `${item.token.slice(0, 12)}…` : ''
+    }))
+    .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0));
+  res.json({ devices });
+});
+
+app.post('/api/notifications/devices/register', auth, (req, res) => {
+  const parsed = notificationDeviceRegisterSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid notification device payload.', issues: parsed.error.issues });
+  }
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const payload = parsed.data;
+  const categories = normalizeNotificationCategories(req.body?.categories);
+  const record = upsertNotificationDevice(db, {
+    userId: req.username,
+    deviceId: payload.deviceId,
+    token: payload.token,
+    platform: payload.platform,
+    browser: payload.browser,
+    userAgent: payload.userAgent || req.headers['user-agent'] || '',
+    permissionState: payload.permissionState,
+    installedAsPwa: !!payload.installedAsPwa,
+    categories,
+    isActive: payload.isActive !== false
+  });
+  saveDB(db);
+  res.json({ ok: true, device: record });
+});
+
+app.put('/api/notifications/devices/:id/preferences', auth, (req, res) => {
+  const parsed = notificationPreferencesSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid notification preferences payload.', issues: parsed.error.issues });
+  }
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const device = db.notificationDevices.find((item) => item.id === req.params.id && item.userId === req.username);
+  if (!device) return res.status(404).json({ error: 'Notification device not found.' });
+  device.categories = normalizeNotificationCategories(req.body?.categories || device.categories);
+  if (typeof parsed.data.isActive === 'boolean') {
+    device.isActive = parsed.data.isActive;
+    if (!device.isActive) device.revokedAt = new Date().toISOString();
+  }
+  if (parsed.data.permissionState) device.permissionState = parsed.data.permissionState;
+  device.updatedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, device });
+});
+
+app.post('/api/notifications/devices/:id/disable', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const device = db.notificationDevices.find((item) => item.id === req.params.id && item.userId === req.username);
+  if (!device) return res.status(404).json({ error: 'Notification device not found.' });
+  device.isActive = false;
+  device.revokedAt = new Date().toISOString();
+  device.updatedAt = device.revokedAt;
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.delete('/api/notifications/devices/:id', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const before = db.notificationDevices.length;
+  db.notificationDevices = db.notificationDevices.filter((item) => !(item.id === req.params.id && item.userId === req.username));
+  if (db.notificationDevices.length === before) return res.status(404).json({ error: 'Notification device not found.' });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/notifications/devices/:id/received', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const device = db.notificationDevices.find((item) => item.id === req.params.id && item.userId === req.username);
+  if (!device) return res.status(404).json({ error: 'Notification device not found.' });
+  device.lastReceivedAt = new Date().toISOString();
+  device.lastSeenAt = device.lastReceivedAt;
+  device.updatedAt = device.lastReceivedAt;
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/notifications/test', auth, asyncHandler(async (req, res) => {
+  if (!checkNotificationTestRateLimit(req, res)) return;
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const targetDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : '';
+  const log = await sendNotificationEvent(db, {
+    userId: req.username,
+    eventType: 'trade_opened',
+    context: {
+      symbol: 'VERACITY',
+      tradeId: 'test',
+      link: '/trades.html?notification=test',
+      tag: 'veracity-test-notification'
+    },
+    onlyDeviceId: targetDeviceId || null
+  });
+  saveDB(db);
+  res.json({ ok: true, log });
+}));
+
+app.post('/api/notifications/internal/send', asyncHandler(async (req, res) => {
+  const headerSecret = req.headers['x-internal-notification-secret'];
+  if (!INTERNAL_NOTIFICATION_SECRET || headerSecret !== INTERNAL_NOTIFICATION_SECRET) {
+    return res.status(403).json({ error: 'Forbidden.' });
+  }
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+  const eventType = typeof req.body?.eventType === 'string' ? req.body.eventType : '';
+  if (!userId || !eventType) return res.status(400).json({ error: 'userId and eventType are required.' });
+  const db = loadDB();
+  const log = await sendNotificationEvent(db, {
+    userId,
+    eventType,
+    context: req.body?.context || {},
+    onlyDeviceId: typeof req.body?.deviceId === 'string' ? req.body.deviceId : null,
+    criticalOnly: !!req.body?.criticalOnly
+  });
+  saveDB(db);
+  res.json({ ok: true, log });
+}));
+
 const socialSettingsPatchSchema = z.object({
   leaderboard_enabled: z.boolean().optional(),
   leaderboard_visibility: z.enum(SOCIAL_VISIBILITY_VALUES).optional(),
@@ -7894,6 +8414,22 @@ const tradeGroupMemberAddSchema = z.object({
 
 const tradeGroupAnnouncementCreateSchema = z.object({
   text: z.string().min(1).max(500)
+});
+
+const notificationDeviceRegisterSchema = z.object({
+  deviceId: z.string().min(8).max(128),
+  token: z.string().min(20),
+  platform: z.string().min(2).max(32),
+  browser: z.string().min(2).max(32).optional(),
+  userAgent: z.string().max(1024).optional(),
+  permissionState: z.enum(['default', 'granted', 'denied']),
+  installedAsPwa: z.boolean().optional(),
+  isActive: z.boolean().optional()
+});
+
+const notificationPreferencesSchema = z.object({
+  isActive: z.boolean().optional(),
+  permissionState: z.enum(['default', 'granted', 'denied']).optional()
 });
 
 app.get('/api/social/me', auth, (req, res) => {
@@ -11601,6 +12137,12 @@ app.post('/api/trades', auth, async (req, res) => {
     applyTradeClose(user, trade, closeNum, closeDate, rates, targetDate);
   }
   createTradeGroupAlertsForNewTrade(db, req.username, trade);
+  const isClosedOnCreate = trade.status === 'closed';
+  sendNotificationEvent(db, {
+    userId: req.username,
+    eventType: isClosedOnCreate ? 'trade_closed' : 'trade_opened',
+    context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
+  }).catch((error) => console.warn('[Notifications] trade create event failed:', error?.message || error));
   saveDB(db);
   res.json({ ok: true, trade, date: targetDate });
 });
@@ -11821,6 +12363,11 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       return res.status(400).json({ error: 'Enter a valid closing price' });
     }
     applyTradeClose(user, trade, closeNum, updates.closeDate, rates, found.dateKey);
+    sendNotificationEvent(db, {
+      userId: req.username,
+      eventType: 'trade_closed',
+      context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
+    }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
   }
   saveDB(db);
   res.json({ ok: true, trade });
@@ -11930,10 +12477,20 @@ app.post('/api/trades/close', auth, (req, res) => {
         trade.closeDate = summaryAfter.lastExitDate || closeDateKey;
         trade.realizedPnlGBP = summaryAfter.realizedPnlGBP;
         trade.realizedPnlCurrency = summaryAfter.realizedPnlCurrency;
+        sendNotificationEvent(db, {
+          userId: req.username,
+          eventType: 'trade_closed',
+          context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
+        }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
         saveDB(db);
         return res.json({ ok: true, pnlGBP: summaryAfter.realizedPnlGBP });
       }
       const result = applyTradeClose(user, trade, closePrice, date, rates, defaultDate);
+      sendNotificationEvent(db, {
+        userId: req.username,
+        eventType: 'trade_closed',
+        context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
+      }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
       saveDB(db);
       res.json({ ok: true, pnlGBP: result.pnlGBP });
     })

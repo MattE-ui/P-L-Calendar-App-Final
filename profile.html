@@ -413,6 +413,40 @@
       <p id="ibkr-connector-banner" class="status-line"></p>
       <p id="ibkr-status" class="status-line"></p>
     </section>
+    <section class="card profile-card" id="notification-settings-section">
+      <header class="profile-automation-header">
+        <h2>Notifications</h2>
+        <p class="helper">OS-level push notifications for desktop, Android, and iPhone/iPad Home Screen apps.</p>
+      </header>
+      <div id="notification-support-message" class="helper"></div>
+      <div id="notification-device-meta" class="read-only-field">Detecting device...</div>
+      <div class="profile-actions">
+        <button id="notification-enable-btn" class="primary" type="button">Enable notifications</button>
+        <button id="notification-reregister-btn" class="ghost" type="button">Re-register token</button>
+        <button id="notification-disable-btn" class="ghost danger" type="button">Disable on this device</button>
+      </div>
+      <div class="profile-field toggle-field">
+        <label class="toggle"><input id="notif-master-enabled" type="checkbox"><span>Enable notifications on this device</span></label>
+        <label class="toggle"><input id="notif-criticalRiskAlerts" type="checkbox"><span>Critical risk alerts</span></label>
+        <label class="toggle"><input id="notif-tradeAlerts" type="checkbox"><span>Trade alerts</span></label>
+        <label class="toggle"><input id="notif-tradeGroupAlerts" type="checkbox"><span>Trade group alerts</span></label>
+        <label class="toggle"><input id="notif-socialInvestorNotifications" type="checkbox"><span>Social / investor notifications</span></label>
+        <label class="toggle"><input id="notif-brokerSyncFailures" type="checkbox"><span>Broker sync / integration failures</span></label>
+        <label class="toggle"><input id="notif-dailyRecap" type="checkbox"><span>Daily recap notifications</span></label>
+        <label class="toggle"><input id="notif-soundEnabled" type="checkbox"><span>Sound enabled (browser dependent)</span></label>
+      </div>
+      <div class="profile-actions">
+        <button id="notification-save-prefs-btn" class="ghost" type="button">Save preferences</button>
+        <button id="notification-test-btn" class="ghost" type="button">Send test notification</button>
+      </div>
+      <div id="notification-status" class="status-line"></div>
+      <div id="notification-error" class="error"></div>
+      <div id="notification-devices-list" class="investor-mini-list"></div>
+      <div id="notification-ios-onboarding" class="helper is-hidden">
+        iPhone/iPad web push requires Veracity installed as a Home Screen app.<br>
+        1) Tap Share → 2) Add to Home Screen → 3) Open Veracity from Home Screen icon → 4) Enable notifications.
+      </div>
+    </section>
       <section class="card profile-card danger-zone" id="profile-reset-card">
       <header class="profile-automation-header">
         <h2>Reset your data</h2>

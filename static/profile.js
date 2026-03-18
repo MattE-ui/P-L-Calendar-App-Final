@@ -36,6 +36,13 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function logoutRequestOptions() {
+  const headers = {};
+  const deviceId = localStorage.getItem('veracity_notification_device_id');
+  if (deviceId) headers['x-device-id'] = deviceId;
+  return { method: 'POST', headers };
+}
+
 const profileState = {
   complete: false,
   netDeposits: 0,
@@ -65,6 +72,27 @@ const PROFILE_AUTO_REFRESH_MS = 5 * 1000;
 let profileRefreshTimer = null;
 let profileLoadInFlight = false;
 let suppressProfileAutoRefreshUntil = 0;
+const notificationState = {
+  initialized: false,
+  supported: false,
+  config: null,
+  deviceId: '',
+  activeDeviceId: '',
+  permission: 'default',
+  scriptLoadPromise: null,
+  firebaseInitPromise: null,
+  messaging: null,
+  registerInFlight: false,
+  categories: {
+    criticalRiskAlerts: true,
+    tradeAlerts: true,
+    tradeGroupAlerts: true,
+    socialInvestorNotifications: true,
+    brokerSyncFailures: true,
+    dailyRecap: false,
+    soundEnabled: true
+  }
+};
 
 const avatarEditorState = {
   open: false,
@@ -188,7 +216,7 @@ function bindNav() {
   });
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     try {
-      await api('/api/logout', { method: 'POST' });
+      await api('/api/logout', logoutRequestOptions());
     } catch (e) {
       console.warn(e);
     }
@@ -1820,7 +1848,7 @@ async function resetProfile() {
 
 async function logout() {
   try {
-    await api('/api/logout', { method: 'POST' });
+    await api('/api/logout', logoutRequestOptions());
   } catch (e) {
     console.warn(e);
   }
@@ -2520,6 +2548,258 @@ function bindInvestorActions() {
   syncInvestorActionAvailability();
 }
 
+function getOrCreateNotificationDeviceId() {
+  const key = 'veracity_notification_device_id';
+  let value = localStorage.getItem(key);
+  if (!value) {
+    const randomId = window.crypto?.randomUUID ? window.crypto.randomUUID() : Math.random().toString(36).slice(2);
+    value = `${Date.now().toString(36)}-${randomId}`;
+    localStorage.setItem(key, value);
+  }
+  return value;
+}
+
+function getNotificationPlatform() {
+  const ua = navigator.userAgent || '';
+  const isIos = /iPad|iPhone|iPod/.test(ua);
+  const isAndroid = /Android/.test(ua);
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone;
+  if (isIos && standalone) return 'ios-pwa';
+  if (isIos) return 'ios-browser';
+  if (isAndroid) return 'android-browser';
+  return 'desktop-browser';
+}
+
+function isLikelyIosSafariNotPwa() {
+  const ua = navigator.userAgent || '';
+  const isIos = /iPad|iPhone|iPod/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+  const standalone = window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone;
+  return !!(isIos && isSafari && !standalone);
+}
+
+function detectBrowserName() {
+  const ua = navigator.userAgent || '';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/OPR\//.test(ua)) return 'opera';
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return 'safari';
+  return 'unknown';
+}
+
+async function loadFirebaseMessagingCompat() {
+  if (notificationState.scriptLoadPromise) {
+    await notificationState.scriptLoadPromise;
+    return;
+  }
+  const injectScript = src => new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+      if (existing.dataset.loaded === 'true') {
+        resolve();
+        return;
+      }
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error(`Failed loading ${src}`)), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+  notificationState.scriptLoadPromise = (async () => {
+    await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+    await injectScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js');
+    console.info('[Notifications] Firebase compat scripts loaded.');
+  })();
+  await notificationState.scriptLoadPromise;
+}
+
+function hasValidNotificationConfig(configPayload) {
+  const cfg = configPayload?.config || {};
+  const required = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId', 'vapidKey'];
+  return required.every((key) => typeof cfg[key] === 'string' && cfg[key].trim().length > 0);
+}
+
+async function ensureFirebaseMessagingReady(configPayload) {
+  if (notificationState.messaging) {
+    return notificationState.messaging;
+  }
+  if (notificationState.firebaseInitPromise) {
+    return notificationState.firebaseInitPromise;
+  }
+  notificationState.firebaseInitPromise = (async () => {
+    await loadFirebaseMessagingCompat();
+    if (!window.firebase) {
+      throw new Error('Firebase SDK failed to load.');
+    }
+    const config = configPayload?.config || {};
+    if (!hasValidNotificationConfig(configPayload)) {
+      throw new Error('Notification config is incomplete.');
+    }
+    const app = (Array.isArray(window.firebase.apps) && window.firebase.apps.length)
+      ? window.firebase.apps[0]
+      : window.firebase.initializeApp(config);
+    console.info('[Notifications] Firebase app initialized.', { initializedApps: window.firebase.apps?.length || 0, projectId: config.projectId || 'unknown' });
+    notificationState.messaging = window.firebase.messaging(app);
+    console.info('[Notifications] Firebase messaging initialized.');
+    return notificationState.messaging;
+  })().catch((error) => {
+    notificationState.firebaseInitPromise = null;
+    notificationState.messaging = null;
+    throw error;
+  });
+  return notificationState.firebaseInitPromise;
+}
+
+function setNotificationMessage(status = '', error = '') {
+  const statusEl = document.getElementById('notification-status');
+  const errorEl = document.getElementById('notification-error');
+  if (statusEl) statusEl.textContent = status;
+  if (errorEl) errorEl.textContent = error;
+}
+
+function renderNotificationControls() {
+  const support = document.getElementById('notification-support-message');
+  const permission = Notification?.permission || 'default';
+  notificationState.permission = permission;
+  const deviceMeta = document.getElementById('notification-device-meta');
+  const platform = getNotificationPlatform();
+  if (deviceMeta) {
+    deviceMeta.textContent = `Platform: ${platform} · Browser: ${detectBrowserName()} · Permission: ${permission} · Device ID: ${notificationState.deviceId || '—'}`;
+  }
+  if (support) {
+    if (!notificationState.supported) {
+      support.textContent = 'Push notifications are not supported in this browser/device context.';
+    } else if (isLikelyIosSafariNotPwa()) {
+      support.textContent = 'On iPhone/iPad, web push works only from the Home Screen-installed app.';
+    } else {
+      support.textContent = 'Notifications are available on this device.';
+    }
+  }
+  document.getElementById('notification-ios-onboarding')?.classList.toggle('is-hidden', !isLikelyIosSafariNotPwa());
+  const fields = ['criticalRiskAlerts', 'tradeAlerts', 'tradeGroupAlerts', 'socialInvestorNotifications', 'brokerSyncFailures', 'dailyRecap', 'soundEnabled'];
+  fields.forEach((name) => {
+    const el = document.getElementById(`notif-${name}`);
+    if (el) el.checked = !!notificationState.categories[name];
+  });
+  const master = document.getElementById('notif-master-enabled');
+  if (master) master.checked = !!notificationState.activeDeviceId;
+}
+
+function renderNotificationDevices(devices) {
+  const container = document.getElementById('notification-devices-list');
+  if (!container) return;
+  if (!Array.isArray(devices) || !devices.length) {
+    container.innerHTML = '<p class="helper">No registered notification devices yet.</p>';
+    return;
+  }
+  container.innerHTML = devices.map((device) => {
+    const marker = device.deviceId === notificationState.deviceId ? ' (this device)' : '';
+    return `<div class="notification-device-row"><strong>${device.platform}</strong> · ${device.browser}${marker}<br>Permission: ${device.permissionState} · Active: ${device.isActive ? 'Yes' : 'No'}<br>Last registration: ${device.lastRegistrationAt || '—'} · Last received: ${device.lastReceivedAt || '—'}</div>`;
+  }).join('');
+  const mine = devices.find((device) => device.deviceId === notificationState.deviceId && device.isActive);
+  notificationState.activeDeviceId = mine?.id || '';
+  if (mine?.categories) {
+    notificationState.categories = { ...notificationState.categories, ...mine.categories };
+  }
+}
+
+async function loadNotificationDevices() {
+  const payload = await api('/api/notifications/devices');
+  renderNotificationDevices(payload.devices || []);
+  renderNotificationControls();
+}
+
+async function registerNotificationToken({ force = false } = {}) {
+  if (notificationState.registerInFlight) {
+    console.info('[Notifications] Token request skipped because one is already running.');
+    return;
+  }
+  notificationState.registerInFlight = true;
+  if (!notificationState.supported) {
+    setNotificationMessage('', 'Notifications are not supported in this browser.');
+    notificationState.registerInFlight = false;
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    setNotificationMessage('', 'Browser permission is denied. Re-enable notifications in browser settings first.');
+    notificationState.registerInFlight = false;
+    return;
+  }
+  try {
+    const configPayload = notificationState.config || await api('/api/notifications/config');
+    notificationState.config = configPayload;
+    console.info('[Notifications] Config loaded.', {
+      supported: !!configPayload?.supported,
+      missingKeys: Array.isArray(configPayload?.missingKeys) ? configPayload.missingKeys : []
+    });
+    if (!configPayload?.supported || !hasValidNotificationConfig(configPayload)) {
+      setNotificationMessage('', 'Server-side notification configuration is incomplete.');
+      return;
+    }
+    await navigator.serviceWorker.register('/serviceWorker.js');
+    const messaging = await ensureFirebaseMessagingReady(configPayload);
+    const serviceWorkerRegistration = await navigator.serviceWorker.ready;
+    console.info('[Notifications] Token request started.');
+    const token = await messaging.getToken({
+      vapidKey: configPayload.config.vapidKey,
+      serviceWorkerRegistration
+    });
+    console.info('[Notifications] Token request finished.', { hasToken: !!token });
+    if (!token) {
+      setNotificationMessage('', 'Unable to fetch a push token. Try again.');
+      return;
+    }
+    const payload = {
+      deviceId: notificationState.deviceId,
+      token,
+      platform: getNotificationPlatform(),
+      browser: detectBrowserName(),
+      userAgent: navigator.userAgent,
+      permissionState: Notification.permission,
+      installedAsPwa: !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone),
+      categories: notificationState.categories,
+      isActive: true
+    };
+    await api('/api/notifications/devices/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    setNotificationMessage(force ? 'Notifications re-registered successfully.' : 'Notifications enabled on this device.', '');
+    await loadNotificationDevices();
+  } finally {
+    notificationState.registerInFlight = false;
+  }
+}
+
+async function initNotificationSettings() {
+  if (notificationState.initialized) return;
+  notificationState.initialized = true;
+  notificationState.deviceId = getOrCreateNotificationDeviceId();
+  notificationState.supported = ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
+  renderNotificationControls();
+  if (!notificationState.supported) return;
+  try {
+    notificationState.config = await api('/api/notifications/config');
+    console.info('[Notifications] Config preload completed.', {
+      supported: !!notificationState.config?.supported,
+      missingKeys: Array.isArray(notificationState.config?.missingKeys) ? notificationState.config.missingKeys : []
+    });
+    await loadNotificationDevices();
+  } catch (error) {
+    setNotificationMessage('', 'Unable to load notification settings.');
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   bindNav();
   loadProfile({ refreshIntegrations: true });
@@ -2533,6 +2813,9 @@ window.addEventListener('DOMContentLoaded', () => {
   }, PROFILE_AUTO_REFRESH_MS);
   bindInvestorAccountToggle();
   bindInvestorActions();
+  setTimeout(() => {
+    initNotificationSettings();
+  }, 0);
   window.addEventListener('focus', () => {
     if (Date.now() < suppressProfileAutoRefreshUntil || isAvatarInteractionLocked()) return;
     loadProfile({ refreshIntegrations: true });
@@ -2705,6 +2988,82 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     } catch (e) {
       if (error) error.textContent = e?.data?.error || 'Unable to save trading accounts right now.';
+    }
+  });
+  document.getElementById('notification-enable-btn')?.addEventListener('click', async () => {
+    try {
+      if (Notification.permission === 'default') {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          setNotificationMessage('', 'Notification permission was not granted.');
+          renderNotificationControls();
+          return;
+        }
+      }
+      await registerNotificationToken();
+    } catch (error) {
+      setNotificationMessage('', error?.message || 'Unable to enable notifications.');
+    }
+  });
+  document.getElementById('notification-reregister-btn')?.addEventListener('click', async () => {
+    try {
+      await registerNotificationToken({ force: true });
+    } catch (error) {
+      setNotificationMessage('', error?.message || 'Unable to re-register token.');
+    }
+  });
+  document.getElementById('notification-disable-btn')?.addEventListener('click', async () => {
+    if (!notificationState.activeDeviceId) return;
+    try {
+      await api(`/api/notifications/devices/${encodeURIComponent(notificationState.activeDeviceId)}/disable`, { method: 'POST' });
+      setNotificationMessage('Notifications disabled on this device.', '');
+      await loadNotificationDevices();
+    } catch (error) {
+      setNotificationMessage('', 'Unable to disable this device.');
+    }
+  });
+  document.getElementById('notification-save-prefs-btn')?.addEventListener('click', async () => {
+    if (!notificationState.activeDeviceId) {
+      setNotificationMessage('', 'Enable notifications first for this device.');
+      return;
+    }
+    const categories = {
+      criticalRiskAlerts: !!document.getElementById('notif-criticalRiskAlerts')?.checked,
+      tradeAlerts: !!document.getElementById('notif-tradeAlerts')?.checked,
+      tradeGroupAlerts: !!document.getElementById('notif-tradeGroupAlerts')?.checked,
+      socialInvestorNotifications: !!document.getElementById('notif-socialInvestorNotifications')?.checked,
+      brokerSyncFailures: !!document.getElementById('notif-brokerSyncFailures')?.checked,
+      dailyRecap: !!document.getElementById('notif-dailyRecap')?.checked,
+      soundEnabled: !!document.getElementById('notif-soundEnabled')?.checked
+    };
+    notificationState.categories = categories;
+    const isActive = !!document.getElementById('notif-master-enabled')?.checked;
+    try {
+      await api(`/api/notifications/devices/${encodeURIComponent(notificationState.activeDeviceId)}/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          categories,
+          isActive,
+          permissionState: Notification.permission
+        })
+      });
+      setNotificationMessage('Notification preferences saved.', '');
+      await loadNotificationDevices();
+    } catch (error) {
+      setNotificationMessage('', 'Unable to save notification preferences.');
+    }
+  });
+  document.getElementById('notification-test-btn')?.addEventListener('click', async () => {
+    try {
+      await api('/api/notifications/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: notificationState.activeDeviceId || undefined })
+      });
+      setNotificationMessage('Test notification sent. Check your OS notification tray.', '');
+    } catch (error) {
+      setNotificationMessage('', error?.data?.error || 'Test notification failed.');
     }
   });
   document.addEventListener('keydown', (event) => {
