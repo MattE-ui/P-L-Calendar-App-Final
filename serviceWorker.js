@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pl-calendar-cache-v28';
+const CACHE_NAME = 'pl-calendar-cache-v29';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/static/style.css',
@@ -6,7 +6,8 @@ const STATIC_ASSETS = [
   '/static/login.js',
   '/static/signup.js',
   '/static/profile.js',
-  '/static/transactions.js'
+  '/static/transactions.js',
+  '/static/Veracity-notification-logo.png'
 ];
 const PRECACHE_URLS = [
   '/index.html',
@@ -18,6 +19,7 @@ const PRECACHE_URLS = [
 ];
 
 const FCM_CONFIG = __FCM_CONFIG__;
+const DEFAULT_NOTIFICATION_ICON = '/static/Veracity-notification-logo.png';
 let messaging = null;
 
 function hasFcmConfig() {
@@ -35,8 +37,8 @@ if (hasFcmConfig()) {
       const data = payload?.data || {};
       const options = {
         body: notification.body || data.body || 'New Veracity notification',
-        icon: notification.icon || data.icon || '/static/icons/icon-192x192.png',
-        badge: notification.badge || data.badge || '/static/icons/icon-192x192.png',
+        icon: notification.icon || data.icon || DEFAULT_NOTIFICATION_ICON,
+        badge: notification.badge || data.badge || DEFAULT_NOTIFICATION_ICON,
         image: notification.image || data.image || undefined,
         tag: notification.tag || data.tag || 'veracity-alert',
         requireInteraction: String(data.requireInteraction || '') === 'true',
@@ -130,8 +132,8 @@ self.addEventListener('push', (event) => {
   }
   const options = {
     body: payload.body || payload.notification?.body || 'New Veracity notification',
-    icon: payload.icon || '/static/icons/icon-192x192.png',
-    badge: payload.badge || '/static/icons/icon-192x192.png',
+    icon: payload.icon || payload.notification?.icon || DEFAULT_NOTIFICATION_ICON,
+    badge: payload.badge || payload.notification?.badge || DEFAULT_NOTIFICATION_ICON,
     image: payload.image || undefined,
     tag: payload.tag || 'veracity-alert',
     requireInteraction: !!payload.requireInteraction,
