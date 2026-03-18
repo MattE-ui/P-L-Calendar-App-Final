@@ -78,9 +78,11 @@ const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https
 const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
 const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
 const INTERNAL_NOTIFICATION_SECRET = process.env.INTERNAL_NOTIFICATION_SECRET || '';
-const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
-const FCM_CLIENT_EMAIL = process.env.FCM_CLIENT_EMAIL || '';
-const FCM_PRIVATE_KEY = process.env.FCM_PRIVATE_KEY ? process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n') : '';
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.FCM_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
+const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL || process.env.FCM_CLIENT_EMAIL || '';
+const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY
+  ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+  : (process.env.FCM_PRIVATE_KEY ? process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n') : '');
 const FCM_VAPID_KEY = process.env.FCM_VAPID_KEY || process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '';
 const FCM_APP_ID = process.env.FCM_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '';
 const FCM_API_KEY = process.env.FCM_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
@@ -90,7 +92,7 @@ const FCM_MESSAGING_SENDER_ID = process.env.FCM_MESSAGING_SENDER_ID || process.e
 const notificationPublicEnvPresence = {
   apiKey: !!FCM_API_KEY,
   authDomain: !!FCM_AUTH_DOMAIN,
-  projectId: !!FCM_PROJECT_ID,
+  projectId: !!FIREBASE_PROJECT_ID,
   messagingSenderId: !!FCM_MESSAGING_SENDER_ID,
   appId: !!FCM_APP_ID,
   vapidKey: !!FCM_VAPID_KEY
@@ -1789,7 +1791,7 @@ function getNotificationConfig() {
   return {
     apiKey: FCM_API_KEY,
     authDomain: FCM_AUTH_DOMAIN,
-    projectId: FCM_PROJECT_ID,
+    projectId: FIREBASE_PROJECT_ID,
     messagingSenderId: FCM_MESSAGING_SENDER_ID,
     appId: FCM_APP_ID,
     vapidKey: FCM_VAPID_KEY
@@ -1805,52 +1807,30 @@ function hasNotificationConfig() {
   return missingNotificationConfigKeys().length === 0;
 }
 
-let fcmAccessTokenCache = { token: '', expiresAt: 0 };
-
-function base64Url(input) {
-  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-async function getFcmAccessToken() {
-  const now = Date.now();
-  if (fcmAccessTokenCache.token && fcmAccessTokenCache.expiresAt - now > 60 * 1000) {
-    return fcmAccessTokenCache.token;
+let firebaseAdminReady = false;
+let firebaseAdmin = null;
+function ensureFirebaseAdmin() {
+  if (firebaseAdminReady) return;
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+    throw new Error('Firebase Admin SDK configuration is missing (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).');
   }
-  if (!FCM_PROJECT_ID || !FCM_CLIENT_EMAIL || !FCM_PRIVATE_KEY) return '';
-  const iat = Math.floor(now / 1000);
-  const exp = iat + 3600;
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const claim = {
-    iss: FCM_CLIENT_EMAIL,
-    sub: FCM_CLIENT_EMAIL,
-    aud: 'https://oauth2.googleapis.com/token',
-    scope: 'https://www.googleapis.com/auth/firebase.messaging',
-    iat,
-    exp
-  };
-  const signingInput = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(claim))}`;
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(signingInput);
-  signer.end();
-  const signature = signer.sign(FCM_PRIVATE_KEY, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-  const assertion = `${signingInput}.${signature}`;
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion
-    }).toString()
-  });
-  const tokenBody = await tokenRes.json();
-  if (!tokenRes.ok || !tokenBody.access_token) {
-    throw new Error(`Failed to obtain FCM access token: ${tokenBody.error_description || tokenBody.error || tokenRes.status}`);
+  if (!firebaseAdmin) {
+    try {
+      firebaseAdmin = require('firebase-admin');
+    } catch (error) {
+      throw new Error(`firebase-admin package is not installed: ${error?.message || String(error)}`);
+    }
   }
-  fcmAccessTokenCache = {
-    token: tokenBody.access_token,
-    expiresAt: now + ((Number(tokenBody.expires_in) || 3600) * 1000)
-  };
-  return fcmAccessTokenCache.token;
+  if (!firebaseAdmin.apps.length) {
+    firebaseAdmin.initializeApp({
+      credential: firebaseAdmin.credential.cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+        privateKey: FIREBASE_PRIVATE_KEY
+      })
+    });
+  }
+  firebaseAdminReady = true;
 }
 
 function detectBrowserFromUserAgent(userAgent) {
@@ -1933,10 +1913,19 @@ function checkNotificationTestRateLimit(req, res) {
 }
 
 async function sendNotificationToDevice(db, device, payload) {
-  const accessToken = await getFcmAccessToken();
-  if (!accessToken || !FCM_PROJECT_ID) {
-    throw new Error('FCM HTTP v1 configuration is missing.');
+  if (!device?.token) {
+    console.warn('[Notifications] Skipping push send because device token is missing.', {
+      deviceId: device?.id || null,
+      userId: device?.userId || null
+    });
+    return null;
   }
+  ensureFirebaseAdmin();
+  console.info('[Notifications] Sending Firebase push notification.', {
+    deviceId: device.id,
+    userId: device.userId,
+    token: device.token
+  });
   const message = {
     token: device.token,
     notification: {
@@ -1960,23 +1949,33 @@ async function sendNotificationToDevice(db, device, payload) {
     },
     data: Object.fromEntries(Object.entries(payload.data || {}).map(([key, value]) => [key, String(value)]))
   };
-  const responseRaw = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ message })
-  });
-  const responseBody = await responseRaw.json().catch(() => ({}));
-  if (!responseRaw.ok) {
-    const error = new Error(responseBody?.error?.message || `FCM send failed (${responseRaw.status})`);
-    error.code = responseBody?.error?.status || '';
-    throw error;
+  try {
+    const messageId = await firebaseAdmin.messaging().send(message);
+    const sentAt = new Date().toISOString();
+    device.lastSentAt = sentAt;
+    device.updatedAt = sentAt;
+    console.info('[Notifications] Firebase push sent successfully.', {
+      deviceId: device.id,
+      userId: device.userId,
+      token: device.token,
+      messageId
+    });
+    return messageId;
+  } catch (error) {
+    console.error('[Notifications] Firebase push send failed.', {
+      deviceId: device.id,
+      userId: device.userId,
+      token: device.token,
+      code: error?.code || null,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
+    const wrapped = new Error(error?.message || 'Firebase push send failed.');
+    wrapped.code = error?.code || '';
+    wrapped.details = error?.errorInfo?.message || '';
+    wrapped.stack = error?.stack || wrapped.stack;
+    throw wrapped;
   }
-  device.lastSentAt = new Date().toISOString();
-  device.updatedAt = device.lastSentAt;
-  return responseBody?.name || 'sent';
 }
 
 function buildNotificationEvent(type, context = {}) {
@@ -2060,6 +2059,17 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   for (const device of devices) {
     try {
       const messageId = await sendNotificationToDevice(db, device, payload);
+      if (!messageId) {
+        log.deliveries.push({
+          deviceId: device.id,
+          ok: false,
+          skipped: true,
+          error: 'Device token missing. Push send skipped.',
+          code: 'missing-token',
+          at: new Date().toISOString()
+        });
+        continue;
+      }
       log.deliveries.push({ deviceId: device.id, ok: true, messageId, at: new Date().toISOString() });
     } catch (error) {
       device.lastErrorAt = new Date().toISOString();
@@ -2069,7 +2079,15 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
         device.isActive = false;
         device.revokedAt = new Date().toISOString();
       }
-      log.deliveries.push({ deviceId: device.id, ok: false, error: error?.message || String(error), code, at: new Date().toISOString() });
+      log.deliveries.push({
+        deviceId: device.id,
+        ok: false,
+        error: error?.message || String(error),
+        details: error?.details || '',
+        code,
+        stack: error?.stack || '',
+        at: new Date().toISOString()
+      });
     }
   }
   db.notificationEvents.push(log);
@@ -8404,7 +8422,18 @@ app.post('/api/notifications/test', auth, asyncHandler(async (req, res) => {
   const okDeliveries = log.deliveries.filter((entry) => entry.ok);
   if (!okDeliveries.length) {
     saveDB(db);
-    return res.status(502).json({ error: 'Push send attempted but failed for all targeted devices.', log });
+    const failedDeliveries = log.deliveries.filter((entry) => !entry.ok);
+    const firebaseErrors = failedDeliveries.map((entry) => ({
+      deviceId: entry.deviceId,
+      code: entry.code || null,
+      message: entry.error || null,
+      details: entry.details || null
+    }));
+    return res.status(502).json({
+      error: 'Push send attempted but failed for all targeted devices.',
+      firebaseErrors,
+      log
+    });
   }
   saveDB(db);
   res.json({ ok: true, log });
