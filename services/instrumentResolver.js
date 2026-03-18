@@ -129,6 +129,62 @@ function pickBestCandidate(raw, candidates = [], opts = {}) {
   };
 }
 
+function evaluateScoredResolution(ranking = {}) {
+  const best = ranking?.best || null;
+  const runnerUp = ranking?.runnerUp || null;
+  if (!best) {
+    return {
+      resolutionStatus: DEFAULT_STATUS.UNRESOLVED,
+      confidenceScore: 0,
+      acceptance: 'no_candidate'
+    };
+  }
+
+  const reasons = Array.isArray(best.reasons) ? best.reasons : [];
+  const score = Number(best.score || 0);
+  const gap = runnerUp ? Math.abs(score - Number(runnerUp.score || 0)) : Infinity;
+  const hasExactName = reasons.includes('exact_normalized_name');
+  const hasNearName = reasons.includes('near_name');
+  const hasExactTicker = reasons.includes('exact_ticker');
+  const hasContext = reasons.includes('exchange_match') || reasons.includes('currency_match') || reasons.includes('instrument_type_match');
+  const strongCombinedEvidence = hasExactName && (hasExactTicker || hasContext);
+  const moderateCombinedEvidence = (hasExactName || hasNearName) && hasExactTicker && hasContext;
+
+  if (gap < 0.1 && score < 0.96) {
+    return {
+      resolutionStatus: DEFAULT_STATUS.AMBIGUOUS,
+      confidenceScore: score,
+      acceptance: 'close_runner_up'
+    };
+  }
+  if (score >= 0.92 && strongCombinedEvidence && gap >= 0.08) {
+    return {
+      resolutionStatus: DEFAULT_STATUS.RESOLVED,
+      confidenceScore: score,
+      acceptance: 'strong_combined_evidence'
+    };
+  }
+  if (score >= 0.96 && moderateCombinedEvidence && gap >= 0.08) {
+    return {
+      resolutionStatus: DEFAULT_STATUS.RESOLVED,
+      confidenceScore: score,
+      acceptance: 'very_high_score_combined_evidence'
+    };
+  }
+  if (gap < 0.14 && score >= 0.75) {
+    return {
+      resolutionStatus: DEFAULT_STATUS.AMBIGUOUS,
+      confidenceScore: score,
+      acceptance: 'high_ambiguity'
+    };
+  }
+  return {
+    resolutionStatus: DEFAULT_STATUS.UNRESOLVED,
+    confidenceScore: score,
+    acceptance: 'insufficient_evidence'
+  };
+}
+
 function buildResolverResult({ mapping = null, canonical = null, confidenceScore = 0, resolutionStatus, resolutionSource, debug = {} }) {
   return {
     mapping,
@@ -152,5 +208,6 @@ module.exports = {
   normalizeTicker,
   scoreInstrumentCandidate,
   pickBestCandidate,
+  evaluateScoredResolution,
   buildResolverResult
 };

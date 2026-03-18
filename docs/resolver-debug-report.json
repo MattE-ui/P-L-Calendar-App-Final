@@ -1,0 +1,100 @@
+{
+  "summary": {
+    "totalMappings": 3,
+    "sampled": 3,
+    "categories": {
+      "likely_cleaned_artifact": 0,
+      "weak_resolved_confidence": 1,
+      "unresolved_or_ambiguous": 1
+    }
+  },
+  "samples": [
+    {
+      "rawTicker": "SNDK1_US_EQ",
+      "rawName": "SanDisk Corporation",
+      "brokerInstrumentId": "inst-sndk",
+      "isin": "",
+      "canonicalTicker": "SNDK",
+      "displayTicker": "SNDK",
+      "resolutionStatus": "resolved",
+      "resolutionSource": "t212_metadata_scored",
+      "confidenceScore": 0.82,
+      "topCandidates": [
+        {
+          "ticker": "SNDK",
+          "name": "SanDisk Corp",
+          "score": 0.82,
+          "reasons": [
+            "ticker_prefix",
+            "near_name"
+          ]
+        },
+        {
+          "ticker": "SAND",
+          "name": "Sandstorm Gold",
+          "score": 0.76,
+          "reasons": [
+            "near_name"
+          ]
+        }
+      ],
+      "likelyCanonicalMarketTicker": true,
+      "likelyCleanedBrokerArtifact": false
+    },
+    {
+      "rawTicker": "BBAI1_US_EQ",
+      "rawName": "BigBear.ai Holdings",
+      "brokerInstrumentId": "inst-bbai",
+      "isin": "",
+      "canonicalTicker": "",
+      "displayTicker": "BBAI",
+      "resolutionStatus": "unresolved",
+      "resolutionSource": "t212_metadata_scored",
+      "confidenceScore": 0.71,
+      "topCandidates": [
+        {
+          "ticker": "BBAI",
+          "name": "BigBear.ai Holdings",
+          "score": 0.71,
+          "reasons": [
+            "ticker_prefix",
+            "near_name"
+          ]
+        },
+        {
+          "ticker": "BBAIW",
+          "name": "BigBear.ai Warrant",
+          "score": 0.68,
+          "reasons": [
+            "near_name"
+          ]
+        }
+      ],
+      "likelyCanonicalMarketTicker": false,
+      "likelyCleanedBrokerArtifact": false
+    },
+    {
+      "rawTicker": "FB_US_EQ",
+      "rawName": "Meta Platforms Inc Class A",
+      "brokerInstrumentId": "inst-meta",
+      "isin": "US30303M1027",
+      "canonicalTicker": "META",
+      "displayTicker": "META",
+      "resolutionStatus": "resolved",
+      "resolutionSource": "t212_metadata_exact",
+      "confidenceScore": 0.99,
+      "topCandidates": [
+        {
+          "ticker": "META",
+          "name": "Meta Platforms Inc Class A",
+          "score": 0.99,
+          "reasons": [
+            "exact_identifier"
+          ]
+        }
+      ],
+      "likelyCanonicalMarketTicker": true,
+      "likelyCleanedBrokerArtifact": false
+    }
+  ]
+}
