@@ -2025,6 +2025,8 @@ function upsertNotificationDevice(db, payload) {
   return next;
 }
 
+const DEFAULT_NOTIFICATION_ICON = '/static/Veracity-notification-logo.png';
+
 function checkNotificationTestRateLimit(req, res) {
   const key = `${req.username}:${getClientIp(req)}`;
   const now = Date.now();
@@ -2069,8 +2071,8 @@ async function sendNotificationToDevice(db, device, payload) {
       notification: {
         title: payload.title,
         body: payload.body,
-        icon: payload.icon || '/static/icons/icon-192x192.png',
-        badge: payload.badge || '/static/icons/icon-192x192.png',
+        icon: payload.icon || DEFAULT_NOTIFICATION_ICON,
+        badge: payload.badge || DEFAULT_NOTIFICATION_ICON,
         image: payload.image || undefined,
         tag: payload.tag || undefined,
         requireInteraction: !!payload.requireInteraction,
@@ -2112,8 +2114,8 @@ async function sendNotificationToDevice(db, device, payload) {
 
 function buildNotificationEvent(type, context = {}) {
   const base = {
-    icon: '/static/icons/icon-192x192.png',
-    badge: '/static/icons/icon-192x192.png',
+    icon: DEFAULT_NOTIFICATION_ICON,
+    badge: DEFAULT_NOTIFICATION_ICON,
     requireInteraction: false
   };
   const builders = {
