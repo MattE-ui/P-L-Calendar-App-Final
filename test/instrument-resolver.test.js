@@ -199,7 +199,7 @@ test('same-brand ETF names across exchanges use exchange hint', () => {
   }
 });
 
-test('metadata conflicts do not overwrite manual/high-confidence mapping', () => {
+test('identifier-backed rename replaces stale high-confidence canonical mapping', () => {
   const db = {
     instrumentMappings: [{
       id: 3,
@@ -221,12 +221,13 @@ test('metadata conflicts do not overwrite manual/high-confidence mapping', () =>
   }, {
     instruments: [{ isin: 'US9999999999', ticker: 'NEW', name: 'New Name', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' }]
   });
-  assert.equal(result.canonicalTicker, 'OLD');
-  assert.equal(result.resolutionStatus, 'ambiguous');
-  assert.equal(db.instrumentResolutionSummary.conflicting_remap_attempts, 1);
+  assert.equal(result.canonicalTicker, 'NEW');
+  assert.equal(result.resolutionStatus, 'resolved');
+  assert.equal(result.resolutionSource, 't212_metadata_exact');
+  assert.equal(db.instrumentResolutionConflicts?.[0]?.action, 'identifier_backed_replacement');
 });
 
-test('conflicting metadata clears stale canonical mapping instead of blindly reusing cache', () => {
+test('identifier match can revalidate stale mapping even when historical cache disagrees', () => {
   const db = {
     instrumentMappings: [{
       id: 4,
@@ -253,8 +254,8 @@ test('conflicting metadata clears stale canonical mapping instead of blindly reu
       { isin: 'US1111111111', ticker: 'NEWB', name: 'New Name B', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' }
     ]
   });
-  assert.equal(result.resolutionStatus, 'ambiguous');
-  assert.equal(result.requiresManualReview, true);
+  assert.equal(result.resolutionStatus, 'resolved');
+  assert.equal(result.canonicalTicker, 'NEWA');
 });
 
 test('getDisplayInstrumentIdentity returns canonical identity when resolved', () => {
@@ -299,4 +300,76 @@ test('getDisplayInstrumentIdentity prefers clean display fallback over raw broke
   assert.equal(identity.displayTicker, 'RCAT');
   assert.equal(identity.isCanonical, false);
   assert.equal(identity.requiresManualReview, true);
+});
+
+test('known renamed instrument SOI resolves to SEI', () => {
+  const db = {
+    instrumentMappings: [{
+      id: 5,
+      source_key: 'TRADING212|ISIN:US78497K1025',
+      scope: 'global',
+      status: 'active',
+      resolution_status: 'resolved',
+      resolution_source: 'local_cache',
+      confidence_score: 0.96,
+      canonical_ticker: 'SOI'
+    }],
+    instrumentResolutionMetrics: [],
+    instrumentResolutionSummary: {},
+    t212MetadataCache: []
+  };
+  const result = resolveAndUpsertTrading212InstrumentMapping(db, 'alice', {
+    rawTicker: 'SOI_US_EQ',
+    rawName: 'Sei Investments Co',
+    rawIsin: 'US78497K1025',
+    rawCurrency: 'USD',
+    brokerInstrumentId: 'inst-sei'
+  }, {
+    instruments: [{ id: 'inst-sei', isin: 'US78497K1025', ticker: 'SEI', name: 'SEI Investments Company', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' }]
+  });
+  assert.equal(result.canonicalTicker, 'SEI');
+  assert.equal(result.resolutionStatus, 'resolved');
+  assert.equal(result.resolutionSource, 't212_metadata_exact');
+});
+
+test('known renamed instrument YNDX resolves to NBIS', () => {
+  const db = {
+    instrumentMappings: [{
+      id: 6,
+      source_key: 'TRADING212|ISIN:NL0009805522',
+      scope: 'global',
+      status: 'active',
+      resolution_status: 'resolved',
+      resolution_source: 'local_cache',
+      confidence_score: 0.98,
+      canonical_ticker: 'YNDX'
+    }],
+    instrumentResolutionMetrics: [],
+    instrumentResolutionSummary: {},
+    t212MetadataCache: []
+  };
+  const result = resolveAndUpsertTrading212InstrumentMapping(db, 'alice', {
+    rawTicker: 'YNDX_US_EQ',
+    rawName: 'Nebius Group NV',
+    rawIsin: 'NL0009805522',
+    rawCurrency: 'USD',
+    brokerInstrumentId: 'inst-nbis'
+  }, {
+    instruments: [{ id: 'inst-nbis', isin: 'NL0009805522', ticker: 'NBIS', name: 'Nebius Group N.V.', exchange: 'NASDAQ', currency: 'USD', type: 'EQUITY' }]
+  });
+  assert.equal(result.canonicalTicker, 'NBIS');
+  assert.equal(result.resolutionStatus, 'resolved');
+  assert.equal(result.resolutionSource, 't212_metadata_exact');
+});
+
+test('unresolved identity does not leak stale canonical displayTicker', () => {
+  const identity = getDisplayInstrumentIdentity({
+    resolutionStatus: 'ambiguous',
+    canonicalTicker: 'YNDX',
+    displayTicker: 'NBIS',
+    trading212Ticker: 'YNDX_US_EQ'
+  });
+  assert.equal(identity.isCanonical, false);
+  assert.equal(identity.displayTicker, 'NBIS');
+  assert.equal(identity.canonicalTicker, 'YNDX');
 });

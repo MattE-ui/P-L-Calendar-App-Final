@@ -6,7 +6,7 @@ const assert = require('node:assert');
 process.env.DATA_FILE = path.join(__dirname, 'data-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
 
-const { app, saveDB } = require('../server');
+const { app, saveDB, loadDB } = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
 const username = 'tester';
@@ -265,4 +265,45 @@ test('trade list payload exposes displayTicker contract fields', async () => {
   assert.equal(trade.isCanonical, false);
   assert.equal(trade.requiresManualReview, true);
   assert.ok(Object.prototype.hasOwnProperty.call(trade, 'rawTicker'));
+});
+
+test('trade serializer does not return stale canonical ticker when mapping is ambiguous', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 15,
+      stop: 13,
+      riskPct: 1,
+      date: '2024-07-01',
+      symbol: 'YNDX',
+      displaySymbol: 'NBIS'
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const db = loadDB();
+  const trade = Object.values(db.users[username].tradeJournal).flat().find(item => item.id === create.data.trade.id);
+  trade.source = 'trading212';
+  trade.trading212Ticker = 'YNDX_US_EQ';
+  trade.trading212Isin = 'NL0009805522';
+  db.instrumentMappings = [{
+    id: 42,
+    source: 'TRADING212',
+    broker: 'trading212',
+    source_key: 'TRADING212|ISIN:NL0009805522',
+    scope: 'global',
+    status: 'active',
+    resolution_status: 'ambiguous',
+    resolution_source: 'local_cache',
+    confidence_score: 0.95,
+    canonical_ticker: 'YNDX'
+  }];
+  saveDB(db);
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const mapped = list.data.trades.find(t => t.id === create.data.trade.id);
+  assert.ok(mapped);
+  assert.equal(mapped.displayTicker, 'NBIS');
+  assert.equal(mapped.canonicalTicker, '');
+  assert.equal(mapped.requiresManualReview, true);
 });
