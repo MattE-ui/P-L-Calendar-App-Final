@@ -2684,6 +2684,33 @@ function notificationDebug(step, details = {}) {
   setNotificationDebugState(step, details?.error || '');
 }
 
+function installRawPushSubscribeProbe() {
+  if (notificationState.rawPushSubscribeProbeInstalled) return;
+  if (!window.PushManager || !window.PushManager.prototype || typeof window.PushManager.prototype.subscribe !== 'function') return;
+  const originalSubscribe = window.PushManager.prototype.subscribe;
+  window.PushManager.prototype.subscribe = function patchedRawPushSubscribe(...args) {
+    console.error('RAW PUSH SUBSCRIBE PATH HIT', {
+      source: 'window.PushManager.prototype.subscribe',
+      stack: new Error('RAW PUSH SUBSCRIBE PATH HIT').stack,
+      args
+    });
+    return originalSubscribe.apply(this, args);
+  };
+  notificationState.rawPushSubscribeProbeInstalled = true;
+  notificationDebug('Raw push subscribe probe installed');
+}
+
+function formatNotificationRuntimeError(error) {
+  const fallback = 'Notification registration failed.';
+  if (!error) return fallback;
+  const message = error?.data?.error || error?.message || String(error) || fallback;
+  const sourceLine = typeof error?.stack === 'string'
+    ? (error.stack.split('\n').find((line) => line.includes('http') || line.includes('static/') || line.includes('serviceWorker.js')) || '')
+    : '';
+  const source = sourceLine ? sourceLine.trim() : 'no-stack-source';
+  return `[runtime ${new Date().toISOString()}] ${message} (source: ${source})`;
+}
+
 function renderNotificationControls() {
   const support = document.getElementById('notification-support-message');
   const permission = Notification?.permission || 'default';
@@ -2780,10 +2807,13 @@ async function registerNotificationToken({ force = false } = {}) {
     }
     setNotificationDebugState('service worker registration started');
     notificationDebug('Service worker registration found/created: started');
-    const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js');
+    const serviceWorkerRegistration = await navigator.serviceWorker.register('/serviceWorker.js?v=20260318-raw-subscribe-probe', {
+      updateViaCache: 'none'
+    });
     if (!serviceWorkerRegistration) {
       throw new Error('Service worker registration failed.');
     }
+    await serviceWorkerRegistration.update();
     setNotificationDebugState('service worker registration found/created');
     notificationDebug('Service worker registration completed', { scope: serviceWorkerRegistration.scope });
     const swReady = await navigator.serviceWorker.ready;
@@ -2791,6 +2821,7 @@ async function registerNotificationToken({ force = false } = {}) {
       throw new Error('Service worker ready state unavailable.');
     }
     notificationDebug('Service worker ready', { scope: swReady?.scope || serviceWorkerRegistration.scope });
+    installRawPushSubscribeProbe();
     const vapidKeyString = (configPayload?.config?.vapidKey || '').trim();
     setNotificationDebugState('Firebase app initialization started');
     const messaging = await ensureFirebaseMessagingReady(configPayload);
@@ -2807,6 +2838,11 @@ async function registerNotificationToken({ force = false } = {}) {
     }
     setNotificationDebugState('getToken started');
     notificationDebug('getToken started', { permission: Notification.permission, force });
+    console.info('FCM GETTOKEN PATH HIT', {
+      force,
+      permission: Notification.permission,
+      serviceWorkerScope: swReady?.scope || serviceWorkerRegistration.scope
+    });
     notificationDebug('Using Firebase getToken registration path', {
       vapidKeyLength: vapidKeyString.length,
       serviceWorkerScope: swReady?.scope || serviceWorkerRegistration.scope
@@ -2877,10 +2913,11 @@ async function registerNotificationToken({ force = false } = {}) {
     await loadNotificationDevices();
     notificationDebug('Registration completed', { force });
   } catch (error) {
-    notificationDebug('Registration failed', { error: error?.data?.error || error?.message || String(error) });
-    notificationDebug('Registration flow failed', { error: error?.data?.error || error?.message || String(error) });
-    setNotificationDebugState('registration flow failed', error?.data?.error || error?.message || 'Notification registration failed.');
-    setNotificationMessage('', error?.data?.error || error?.message || 'Notification registration failed.');
+    const runtimeError = formatNotificationRuntimeError(error);
+    notificationDebug('Registration failed', { error: runtimeError });
+    notificationDebug('Registration flow failed', { error: runtimeError, stack: error?.stack || null });
+    setNotificationDebugState('registration flow failed', runtimeError);
+    setNotificationMessage('', runtimeError);
   } finally {
     clearTimeout(registrationTimeoutId);
     notificationState.registerInFlight = false;
