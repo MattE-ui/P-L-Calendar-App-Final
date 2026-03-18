@@ -217,6 +217,10 @@ test('getDisplayInstrumentIdentity returns canonical identity when resolved', ()
     trading212Ticker: 'FB_US_EQ'
   });
   assert.equal(identity.ticker, 'META');
+  assert.equal(identity.displayTicker, 'META');
+  assert.equal(identity.canonicalTicker, 'META');
+  assert.equal(identity.rawTicker, 'FB_US_EQ');
+  assert.equal(identity.requiresManualReview, false);
   assert.equal(identity.isCanonical, true);
   assert.equal(identity.resolutionStatus, 'resolved');
 });
@@ -228,6 +232,21 @@ test('getDisplayInstrumentIdentity exposes unresolved state when using raw fallb
     resolutionStatus: 'unresolved'
   });
   assert.equal(identity.ticker, 'RAWTICK');
+  assert.equal(identity.displayTicker, 'RAWTICK');
+  assert.equal(identity.canonicalTicker, '');
+  assert.equal(identity.rawTicker, 'RAWTICK_US_EQ');
+  assert.equal(identity.requiresManualReview, true);
   assert.equal(identity.isCanonical, false);
   assert.equal(identity.resolutionStatus, 'unresolved');
+});
+
+test('getDisplayInstrumentIdentity prefers clean display fallback over raw broker ticker when unresolved', () => {
+  const identity = getDisplayInstrumentIdentity({
+    trading212Ticker: 'RCAT_US_EQ',
+    displayTicker: 'RCAT',
+    resolutionStatus: 'unresolved'
+  });
+  assert.equal(identity.displayTicker, 'RCAT');
+  assert.equal(identity.isCanonical, false);
+  assert.equal(identity.requiresManualReview, true);
 });
