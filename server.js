@@ -15,6 +15,13 @@ try {
 }
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const analytics = require('./lib/analytics');
+const {
+  RESOLUTION_STATUS,
+  RESOLUTION_SOURCE,
+  normalizeTicker,
+  pickBestCandidate,
+  buildResolverResult
+} = require('./services/instrumentResolver');
 
 const TRADE_TYPES = ['scalp', 'day', 'swing', 'position'];
 const ASSET_CLASSES = ['stocks', 'options', 'forex', 'crypto', 'futures', 'other'];
@@ -64,6 +71,7 @@ const IBKR_SYNC_INTERVAL_MS = (() => {
   if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
   return Math.min(parsed, 29 * 1000);
 })();
+const T212_METADATA_CACHE_TTL_MS = Number(process.env.T212_METADATA_CACHE_TTL_MS) || (6 * 60 * 60 * 1000);
 const IBKR_CONNECTOR_WINDOWS_URL = process.env.IBKR_CONNECTOR_WINDOWS_URL || '';
 const IBKR_CONNECTOR_WINDOWS_FILE = process.env.IBKR_CONNECTOR_WINDOWS_FILE || '';
 const IBKR_CONNECTOR_WINDOWS_META_PATH = process.env.IBKR_CONNECTOR_WINDOWS_META_PATH || '';
@@ -730,8 +738,15 @@ function buildGroupCurrentPositions(db, group) {
 
 function resolveCanonicalTickerForTrade(trade) {
   if (!trade || typeof trade !== 'object') return '';
+  const canonicalTicker = typeof trade.canonicalTicker === 'string' ? trade.canonicalTicker.trim().toUpperCase() : '';
+  if (canonicalTicker) return canonicalTicker;
   const mappedTicker = typeof trade.displayTicker === 'string' ? trade.displayTicker.trim().toUpperCase() : '';
-  if (mappedTicker) return mappedTicker;
+  if (mappedTicker) {
+    if (mappedTicker.includes('_')) {
+      return normalizeTrading212Symbol(mappedTicker) || mappedTicker;
+    }
+    return mappedTicker;
+  }
   const internalTicker = typeof trade.displaySymbol === 'string' ? trade.displaySymbol.trim().toUpperCase() : '';
   if (internalTicker) return internalTicker;
   const canonicalStoredTicker = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
@@ -1731,6 +1746,12 @@ function loadDB() {
     if (!Array.isArray(db.instrumentMappings)) {
       db.instrumentMappings = [];
     }
+    if (!Array.isArray(db.t212MetadataCache)) {
+      db.t212MetadataCache = [];
+    }
+    if (!Array.isArray(db.instrumentResolutionMetrics)) {
+      db.instrumentResolutionMetrics = [];
+    }
     if (!Array.isArray(db.brokerSnapshots)) {
       db.brokerSnapshots = [];
     }
@@ -1790,6 +1811,8 @@ function loadDB() {
       users: {},
       sessions: {},
       instrumentMappings: [],
+      t212MetadataCache: [],
+      instrumentResolutionMetrics: [],
       brokerSnapshots: [],
       ibkrConnectorTokens: [],
       ibkrConnectorKeys: [],
@@ -4919,6 +4942,7 @@ function updateTrading212LayerMetadata(trade, {
   rawName,
   rawIsin,
   rawTickerValue,
+  canonicalTicker,
   tradeCurrency,
   direction,
   currentPrice,
@@ -4941,6 +4965,7 @@ function updateTrading212LayerMetadata(trade, {
   if (rawName) trade.trading212Name = rawName;
   if (rawIsin) trade.trading212Isin = rawIsin;
   if (rawTickerValue) trade.trading212Ticker = rawTickerValue;
+  if (canonicalTicker) trade.canonicalTicker = canonicalTicker;
   if (Number.isFinite(currentPrice) && currentPrice > 0) {
     trade.lastSyncPrice = currentPrice;
   }
@@ -5360,6 +5385,38 @@ function ensureInstrumentMappings(db) {
   return db.instrumentMappings;
 }
 
+function ensureT212MetadataCache(db) {
+  if (!Array.isArray(db.t212MetadataCache)) {
+    db.t212MetadataCache = [];
+  }
+  return db.t212MetadataCache;
+}
+
+function findT212MetadataCacheRecord(db, baseUrl) {
+  const cache = ensureT212MetadataCache(db);
+  return cache.find(item => item && item.baseUrl === baseUrl) || null;
+}
+
+function ensureInstrumentResolverMappingShape(mapping = {}) {
+  mapping.broker = mapping.broker || 'trading212';
+  mapping.resolution_status ||= RESOLUTION_STATUS.UNRESOLVED;
+  mapping.resolution_source ||= RESOLUTION_SOURCE.LOCAL_CACHE;
+  if (mapping.requiresManualReview === undefined) {
+    mapping.requiresManualReview = mapping.resolution_status !== RESOLUTION_STATUS.RESOLVED;
+  }
+  mapping.confidence_score = Number.isFinite(Number(mapping.confidence_score))
+    ? Number(mapping.confidence_score)
+    : 0;
+  return mapping;
+}
+
+function ensureInstrumentResolutionMetrics(db) {
+  if (!Array.isArray(db.instrumentResolutionMetrics)) {
+    db.instrumentResolutionMetrics = [];
+  }
+  return db.instrumentResolutionMetrics;
+}
+
 function parseSourceKey(sourceKey) {
   if (typeof sourceKey !== 'string') return { source: 'TRADING212', sourceKey: '' };
   const trimmed = sourceKey.trim();
@@ -5396,7 +5453,9 @@ function resolveInstrumentMapping(db, instrument, username) {
       sourceKey: null,
       displayTicker: instrument.ticker || '',
       displayName: instrument.name || '',
-      scope: 'broker'
+      scope: 'broker',
+      resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
     };
   }
   const { source, sourceKey: normalizedKey } = parseSourceKey(sourceKey);
@@ -5410,9 +5469,12 @@ function resolveInstrumentMapping(db, instrument, username) {
   if (userMapping) {
     return {
       sourceKey: normalizedKey,
-      displayTicker: userMapping.canonical_ticker,
-      displayName: userMapping.canonical_name || userMapping.broker_name || instrument.name || '',
+      displayTicker: userMapping.canonical_ticker || userMapping.canonicalTicker || instrument.ticker || '',
+      displayName: userMapping.canonical_name || userMapping.canonicalName || userMapping.broker_name || instrument.name || '',
       scope: 'user',
+      resolutionStatus: userMapping.resolution_status || RESOLUTION_STATUS.MANUAL_OVERRIDE,
+      resolutionSource: userMapping.resolution_source || RESOLUTION_SOURCE.MANUAL_OVERRIDE,
+      confidenceScore: Number(userMapping.confidence_score ?? userMapping.confidence ?? 1),
       mapping: userMapping
     };
   }
@@ -5426,9 +5488,12 @@ function resolveInstrumentMapping(db, instrument, username) {
   if (globalMapping) {
     return {
       sourceKey: normalizedKey,
-      displayTicker: globalMapping.canonical_ticker,
-      displayName: globalMapping.canonical_name || globalMapping.broker_name || instrument.name || '',
+      displayTicker: globalMapping.canonical_ticker || globalMapping.canonicalTicker || instrument.ticker || '',
+      displayName: globalMapping.canonical_name || globalMapping.canonicalName || globalMapping.broker_name || instrument.name || '',
       scope: 'global',
+      resolutionStatus: globalMapping.resolution_status || RESOLUTION_STATUS.RESOLVED,
+      resolutionSource: globalMapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
+      confidenceScore: Number(globalMapping.confidence_score ?? globalMapping.confidence ?? 0.9),
       mapping: globalMapping
     };
   }
@@ -5436,7 +5501,9 @@ function resolveInstrumentMapping(db, instrument, username) {
     sourceKey: normalizedKey,
     displayTicker: instrument.ticker || '',
     displayName: instrument.name || '',
-    scope: 'broker'
+    scope: 'broker',
+    resolutionStatus: RESOLUTION_STATUS.UNRESOLVED,
+    resolutionSource: RESOLUTION_SOURCE.LOCAL_CACHE
   };
 }
 
@@ -5446,9 +5513,12 @@ function buildInstrumentFromTrade(trade = {}) {
   );
   return {
     isin: trade.trading212Isin || '',
+    brokerInstrumentId: trade.trading212BrokerInstrumentId || '',
     uid: trade.trading212Id || '',
+    exchange: trade.trading212Exchange || '',
     ticker: brokerTicker,
     currency: trade.currency || '',
+    instrumentType: trade.trading212InstrumentType || '',
     name: trade.trading212Name || ''
   };
 }
@@ -5472,13 +5542,224 @@ function applyInstrumentMappingToTrade(trade, db, username) {
     : (resolved.displayTicker || fallbackTicker);
   return {
     ...trade,
+    canonicalTicker: resolved.scope === 'broker'
+      ? (trade.canonicalTicker || trade.symbol || '')
+      : (resolved.displayTicker || trade.canonicalTicker || trade.symbol || ''),
     displayTicker,
     displayName: resolved.displayName || trade.displayName || trade.trading212Name || '',
     mappingScope: resolved.scope === 'broker' ? null : resolved.scope,
     mappingId: resolved.mapping?.id,
+    resolutionStatus: resolved.resolutionStatus || RESOLUTION_STATUS.UNRESOLVED,
+    resolutionSource: resolved.resolutionSource || RESOLUTION_SOURCE.LOCAL_CACHE,
+    confidenceScore: Number.isFinite(Number(resolved.confidenceScore)) ? Number(resolved.confidenceScore) : undefined,
     sourceKey: resolved.sourceKey,
     brokerTicker: instrument.ticker || trade.symbol || ''
   };
+}
+
+function normalizeT212MetadataInstrument(item = {}) {
+  const ticker = normalizeTicker(item.ticker || item.symbol || item.instrumentTicker || '');
+  const name = String(item.name || item.instrumentName || item.title || '').trim();
+  const exchange = normalizeTicker(item.exchange || item.exchangeCode || item.market || '');
+  const mic = normalizeTicker(item.mic || item.exchangeMic || '');
+  const currency = normalizeTicker(item.currency || item.quoteCurrency || item.instrumentCurrency || '');
+  const instrumentType = normalizeTicker(item.type || item.instrumentType || item.assetType || '');
+  const isin = normalizeTicker(item.isin || '');
+  const brokerInstrumentId = String(item.id || item.instrumentId || item.uid || '').trim();
+  const isActive = item.active === false ? false : true;
+  return {
+    ticker,
+    name,
+    exchange,
+    mic,
+    currency,
+    instrumentType,
+    isin,
+    brokerInstrumentId,
+    isActive,
+    raw: item
+  };
+}
+
+function deriveMappingSourceKey(rawInput = {}) {
+  const brokerInstrumentId = String(rawInput.brokerInstrumentId || '').trim();
+  if (brokerInstrumentId) return `TRADING212|INSTRUMENT:${brokerInstrumentId}`;
+  const isin = normalizeTicker(rawInput.rawIsin || rawInput.isin || '');
+  if (isin) return `TRADING212|ISIN:${isin}`;
+  const ticker = normalizeTicker(rawInput.rawTicker || rawInput.ticker || '');
+  const currency = normalizeTicker(rawInput.rawCurrency || rawInput.currency || '');
+  const exchange = normalizeTicker(rawInput.rawExchange || rawInput.exchange || '');
+  return `TRADING212|TICKER:${ticker}|CCY:${currency}|EX:${exchange}`;
+}
+
+function recordInstrumentResolutionMetric(db, payload = {}) {
+  const metrics = ensureInstrumentResolutionMetrics(db);
+  metrics.push({
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    ...payload
+  });
+  if (metrics.length > 5000) {
+    metrics.splice(0, metrics.length - 5000);
+  }
+}
+
+function findManualOverrideMapping(mappings, sourceKey, username) {
+  return mappings.find(mapping => (
+    mapping.source_key === sourceKey
+    && mapping.status === 'active'
+    && mapping.resolution_status === RESOLUTION_STATUS.MANUAL_OVERRIDE
+    && (mapping.scope === 'global' || (mapping.scope === 'user' && mapping.user_id === username))
+  )) || null;
+}
+
+function resolveAndUpsertTrading212InstrumentMapping(db, username, rawInput = {}, metadataRecord = null) {
+  const mappings = ensureInstrumentMappings(db);
+  const now = new Date().toISOString();
+  const sourceKey = deriveMappingSourceKey(rawInput);
+  const activeGlobal = mappings.find(m => m.scope === 'global' && m.status === 'active' && m.source_key === sourceKey) || null;
+  const activeUser = mappings.find(m => m.scope === 'user' && m.status === 'active' && m.source_key === sourceKey && m.user_id === username) || null;
+  const manual = findManualOverrideMapping(mappings, sourceKey, username);
+
+  const rawName = String(rawInput.rawName || '').trim();
+  const rawTicker = normalizeTicker(rawInput.rawTicker || '');
+  const rawExchange = normalizeTicker(rawInput.rawExchange || '');
+  const rawCurrency = normalizeTicker(rawInput.rawCurrency || '');
+  const rawInstrumentType = normalizeTicker(rawInput.rawInstrumentType || '');
+  const rawIsin = normalizeTicker(rawInput.rawIsin || '');
+  const brokerInstrumentId = String(rawInput.brokerInstrumentId || '').trim();
+
+  const cachedMapping = manual || activeUser || activeGlobal;
+  if (cachedMapping && Number(cachedMapping.confidence_score ?? cachedMapping.confidence ?? 0) >= 0.95) {
+    cachedMapping.last_seen_at = now;
+    cachedMapping.last_verified_at = now;
+    ensureInstrumentResolverMappingShape(cachedMapping);
+    const result = buildResolverResult({
+      mapping: cachedMapping,
+      canonical: {
+        ticker: cachedMapping.canonical_ticker,
+        name: cachedMapping.canonical_name,
+        exchange: cachedMapping.canonical_exchange,
+        mic: cachedMapping.canonical_mic,
+        currency: cachedMapping.canonical_currency
+      },
+      confidenceScore: Number(cachedMapping.confidence_score ?? cachedMapping.confidence ?? 1),
+      resolutionStatus: cachedMapping.resolution_status,
+      resolutionSource: cachedMapping.resolution_source || (manual ? RESOLUTION_SOURCE.MANUAL_OVERRIDE : RESOLUTION_SOURCE.LOCAL_CACHE),
+      debug: { sourceKey, path: 'cached_mapping' }
+    });
+    return result;
+  }
+
+  const universe = Array.isArray(metadataRecord?.instruments) ? metadataRecord.instruments : [];
+  const normalizedUniverse = universe.map(normalizeT212MetadataInstrument).filter(item => item.ticker || item.isin || item.brokerInstrumentId);
+  const exactById = normalizedUniverse.find(item => brokerInstrumentId && item.brokerInstrumentId && item.brokerInstrumentId === brokerInstrumentId)
+    || normalizedUniverse.find(item => rawIsin && item.isin && item.isin === rawIsin)
+    || null;
+  let candidate = null;
+  let confidenceScore = 0;
+  let resolutionStatus = RESOLUTION_STATUS.UNRESOLVED;
+  let resolutionSource = RESOLUTION_SOURCE.FALLBACK_NAME_MATCH;
+  let debug = { sourceKey };
+
+  if (exactById) {
+    candidate = exactById;
+    confidenceScore = 0.99;
+    resolutionStatus = RESOLUTION_STATUS.RESOLVED;
+    resolutionSource = RESOLUTION_SOURCE.T212_METADATA_EXACT;
+  } else if (normalizedUniverse.length) {
+    const scopedCandidates = normalizedUniverse.filter(item => {
+      if (rawCurrency && item.currency && item.currency !== rawCurrency) return false;
+      if (rawExchange && item.exchange && item.exchange !== rawExchange && item.mic !== rawExchange) return false;
+      if (rawInstrumentType && item.instrumentType && item.instrumentType !== rawInstrumentType) return false;
+      return true;
+    });
+    const ranking = pickBestCandidate({
+      rawName,
+      rawTicker,
+      rawExchange,
+      rawCurrency,
+      rawInstrumentType
+    }, scopedCandidates.length ? scopedCandidates : normalizedUniverse, {
+      hints: {
+        previousSuccess: Boolean(cachedMapping)
+      }
+    });
+    if (ranking.best) {
+      candidate = ranking.best.candidate;
+      confidenceScore = ranking.best.score;
+      debug = { ...debug, reasons: ranking.best.reasons || [], runnerUpScore: ranking.runnerUp?.score ?? null };
+      if (ranking.best.score >= 0.95) {
+        resolutionStatus = RESOLUTION_STATUS.RESOLVED;
+        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
+      } else if (ranking.best.score >= 0.8) {
+        resolutionStatus = RESOLUTION_STATUS.RESOLVED;
+        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
+      } else if (ranking.runnerUp && Math.abs(ranking.best.score - ranking.runnerUp.score) < 0.08) {
+        resolutionStatus = RESOLUTION_STATUS.AMBIGUOUS;
+        resolutionSource = RESOLUTION_SOURCE.T212_METADATA_SCORED;
+      } else {
+        resolutionStatus = RESOLUTION_STATUS.UNRESOLVED;
+      }
+    }
+  }
+
+  const existing = cachedMapping || mappings.find(item => item.source_key === sourceKey && item.scope === 'global');
+  const mapping = ensureInstrumentResolverMappingShape(existing || {
+    id: nextInstrumentMappingId(mappings),
+    source: 'TRADING212',
+    broker: 'trading212',
+    source_key: sourceKey,
+    scope: 'global',
+    user_id: null,
+    status: 'active',
+    first_resolved_at: now,
+    created_at: now
+  });
+  mapping.broker_instrument_id = brokerInstrumentId || mapping.broker_instrument_id || '';
+  mapping.raw_ticker = rawTicker || mapping.raw_ticker || '';
+  mapping.raw_name = rawName || mapping.raw_name || '';
+  mapping.raw_exchange = rawExchange || mapping.raw_exchange || '';
+  mapping.raw_currency = rawCurrency || mapping.raw_currency || '';
+  mapping.raw_instrument_type = rawInstrumentType || mapping.raw_instrument_type || '';
+  mapping.raw_isin = rawIsin || mapping.raw_isin || '';
+  mapping.canonical_ticker = candidate?.ticker || mapping.canonical_ticker || '';
+  mapping.canonical_name = candidate?.name || mapping.canonical_name || '';
+  mapping.canonical_exchange = candidate?.exchange || mapping.canonical_exchange || '';
+  mapping.canonical_mic = candidate?.mic || mapping.canonical_mic || '';
+  mapping.canonical_currency = candidate?.currency || mapping.canonical_currency || '';
+  mapping.confidence_score = Number.isFinite(confidenceScore) ? confidenceScore : 0;
+  mapping.resolution_source = resolutionSource;
+  mapping.resolution_status = resolutionStatus;
+  mapping.requiresManualReview = resolutionStatus !== RESOLUTION_STATUS.RESOLVED;
+  mapping.last_verified_at = now;
+  mapping.last_seen_at = now;
+  mapping.updated_at = now;
+  if (!existing) mappings.push(mapping);
+
+  recordInstrumentResolutionMetric(db, {
+    source_key: sourceKey,
+    resolution_status: resolutionStatus,
+    resolution_source: resolutionSource,
+    confidence_score: mapping.confidence_score,
+    raw_ticker: rawTicker,
+    canonical_ticker: mapping.canonical_ticker
+  });
+
+  return buildResolverResult({
+    mapping,
+    canonical: {
+      ticker: mapping.canonical_ticker,
+      name: mapping.canonical_name,
+      exchange: mapping.canonical_exchange,
+      mic: mapping.canonical_mic,
+      currency: mapping.canonical_currency
+    },
+    confidenceScore: mapping.confidence_score,
+    resolutionStatus: mapping.resolution_status,
+    resolutionSource: mapping.resolution_source,
+    debug
+  });
 }
 
 function deriveTrading212Root(endpointPath) {
@@ -5889,6 +6170,70 @@ async function fetchTrading212Snapshot(config) {
   throw lastError || new Trading212Error('Trading 212 portfolio summary endpoint not found.', { status: 404 });
 }
 
+async function refreshTrading212MetadataCache(db, config, { force = false } = {}) {
+  const baseUrl = resolveTrading212BaseUrl(config);
+  const now = Date.now();
+  const existing = findT212MetadataCacheRecord(db, baseUrl);
+  if (!force && existing && Number.isFinite(existing.fetchedAt) && (now - existing.fetchedAt) < T212_METADATA_CACHE_TTL_MS) {
+    return existing;
+  }
+  const headers = buildTrading212AuthHeaders(config);
+  const candidates = [
+    '/api/v0/equity/metadata/instruments',
+    '/api/v0/metadata/instruments',
+    '/api/v0/equity/instruments'
+  ];
+  const exchangeCandidates = [
+    '/api/v0/equity/metadata/exchanges',
+    '/api/v0/metadata/exchanges',
+    '/api/v0/equity/exchanges'
+  ];
+  let instruments = [];
+  let exchanges = [];
+  for (const suffix of candidates) {
+    try {
+      const payload = await requestTrading212RawEndpoint(`${baseUrl}${suffix}`, headers);
+      const list = Array.isArray(payload) ? payload : payload?.items || payload?.instruments;
+      if (Array.isArray(list)) {
+        instruments = list;
+        break;
+      }
+    } catch (error) {
+      if (!(error instanceof Trading212Error) || error.status !== 404) {
+        console.warn(`[T212] metadata instruments fetch failed suffix=${suffix}`, error?.message || error);
+      }
+    }
+  }
+  for (const suffix of exchangeCandidates) {
+    try {
+      const payload = await requestTrading212RawEndpoint(`${baseUrl}${suffix}`, headers);
+      const list = Array.isArray(payload) ? payload : payload?.items || payload?.exchanges;
+      if (Array.isArray(list)) {
+        exchanges = list;
+        break;
+      }
+    } catch (error) {
+      if (!(error instanceof Trading212Error) || error.status !== 404) {
+        console.warn(`[T212] metadata exchanges fetch failed suffix=${suffix}`, error?.message || error);
+      }
+    }
+  }
+  const cache = ensureT212MetadataCache(db);
+  const payload = {
+    baseUrl,
+    fetchedAt: now,
+    fetchedAtIso: new Date(now).toISOString(),
+    instruments,
+    exchanges
+  };
+  if (existing) {
+    Object.assign(existing, payload);
+    return existing;
+  }
+  cache.push(payload);
+  return payload;
+}
+
 const trading212Jobs = new Map();
 const ibkrJobs = new Map();
 
@@ -5928,11 +6273,13 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         baseUrl: account.baseUrl || cfg.baseUrl
       };
       const snapshot = await fetchTrading212Snapshot(accountConfig);
+      const metadataRecord = await refreshTrading212MetadataCache(db, accountConfig);
       const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
       return {
         accountId,
         accountConfig,
         snapshot,
+        metadataRecord,
         ordersPayload
       };
     }));
@@ -6176,7 +6523,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
             ? snapshot.positionsRaw
             : inlinePositions;
       if (!Array.isArray(effectivePositions)) return [];
-      return effectivePositions.map(position => ({ position, accountId: result.accountId }));
+      return effectivePositions.map(position => ({ position, accountId: result.accountId, metadataRecord: result.metadataRecord }));
     });
     let positionsMutated = false;
     const journal = ensureTradeJournal(user);
@@ -6196,10 +6543,14 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       for (const entry of sortedPositions) {
         const raw = entry.position;
         const accountId = entry.accountId || '';
+        const metadataRecord = entry.metadataRecord || null;
         const instrument = raw?.instrument || {};
         const walletImpact = raw?.walletImpact || {};
         const rawName = instrument?.name ?? raw?.name ?? '';
         const rawIsin = instrument?.isin ?? raw?.isin ?? '';
+        const rawExchange = instrument?.exchange ?? raw?.exchange ?? instrument?.mic ?? '';
+        const rawInstrumentType = instrument?.type ?? raw?.instrumentType ?? raw?.type ?? '';
+        const brokerInstrumentId = instrument?.id ?? raw?.instrumentId ?? raw?.uid ?? '';
         const rawTickerValue = normalizeTrading212TickerValue(
           raw?.ticker ??
           raw?.symbol ??
@@ -6208,7 +6559,18 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           rawIsin ??
           ''
         );
-        const symbol = normalizeTrading212Symbol(rawTickerValue);
+        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
+        const resolution = resolveAndUpsertTrading212InstrumentMapping(db, username, {
+          rawTicker: rawTickerValue,
+          rawName,
+          rawExchange,
+          rawCurrency: tradeCurrency,
+          rawInstrumentType,
+          rawIsin,
+          brokerInstrumentId
+        }, metadataRecord);
+        const canonicalTicker = normalizeTicker(resolution.canonicalTicker || '');
+        const symbol = normalizeTrading212Symbol(canonicalTicker || rawTickerValue);
         if (!symbol) continue;
         const quantity = parseTradingNumber(
           raw?.quantity ??
@@ -6284,7 +6646,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           raw?.trailingStopPrice
         );
         const sizeUnits = Math.abs(quantity);
-        const tradeCurrency = instrument?.currency ?? raw?.currency ?? walletImpact?.currency ?? 'GBP';
         const tradeDateKey = getNyDateKeyForDate(createdAtDate, false);
         let lowStop = null;
         try {
@@ -6319,6 +6680,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               rawName,
               rawIsin,
               rawTickerValue,
+              canonicalTicker,
               tradeCurrency,
               direction,
               currentPrice,
@@ -6367,6 +6729,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               rawName,
               rawIsin,
               rawTickerValue,
+              canonicalTicker,
               tradeCurrency,
               direction,
               currentPrice,
@@ -6412,12 +6775,20 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           tradeType: 'day',
           assetClass: 'stocks',
           source: 'trading212',
+          canonicalTicker: canonicalTicker || undefined,
           trading212Id,
           trading212PositionKey,
           trading212AccountId: accountId || undefined,
+          trading212BrokerInstrumentId: brokerInstrumentId ? String(brokerInstrumentId) : undefined,
+          trading212Exchange: rawExchange || undefined,
+          trading212InstrumentType: rawInstrumentType || undefined,
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
           trading212Ticker: rawTickerValue || undefined,
+          resolutionStatus: resolution.resolutionStatus,
+          resolutionSource: resolution.resolutionSource,
+          confidenceScore: resolution.confidenceScore,
+          requiresManualReview: resolution.requiresManualReview,
           lastSyncPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : undefined,
           ppl: Number.isFinite(ppl) ? ppl : undefined
         });
@@ -8571,11 +8942,18 @@ app.post('/api/instrument-mappings/user', auth, asyncHandler(async (req, res) =>
     mapping.canonical_ticker = canonicalTicker;
     mapping.canonical_name = canonicalName || mapping.canonical_name;
     mapping.status = 'active';
+    mapping.resolution_status = RESOLUTION_STATUS.MANUAL_OVERRIDE;
+    mapping.resolution_source = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
+    mapping.requiresManualReview = false;
+    mapping.confidence_score = 1;
+    mapping.last_verified_at = now;
+    mapping.last_seen_at = now;
     mapping.updated_at = now;
   } else {
     mapping = {
       id: nextInstrumentMappingId(mappings),
       source,
+      broker: 'trading212',
       source_key: normalizedKey,
       scope: 'user',
       user_id: req.username,
@@ -8586,7 +8964,14 @@ app.post('/api/instrument-mappings/user', auth, asyncHandler(async (req, res) =>
       canonical_ticker: canonicalTicker,
       canonical_name: canonicalName,
       status: 'active',
-      confidence: 0.6,
+      confidence: 1,
+      confidence_score: 1,
+      resolution_status: RESOLUTION_STATUS.MANUAL_OVERRIDE,
+      resolution_source: RESOLUTION_SOURCE.MANUAL_OVERRIDE,
+      requiresManualReview: false,
+      first_resolved_at: now,
+      last_verified_at: now,
+      last_seen_at: now,
       created_at: now,
       updated_at: now
     };
@@ -8635,12 +9020,19 @@ app.post('/api/instrument-mappings/promote', auth, asyncHandler(async (req, res)
     globalMapping.canonical_ticker = sourceMapping.canonical_ticker;
     globalMapping.canonical_name = sourceMapping.canonical_name || globalMapping.canonical_name;
     globalMapping.status = 'active';
+    globalMapping.resolution_status = RESOLUTION_STATUS.MANUAL_OVERRIDE;
+    globalMapping.resolution_source = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
+    globalMapping.requiresManualReview = false;
+    globalMapping.confidence_score = 1;
+    globalMapping.last_verified_at = now;
+    globalMapping.last_seen_at = now;
     globalMapping.user_id = null;
     globalMapping.updated_at = now;
   } else {
     globalMapping = {
       id: nextInstrumentMappingId(mappings),
       source: sourceMapping.source,
+      broker: 'trading212',
       source_key: sourceMapping.source_key,
       scope: 'global',
       user_id: null,
@@ -8651,7 +9043,14 @@ app.post('/api/instrument-mappings/promote', auth, asyncHandler(async (req, res)
       canonical_ticker: sourceMapping.canonical_ticker,
       canonical_name: sourceMapping.canonical_name,
       status: 'active',
-      confidence: sourceMapping.confidence ?? 0.6,
+      confidence: 1,
+      confidence_score: 1,
+      resolution_status: RESOLUTION_STATUS.MANUAL_OVERRIDE,
+      resolution_source: RESOLUTION_SOURCE.MANUAL_OVERRIDE,
+      requiresManualReview: false,
+      first_resolved_at: now,
+      last_verified_at: now,
+      last_seen_at: now,
       created_at: now,
       updated_at: now
     };
@@ -8659,6 +9058,95 @@ app.post('/api/instrument-mappings/promote', auth, asyncHandler(async (req, res)
   }
   saveDB(db);
   res.json(globalMapping);
+}));
+
+app.get('/api/admin/instrument-resolver/review-queue', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const items = ensureInstrumentMappings(db)
+    .filter(mapping => mapping && mapping.status === 'active' && mapping.requiresManualReview === true)
+    .map(mapping => ({
+      id: mapping.id,
+      sourceKey: mapping.source_key,
+      broker: mapping.broker || 'trading212',
+      rawTicker: mapping.raw_ticker || mapping.broker_ticker || '',
+      rawName: mapping.raw_name || mapping.broker_name || '',
+      rawExchange: mapping.raw_exchange || '',
+      rawCurrency: mapping.raw_currency || mapping.currency || '',
+      rawInstrumentType: mapping.raw_instrument_type || '',
+      confidenceScore: Number(mapping.confidence_score ?? mapping.confidence ?? 0),
+      resolutionStatus: mapping.resolution_status || RESOLUTION_STATUS.UNRESOLVED,
+      resolutionSource: mapping.resolution_source || RESOLUTION_SOURCE.LOCAL_CACHE,
+      canonicalTicker: mapping.canonical_ticker || '',
+      canonicalName: mapping.canonical_name || ''
+    }));
+  res.json({ queue: items });
+}));
+
+app.post('/api/admin/instrument-resolver/manual-override', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin privileges required.' });
+  }
+  const mappingId = Number(req.body?.mappingId);
+  const canonicalTicker = normalizeTicker(req.body?.canonicalTicker || '');
+  if (!Number.isFinite(mappingId) || !canonicalTicker) {
+    return res.status(400).json({ error: 'mappingId and canonicalTicker are required.' });
+  }
+  const mappings = ensureInstrumentMappings(db);
+  const mapping = mappings.find(item => Number(item.id) === mappingId && item.status === 'active');
+  if (!mapping) {
+    return res.status(404).json({ error: 'Mapping not found.' });
+  }
+  const now = new Date().toISOString();
+  mapping.canonical_ticker = canonicalTicker;
+  mapping.canonical_name = String(req.body?.canonicalName || mapping.canonical_name || '').trim();
+  mapping.canonical_exchange = normalizeTicker(req.body?.canonicalExchange || mapping.canonical_exchange || '');
+  mapping.canonical_mic = normalizeTicker(req.body?.canonicalMic || mapping.canonical_mic || '');
+  mapping.canonical_currency = normalizeTicker(req.body?.canonicalCurrency || mapping.canonical_currency || mapping.raw_currency || '');
+  mapping.resolution_status = RESOLUTION_STATUS.MANUAL_OVERRIDE;
+  mapping.resolution_source = RESOLUTION_SOURCE.MANUAL_OVERRIDE;
+  mapping.requiresManualReview = false;
+  mapping.confidence_score = 1;
+  mapping.status = 'active';
+  mapping.last_verified_at = now;
+  mapping.last_seen_at = now;
+  mapping.updated_at = now;
+  saveDB(db);
+  res.json({ ok: true, mapping });
+}));
+
+app.post('/api/integrations/trading212/metadata/refresh', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const cfg = user.trading212;
+  if (!cfg?.enabled) return res.status(400).json({ error: 'Trading 212 is not enabled.' });
+  const accounts = getTrading212Accounts(cfg);
+  if (!accounts.length) return res.status(400).json({ error: 'No Trading 212 account configured.' });
+  const refreshed = [];
+  for (const account of accounts) {
+    const accountConfig = {
+      ...cfg,
+      apiKey: account.apiKey,
+      apiSecret: account.apiSecret,
+      mode: account.mode || cfg.mode,
+      baseUrl: account.baseUrl || cfg.baseUrl
+    };
+    const metadata = await refreshTrading212MetadataCache(db, accountConfig, { force: true });
+    refreshed.push({
+      baseUrl: metadata.baseUrl,
+      fetchedAt: metadata.fetchedAtIso,
+      instrumentCount: Array.isArray(metadata.instruments) ? metadata.instruments.length : 0,
+      exchangeCount: Array.isArray(metadata.exchanges) ? metadata.exchanges.length : 0
+    });
+  }
+  saveDB(db);
+  res.json({ ok: true, refreshed });
 }));
 
 app.get('/api/transactions/prefs', auth, (req, res) => {
@@ -11843,6 +12331,8 @@ module.exports = {
   applyIbkrHeartbeat,
   buildGroupCurrentPositions,
   resolveCanonicalTickerForTrade,
+  resolveAndUpsertTrading212InstrumentMapping,
+  refreshTrading212MetadataCache,
   createTradeGroupAlertsForNewTrade,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts,
