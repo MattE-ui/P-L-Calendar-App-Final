@@ -53,9 +53,9 @@ async function main() {
       }
     },
     sessions: { [token]: username },
-    instrumentMappings: [
-      { id: 1, source: 'TRADING212', broker: 'trading212', source_key: 'TRADING212|ISIN:US78497K1025', scope: 'global', status: 'active', resolution_status: 'resolved', resolution_source: 'local_cache', confidence_score: 0.98, canonical_ticker: 'SOI', raw_ticker: 'SOI_US_EQ', raw_isin: 'US78497K1025' },
-      { id: 2, source: 'TRADING212', broker: 'trading212', source_key: 'TRADING212|ISIN:NL0009805522', scope: 'global', status: 'active', resolution_status: 'resolved', resolution_source: 'local_cache', confidence_score: 0.98, canonical_ticker: 'YNDX', raw_ticker: 'YNDX_US_EQ', raw_isin: 'NL0009805522' }
+    brokerInstrumentRegistry: [
+      { id: 1, broker: 'trading212', isin: 'US78497K1025', rawTicker: 'SOI_US_EQ', rawName: 'SEI Investments Company', rawCurrency: 'USD', status: 'active', resolutionStatus: 'resolved', resolutionSource: 'local_cache', confidenceScore: 0.98, canonicalTicker: 'SEI', canonicalName: 'SEI Investments Company' },
+      { id: 2, broker: 'trading212', isin: 'NL0009805522', rawTicker: 'YNDX_US_EQ', rawName: 'Nebius Group N.V.', rawCurrency: 'USD', status: 'active', resolutionStatus: 'resolved', resolutionSource: 'local_cache', confidenceScore: 0.98, canonicalTicker: 'NBIS', canonicalName: 'Nebius Group N.V.' }
     ],
     instrumentResolutionMetrics: [],
     t212MetadataCache: []
@@ -78,21 +78,15 @@ async function main() {
     return { elapsed, status: res.status, json };
   }
 
-  const endpoints = ['/api/pl?debugPerf=1', '/api/portfolio?debugPerf=1', '/api/trades/active?debugPerf=1'];
+  const endpoints = ['/api/pl?debugPerf=1', '/api/portfolio?debugPerf=1', '/api/trades?debugPerf=1', '/api/trades/active?debugPerf=1'];
   const dashStart = Date.now();
   const dashResults = await Promise.all(endpoints.map(call));
   const dashboardTotal = Date.now() - dashStart;
-
-  const trades = await call('/api/trades?debugPerf=1');
 
   console.log(JSON.stringify({
     dashboard: {
       totalMs: dashboardTotal,
       requests: endpoints.map((ep, i) => ({ endpoint: ep, elapsedMs: dashResults[i].elapsed, perf: dashResults[i].json.performance }))
-    },
-    trades: {
-      totalMs: trades.elapsed,
-      perf: trades.json.performance
     }
   }, null, 2));
 
