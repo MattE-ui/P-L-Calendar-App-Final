@@ -2747,17 +2747,15 @@ async function registerNotificationToken({ force = false } = {}) {
     return;
   }
   notificationState.registerInFlight = true;
-  if (!notificationState.supported) {
-    setNotificationMessage('', 'Notifications are not supported in this browser.');
-    notificationState.registerInFlight = false;
-    return;
-  }
-  if (Notification.permission === 'denied') {
-    setNotificationMessage('', 'Browser permission is denied. Re-enable notifications in browser settings first.');
-    notificationState.registerInFlight = false;
-    return;
-  }
   try {
+    if (!notificationState.supported) {
+      setNotificationMessage('', 'Notifications are not supported in this browser.');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      setNotificationMessage('', 'Browser permission is denied. Re-enable notifications in browser settings first.');
+      return;
+    }
     notificationDebug('current Notification.permission', { permission: Notification.permission });
     setNotificationDebugState('config fetch started');
     const configPayload = notificationState.config || await api('/api/notifications/config');
