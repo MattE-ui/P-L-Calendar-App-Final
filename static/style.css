@@ -5048,3 +5048,202 @@ textarea {
 .notification-device-row strong {
   color: #8ef0b7;
 }
+
+/* Mobile-first overrides: keep desktop layout intact while improving small-screen usability */
+@media (max-width: 760px) {
+  .app-shell-header__inner {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .app-shell-brand {
+    justify-content: center;
+  }
+
+  .app-shell-brand__logo {
+    width: 142px;
+  }
+
+  .app-shell-nav {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+  }
+
+  .app-shell-nav__link {
+    justify-content: center;
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.2;
+    padding: 9px 6px;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    border-bottom-width: 1px;
+    text-transform: none;
+    letter-spacing: 0.01em;
+  }
+
+  .app-shell-nav__link.is-active {
+    border-color: color-mix(in srgb, var(--accent) 62%, var(--border) 38%);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .app-shell-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .app-shell-actions .app-shell-action-btn {
+    width: 100%;
+    padding: 9px 6px;
+    font-size: 12px;
+  }
+
+  .container {
+    padding: 0 12px 22px;
+  }
+
+  .dashboard-top-content {
+    margin: 12px 0 10px;
+  }
+
+  .dashboard-grid {
+    gap: 12px;
+  }
+
+  .dashboard-grid > .center-column {
+    order: 1;
+  }
+
+  .dashboard-grid > .side-column:first-child {
+    order: 2;
+  }
+
+  .dashboard-grid > .side-column:last-child {
+    order: 3;
+  }
+
+  .center-panel,
+  .tool-card,
+  .profile-card,
+  .social-card,
+  .kpi-card,
+  .chart-card,
+  .list-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .hero-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-metrics .metric-card,
+  .hero-metrics .metric-card + .metric-card {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .hero-metrics .metric-card:first-child {
+    border-top: 0;
+  }
+
+  .portfolio-metrics-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .section-header,
+  .stats-hero,
+  .trade-header,
+  .trade-meta-row,
+  .tool-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .filter-actions,
+  .table-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .filter-actions button,
+  .table-actions button {
+    flex: 1 1 140px;
+  }
+
+  .field-row.two-col,
+  .tool-results {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-portfolio-row {
+    flex-direction: column;
+  }
+
+  .tool-portfolio {
+    min-width: 0;
+    width: 100%;
+    text-align: left;
+  }
+
+  .table-wrapper,
+  .investor-table-wrap {
+    margin-inline: -4px;
+    padding-inline: 4px;
+  }
+
+  #active-trades-card .trade-row-grid {
+    grid-template-columns: minmax(0, 1fr) 92px 24px;
+  }
+
+  #active-trades-card .trade-row-grid-child {
+    grid-template-columns: 14px minmax(0, 1fr) 92px 24px;
+  }
+
+  #active-trades-card .trade-compact-middle {
+    justify-self: flex-start;
+  }
+
+  #active-trades-card .trade-compact-right {
+    width: 92px;
+  }
+
+  .grid.view-month {
+    grid-template-columns: repeat(7, minmax(74px, 1fr));
+  }
+
+  .cell {
+    min-width: 74px;
+    min-height: 108px;
+    padding: 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-metrics-bar {
+    grid-template-columns: 1fr;
+  }
+
+  #view-controls .control-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #view-controls .control-group.end {
+    grid-template-columns: 1fr;
+  }
+}
