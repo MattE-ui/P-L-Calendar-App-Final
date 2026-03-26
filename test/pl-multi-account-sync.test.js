@@ -151,7 +151,7 @@ test('saving account cashflows updates account net deposits and combined net dep
   assert.equal(profile.data.netDepositsTotal, 7000);
 });
 
-test('profile backfills legacy aggregate cashflows into the integrated account once', async () => {
+test('profile does not auto-apply legacy aggregate cashflows to integrated account net deposits in multi-account mode', async () => {
   const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   db.users[username].tradingAccounts = [
     { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000, integrationEnabled: false, integrationProvider: null },
@@ -172,18 +172,18 @@ test('profile backfills legacy aggregate cashflows into the integrated account o
   assert.equal(firstProfile.res.status, 200);
   const firstIntegrated = firstProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
   assert.ok(firstIntegrated);
-  assert.equal(firstIntegrated.currentNetDeposits, 4000);
-  assert.equal(firstProfile.data.netDepositsTotal, 7000);
+  assert.equal(firstIntegrated.currentNetDeposits, 4500);
+  assert.equal(firstProfile.data.netDepositsTotal, 7500);
 
   const secondProfile = await authedFetch('/api/profile');
   assert.equal(secondProfile.res.status, 200);
   const secondIntegrated = secondProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
   assert.ok(secondIntegrated);
-  assert.equal(secondIntegrated.currentNetDeposits, 4000);
-  assert.equal(secondProfile.data.netDepositsTotal, 7000);
+  assert.equal(secondIntegrated.currentNetDeposits, 4500);
+  assert.equal(secondProfile.data.netDepositsTotal, 7500);
 });
 
-test('profile reconciliation applies historical account withdrawals to integrated account net deposits', async () => {
+test('profile reconciliation keeps integrated account net deposits manual in multi-account mode', async () => {
   const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   db.users[username].tradingAccounts = [
     { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
@@ -210,8 +210,8 @@ test('profile reconciliation applies historical account withdrawals to integrate
   assert.equal(profile.res.status, 200);
   const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
   assert.ok(t212);
-  assert.equal(t212.currentNetDeposits, 14500);
-  assert.equal(profile.data.netDepositsTotal, 19000);
+  assert.equal(t212.currentNetDeposits, 15000);
+  assert.equal(profile.data.netDepositsTotal, 19500);
 
   const addFutureWithdrawal = await authedFetch('/api/pl', {
     method: 'POST',
@@ -229,8 +229,8 @@ test('profile reconciliation applies historical account withdrawals to integrate
   assert.equal(refreshedProfile.res.status, 200);
   const refreshedT212 = refreshedProfile.data.tradingAccounts.find(account => account.id === 't212');
   assert.ok(refreshedT212);
-  assert.equal(refreshedT212.currentNetDeposits, 14400);
-  assert.equal(refreshedProfile.data.netDepositsTotal, 18900);
+  assert.equal(refreshedT212.currentNetDeposits, 14900);
+  assert.equal(refreshedProfile.data.netDepositsTotal, 19400);
 });
 
 test('editing integrated account net deposits sets a new baseline reference for future reconciliation', async () => {
@@ -277,7 +277,7 @@ test('editing integrated account net deposits sets a new baseline reference for 
   assert.equal(profile.data.netDepositsTotal, 19000);
 });
 
-test('legacy backfill only applies the 10 most recent aggregate cashflow entries', async () => {
+test('legacy aggregate cashflow backfill does not change integrated account net deposits in multi-account mode', async () => {
   const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   db.users[username].tradingAccounts = [
     { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000, integrationEnabled: false, integrationProvider: null },
@@ -295,5 +295,5 @@ test('legacy backfill only applies the 10 most recent aggregate cashflow entries
   assert.equal(profile.res.status, 200);
   const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
   assert.ok(t212);
-  assert.equal(t212.currentNetDeposits, 9000);
+  assert.equal(t212.currentNetDeposits, 10000);
 });

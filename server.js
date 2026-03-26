@@ -5001,6 +5001,11 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
   return { baseline, total };
 }
 
+function isMultiTradingAccountsMode(user) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  return !!(user?.multiTradingAccountsEnabled || accountList.length > 1);
+}
+
 function findLatestAccountClosingValue(history, accountId) {
   if (!accountId) return null;
   let latestDate = '';
@@ -5104,6 +5109,7 @@ function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
 
 function reconcileIntegratedAccountNetDepositsFromHistory(user, history = ensurePortfolioHistory(user)) {
   if (!user || typeof user !== 'object') return false;
+  if (isMultiTradingAccountsMode(user)) return false;
   ensureTradingAccounts(user);
   const accounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
   let mutated = false;
@@ -7812,9 +7818,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
       applyAccountAggregatesToHistoryEntry(payload);
       integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
-      const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
-      const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
-      integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
+      if (!isMultiTradingAccountsMode(user)) {
+        const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
+        const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
+        integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
+      }
     }
     if (existing.preBaseline) {
       payload.preBaseline = true;
@@ -8343,9 +8351,11 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
     carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
     applyAccountAggregatesToHistoryEntry(payload);
     integratedAccount.currentValue = Number.isFinite(nextPortfolio) ? nextPortfolio : (Number(integratedAccount.currentValue) || 0);
-    const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
-    const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
-    integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
+    if (!isMultiTradingAccountsMode(user)) {
+      const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
+      const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
+      integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
+    }
   }
   history[ym][dateKey] = payload;
   if (existing.preBaseline) {
