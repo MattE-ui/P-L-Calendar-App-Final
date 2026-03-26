@@ -937,7 +937,7 @@ function renderTradingAccounts() {
         </div>
         <div class="trading-account-metric-field">
           <label>Net deposits (£)</label>
-          <input type="number" step="0.01" ${provider ? 'disabled' : ''} data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
+          <input type="number" step="0.01" data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
         </div>
       </div>
       <div class="profile-actions trading-account-integration-actions">
@@ -945,7 +945,7 @@ function renderTradingAccounts() {
         <button type="button" class="ghost small" data-account-id="${account.id}" data-account-action="integration-toggle" data-provider="ibkr">${useIbkr ? 'Turn off IBKR integration' : 'Use IBKR integration'}</button>
       </div>
       <p class="helper trading-account-integration-note">${provider
-    ? 'Integration active: manual portfolio and net deposit edits are disabled for this account.'
+    ? 'Integration active: portfolio value is automated. Net deposits can be edited to set the reference point for future sync updates.'
     : 'Enable an integration to auto-populate this account. Only one account can use Trading 212 and only one can use IBKR at a time.'}</p>
     `;
     row.querySelectorAll('[data-account-action="integration-toggle"]').forEach(btn => {
