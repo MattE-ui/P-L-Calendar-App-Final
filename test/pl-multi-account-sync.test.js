@@ -276,3 +276,24 @@ test('editing integrated account net deposits sets a new baseline reference for 
   assert.equal(t212.currentNetDeposits, 14500);
   assert.equal(profile.data.netDepositsTotal, 19000);
 });
+
+test('legacy backfill only applies the 10 most recent aggregate cashflow entries', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000, integrationEnabled: false, integrationProvider: null },
+    { id: 't212', label: 'Trading 212', currentValue: 6000, currentNetDeposits: 10000, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  const days = {};
+  for (let day = 1; day <= 12; day += 1) {
+    const key = `2026-03-${String(day).padStart(2, '0')}`;
+    days[key] = { cashIn: 0, cashOut: 100 };
+  }
+  db.users[username].portfolioHistory = { '2026-03': days };
+  saveDB(db);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(t212);
+  assert.equal(t212.currentNetDeposits, 9000);
+});

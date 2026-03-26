@@ -5067,9 +5067,10 @@ function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
   if (!accountId) return { mutated: false, netDelta: 0 };
   let mutated = false;
   let netDelta = 0;
-  for (const days of Object.values(history || {})) {
+  const candidates = [];
+  for (const [monthKey, days] of Object.entries(history || {})) {
     if (!days || typeof days !== 'object') continue;
-    for (const record of Object.values(days || {})) {
+    for (const [dateKey, record] of Object.entries(days || {})) {
       if (!record || typeof record !== 'object' || record.preBaseline === true) continue;
       const cashInRaw = Number(record.cashIn ?? 0);
       const cashOutRaw = Number(record.cashOut ?? 0);
@@ -5078,6 +5079,14 @@ function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
       if (cashIn === 0 && cashOut === 0) continue;
       const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
       if (accountMap && Object.keys(accountMap).length > 0) continue;
+      const normalizedDate = typeof dateKey === 'string' && dateKey ? dateKey : monthKey;
+      candidates.push({ record, cashIn, cashOut, normalizedDate });
+    }
+  }
+  candidates
+    .sort((a, b) => String(b.normalizedDate).localeCompare(String(a.normalizedDate)))
+    .slice(0, 10)
+    .forEach(({ record, cashIn, cashOut }) => {
       const nextRecord = {
         cashIn,
         cashOut
@@ -5089,8 +5098,7 @@ function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
       record.accounts = { [accountId]: nextRecord };
       netDelta += cashIn - cashOut;
       mutated = true;
-    }
-  }
+    });
   return { mutated, netDelta };
 }
 
