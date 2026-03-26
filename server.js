@@ -7525,6 +7525,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
+    const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
+    const integratedAccountNetBefore = integratedAccount?.id
+      ? computeAccountNetDepositsFromHistory(history, integratedAccount.id)
+      : 0;
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
     const combinedTransactions = fulfilled.flatMap(result => {
@@ -7644,10 +7648,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
-    const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
-    const integratedAccountNetBefore = integratedAccount?.id
-      ? computeAccountNetDepositsFromHistory(history, integratedAccount.id)
-      : 0;
     const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
       const value = Number(result.snapshot?.portfolioValue);
       return Number.isFinite(value) ? sum + value : sum;
