@@ -3456,7 +3456,7 @@ function normalizeTradingAccountLabel(value, fallback = '') {
 
 function ensureTradingAccounts(user) {
   if (!user || typeof user !== 'object') {
-    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false }] };
+    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, netDepositsReferenceValue: null, netDepositsReferenceDate: null, integrationProvider: null, integrationEnabled: false }] };
   }
   let mutated = false;
   if (typeof user.multiTradingAccountsEnabled !== 'boolean') {
@@ -3477,6 +3477,12 @@ function ensureTradingAccounts(user) {
     const netDepositsBaselineRaw = typeof account.netDepositsBaseline === 'number'
       ? account.netDepositsBaseline
       : NaN;
+    const netDepositsReferenceValueRaw = typeof account.netDepositsReferenceValue === 'number'
+      ? account.netDepositsReferenceValue
+      : NaN;
+    const netDepositsReferenceDate = typeof account.netDepositsReferenceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(account.netDepositsReferenceDate)
+      ? account.netDepositsReferenceDate
+      : null;
     const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
     const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
       ? integrationProviderRaw
@@ -3488,15 +3494,17 @@ function ensureTradingAccounts(user) {
       currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
       currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0,
       netDepositsBaseline: Number.isFinite(netDepositsBaselineRaw) ? netDepositsBaselineRaw : null,
+      netDepositsReferenceValue: Number.isFinite(netDepositsReferenceValueRaw) ? netDepositsReferenceValueRaw : null,
+      netDepositsReferenceDate,
       integrationProvider,
       integrationEnabled
     });
   });
   if (!normalized.length) {
-    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
+    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, netDepositsReferenceValue: null, netDepositsReferenceDate: null, integrationProvider: null, integrationEnabled: false });
   }
   if (!normalized.some(account => account.id === 'primary')) {
-    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
+    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, netDepositsReferenceValue: null, netDepositsReferenceDate: null, integrationProvider: null, integrationEnabled: false });
   }
   if (!Array.isArray(user.tradingAccounts) || JSON.stringify(existing) !== JSON.stringify(normalized)) {
     user.tradingAccounts = normalized;
@@ -5034,6 +5042,27 @@ function computeAccountNetDepositsFromHistory(history, accountId) {
   return total;
 }
 
+function computeAccountNetDepositsFromHistorySince(history, accountId, sinceDateKey = null) {
+  if (!accountId) return 0;
+  let total = 0;
+  for (const [monthKey, days] of Object.entries(history || {})) {
+    if (!days || typeof days !== 'object') continue;
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object' || record.preBaseline === true) continue;
+      const normalizedDate = typeof dateKey === 'string' && dateKey ? dateKey : monthKey;
+      if (sinceDateKey && normalizedDate <= sinceDateKey) continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      const accountRecord = accountMap[accountId];
+      if (!accountRecord || typeof accountRecord !== 'object') continue;
+      const cashIn = Number(accountRecord.cashIn ?? 0);
+      const cashOut = Number(accountRecord.cashOut ?? 0);
+      total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
+    }
+  }
+  return total;
+}
+
 function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
   if (!accountId) return { mutated: false, netDelta: 0 };
   let mutated = false;
@@ -5072,8 +5101,21 @@ function reconcileIntegratedAccountNetDepositsFromHistory(user, history = ensure
   let mutated = false;
   for (const account of accounts) {
     if (!account?.id || !account.integrationEnabled || !account.integrationProvider) continue;
-    const historyNet = computeAccountNetDepositsFromHistory(history, account.id);
     const currentNet = Number(account.currentNetDeposits) || 0;
+    const hasReferenceValue = typeof account.netDepositsReferenceValue === 'number' && Number.isFinite(account.netDepositsReferenceValue);
+    const referenceDate = typeof account.netDepositsReferenceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(account.netDepositsReferenceDate)
+      ? account.netDepositsReferenceDate
+      : null;
+    if (hasReferenceValue && referenceDate) {
+      const historyDeltaSinceReference = computeAccountNetDepositsFromHistorySince(history, account.id, referenceDate);
+      const reconciledNet = account.netDepositsReferenceValue + historyDeltaSinceReference;
+      if (currentNet !== reconciledNet) {
+        account.currentNetDeposits = reconciledNet;
+        mutated = true;
+      }
+      continue;
+    }
+    const historyNet = computeAccountNetDepositsFromHistory(history, account.id);
     const hasBaseline = typeof account.netDepositsBaseline === 'number' && Number.isFinite(account.netDepositsBaseline);
     const baseline = hasBaseline
       ? account.netDepositsBaseline
@@ -11087,10 +11129,20 @@ app.post('/api/profile', auth, (req,res)=>{
       const existingBaseline = typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
         ? existing.netDepositsBaseline
         : null;
+      const existingReferenceValue = typeof existing.netDepositsReferenceValue === 'number' && Number.isFinite(existing.netDepositsReferenceValue)
+        ? existing.netDepositsReferenceValue
+        : null;
+      const existingReferenceDate = typeof existing.netDepositsReferenceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(existing.netDepositsReferenceDate)
+        ? existing.netDepositsReferenceDate
+        : null;
       let nextBaseline = existingBaseline;
+      let nextReferenceValue = existingReferenceValue;
+      let nextReferenceDate = existingReferenceDate;
       if (integrationProvider && currentNetDeposits !== existingNetDeposits) {
         const historyNet = computeAccountNetDepositsFromHistory(history, id);
         nextBaseline = currentNetDeposits - historyNet;
+        nextReferenceValue = currentNetDeposits;
+        nextReferenceDate = currentDateKey();
       }
       nextAccounts.push({
         ...existing,
@@ -11098,7 +11150,9 @@ app.post('/api/profile', auth, (req,res)=>{
         label,
         currentValue,
         currentNetDeposits,
-        netDepositsBaseline: nextBaseline
+        netDepositsBaseline: nextBaseline,
+        netDepositsReferenceValue: nextReferenceValue,
+        netDepositsReferenceDate: nextReferenceDate
       });
     }
     if (!nextAccounts.some(account => account.id === 'primary')) {
@@ -11340,10 +11394,20 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const existingBaseline = typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
           ? existing.netDepositsBaseline
           : null;
+        const existingReferenceValue = typeof existing.netDepositsReferenceValue === 'number' && Number.isFinite(existing.netDepositsReferenceValue)
+          ? existing.netDepositsReferenceValue
+          : null;
+        const existingReferenceDate = typeof existing.netDepositsReferenceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(existing.netDepositsReferenceDate)
+          ? existing.netDepositsReferenceDate
+          : null;
         let nextNetDepositsBaseline = existingBaseline;
+        let nextReferenceValue = existingReferenceValue;
+        let nextReferenceDate = existingReferenceDate;
         if (integrationProvider && Number.isFinite(currentNetDepositsRaw) && nextCurrentNetDeposits !== existingNetDeposits) {
           const historyNet = computeAccountNetDepositsFromHistory(history, id);
           nextNetDepositsBaseline = nextCurrentNetDeposits - historyNet;
+          nextReferenceValue = nextCurrentNetDeposits;
+          nextReferenceDate = currentDateKey();
         }
         return {
           id,
@@ -11355,6 +11419,8 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
           netDepositsBaseline: Number.isFinite(netDepositsBaselineRaw)
             ? netDepositsBaselineRaw
             : nextNetDepositsBaseline,
+          netDepositsReferenceValue: nextReferenceValue,
+          netDepositsReferenceDate: nextReferenceDate,
           integrationProvider,
           integrationEnabled
         };
@@ -11368,9 +11434,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
       deduped.push(account);
     });
     if (!deduped.some(account => account.id === 'primary')) {
-      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
+      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, netDepositsReferenceValue: null, netDepositsReferenceDate: null, integrationProvider: null, integrationEnabled: false });
     }
-    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false }];
+    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, netDepositsReferenceValue: null, netDepositsReferenceDate: null, integrationProvider: null, integrationEnabled: false }];
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;

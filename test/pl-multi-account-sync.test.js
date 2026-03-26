@@ -212,6 +212,25 @@ test('profile reconciliation applies historical account withdrawals to integrate
   assert.ok(t212);
   assert.equal(t212.currentNetDeposits, 14500);
   assert.equal(profile.data.netDepositsTotal, 19000);
+
+  const addFutureWithdrawal = await authedFetch('/api/pl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: '2026-03-27',
+      value: null,
+      cashOut: 100,
+      accountId: 't212'
+    })
+  });
+  assert.equal(addFutureWithdrawal.res.status, 200);
+
+  const refreshedProfile = await authedFetch('/api/profile');
+  assert.equal(refreshedProfile.res.status, 200);
+  const refreshedT212 = refreshedProfile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(refreshedT212);
+  assert.equal(refreshedT212.currentNetDeposits, 14400);
+  assert.equal(refreshedProfile.data.netDepositsTotal, 18900);
 });
 
 test('editing integrated account net deposits sets a new baseline reference for future reconciliation', async () => {
