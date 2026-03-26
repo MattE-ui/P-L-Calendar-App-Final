@@ -3124,35 +3124,48 @@ textarea {
 @media (max-width: 640px) {
   .title-wrap { margin-bottom: 6px; }
   .mobile-month-summary {
-    display: block;
-    margin-bottom: 10px;
-    padding: 12px;
-    border-radius: 14px;
-    background: linear-gradient(180deg, rgba(16,185,129,0.08), rgba(11,15,20,0.85));
-    border: 1px solid rgba(16,185,129,0.28);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "month pnl"
+      "meta meta";
+    align-items: center;
+    gap: 5px 10px;
+    margin-bottom: 8px;
+    padding: 9px 10px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(16,185,129,0.07), rgba(11,15,20,0.86));
+    border: 1px solid rgba(16,185,129,0.24);
     box-shadow: var(--shadow-soft);
   }
   .mobile-month-summary-head {
+    grid-area: month;
     color: var(--muted);
-    font-size: 12px;
-    letter-spacing: 0.04em;
+    font-size: 11px;
+    letter-spacing: 0.03em;
     text-transform: uppercase;
+    line-height: 1.1;
   }
   .mobile-month-summary-main {
-    margin-top: 3px;
-    font-size: 22px;
+    grid-area: pnl;
+    margin-top: 0;
+    font-size: 18px;
     font-weight: 700;
     color: var(--text);
+    line-height: 1.05;
+    text-align: right;
   }
   .mobile-month-summary-main.positive { color: #6EE7B7; }
   .mobile-month-summary-main.negative { color: #FCA5A5; }
   .mobile-month-summary-meta {
-    margin-top: 6px;
+    grid-area: meta;
+    margin-top: 2px;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    font-size: 11px;
+    gap: 6px;
+    font-size: 10px;
     color: var(--muted);
+    line-height: 1.1;
   }
   #view-controls { flex-direction: column; align-items: stretch; gap: 16px; }
   #view-controls .control-group { width: 100%; }
@@ -3164,49 +3177,56 @@ textarea {
   .key-metrics { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   .tool-grid { grid-template-columns: 1fr; }
   .tool-results { grid-template-columns: 1fr; }
-  .grid.view-month { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+  .grid.view-month { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
   .grid.view-week .list-row { flex-direction: column; align-items: flex-start; }
   .list-row .row-value { width: 100%; text-align: left; }
   .list-row { gap: 10px; }
   .grid.view-month .cell.mobile-day {
-    min-height: 84px;
-    border-radius: 12px;
-    padding: 8px 9px;
-    gap: 6px;
+    min-height: 64px;
+    border-radius: 9px;
+    padding: 5px 4px 4px;
+    gap: 2px;
     border-left-width: 1px;
     overflow: hidden;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
   }
   .grid.view-month .cell.mobile-day.profit {
     background:
-      linear-gradient(180deg, rgba(16,185,129, calc(0.10 + (var(--day-intensity, 0) * 0.24))), rgba(16,185,129, 0.08)),
-      rgba(15, 21, 28, 0.94);
+      linear-gradient(180deg, rgba(16,185,129, calc(0.08 + (var(--day-intensity, 0) * 0.17))), rgba(16,185,129, 0.06)),
+      rgba(15, 21, 28, 0.95);
   }
   .grid.view-month .cell.mobile-day.loss {
     background:
-      linear-gradient(180deg, rgba(239,68,68, calc(0.10 + (var(--day-intensity, 0) * 0.24))), rgba(239,68,68, 0.08)),
-      rgba(15, 21, 28, 0.94);
+      linear-gradient(180deg, rgba(239,68,68, calc(0.08 + (var(--day-intensity, 0) * 0.17))), rgba(239,68,68, 0.06)),
+      rgba(15, 21, 28, 0.95);
   }
   .mobile-day-date {
-    font-size: 11px;
-    color: var(--muted);
-    line-height: 1.1;
-  }
-  .mobile-day-value {
-    margin-top: 2px;
-    font-size: clamp(13px, 3.2vw, 16px);
-    font-weight: 700;
-    line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mobile-day-pct {
-    margin-top: auto;
     font-size: 10px;
     color: var(--muted);
     line-height: 1;
+    font-weight: 600;
+    text-align: left;
   }
+  .mobile-day-value {
+    margin-top: 1px;
+    font-size: clamp(10px, 2.65vw, 12px);
+    font-weight: 750;
+    line-height: 1.1;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .mobile-day-pct {
+    margin-top: auto;
+    font-size: clamp(9px, 2.2vw, 10px);
+    color: var(--muted);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .mobile-day-value.positive,
+  .mobile-day-pct.positive { color: #6EE7B7; }
+  .mobile-day-value.negative,
+  .mobile-day-pct.negative { color: #FCA5A5; }
   .grid.view-month .cell.mobile-day.placeholder {
     min-height: 0;
     padding: 0;
@@ -3226,7 +3246,7 @@ textarea {
   .key-metrics { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
   .grid { overflow-x: visible; padding-bottom: 6px; }
   .cell { min-width: 0; min-height: 132px; }
-  .grid.view-month .cell { min-height: 96px; }
+  .grid.view-month .cell { min-height: 64px; }
   .modal-card { padding: 16px; }
   .mobile-day-metrics { grid-template-columns: 1fr; }
 }
@@ -3235,8 +3255,8 @@ textarea {
   .topbar button { width: 100%; }
   #view-controls .control-group button { min-width: unset; }
   .key-metrics { grid-template-columns: 1fr; }
-  .grid.view-month { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .mobile-month-summary-meta { grid-template-columns: 1fr; gap: 4px; }
+  .grid.view-month { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+  .mobile-month-summary-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; }
 }
 
 :root[data-ui-theme-v1="true"] {

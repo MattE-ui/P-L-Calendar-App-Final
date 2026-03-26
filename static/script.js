@@ -2764,13 +2764,15 @@ function renderMonthGrid(targetDate, grid) {
     cell.style.setProperty('--day-intensity', intensity.toFixed(3));
     if (mobileLayout) {
       const compactPnl = state.safeScreenshot
-        ? (pct === null ? '—' : formatPercent(pct))
+        ? SAFE_SCREENSHOT_LABEL
         : (change === null ? '—' : formatSignedCurrency(change));
-      const pctHtml = pct === null ? '' : `<div class="mobile-day-pct">${formatPercent(pct)}</div>`;
+      const pctText = pct === null ? '—' : formatPercent(pct);
+      const pnlClass = change > 0 ? 'positive' : change < 0 ? 'negative' : '';
+      const pctClass = pct > 0 ? 'positive' : pct < 0 ? 'negative' : '';
       cell.innerHTML = `
         <div class="mobile-day-date">${day}</div>
-        <div class="mobile-day-value">${compactPnl}</div>
-        ${pctHtml}
+        <div class="mobile-day-value ${pnlClass}">${compactPnl}</div>
+        <div class="mobile-day-pct ${pctClass}">${pctText}</div>
       `;
       cell.addEventListener('click', () => openMobileDayDetail(key, entry));
     } else {
