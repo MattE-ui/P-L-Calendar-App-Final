@@ -182,3 +182,34 @@ test('profile backfills legacy aggregate cashflows into the integrated account o
   assert.equal(secondIntegrated.currentNetDeposits, 4000);
   assert.equal(secondProfile.data.netDepositsTotal, 7000);
 });
+
+test('profile reconciliation applies historical account withdrawals to integrated account net deposits', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+    { id: 't212', label: 'Trading 212', currentValue: 6500, currentNetDeposits: 15000, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-22': {
+        end: 10500,
+        cashIn: 0,
+        cashOut: 500,
+        accounts: {
+          t212: {
+            cashIn: 0,
+            cashOut: 500
+          }
+        }
+      }
+    }
+  };
+  saveDB(db);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(t212);
+  assert.equal(t212.currentNetDeposits, 14500);
+  assert.equal(profile.data.netDepositsTotal, 19000);
+});

@@ -3456,7 +3456,7 @@ function normalizeTradingAccountLabel(value, fallback = '') {
 
 function ensureTradingAccounts(user) {
   if (!user || typeof user !== 'object') {
-    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }] };
+    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false }] };
   }
   let mutated = false;
   if (typeof user.multiTradingAccountsEnabled !== 'boolean') {
@@ -3474,6 +3474,9 @@ function ensureTradingAccounts(user) {
     seen.add(id);
     const currentValueRaw = Number(account.currentValue);
     const currentNetDepositsRaw = Number(account.currentNetDeposits);
+    const netDepositsBaselineRaw = typeof account.netDepositsBaseline === 'number'
+      ? account.netDepositsBaseline
+      : NaN;
     const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
     const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
       ? integrationProviderRaw
@@ -3484,15 +3487,16 @@ function ensureTradingAccounts(user) {
       label: normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`),
       currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
       currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0,
+      netDepositsBaseline: Number.isFinite(netDepositsBaselineRaw) ? netDepositsBaselineRaw : null,
       integrationProvider,
       integrationEnabled
     });
   });
   if (!normalized.length) {
-    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
   }
   if (!normalized.some(account => account.id === 'primary')) {
-    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
   }
   if (!Array.isArray(user.tradingAccounts) || JSON.stringify(existing) !== JSON.stringify(normalized)) {
     user.tradingAccounts = normalized;
@@ -5059,6 +5063,32 @@ function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
     }
   }
   return { mutated, netDelta };
+}
+
+function reconcileIntegratedAccountNetDepositsFromHistory(user, history = ensurePortfolioHistory(user)) {
+  if (!user || typeof user !== 'object') return false;
+  ensureTradingAccounts(user);
+  const accounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  let mutated = false;
+  for (const account of accounts) {
+    if (!account?.id || !account.integrationEnabled || !account.integrationProvider) continue;
+    const historyNet = computeAccountNetDepositsFromHistory(history, account.id);
+    const currentNet = Number(account.currentNetDeposits) || 0;
+    const hasBaseline = typeof account.netDepositsBaseline === 'number' && Number.isFinite(account.netDepositsBaseline);
+    const baseline = hasBaseline
+      ? account.netDepositsBaseline
+      : currentNet;
+    if (!hasBaseline) {
+      account.netDepositsBaseline = baseline;
+      mutated = true;
+    }
+    const reconciledNet = baseline + historyNet;
+    if (currentNet !== reconciledNet) {
+      account.currentNetDeposits = reconciledNet;
+      mutated = true;
+    }
+  }
+  return mutated;
 }
 
 function dateKeyInTimezone(timezone, date = new Date()) {
@@ -7558,10 +7588,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const existing = history[ym][dateKey] || {};
     const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     if (integratedAccount?.id) {
-      const { mutated: backfilled, netDelta } = backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
-      if (backfilled && netDelta !== 0) {
-        integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + netDelta;
-      }
+      backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
     }
     const integratedAccountNetBefore = integratedAccount?.id
       ? computeAccountNetDepositsFromHistory(history, integratedAccount.id)
@@ -9142,12 +9169,10 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     : [];
   if (integratedAccounts.length === 1) {
     const integratedAccount = integratedAccounts[0];
-    const { mutated: backfilled, netDelta } = backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
-    if (backfilled) {
-      integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + netDelta;
-      mutated = true;
-    }
+    const { mutated: backfilled } = backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
+    if (backfilled) mutated = true;
   }
+  if (reconcileIntegratedAccountNetDepositsFromHistory(user, history)) mutated = true;
   if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   const { baseline, total } = computeNetDepositsTotals(user, history);
   const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
@@ -11279,6 +11304,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const existing = existingById.get(id) || {};
         const currentValueRaw = Number(account.currentValue);
         const currentNetDepositsRaw = Number(account.currentNetDeposits);
+        const netDepositsBaselineRaw = typeof account.netDepositsBaseline === 'number'
+          ? account.netDepositsBaseline
+          : NaN;
         const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
         const submittedProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
           ? integrationProviderRaw
@@ -11297,6 +11325,11 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
           currentNetDeposits: Number.isFinite(currentNetDepositsRaw)
             ? currentNetDepositsRaw
             : (Number(existing.currentNetDeposits) || 0),
+          netDepositsBaseline: Number.isFinite(netDepositsBaselineRaw)
+            ? netDepositsBaselineRaw
+            : (typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
+              ? existing.netDepositsBaseline
+              : null),
           integrationProvider,
           integrationEnabled
         };
@@ -11310,9 +11343,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
       deduped.push(account);
     });
     if (!deduped.some(account => account.id === 'primary')) {
-      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false });
     }
-    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
+    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, netDepositsBaseline: null, integrationProvider: null, integrationEnabled: false }];
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;
