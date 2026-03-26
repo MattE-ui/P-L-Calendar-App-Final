@@ -129,3 +129,24 @@ test('deleting a more recent account close rolls current value back to the lates
   assert.equal(ibkr.currentValue, 6400);
   assert.equal(profile.data.portfolio, 10400);
 });
+
+test('saving account cashflows updates account net deposits and combined net deposits total', async () => {
+  const saveEntry = await authedFetch('/api/pl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: '2026-03-23',
+      value: null,
+      cashOut: 500,
+      accountId: 'ibkr'
+    })
+  });
+  assert.equal(saveEntry.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(ibkr);
+  assert.equal(ibkr.currentNetDeposits, 4000);
+  assert.equal(profile.data.netDepositsTotal, 7000);
+});
