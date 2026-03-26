@@ -665,6 +665,47 @@ function getValuesForSummary() {
     .map(item => ({ change: item.change, pct: item.pct, cashFlow: item.cashFlow ?? 0 }));
 }
 
+function isMobileCalendarLayout() {
+  return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
+}
+
+function getMonthSummary(date) {
+  const days = getDaysInMonth(date)
+    .map(getDailyEntry)
+    .filter(Boolean);
+  const changeEntries = days.filter(entry => entry.change !== null && entry.change !== undefined);
+  const totalPnl = changeEntries.reduce((sum, entry) => sum + (entry.change ?? 0), 0);
+  const totalTrades = days.reduce((sum, entry) => sum + (entry.tradesCount ?? 0), 0);
+  return {
+    monthLabel: startOfMonth(date).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+    totalPnl,
+    monthlyPct: changeEntries.length ? computeChangePercentFromLatestPortfolio(totalPnl) : null,
+    tradeCount: totalTrades,
+    recordedDays: days.length
+  };
+}
+
+function renderMobileMonthSummary() {
+  const summaryEl = $('#mobile-month-summary');
+  if (!summaryEl) return;
+  const show = state.view === 'day' && isMobileCalendarLayout();
+  summaryEl.classList.toggle('hidden', !show);
+  if (!show) return;
+  const summary = getMonthSummary(state.selected);
+  const pnlClass = summary.totalPnl > 0 ? 'positive' : summary.totalPnl < 0 ? 'negative' : '';
+  const pctText = summary.monthlyPct === null ? '—' : formatPercent(summary.monthlyPct);
+  const pnlText = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(summary.totalPnl);
+  summaryEl.innerHTML = `
+    <div class="mobile-month-summary-head">${summary.monthLabel}</div>
+    <div class="mobile-month-summary-main ${pnlClass}">${pnlText}</div>
+    <div class="mobile-month-summary-meta">
+      <span>Monthly %: ${pctText}</span>
+      <span>Trades: ${summary.tradeCount}</span>
+      <span>Days: ${summary.recordedDays}</span>
+    </div>
+  `;
+}
+
 function getAllEntries() {
   const entries = [];
   Object.entries(state.data || {}).forEach(([, days]) => {
@@ -2671,13 +2712,16 @@ function renderWeek() {
 function renderMonthGrid(targetDate, grid) {
   if (!grid) return;
   grid.innerHTML = '';
-  const headers = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  headers.forEach(day => {
-    const h = document.createElement('div');
-    h.className = 'dow';
-    h.textContent = day;
-    grid.appendChild(h);
-  });
+  const mobileLayout = isMobileCalendarLayout();
+  if (!mobileLayout) {
+    const headers = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    headers.forEach(day => {
+      const h = document.createElement('div');
+      h.className = 'dow';
+      h.textContent = day;
+      grid.appendChild(h);
+    });
+  }
 
   const first = startOfMonth(targetDate);
   const startDay = (first.getDay() + 6) % 7;
@@ -2688,8 +2732,9 @@ function renderMonthGrid(targetDate, grid) {
 
   for (let i = 0; i < startDay; i++) {
     const placeholder = document.createElement('div');
-    placeholder.className = 'cell';
+    placeholder.className = mobileLayout ? 'cell mobile-day placeholder' : 'cell';
     placeholder.style.visibility = 'hidden';
+    placeholder.setAttribute('aria-hidden', 'true');
     grid.appendChild(placeholder);
   }
 
@@ -2704,7 +2749,7 @@ function renderMonthGrid(targetDate, grid) {
     const pct = entry?.pct ?? null;
     const tradeCount = entry?.tradesCount ?? 0;
     const cell = document.createElement('div');
-    cell.className = 'cell';
+    cell.className = mobileLayout ? 'cell mobile-day' : 'cell';
     const isFirstEntry = firstEntryKey && key === firstEntryKey;
     if (isFirstEntry) {
       cell.classList.add('first-entry');
@@ -2713,21 +2758,83 @@ function renderMonthGrid(targetDate, grid) {
       if (change > 0) cell.classList.add('profit');
       if (change < 0) cell.classList.add('loss');
     }
-    const changeText = state.safeScreenshot
-      ? ''
-      : (change === null
-        ? 'Δ —'
-        : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`);
-    const pctDisplay = pct === null ? '—' : formatPercent(pct);
-    const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
-    cell.innerHTML = `
-      <div class="date">${day}</div>
-      <div class="val">${state.safeScreenshot ? pctDisplay : (closing === null ? '—' : formatCurrency(closing))}</div>
-      <div class="pct">${changeText}</div>
-      ${tradeHtml}
-    `;
-    cell.addEventListener('click', () => openEntryModal(key, entry));
+    const intensity = change === null || change === 0
+      ? 0
+      : Math.min(1, Math.abs(computeChangePercentFromLatestPortfolio(change) || 0) / 2.5);
+    cell.style.setProperty('--day-intensity', intensity.toFixed(3));
+    if (mobileLayout) {
+      const compactPnl = state.safeScreenshot
+        ? (pct === null ? '—' : formatPercent(pct))
+        : (change === null ? '—' : formatSignedCurrency(change));
+      const pctHtml = pct === null ? '' : `<div class="mobile-day-pct">${formatPercent(pct)}</div>`;
+      cell.innerHTML = `
+        <div class="mobile-day-date">${day}</div>
+        <div class="mobile-day-value">${compactPnl}</div>
+        ${pctHtml}
+      `;
+      cell.addEventListener('click', () => openMobileDayDetail(key, entry));
+    } else {
+      const changeText = state.safeScreenshot
+        ? ''
+        : (change === null
+          ? 'Δ —'
+          : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`);
+      const pctDisplay = pct === null ? '—' : formatPercent(pct);
+      const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
+      cell.innerHTML = `
+        <div class="date">${day}</div>
+        <div class="val">${state.safeScreenshot ? pctDisplay : (closing === null ? '—' : formatCurrency(closing))}</div>
+        <div class="pct">${changeText}</div>
+        ${tradeHtml}
+      `;
+      cell.addEventListener('click', () => openEntryModal(key, entry));
+    }
+    cell.setAttribute('aria-label', `${new Date(key).toLocaleDateString('en-GB')} ${change === null ? 'No PnL' : formatSignedCurrency(change)} ${tradeCount ? `${tradeCount} trades` : 'No trades'}`);
     grid.appendChild(cell);
+  }
+}
+
+function openMobileDayDetail(dateStr, existingEntry = null) {
+  const modal = $('#mobile-day-modal');
+  if (!modal) return openEntryModal(dateStr, existingEntry);
+  const entry = existingEntry ?? getDailyEntry(new Date(dateStr));
+  const title = $('#mobile-day-title');
+  const pnl = $('#mobile-day-pnl');
+  const metrics = $('#mobile-day-metrics');
+  if (title) {
+    title.textContent = new Date(dateStr).toLocaleDateString('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  }
+  const pnlValue = state.safeScreenshot
+    ? SAFE_SCREENSHOT_LABEL
+    : (entry?.change === null || entry?.change === undefined ? 'No PnL data' : formatSignedCurrency(entry.change));
+  if (pnl) {
+    pnl.textContent = `PnL: ${pnlValue}`;
+    pnl.classList.toggle('positive', (entry?.change ?? 0) > 0);
+    pnl.classList.toggle('negative', (entry?.change ?? 0) < 0);
+  }
+  const pctText = entry?.pct === null || entry?.pct === undefined ? '—' : formatPercent(entry.pct);
+  const closingText = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (entry?.closing === null || entry?.closing === undefined ? '—' : formatCurrency(entry.closing));
+  const tradeCount = entry?.tradesCount ?? 0;
+  if (metrics) {
+    metrics.innerHTML = `
+      <div><span>Portfolio value</span><strong>${closingText}</strong></div>
+      <div><span>Daily return</span><strong>${pctText}</strong></div>
+      <div><span>Trades</span><strong>${tradeCount}</strong></div>
+      <div><span>Cash flow</span><strong>${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(entry?.cashFlow ?? 0)}</strong></div>
+    `;
+  }
+  modal.classList.remove('hidden');
+  const editBtn = $('#mobile-day-edit-btn');
+  if (editBtn) {
+    editBtn.onclick = () => {
+      modal.classList.add('hidden');
+      openEntryModal(dateStr, entry);
+    };
   }
 }
 
@@ -2899,6 +3006,7 @@ function render() {
   }
 
   renderSummary();
+  renderMobileMonthSummary();
   syncActiveTradesHeight();
 }
 
@@ -3557,6 +3665,12 @@ function bindControls() {
   $('#close-profit-btn')?.addEventListener('click', () => {
     $('#profit-modal')?.classList.add('hidden');
   });
+  $('#mobile-day-close-btn')?.addEventListener('click', () => {
+    $('#mobile-day-modal')?.classList.add('hidden');
+  });
+  $('#mobile-day-dismiss-btn')?.addEventListener('click', () => {
+    $('#mobile-day-modal')?.classList.add('hidden');
+  });
 
   $('#close-edit-trade-btn')?.addEventListener('click', () => {
     $('#edit-trade-modal')?.classList.add('hidden');
@@ -4007,6 +4121,7 @@ function bindControls() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       $('#profit-modal')?.classList.add('hidden');
+      $('#mobile-day-modal')?.classList.add('hidden');
       $('#edit-trade-modal')?.classList.add('hidden');
       $('#close-trade-modal')?.classList.add('hidden');
       closeShareCardModal();

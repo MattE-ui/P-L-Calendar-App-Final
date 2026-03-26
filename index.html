@@ -159,6 +159,7 @@
             <h2 id="title"></h2>
             <div id="avg" class="avg"></div>
           </section>
+          <section id="mobile-month-summary" class="mobile-month-summary hidden" aria-live="polite"></section>
 
           <section id="grid" class="grid"></section>
         </div>
@@ -311,6 +312,21 @@
         <button id="save-profit-btn" class="primary">Save</button>
         <button id="delete-profit-btn" class="danger">Delete</button>
         <button id="close-profit-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mobile-day-modal" class="modal hidden mobile-day-modal">
+    <div class="modal-card mobile-day-card">
+      <div class="modal-header">
+        <h3 id="mobile-day-title"></h3>
+        <button id="mobile-day-close-btn" class="ghost close-btn" aria-label="Close day details">✕</button>
+      </div>
+      <div id="mobile-day-pnl" class="mobile-day-pnl"></div>
+      <div id="mobile-day-metrics" class="mobile-day-metrics"></div>
+      <div class="row mobile-day-actions">
+        <button id="mobile-day-edit-btn" class="primary">Edit day details</button>
+        <button id="mobile-day-dismiss-btn" class="ghost">Close</button>
       </div>
     </div>
   </div>
