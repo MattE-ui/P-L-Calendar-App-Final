@@ -11078,12 +11078,27 @@ app.post('/api/profile', auth, (req,res)=>{
       if (!Number.isFinite(currentNetDeposits)) {
         return res.status(400).json({ error: `Invalid net deposits for account ${label || id}.` });
       }
+      const existing = existingById.get(id) || {};
+      const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
+      const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
+        ? integrationProviderRaw
+        : (existing.integrationProvider || null);
+      const existingNetDeposits = Number(existing.currentNetDeposits) || 0;
+      const existingBaseline = typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
+        ? existing.netDepositsBaseline
+        : null;
+      let nextBaseline = existingBaseline;
+      if (integrationProvider && currentNetDeposits !== existingNetDeposits) {
+        const historyNet = computeAccountNetDepositsFromHistory(history, id);
+        nextBaseline = currentNetDeposits - historyNet;
+      }
       nextAccounts.push({
-        ...(existingById.get(id) || {}),
+        ...existing,
         id,
         label,
         currentValue,
-        currentNetDeposits
+        currentNetDeposits,
+        netDepositsBaseline: nextBaseline
       });
     }
     if (!nextAccounts.some(account => account.id === 'primary')) {
@@ -11291,6 +11306,8 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+  const history = ensurePortfolioHistory(user);
+  normalizePortfolioHistory(user);
   if (typeof req.body?.enabled === 'boolean') {
     user.multiTradingAccountsEnabled = req.body.enabled;
   }
@@ -11316,20 +11333,28 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const integrationEnabled = integrationProvider
           ? (hasExplicitEnabled ? account.integrationEnabled : existing.integrationEnabled !== false)
           : false;
+        const existingNetDeposits = Number(existing.currentNetDeposits) || 0;
+        const nextCurrentNetDeposits = Number.isFinite(currentNetDepositsRaw)
+          ? currentNetDepositsRaw
+          : existingNetDeposits;
+        const existingBaseline = typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
+          ? existing.netDepositsBaseline
+          : null;
+        let nextNetDepositsBaseline = existingBaseline;
+        if (integrationProvider && Number.isFinite(currentNetDepositsRaw) && nextCurrentNetDeposits !== existingNetDeposits) {
+          const historyNet = computeAccountNetDepositsFromHistory(history, id);
+          nextNetDepositsBaseline = nextCurrentNetDeposits - historyNet;
+        }
         return {
           id,
           label,
           currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0
             ? currentValueRaw
             : (Number(existing.currentValue) || 0),
-          currentNetDeposits: Number.isFinite(currentNetDepositsRaw)
-            ? currentNetDepositsRaw
-            : (Number(existing.currentNetDeposits) || 0),
+          currentNetDeposits: nextCurrentNetDeposits,
           netDepositsBaseline: Number.isFinite(netDepositsBaselineRaw)
             ? netDepositsBaselineRaw
-            : (typeof existing.netDepositsBaseline === 'number' && Number.isFinite(existing.netDepositsBaseline)
-              ? existing.netDepositsBaseline
-              : null),
+            : nextNetDepositsBaseline,
           integrationProvider,
           integrationEnabled
         };
@@ -11357,26 +11382,29 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
     user.portfolioCurrency = 'GBP';
     user.portfolioSource = 'manual';
     user.lastPortfolioSyncAt = new Date().toISOString();
-    user.initialNetDeposits = combinedNetDeposits;
-    const dateKey = currentDateKey();
-    user.netDepositsAnchor = dateKey;
     const history = ensurePortfolioHistory(user);
-    const ym = dateKey.slice(0, 7);
-    history[ym] ||= {};
-    const accountsPayload = {};
-    user.tradingAccounts.forEach(account => {
-      accountsPayload[account.id] = {
-        end: Number(account.currentValue) || 0,
+    const hasHistoryEntries = Object.values(history).some(days => days && Object.keys(days).length > 0);
+    if (!user.profileComplete || !hasHistoryEntries) {
+      user.initialNetDeposits = combinedNetDeposits;
+      const dateKey = currentDateKey();
+      user.netDepositsAnchor = dateKey;
+      const ym = dateKey.slice(0, 7);
+      history[ym] ||= {};
+      const accountsPayload = {};
+      user.tradingAccounts.forEach(account => {
+        accountsPayload[account.id] = {
+          end: Number(account.currentValue) || 0,
+          cashIn: 0,
+          cashOut: 0
+        };
+      });
+      history[ym][dateKey] = {
+        end: combinedPortfolio,
         cashIn: 0,
-        cashOut: 0
+        cashOut: 0,
+        accounts: accountsPayload
       };
-    });
-    history[ym][dateKey] = {
-      end: combinedPortfolio,
-      cashIn: 0,
-      cashOut: 0,
-      accounts: accountsPayload
-    };
+    }
     user.profileComplete = true;
   }
   saveDB(db);

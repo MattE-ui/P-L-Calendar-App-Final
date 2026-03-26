@@ -213,3 +213,47 @@ test('profile reconciliation applies historical account withdrawals to integrate
   assert.equal(t212.currentNetDeposits, 14500);
   assert.equal(profile.data.netDepositsTotal, 19000);
 });
+
+test('editing integrated account net deposits sets a new baseline reference for future reconciliation', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+    { id: 't212', label: 'Trading 212', currentValue: 12027.74, currentNetDeposits: 9500, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-22': {
+        end: 16027.74,
+        cashIn: 0,
+        cashOut: 500,
+        accounts: {
+          t212: {
+            cashIn: 0,
+            cashOut: 500
+          }
+        }
+      }
+    }
+  };
+  saveDB(db);
+
+  const saveAccounts = await authedFetch('/api/account/trading-accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      accounts: [
+        { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+        { id: 't212', label: 'Trading 212', currentValue: 12027.74, currentNetDeposits: 14500, integrationEnabled: true, integrationProvider: 'trading212' }
+      ]
+    })
+  });
+  assert.equal(saveAccounts.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(t212);
+  assert.equal(t212.currentNetDeposits, 14500);
+  assert.equal(profile.data.netDepositsTotal, 19000);
+});
