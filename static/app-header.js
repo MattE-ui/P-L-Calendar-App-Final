@@ -31,24 +31,56 @@
       <a class="app-shell-brand" href="/" aria-label="Veracity dashboard home">
         <img class="app-shell-brand__logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
       </a>
-      <nav class="app-shell-nav" aria-label="Primary">
-        ${navItems.map((item) => {
-          const labelHtml = item.key === 'social'
-            ? `${item.label}<span id="social-nav-pending-badge" class="social-nav-pending-badge hidden" aria-live="polite" aria-label="Pending incoming friend requests"></span>`
-            : item.label;
-          return `<a id="${item.key}-btn" class="app-shell-nav__link ${activeKey === item.key ? 'is-active' : ''}" href="${item.href}">${labelHtml}</a>`;
-        }).join('')}
-      </nav>
-      <div class="app-shell-actions">
-        <button id="quick-settings-btn" class="ghost app-shell-action-btn" type="button">Settings</button>
-        <button id="devtools-btn" class="ghost app-shell-action-btn is-hidden" type="button">Devtools</button>
-        <button id="logout-btn" class="ghost app-shell-action-btn" type="button">Logout</button>
+      <button id="app-shell-menu-toggle" class="ghost app-shell-menu-toggle" type="button" aria-expanded="false" aria-controls="app-shell-mobile-panel">
+        Menu
+      </button>
+      <div id="app-shell-mobile-panel" class="app-shell-mobile-panel">
+        <nav class="app-shell-nav" aria-label="Primary">
+          ${navItems.map((item) => {
+            const labelHtml = item.key === 'social'
+              ? `${item.label}<span id="social-nav-pending-badge" class="social-nav-pending-badge hidden" aria-live="polite" aria-label="Pending incoming friend requests"></span>`
+              : item.label;
+            return `<a id="${item.key}-btn" class="app-shell-nav__link ${activeKey === item.key ? 'is-active' : ''}" href="${item.href}">${labelHtml}</a>`;
+          }).join('')}
+        </nav>
+        <div class="app-shell-actions">
+          <button id="quick-settings-btn" class="ghost app-shell-action-btn" type="button">Settings</button>
+          <button id="devtools-btn" class="ghost app-shell-action-btn is-hidden" type="button">Devtools</button>
+          <button id="logout-btn" class="ghost app-shell-action-btn" type="button">Logout</button>
+        </div>
       </div>
     </div>
   `;
 
   document.body.prepend(header);
   document.body.classList.add('with-app-shell-header');
+
+  const menuToggle = document.getElementById('app-shell-menu-toggle');
+  const menuPanel = document.getElementById('app-shell-mobile-panel');
+
+  function closeMobileMenu() {
+    if (!menuToggle || !menuPanel) return;
+    menuToggle.setAttribute('aria-expanded', 'false');
+    menuPanel.classList.remove('is-open');
+    document.body.classList.remove('app-shell-mobile-menu-open');
+  }
+
+  if (menuToggle && menuPanel) {
+    menuToggle.addEventListener('click', () => {
+      const willOpen = menuToggle.getAttribute('aria-expanded') !== 'true';
+      menuToggle.setAttribute('aria-expanded', String(willOpen));
+      menuPanel.classList.toggle('is-open', willOpen);
+      document.body.classList.toggle('app-shell-mobile-menu-open', willOpen);
+    });
+
+    menuPanel.addEventListener('click', (event) => {
+      if (event.target.closest('a,button')) closeMobileMenu();
+    });
+
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 760) closeMobileMenu();
+    });
+  }
 })();
 
 (function initFriendRequestAlertPolling() {
