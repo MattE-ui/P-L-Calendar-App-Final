@@ -129,3 +129,131 @@ test('deleting a more recent account close rolls current value back to the lates
   assert.equal(ibkr.currentValue, 6400);
   assert.equal(profile.data.portfolio, 10400);
 });
+
+test('saving account cashflows updates account net deposits and combined net deposits total', async () => {
+  const saveEntry = await authedFetch('/api/pl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: '2026-03-23',
+      value: null,
+      cashOut: 500,
+      accountId: 'ibkr'
+    })
+  });
+  assert.equal(saveEntry.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(ibkr);
+  assert.equal(ibkr.currentNetDeposits, 4000);
+  assert.equal(profile.data.netDepositsTotal, 7000);
+});
+
+test('profile backfills legacy aggregate cashflows into the integrated account once', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000, integrationEnabled: false, integrationProvider: null },
+    { id: 'ibkr', label: 'IBKR', currentValue: 6500, currentNetDeposits: 4500, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-19': {
+        end: 10500,
+        cashIn: 0,
+        cashOut: 500
+      }
+    }
+  };
+  saveDB(db);
+
+  const firstProfile = await authedFetch('/api/profile');
+  assert.equal(firstProfile.res.status, 200);
+  const firstIntegrated = firstProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(firstIntegrated);
+  assert.equal(firstIntegrated.currentNetDeposits, 4000);
+  assert.equal(firstProfile.data.netDepositsTotal, 7000);
+
+  const secondProfile = await authedFetch('/api/profile');
+  assert.equal(secondProfile.res.status, 200);
+  const secondIntegrated = secondProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(secondIntegrated);
+  assert.equal(secondIntegrated.currentNetDeposits, 4000);
+  assert.equal(secondProfile.data.netDepositsTotal, 7000);
+});
+
+test('profile reconciliation applies historical account withdrawals to integrated account net deposits', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+    { id: 't212', label: 'Trading 212', currentValue: 6500, currentNetDeposits: 15000, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-22': {
+        end: 10500,
+        cashIn: 0,
+        cashOut: 500,
+        accounts: {
+          t212: {
+            cashIn: 0,
+            cashOut: 500
+          }
+        }
+      }
+    }
+  };
+  saveDB(db);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(t212);
+  assert.equal(t212.currentNetDeposits, 14500);
+  assert.equal(profile.data.netDepositsTotal, 19000);
+});
+
+test('editing integrated account net deposits sets a new baseline reference for future reconciliation', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+    { id: 't212', label: 'Trading 212', currentValue: 12027.74, currentNetDeposits: 9500, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-22': {
+        end: 16027.74,
+        cashIn: 0,
+        cashOut: 500,
+        accounts: {
+          t212: {
+            cashIn: 0,
+            cashOut: 500
+          }
+        }
+      }
+    }
+  };
+  saveDB(db);
+
+  const saveAccounts = await authedFetch('/api/account/trading-accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      accounts: [
+        { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 4500, integrationEnabled: false, integrationProvider: null },
+        { id: 't212', label: 'Trading 212', currentValue: 12027.74, currentNetDeposits: 14500, integrationEnabled: true, integrationProvider: 'trading212' }
+      ]
+    })
+  });
+  assert.equal(saveAccounts.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const t212 = profile.data.tradingAccounts.find(account => account.id === 't212');
+  assert.ok(t212);
+  assert.equal(t212.currentNetDeposits, 14500);
+  assert.equal(profile.data.netDepositsTotal, 19000);
+});
