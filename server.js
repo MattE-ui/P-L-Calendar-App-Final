@@ -5011,6 +5011,56 @@ function findLatestAccountClosingValue(history, accountId) {
   return Number.isFinite(latestValue) ? latestValue : null;
 }
 
+function computeAccountNetDepositsFromHistory(history, accountId) {
+  if (!accountId) return 0;
+  let total = 0;
+  for (const days of Object.values(history || {})) {
+    if (!days || typeof days !== 'object') continue;
+    for (const record of Object.values(days || {})) {
+      if (!record || typeof record !== 'object' || record.preBaseline === true) continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      const accountRecord = accountMap[accountId];
+      if (!accountRecord || typeof accountRecord !== 'object') continue;
+      const cashIn = Number(accountRecord.cashIn ?? 0);
+      const cashOut = Number(accountRecord.cashOut ?? 0);
+      total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
+    }
+  }
+  return total;
+}
+
+function backfillMissingAccountCashflowsFromAggregate(history, accountId) {
+  if (!accountId) return { mutated: false, netDelta: 0 };
+  let mutated = false;
+  let netDelta = 0;
+  for (const days of Object.values(history || {})) {
+    if (!days || typeof days !== 'object') continue;
+    for (const record of Object.values(days || {})) {
+      if (!record || typeof record !== 'object' || record.preBaseline === true) continue;
+      const cashInRaw = Number(record.cashIn ?? 0);
+      const cashOutRaw = Number(record.cashOut ?? 0);
+      const cashIn = Number.isFinite(cashInRaw) && cashInRaw > 0 ? cashInRaw : 0;
+      const cashOut = Number.isFinite(cashOutRaw) && cashOutRaw > 0 ? cashOutRaw : 0;
+      if (cashIn === 0 && cashOut === 0) continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (accountMap && Object.keys(accountMap).length > 0) continue;
+      const nextRecord = {
+        cashIn,
+        cashOut
+      };
+      const endRaw = Number(record.end);
+      if (Number.isFinite(endRaw) && endRaw >= 0) {
+        nextRecord.end = endRaw;
+      }
+      record.accounts = { [accountId]: nextRecord };
+      netDelta += cashIn - cashOut;
+      mutated = true;
+    }
+  }
+  return { mutated, netDelta };
+}
+
 function dateKeyInTimezone(timezone, date = new Date()) {
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
@@ -7506,6 +7556,16 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
+    const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
+    if (integratedAccount?.id) {
+      const { mutated: backfilled, netDelta } = backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
+      if (backfilled && netDelta !== 0) {
+        integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + netDelta;
+      }
+    }
+    const integratedAccountNetBefore = integratedAccount?.id
+      ? computeAccountNetDepositsFromHistory(history, integratedAccount.id)
+      : 0;
     let cashIn = Number(existing.cashIn ?? 0);
     let cashOut = Number(existing.cashOut ?? 0);
     const combinedTransactions = fulfilled.flatMap(result => {
@@ -7606,10 +7666,33 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const entry = history[monthKey][item.date] || {};
         const entryCashIn = Number(entry.cashIn ?? 0);
         const entryCashOut = Number(entry.cashOut ?? 0);
+        const entryAccounts = entry.accounts && typeof entry.accounts === 'object'
+          ? { ...entry.accounts }
+          : {};
+        const sourceAccountId = integratedAccount?.id || null;
+        const sourceAccountRecord = sourceAccountId && entryAccounts[sourceAccountId] && typeof entryAccounts[sourceAccountId] === 'object'
+          ? { ...entryAccounts[sourceAccountId] }
+          : {};
+        const sourceCashInRaw = Number(sourceAccountRecord.cashIn ?? 0);
+        const sourceCashOutRaw = Number(sourceAccountRecord.cashOut ?? 0);
+        const sourceCashIn = Number.isFinite(sourceCashInRaw) ? sourceCashInRaw : 0;
+        const sourceCashOut = Number.isFinite(sourceCashOutRaw) ? sourceCashOutRaw : 0;
         if (item.isDepositType) {
           entry.cashIn = entryCashIn + item.amountGBP;
+          if (sourceAccountId) {
+            sourceAccountRecord.cashIn = sourceCashIn + item.amountGBP;
+            sourceAccountRecord.cashOut = sourceCashOut;
+          }
         } else if (item.isWithdrawalType) {
           entry.cashOut = entryCashOut + item.amountGBP;
+          if (sourceAccountId) {
+            sourceAccountRecord.cashIn = sourceCashIn;
+            sourceAccountRecord.cashOut = sourceCashOut + item.amountGBP;
+          }
+        }
+        if (sourceAccountId) {
+          entryAccounts[sourceAccountId] = sourceAccountRecord;
+          entry.accounts = entryAccounts;
         }
         history[monthKey][item.date] = entry;
         if (item.referenceKey) {
@@ -7625,7 +7708,6 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
     }
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
-    const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
       const value = Number(result.snapshot?.portfolioValue);
       return Number.isFinite(value) ? sum + value : sum;
@@ -7653,8 +7735,9 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
       applyAccountAggregatesToHistoryEntry(payload);
       integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
-      const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
-      integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
+      const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
+      const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
+      integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
     }
     if (existing.preBaseline) {
       payload.preBaseline = true;
@@ -8157,6 +8240,9 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
     }
   }
   const integratedAccount = getIntegratedTradingAccount(user, 'ibkr');
+  const integratedAccountNetBefore = integratedAccount?.id
+    ? computeAccountNetDepositsFromHistory(history, integratedAccount.id)
+    : 0;
   const payload = {
     ...existing,
     end: Number.isFinite(nextPortfolio) ? nextPortfolio : existing.end,
@@ -8180,8 +8266,9 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
     carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
     applyAccountAggregatesToHistoryEntry(payload);
     integratedAccount.currentValue = Number.isFinite(nextPortfolio) ? nextPortfolio : (Number(integratedAccount.currentValue) || 0);
-    const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
-    integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
+    const accountNetDeposits = computeAccountNetDepositsFromHistory(history, integratedAccount.id);
+    const accountNetDepositsDelta = accountNetDeposits - integratedAccountNetBefore;
+    integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + accountNetDepositsDelta;
   }
   history[ym][dateKey] = payload;
   if (existing.preBaseline) {
@@ -9050,6 +9137,17 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
   if (normalizePortfolioHistory(user)) mutated = true;
+  const integratedAccounts = Array.isArray(user.tradingAccounts)
+    ? user.tradingAccounts.filter(account => account?.integrationEnabled && account?.integrationProvider)
+    : [];
+  if (integratedAccounts.length === 1) {
+    const integratedAccount = integratedAccounts[0];
+    const { mutated: backfilled, netDelta } = backfillMissingAccountCashflowsFromAggregate(history, integratedAccount.id);
+    if (backfilled) {
+      integratedAccount.currentNetDeposits = (Number(integratedAccount.currentNetDeposits) || 0) + netDelta;
+      mutated = true;
+    }
+  }
   if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   const { baseline, total } = computeNetDepositsTotals(user, history);
   const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
@@ -12188,6 +12286,7 @@ app.post('/api/pl', auth, (req,res)=>{
   const existingAccountRecord = existingAccounts[selectedAccountId] && typeof existingAccounts[selectedAccountId] === 'object'
     ? existingAccounts[selectedAccountId]
     : {};
+  const selectedAccountNetBefore = computeAccountNetDepositsFromHistory(history, selectedAccountId);
   let anchorDate = user.netDepositsAnchor || null;
   if (anchorDate && date < anchorDate) {
     user.netDepositsAnchor = date;
@@ -12279,6 +12378,9 @@ app.post('/api/pl', auth, (req,res)=>{
   if (selectedTradingAccount) {
     const latestAccountClose = findLatestAccountClosingValue(history, selectedAccountId);
     selectedTradingAccount.currentValue = Number.isFinite(latestAccountClose) ? latestAccountClose : 0;
+    const selectedAccountNetAfter = computeAccountNetDepositsFromHistory(history, selectedAccountId);
+    const selectedAccountNetDelta = selectedAccountNetAfter - selectedAccountNetBefore;
+    selectedTradingAccount.currentNetDeposits = (Number(selectedTradingAccount.currentNetDeposits) || 0) + selectedAccountNetDelta;
   }
   const multiEnabled = user.multiTradingAccountsEnabled || tradingAccountsState.accounts.length > 1;
   if (multiEnabled && tradingAccountsState.accounts.length) {

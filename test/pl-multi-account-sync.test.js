@@ -129,3 +129,56 @@ test('deleting a more recent account close rolls current value back to the lates
   assert.equal(ibkr.currentValue, 6400);
   assert.equal(profile.data.portfolio, 10400);
 });
+
+test('saving account cashflows updates account net deposits and combined net deposits total', async () => {
+  const saveEntry = await authedFetch('/api/pl', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: '2026-03-23',
+      value: null,
+      cashOut: 500,
+      accountId: 'ibkr'
+    })
+  });
+  assert.equal(saveEntry.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(ibkr);
+  assert.equal(ibkr.currentNetDeposits, 4000);
+  assert.equal(profile.data.netDepositsTotal, 7000);
+});
+
+test('profile backfills legacy aggregate cashflows into the integrated account once', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].tradingAccounts = [
+    { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000, integrationEnabled: false, integrationProvider: null },
+    { id: 'ibkr', label: 'IBKR', currentValue: 6500, currentNetDeposits: 4500, integrationEnabled: true, integrationProvider: 'trading212' }
+  ];
+  db.users[username].portfolioHistory = {
+    '2026-03': {
+      '2026-03-19': {
+        end: 10500,
+        cashIn: 0,
+        cashOut: 500
+      }
+    }
+  };
+  saveDB(db);
+
+  const firstProfile = await authedFetch('/api/profile');
+  assert.equal(firstProfile.res.status, 200);
+  const firstIntegrated = firstProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(firstIntegrated);
+  assert.equal(firstIntegrated.currentNetDeposits, 4000);
+  assert.equal(firstProfile.data.netDepositsTotal, 7000);
+
+  const secondProfile = await authedFetch('/api/profile');
+  assert.equal(secondProfile.res.status, 200);
+  const secondIntegrated = secondProfile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(secondIntegrated);
+  assert.equal(secondIntegrated.currentNetDeposits, 4000);
+  assert.equal(secondProfile.data.netDepositsTotal, 7000);
+});
