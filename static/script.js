@@ -1355,11 +1355,10 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   compactDirection.textContent = directionLabel;
   compactLeft.append(compactTitle, compactDirection);
 
-  const compactMiddle = createCompactMiddleStack(pnl, pctChange);
-  const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
+  const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  compactRow.append(compactLeft, compactMiddle, compactRight, compactChevron);
+  compactRow.append(compactLeft, compactMetrics, compactChevron);
   compactRow.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -1389,11 +1388,10 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   compactLeftPlaceholder.className = 'trade-left-placeholder';
   compactLeftPlaceholder.setAttribute('aria-hidden', 'true');
 
-  const compactMiddle = createCompactMiddleStack(pnl, pctChange);
-  const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
+  const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  row.append(connector, compactLeftPlaceholder, compactMiddle, compactRight, compactChevron);
+  row.append(connector, compactLeftPlaceholder, compactMetrics, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -1423,11 +1421,10 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   compactDirection.textContent = group.directionLabel;
   compactLeft.append(compactTitle, compactDirection);
 
-  const compactMiddle = createCompactMiddleStack(pnl, pctChange);
-  const compactRight = createCompactRightStack(riskMultipleLabel, riskPctValue);
+  const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
 
-  row.append(compactLeft, compactMiddle, compactRight, compactChevron);
+  row.append(compactLeft, compactMetrics, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -1454,8 +1451,6 @@ function createCompactTitleRow(symbol, stopMissing) {
 }
 
 function createCompactMiddleStack(pnl, pctChange) {
-  const compactMiddle = document.createElement('div');
-  compactMiddle.className = 'trade-compact-middle trade-middle-cell';
   const compactMiddleStack = document.createElement('div');
   compactMiddleStack.className = 'trade-middle-stack';
   const compactPnl = document.createElement('strong');
@@ -1474,28 +1469,40 @@ function createCompactMiddleStack(pnl, pctChange) {
     compactMiddleStack.appendChild(pctSpan);
   }
 
-  compactMiddle.appendChild(compactMiddleStack);
-  return compactMiddle;
+  return compactMiddleStack;
 }
 
 function createCompactRightStack(riskMultipleLabel, riskPctValue) {
-  const compactRight = document.createElement('div');
-  compactRight.className = 'trade-compact-right';
+  const compactBadges = document.createElement('div');
+  compactBadges.className = 'trade-compact-badges';
   const compactR = document.createElement('span');
   compactR.className = 'trade-compact-r';
   compactR.dataset.role = 'trade-compact-r';
   compactR.textContent = riskMultipleLabel;
-  const compactRightStack = document.createElement('div');
-  compactRightStack.className = 'trade-right-stack';
-  compactRightStack.appendChild(compactR);
+  compactBadges.appendChild(compactR);
   if (Number.isFinite(riskPctValue)) {
     const compactRisk = document.createElement('span');
     compactRisk.className = 'trade-badge trade-compact-risk';
     compactRisk.textContent = `Risk ${riskPctValue.toFixed(2)}%`;
-    compactRightStack.appendChild(compactRisk);
+    compactBadges.appendChild(compactRisk);
   }
-  compactRight.appendChild(compactRightStack);
-  return compactRight;
+  return compactBadges;
+}
+
+function createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue) {
+  const cluster = document.createElement('div');
+  cluster.className = 'trade-metrics-cluster';
+
+  const compactMiddle = document.createElement('div');
+  compactMiddle.className = 'trade-compact-middle trade-middle-cell';
+  compactMiddle.appendChild(createCompactMiddleStack(pnl, pctChange));
+
+  const compactRight = document.createElement('div');
+  compactRight.className = 'trade-compact-right';
+  compactRight.appendChild(createCompactRightStack(riskMultipleLabel, riskPctValue));
+
+  cluster.append(compactMiddle, compactRight);
+  return cluster;
 }
 
 function createCompactChevron() {
@@ -2766,12 +2773,20 @@ function renderMonthGrid(targetDate, grid) {
       const compactPnl = state.safeScreenshot
         ? SAFE_SCREENSHOT_LABEL
         : (change === null ? '—' : formatSignedCurrency(change));
+      const compactLength = compactPnl.length;
+      const valueSizeClass = compactLength >= 12
+        ? 'is-xxl'
+        : compactLength >= 10
+          ? 'is-xl'
+          : compactLength >= 8
+            ? 'is-lg'
+            : '';
       const pctText = pct === null ? '—' : formatPercent(pct);
       const pnlClass = change > 0 ? 'positive' : change < 0 ? 'negative' : '';
       const pctClass = pct > 0 ? 'positive' : pct < 0 ? 'negative' : '';
       cell.innerHTML = `
         <div class="mobile-day-date">${day}</div>
-        <div class="mobile-day-value ${pnlClass}">${compactPnl}</div>
+        <div class="mobile-day-value ${pnlClass} ${valueSizeClass}">${compactPnl}</div>
         <div class="mobile-day-pct ${pctClass}">${pctText}</div>
       `;
       cell.addEventListener('click', () => openMobileDayDetail(key, entry));

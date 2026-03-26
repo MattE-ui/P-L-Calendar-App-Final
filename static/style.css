@@ -1815,11 +1815,11 @@ select {
 }
 #active-trades-card .trade-row-grid {
   width: 100%;
-  grid-template-columns: 78px minmax(92px, 1fr) 96px 28px;
+  grid-template-columns: 78px minmax(0, 1fr) 28px;
 }
 #active-trades-card .trade-row-grid-child {
   width: 100%;
-  grid-template-columns: 18px 56px minmax(92px, 1fr) 96px 28px;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) 28px;
 }
 #active-trades-card .trade-tile-warning {
   border: 1px solid rgba(209, 175, 87, 0.45);
@@ -1885,16 +1885,23 @@ select {
 #active-trades-card .trade-compact-direction.mixed {
   color: var(--muted);
 }
+#active-trades-card .trade-metrics-cluster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 #active-trades-card .trade-compact-middle {
   display: flex;
   align-items: center;
-  justify-content: center;
-  justify-self: center;
-  text-align: center;
+  justify-content: flex-end;
+  justify-self: end;
+  text-align: right;
   padding: 0;
   margin: 0;
-  width: 100%;
-  max-width: 140px;
+  width: auto;
+  max-width: min(180px, 100%);
   min-width: 0;
 }
 #active-trades-card .trade-compact-middle * {
@@ -1902,24 +1909,24 @@ select {
 }
 #active-trades-card .trade-middle-cell {
   width: 100%;
-  max-width: 140px;
+  max-width: min(180px, 100%);
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  text-align: center;
+  text-align: right;
   margin: 0;
   padding: 0;
-  justify-self: center;
+  justify-self: end;
 }
 #active-trades-card .trade-middle-stack {
   width: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   line-height: 1.1;
   white-space: nowrap;
 }
@@ -1929,27 +1936,29 @@ select {
   align-items: flex-end;
   justify-content: center;
   justify-self: end;
-  width: 96px;
+  width: auto;
   min-width: 0;
 }
-#active-trades-card .trade-right-stack {
+#active-trades-card .trade-compact-badges {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: flex-end;
-  justify-content: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
-#active-trades-card .trade-right-stack .trade-compact-r,
-#active-trades-card .trade-right-stack .trade-compact-risk {
+#active-trades-card .trade-compact-badges .trade-compact-r,
+#active-trades-card .trade-compact-badges .trade-compact-risk {
   white-space: nowrap;
 }
 #active-trades-card .trade-compact-pnl {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
   line-height: 1;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
 }
 #active-trades-card .trade-compact-pnl.positive { color: var(--positive); }
 #active-trades-card .trade-compact-pnl.negative { color: var(--negative); }
@@ -1958,13 +1967,14 @@ select {
   font-weight: 600;
   opacity: 0.84;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 #active-trades-card .trade-compact-percent.positive { color: var(--positive); }
 #active-trades-card .trade-compact-percent.negative { color: var(--negative); }
 #active-trades-card .trade-compact-r {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  padding: 4px 10px;
+  padding: 4px 8px;
   line-height: 1;
   min-height: unset;
   border-radius: 999px;
@@ -1973,9 +1983,9 @@ select {
   color: var(--text);
 }
 #active-trades-card .trade-compact-risk {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 4px 10px;
+  padding: 4px 8px;
   line-height: 1;
   min-height: unset;
   white-space: nowrap;
@@ -3215,6 +3225,21 @@ textarea {
     white-space: nowrap;
     letter-spacing: -0.01em;
     color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    overflow: hidden;
+  }
+  .mobile-day-value.is-lg {
+    font-size: clamp(9px, 2.45vw, 11px);
+    letter-spacing: -0.015em;
+  }
+  .mobile-day-value.is-xl {
+    font-size: clamp(8.4px, 2.25vw, 10px);
+    letter-spacing: -0.02em;
+  }
+  .mobile-day-value.is-xxl {
+    font-size: clamp(7.8px, 2.05vw, 9px);
+    letter-spacing: -0.025em;
   }
   .mobile-day-pct {
     margin-top: auto;
@@ -3222,6 +3247,8 @@ textarea {
     color: var(--muted);
     line-height: 1;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
   }
   .mobile-day-value.positive,
   .mobile-day-pct.positive { color: #6EE7B7; }
@@ -5365,6 +5392,13 @@ textarea {
     text-align: left;
   }
 
+  #active-trades-card .tool-portfolio-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
   .table-wrapper,
   .investor-table-wrap {
     margin-inline: -4px;
@@ -5372,19 +5406,31 @@ textarea {
   }
 
   #active-trades-card .trade-row-grid {
-    grid-template-columns: minmax(0, 1fr) 92px 24px;
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 45%) 22px;
   }
 
   #active-trades-card .trade-row-grid-child {
-    grid-template-columns: 14px minmax(0, 1fr) 92px 24px;
+    grid-template-columns: 12px minmax(0, 1fr) minmax(132px, 45%) 22px;
   }
 
-  #active-trades-card .trade-compact-middle {
-    justify-self: flex-start;
+  #active-trades-card .trade-metrics-cluster {
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: end;
   }
 
-  #active-trades-card .trade-compact-right {
-    width: 92px;
+  #active-trades-card .trade-compact-pnl {
+    font-size: clamp(13px, 3.9vw, 16px);
+  }
+
+  #active-trades-card .trade-compact-percent {
+    font-size: clamp(9px, 2.8vw, 11px);
+  }
+
+  #active-trades-card .trade-compact-r,
+  #active-trades-card .trade-compact-risk {
+    font-size: 10px;
+    padding: 3px 7px;
   }
 
   .grid.view-month {
@@ -5424,5 +5470,30 @@ textarea {
 
   #view-controls .control-group.end {
     grid-template-columns: 1fr;
+  }
+
+  #active-trades-card .tool-portfolio-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+  }
+
+  #active-trades-card .tool-portfolio {
+    min-width: 0;
+    padding: 7px 8px;
+    text-align: left;
+  }
+
+  #active-trades-card .tool-portfolio span {
+    font-size: 10px;
+    letter-spacing: 0.02em;
+  }
+
+  #active-trades-card .tool-portfolio strong {
+    font-size: clamp(13px, 3.7vw, 16px);
+    line-height: 1.05;
+    white-space: nowrap;
+    margin-top: 3px;
   }
 }
