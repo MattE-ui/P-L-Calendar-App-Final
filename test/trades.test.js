@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const test = require('node:test');
 const assert = require('node:assert');
 
@@ -13,6 +14,7 @@ const username = 'tester';
 const token = 'sessiontoken';
 let server;
 let baseUrl;
+let marketDataServer;
 
 function seedDatabase() {
   fs.rmSync(DATA_FILE, { force: true });
@@ -40,6 +42,8 @@ function seedDatabase() {
 test.beforeEach(() => {
   seedDatabase();
   if (server) server.close();
+  if (marketDataServer) marketDataServer.close();
+  delete process.env.MARKET_DATA_URL;
   server = app.listen(0);
   const port = server.address().port;
   baseUrl = `http://127.0.0.1:${port}`;
@@ -47,6 +51,8 @@ test.beforeEach(() => {
 
 test.after(() => {
   if (server) server.close();
+  if (marketDataServer) marketDataServer.close();
+  delete process.env.MARKET_DATA_URL;
   fs.rmSync(DATA_FILE, { force: true });
 });
 
@@ -217,6 +223,55 @@ test('records partial trims when reducing units and includes trim pnl in final r
   assert.ok(closed);
   assert.equal(closed.status, 'closed');
   assert.equal(closed.realizedPnlGBP, 70);
+});
+
+test('active option trades use option contract quote and never fall back to underlying stock quote', async () => {
+  marketDataServer = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const symbol = url.searchParams.get('symbols');
+    const price = symbol === 'AAPL260619C00195000' ? 0.52 : 75.71;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      quoteResponse: {
+        result: [{
+          symbol,
+          regularMarketPrice: price,
+          currency: 'USD'
+        }]
+      }
+    }));
+  });
+  await new Promise(resolve => marketDataServer.listen(0, resolve));
+  const marketPort = marketDataServer.address().port;
+  process.env.MARKET_DATA_URL = `http://127.0.0.1:${marketPort}/quote`;
+
+  await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 0.33,
+      stop: 0.2,
+      riskPct: 1,
+      date: '2026-03-15',
+      symbol: 'AAPL',
+      assetClass: 'options',
+      optionType: 'call',
+      optionStrike: 195,
+      optionExpiration: '2026-06-19',
+      optionContracts: 2,
+      currency: 'USD'
+    })
+  });
+
+  const { res, data } = await authedFetch('/api/trades/active');
+  assert.equal(res.status, 200);
+  assert.equal(data.trades.length, 1);
+  assert.equal(data.trades[0].assetClass, 'options');
+  assert.equal(data.trades[0].livePrice, 0.52);
+  assert.equal(data.trades[0].liveCurrency, 'USD');
+  assert.equal(data.trades[0].sizeUnits, 200);
+  assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
+  assert.ok(data.trades[0].unrealizedGBP > 0);
 });
 
 test('persists and lists fully closed execution-leg trades', async () => {

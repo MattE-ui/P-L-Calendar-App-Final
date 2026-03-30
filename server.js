@@ -13333,6 +13333,48 @@ async function fetchMarketPrice(symbol) {
   return normalized;
 }
 
+function isOptionsTrade(trade) {
+  return String(trade?.assetClass || '').trim().toLowerCase() === 'options';
+}
+
+function buildOptionContractQuoteSymbol(trade) {
+  if (!isOptionsTrade(trade)) return '';
+  const optionType = String(trade?.optionType || '').trim().toLowerCase();
+  const optionStrike = Number(trade?.optionStrike);
+  const optionExpiration = String(trade?.optionExpiration || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(optionExpiration)) return '';
+  if (!Number.isFinite(optionStrike) || optionStrike <= 0) return '';
+  if (optionType !== 'call' && optionType !== 'put') return '';
+  const parsedFromSymbol = parseIbkrOptionSymbol(trade?.symbol || '');
+  const underlying = String(
+    trade?.underlyingTicker
+    || parsedFromSymbol?.underlyingTicker
+    || trade?.displaySymbol
+    || trade?.symbol
+    || ''
+  ).trim().toUpperCase();
+  if (!underlying) return '';
+  const yymmdd = optionExpiration.replace(/-/g, '').slice(2);
+  const cp = optionType === 'put' ? 'P' : 'C';
+  const strikeScaled = Math.round(optionStrike * 1000);
+  if (!Number.isFinite(strikeScaled) || strikeScaled <= 0) return '';
+  const strikePart = String(strikeScaled).padStart(8, '0');
+  return `${underlying}${yymmdd}${cp}${strikePart}`;
+}
+
+function resolveTradeSizeUnits(trade) {
+  const directSize = Number(trade?.sizeUnits);
+  if (Number.isFinite(directSize) && directSize > 0) return directSize;
+  if (!isOptionsTrade(trade)) return NaN;
+  const contracts = Number(trade?.optionContracts);
+  const multiplierRaw = Number(trade?.optionMultiplier);
+  const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 0 ? multiplierRaw : 100;
+  if (Number.isFinite(contracts) && contracts > 0) {
+    return contracts * multiplier;
+  }
+  return NaN;
+}
+
 async function fetchYahooDayLowForDate(symbol, dateKey) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
@@ -13454,6 +13496,7 @@ async function buildActiveTrades(user, rates = {}) {
   for (const trade of trades) {
     const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
     const quoteSymbol = normalizeTrading212Symbol(symbol);
+    const optionContractSymbol = buildOptionContractQuoteSymbol(trade);
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
     const tradeCurrency = trade.currency || 'GBP';
@@ -13464,6 +13507,10 @@ async function buildActiveTrades(user, rates = {}) {
       if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
         livePrice = Number(trade.lastSyncPrice);
         liveCurrency = tradeCurrency;
+      } else if (optionContractSymbol) {
+        const quote = await fetchMarketPrice(optionContractSymbol);
+        livePrice = quote.price;
+        liveCurrency = quote.currency || liveCurrency;
       } else if (quoteSymbol) {
         const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
@@ -13472,7 +13519,7 @@ async function buildActiveTrades(user, rates = {}) {
     } catch (e) {
       // ignore fetch failures; leave livePrice null
     }
-    const sizeUnits = Number(trade.sizeUnits);
+    const sizeUnits = resolveTradeSizeUnits(trade);
     const entry = Number(trade.entry);
     const direction = trade.direction === 'short' ? 'short' : 'long';
     const slippage = Number(trade.slippage) || 0;
@@ -13535,7 +13582,13 @@ async function buildActiveTrades(user, rates = {}) {
         currentStopStale: trade.currentStopStale === true,
         originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
-        note: trade.note
+        note: trade.note,
+        assetClass: trade.assetClass || 'stocks',
+        optionType: trade.optionType,
+        optionStrike: trade.optionStrike,
+        optionExpiration: trade.optionExpiration,
+        optionContracts: trade.optionContracts,
+        optionMultiplier: trade.optionMultiplier
       });
       continue;
     }
@@ -13633,7 +13686,13 @@ async function buildActiveTrades(user, rates = {}) {
       currentStopStale: trade.currentStopStale === true,
       originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
-        note: trade.note
+        note: trade.note,
+        assetClass: trade.assetClass || 'stocks',
+        optionType: trade.optionType,
+        optionStrike: trade.optionStrike,
+        optionExpiration: trade.optionExpiration,
+        optionContracts: trade.optionContracts,
+        optionMultiplier: trade.optionMultiplier
       });
   }
   return {
