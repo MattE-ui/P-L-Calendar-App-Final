@@ -108,13 +108,38 @@ test('reconcileTrading212HistoricalExits imports partial then full closes idempo
   const first = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
   const trade = user.tradeJournal['2026-02-28'][0];
   assert.equal(first.imported, 2);
+  assert.equal(first.importedFillEvents.length, 2);
+  assert.equal(first.importedFillEvents[0].side, 'SELL');
   assert.equal(trade.status, 'closed');
   assert.equal(trade.sizeUnits, 0);
   assert.equal(trade.executions.filter(leg => leg.side === 'exit').length, 2);
 
   const second = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
   assert.equal(second.imported, 0);
+  assert.equal(second.importedFillEvents.length, 0);
   assert.equal(trade.executions.filter(leg => leg.side === 'exit').length, 2);
+});
+
+test('reconcileTrading212HistoricalExits emits buy fill events even without open trade match', () => {
+  const user = { tradeJournal: {} };
+  const cfg = { historySync: { accounts: {} } };
+  const payload = {
+    orders: [{
+      id: 'buy-1',
+      fillId: 'fill-buy-1',
+      side: 'BUY',
+      status: 'FILLED',
+      quantity: 3,
+      fillPrice: 33.5,
+      filledAt: '2026-03-03T11:00:00Z',
+      instrumentTicker: 'MSFT_US_EQ'
+    }]
+  };
+  const result = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
+  assert.equal(result.imported, 0);
+  assert.equal(result.importedFillEvents.length, 1);
+  assert.equal(result.importedFillEvents[0].fillId, 'fill-buy-1');
+  assert.equal(result.importedFillEvents[0].side, 'BUY');
 });
 
 test('reconcileTrading212HistoricalExits preserves option identity matching', () => {

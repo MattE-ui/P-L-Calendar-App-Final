@@ -12,6 +12,7 @@ const {
   saveDB,
   loadDB,
   buildGroupCurrentPositions,
+  emitTradeGroupAlertFromTrading212Fill,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts
 } = require('../server');
@@ -499,4 +500,38 @@ test('Trading212 delayed alerts send best effort without stop and cancel when po
   assert.equal(db.tradeGroupAlerts[0].stop_price, null);
   const cancelled = db.tradeGroupPendingAlerts.find(item => item.linked_trade_id === 't212-open-3');
   assert.equal(cancelled.status, 'cancelled');
+});
+
+test('Trading212 fill-based leader alerts emit sell metadata and dedupe on fill id', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-fill', leader_user_id: leader, name: 'Fill Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gf-l', group_id: 'g-fill', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gf-m', group_id: 'g-fill', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  const first = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'fill-1',
+    side: 'SELL',
+    ticker: 'AAPL',
+    fillPrice: 120.5,
+    quantity: 2,
+    remainingQuantity: 1,
+    realizedPnlGbp: 40,
+    stopTriggered: true
+  });
+  assert.equal(first.alertsCreated, 1);
+  assert.equal(db.tradeGroupAlerts[0].alert_classification, 'partial_sell');
+  assert.equal(db.tradeGroupAlerts[0].side, 'SELL');
+  assert.equal(db.tradeGroupAlerts[0].stop_triggered, true);
+
+  const second = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'fill-1',
+    side: 'SELL',
+    ticker: 'AAPL',
+    fillPrice: 120.5,
+    quantity: 2
+  });
+  assert.equal(second.alertsCreated, 0);
+  assert.equal(second.duplicates, 1);
 });
