@@ -186,10 +186,7 @@ async function loadTrading212Payloads() {
     const historyOrdersEl = document.getElementById('devtools-history-orders');
     if (historyOrdersEl) {
       const historyOrdersPayload = accounts
-        ? accounts.map(account => ({
-          accountId: account.accountId,
-          historyOrders: account.historyOrders ?? null
-        }))
+        ? accounts
         : (data.historyOrders ?? null);
       historyOrdersEl.textContent = JSON.stringify(historyOrdersPayload, null, 2);
     }
