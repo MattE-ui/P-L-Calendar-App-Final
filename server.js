@@ -15,6 +15,12 @@ try {
 }
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const analytics = require('./lib/analytics');
+const {
+  parseCsvTable,
+  parseIbkrDateTime,
+  parseIbkrNumber,
+  buildIbkrImportFingerprint
+} = require('./lib/ibkrCsvImport');
 
 const TRADE_TYPES = ['scalp', 'day', 'swing', 'position'];
 const ASSET_CLASSES = ['stocks', 'options', 'forex', 'crypto', 'futures', 'other'];
@@ -3665,6 +3671,14 @@ function ensureTradeJournal(user) {
   return user.tradeJournal;
 }
 
+function ensureImportBatches(user) {
+  if (!user) return [];
+  if (!Array.isArray(user.importBatches)) {
+    user.importBatches = [];
+  }
+  return user.importBatches;
+}
+
 function ensureTrading212Config(user) {
   if (!user) return { mutated: false, config: {} };
   let mutated = false;
@@ -4059,6 +4073,35 @@ function ensureUserShape(user, identifier) {
     user.tradeJournal = {};
     mutated = true;
   }
+  if (!Array.isArray(user.importBatches)) {
+    user.importBatches = [];
+    mutated = true;
+  } else {
+    const normalizedBatches = user.importBatches
+      .filter(batch => batch && typeof batch === 'object')
+      .map((batch) => {
+        const statusRaw = String(batch.status || '').trim().toLowerCase();
+        const status = ['completed', 'rolled_back', 'failed'].includes(statusRaw) ? statusRaw : 'completed';
+        return {
+          id: typeof batch.id === 'string' ? batch.id : crypto.randomUUID(),
+          broker: typeof batch.broker === 'string' ? batch.broker : 'IBKR',
+          sourceType: typeof batch.sourceType === 'string' ? batch.sourceType : 'csv',
+          originalFilename: typeof batch.originalFilename === 'string' ? batch.originalFilename : 'upload.csv',
+          importedAt: typeof batch.importedAt === 'string' ? batch.importedAt : new Date().toISOString(),
+          removedAt: typeof batch.removedAt === 'string' ? batch.removedAt : null,
+          status,
+          totalRows: Number.isFinite(Number(batch.totalRows)) ? Number(batch.totalRows) : 0,
+          importedCount: Number.isFinite(Number(batch.importedCount)) ? Number(batch.importedCount) : 0,
+          duplicateCount: Number.isFinite(Number(batch.duplicateCount)) ? Number(batch.duplicateCount) : 0,
+          skippedCashCount: Number.isFinite(Number(batch.skippedCashCount)) ? Number(batch.skippedCashCount) : 0,
+          invalidCount: Number.isFinite(Number(batch.invalidCount)) ? Number(batch.invalidCount) : 0,
+          removedCount: Number.isFinite(Number(batch.removedCount)) ? Number(batch.removedCount) : 0,
+          metadata: batch.metadata && typeof batch.metadata === 'object' ? batch.metadata : {}
+        };
+      });
+    if (normalizedBatches.length !== user.importBatches.length) mutated = true;
+    user.importBatches = normalizedBatches;
+  }
   if (!user.uiPrefs || typeof user.uiPrefs !== 'object') {
     user.uiPrefs = {};
     mutated = true;
@@ -4411,6 +4454,42 @@ function normalizeTradeJournal(user) {
         createdAt,
         originalStopPrice
       };
+      const brokerRaw = typeof trade.broker === 'string' ? trade.broker.trim().toUpperCase() : '';
+      if (brokerRaw) normalizedTrade.broker = brokerRaw;
+      const brokerTradeIdRaw = typeof trade.brokerTradeId === 'string' ? trade.brokerTradeId.trim() : '';
+      if (brokerTradeIdRaw) normalizedTrade.brokerTradeId = brokerTradeIdRaw;
+      const importFingerprintRaw = typeof trade.importFingerprint === 'string' ? trade.importFingerprint.trim() : '';
+      if (importFingerprintRaw) normalizedTrade.importFingerprint = importFingerprintRaw;
+      const importSourceRaw = typeof trade.importSource === 'string' ? trade.importSource.trim() : '';
+      if (importSourceRaw) normalizedTrade.importSource = importSourceRaw;
+      const importBatchIdRaw = typeof trade.importBatchId === 'string' ? trade.importBatchId.trim() : '';
+      if (importBatchIdRaw) normalizedTrade.importBatchId = importBatchIdRaw;
+      const importedAtRaw = typeof trade.importedAt === 'string' ? trade.importedAt.trim() : '';
+      if (importedAtRaw) normalizedTrade.importedAt = importedAtRaw;
+      const rawImportRow = trade.rawImportRow && typeof trade.rawImportRow === 'object' ? trade.rawImportRow : null;
+      if (rawImportRow) normalizedTrade.rawImportRow = rawImportRow;
+      const ibkrAccountIdRaw = typeof trade.ibkrAccountId === 'string' ? trade.ibkrAccountId.trim() : '';
+      if (ibkrAccountIdRaw) normalizedTrade.ibkrAccountId = ibkrAccountIdRaw;
+      const ibkrTransactionTypeRaw = typeof trade.ibkrTransactionType === 'string' ? trade.ibkrTransactionType.trim() : '';
+      if (ibkrTransactionTypeRaw) normalizedTrade.ibkrTransactionType = ibkrTransactionTypeRaw;
+      const ibkrTradeDateTimeRaw = typeof trade.ibkrTradeDateTime === 'string' ? trade.ibkrTradeDateTime.trim() : '';
+      if (ibkrTradeDateTimeRaw) normalizedTrade.ibkrTradeDateTime = ibkrTradeDateTimeRaw;
+      const ibkrAssetClassRaw = typeof trade.ibkrAssetClass === 'string' ? trade.ibkrAssetClass.trim() : '';
+      if (ibkrAssetClassRaw) normalizedTrade.ibkrAssetClass = ibkrAssetClassRaw;
+      const ibkrBuySellRaw = typeof trade.ibkrBuySell === 'string' ? trade.ibkrBuySell.trim() : '';
+      if (ibkrBuySellRaw) normalizedTrade.ibkrBuySell = ibkrBuySellRaw;
+      const ibkrExchangeRaw = typeof trade.ibkrExchange === 'string' ? trade.ibkrExchange.trim() : '';
+      if (ibkrExchangeRaw) normalizedTrade.ibkrExchange = ibkrExchangeRaw;
+      const ibkrDescriptionRaw = typeof trade.ibkrDescription === 'string' ? trade.ibkrDescription.trim() : '';
+      if (ibkrDescriptionRaw) normalizedTrade.ibkrDescription = ibkrDescriptionRaw;
+      const ibkrOpenCloseRaw = typeof trade.ibkrOpenCloseIndicator === 'string' ? trade.ibkrOpenCloseIndicator.trim() : '';
+      if (ibkrOpenCloseRaw) normalizedTrade.ibkrOpenCloseIndicator = ibkrOpenCloseRaw;
+      const ibkrCommissionRaw = Number(trade.ibkrCommission);
+      if (Number.isFinite(ibkrCommissionRaw)) normalizedTrade.ibkrCommission = ibkrCommissionRaw;
+      const ibkrNetCashRaw = Number(trade.ibkrNetCash);
+      if (Number.isFinite(ibkrNetCashRaw)) normalizedTrade.ibkrNetCash = ibkrNetCashRaw;
+      const ibkrMultiplierRaw = Number(trade.ibkrMultiplier);
+      if (Number.isFinite(ibkrMultiplierRaw) && ibkrMultiplierRaw > 0) normalizedTrade.ibkrMultiplier = ibkrMultiplierRaw;
       if (partialCloses.length) {
         normalizedTrade.partialCloses = partialCloses;
       }
@@ -13032,6 +13111,331 @@ app.get('/api/trades/export', auth, async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="trades.csv"');
   res.send(csv);
+});
+
+function parseMultipartFileUpload(req) {
+  const contentType = String(req.headers['content-type'] || '');
+  if (!contentType.toLowerCase().includes('multipart/form-data')) {
+    return null;
+  }
+  const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+  if (!boundaryMatch) {
+    throw new Error('Upload boundary missing.');
+  }
+  const boundary = boundaryMatch[1].trim().replace(/^"|"$/g, '');
+  const raw = Buffer.isBuffer(req.body) ? req.body.toString('latin1') : '';
+  if (!raw) {
+    throw new Error('Uploaded file is empty.');
+  }
+  const chunks = raw.split(`--${boundary}`);
+  for (const chunkRaw of chunks) {
+    const chunk = chunkRaw.trim();
+    if (!chunk || chunk === '--') continue;
+    const splitAt = chunk.indexOf('\r\n\r\n');
+    if (splitAt < 0) continue;
+    const headerText = chunk.slice(0, splitAt);
+    let bodyText = chunk.slice(splitAt + 4);
+    if (bodyText.endsWith('\r\n')) {
+      bodyText = bodyText.slice(0, -2);
+    }
+    const dispositionLine = headerText
+      .split('\r\n')
+      .find(line => /^content-disposition:/i.test(line));
+    if (!dispositionLine) continue;
+    if (!/name="file"/i.test(dispositionLine)) continue;
+    const filenameMatch = dispositionLine.match(/filename="([^"]*)"/i);
+    const filename = filenameMatch ? filenameMatch[1] : 'upload.csv';
+    return {
+      filename,
+      text: Buffer.from(bodyText, 'latin1').toString('utf8')
+    };
+  }
+  throw new Error('No file field named "file" found in upload.');
+}
+
+function mapIbkrAssetClassToTradeClass(assetClass) {
+  const normalized = String(assetClass || '').trim().toUpperCase();
+  if (normalized === 'STK') return 'stocks';
+  if (normalized === 'OPT') return 'options';
+  if (normalized === 'FUT') return 'futures';
+  if (normalized === 'CASH' || normalized === 'FX') return 'forex';
+  if (normalized === 'CRYPTO') return 'crypto';
+  return 'other';
+}
+
+app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  try {
+    const uploaded = parseMultipartFileUpload(req)
+      || {
+        filename: 'upload.csv',
+        text: Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '')
+      };
+    if (!uploaded.text || !uploaded.text.trim()) {
+      return res.status(400).json({ error: 'Uploaded file is empty.' });
+    }
+    if (!/\.csv$/i.test(uploaded.filename) && !String(req.headers['content-type'] || '').includes('text/csv')) {
+      return res.status(400).json({ error: 'Please upload a CSV file.' });
+    }
+    const table = parseCsvTable(uploaded.text);
+    if (!Array.isArray(table.rows) || !table.rows.length || !table.headers.length) {
+      return res.status(400).json({ error: 'Malformed CSV: header row missing or no data rows found.' });
+    }
+    const hasTradeColumns = table.headers.includes('AssetClass')
+      && (table.headers.includes('DateTime') || table.headers.includes('TradeDate'))
+      && table.headers.includes('TradePrice');
+    if (!hasTradeColumns) {
+      return res.status(400).json({ error: 'CSV does not appear to be an IBKR trade export.' });
+    }
+    const db = loadDB();
+    const user = db.users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    ensureUserShape(user, req.username);
+    normalizeTradeJournal(user);
+    const journal = ensureTradeJournal(user);
+    const existingTradeIds = new Set();
+    const existingFingerprints = new Set();
+    for (const items of Object.values(journal)) {
+      for (const trade of (items || [])) {
+        if (!trade || typeof trade !== 'object') continue;
+        if (String(trade.broker || '').toUpperCase() !== 'IBKR') continue;
+        const brokerTradeId = String(trade.brokerTradeId || '').trim();
+        if (brokerTradeId) existingTradeIds.add(`IBKR:${brokerTradeId}`);
+        const fingerprint = String(trade.importFingerprint || '').trim();
+        if (fingerprint) existingFingerprints.add(`IBKR:${fingerprint}`);
+      }
+    }
+
+    const importBatches = ensureImportBatches(user);
+    const dryRunRows = [];
+    const errors = [];
+    let skippedNonTradeRows = 0;
+    let skippedCashRows = 0;
+    let invalidRows = 0;
+    for (let index = 0; index < table.rows.length; index += 1) {
+      const row = table.rows[index];
+      if (!row || typeof row !== 'object') {
+        invalidRows += 1;
+        errors.push({ rowNumber: index + 2, error: 'Row is not a valid CSV record.' });
+        continue;
+      }
+      const assetClassRaw = String(row.AssetClass || '').trim().toUpperCase();
+      const transactionType = String(row.TransactionType || '').trim();
+      if (assetClassRaw === 'CASH') {
+        skippedCashRows += 1;
+        continue;
+      }
+      if (transactionType !== 'ExchTrade') {
+        skippedNonTradeRows += 1;
+        continue;
+      }
+      const tradeDateRaw = row.DateTime || row.TradeDate || '';
+      const parsedDate = parseIbkrDateTime(tradeDateRaw);
+      const quantityRaw = parseIbkrNumber(row.Quantity);
+      const tradePriceRaw = parseIbkrNumber(row.TradePrice);
+      const buySell = String(row['Buy/Sell'] || '').trim().toUpperCase();
+      const symbolRaw = String(row.Symbol || '').trim().toUpperCase();
+      const description = String(row.Description || '').trim();
+      const brokerTradeId = String(row.TradeID || '').trim();
+      if (!parsedDate || !Number.isFinite(quantityRaw) || quantityRaw === 0 || !Number.isFinite(tradePriceRaw) || tradePriceRaw <= 0) {
+        invalidRows += 1;
+        errors.push({ rowNumber: index + 2, error: 'Missing or invalid DateTime/Quantity/TradePrice.' });
+        continue;
+      }
+      if (!symbolRaw) {
+        invalidRows += 1;
+        errors.push({ rowNumber: index + 2, error: 'Missing symbol.' });
+        continue;
+      }
+      if (buySell !== 'BUY' && buySell !== 'SELL') {
+        invalidRows += 1;
+        errors.push({ rowNumber: index + 2, error: 'Buy/Sell must be BUY or SELL.' });
+        continue;
+      }
+      const fingerprint = buildIbkrImportFingerprint({
+        accountId: row.ClientAccountID,
+        symbol: symbolRaw,
+        description,
+        tradeDateTime: parsedDate.iso,
+        quantity: quantityRaw,
+        tradePrice: tradePriceRaw,
+        buySell,
+        assetClass: assetClassRaw
+      });
+      if (!brokerTradeId && !fingerprint) {
+        invalidRows += 1;
+        errors.push({ rowNumber: index + 2, error: 'Missing trade identifier and unable to build fallback fingerprint.' });
+        continue;
+      }
+      const multiplierRaw = parseIbkrNumber(row.Multiplier);
+      const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 0 ? multiplierRaw : (assetClassRaw === 'OPT' ? 100 : 1);
+      const quantityAbs = Math.abs(quantityRaw);
+      const optionContracts = assetClassRaw === 'OPT' ? quantityAbs : undefined;
+      const sizeUnits = assetClassRaw === 'OPT' ? quantityAbs * multiplier : quantityAbs;
+      const optionTypeRaw = String(row['Put/Call'] || '').trim().toLowerCase();
+      const optionType = optionTypeRaw === 'put' || optionTypeRaw === 'call' ? optionTypeRaw : undefined;
+      const expiryParsed = parseIbkrDateTime(row.Expiry || '');
+      const noteBits = [
+        description ? `IBKR: ${description}` : '',
+        row.Exchange ? `Exchange: ${row.Exchange}` : '',
+        row.OpenCloseIndicator ? `Open/Close: ${row.OpenCloseIndicator}` : ''
+      ].filter(Boolean);
+      const normalizedTrade = normalizeTradeMeta({
+        id: crypto.randomBytes(8).toString('hex'),
+        entry: tradePriceRaw,
+        sizeUnits,
+        riskPct: 0,
+        symbol: symbolRaw,
+        currency: String(row.CurrencyPrimary || '').trim().toUpperCase() || 'USD',
+        direction: buySell === 'SELL' ? 'short' : 'long',
+        assetClass: mapIbkrAssetClassToTradeClass(assetClassRaw),
+        tradeType: 'day',
+        status: 'open',
+        optionType,
+        optionStrike: parseIbkrNumber(row.Strike) || undefined,
+        optionExpiration: expiryParsed?.dateKey,
+        optionContracts,
+        source: 'ibkr',
+        note: noteBits.join(' • ') || undefined,
+        broker: 'IBKR',
+        brokerTradeId: brokerTradeId || undefined,
+        importFingerprint: fingerprint,
+        importSource: 'IBKR_CSV',
+        importedAt: new Date().toISOString(),
+        ibkrAccountId: String(row.ClientAccountID || '').trim() || undefined,
+        ibkrTransactionType: transactionType,
+        ibkrTradeDateTime: parsedDate.iso,
+        ibkrAssetClass: assetClassRaw,
+        ibkrBuySell: buySell,
+        ibkrCommission: parseIbkrNumber(row.IBCommission),
+        ibkrNetCash: parseIbkrNumber(row.NetCash),
+        ibkrExchange: String(row.Exchange || '').trim() || undefined,
+        ibkrDescription: description || undefined,
+        ibkrOpenCloseIndicator: String(row.OpenCloseIndicator || '').trim() || undefined,
+        ibkrMultiplier: multiplier,
+        rawImportRow: row
+      });
+      dryRunRows.push({ trade: normalizedTrade, dateKey: parsedDate.dateKey, brokerTradeId, fingerprint });
+    }
+
+    const seenInFile = new Set();
+    const toInsert = [];
+    let duplicates = 0;
+    for (const row of dryRunRows) {
+      const tradeIdKey = row.brokerTradeId ? `IBKR:${row.brokerTradeId}` : '';
+      const fpKey = `IBKR:${row.fingerprint}`;
+      const duplicateInDb = (tradeIdKey && existingTradeIds.has(tradeIdKey)) || existingFingerprints.has(fpKey);
+      const duplicateInFile = (tradeIdKey && seenInFile.has(tradeIdKey)) || seenInFile.has(fpKey);
+      if (duplicateInDb || duplicateInFile) {
+        duplicates += 1;
+        continue;
+      }
+      if (tradeIdKey) seenInFile.add(tradeIdKey);
+      seenInFile.add(fpKey);
+      toInsert.push(row);
+    }
+
+    for (const row of toInsert) {
+      journal[row.dateKey] ||= [];
+      journal[row.dateKey].push(row.trade);
+      if (journal[row.dateKey].length > 50) {
+        journal[row.dateKey] = journal[row.dateKey].slice(-50);
+      }
+    }
+    const batchId = crypto.randomUUID();
+    const importedAt = new Date().toISOString();
+    const batchRecord = {
+      id: batchId,
+      userId: req.username,
+      broker: 'IBKR',
+      sourceType: 'csv',
+      originalFilename: uploaded.filename || 'upload.csv',
+      importedAt,
+      removedAt: null,
+      status: 'completed',
+      totalRows: table.rows.length,
+      importedCount: toInsert.length,
+      duplicateCount: duplicates,
+      skippedCashCount: skippedCashRows,
+      invalidCount: invalidRows,
+      removedCount: 0,
+      metadata: {
+        skippedNonTradeRows
+      }
+    };
+    for (const row of toInsert) {
+      row.trade.importBatchId = batchId;
+      row.trade.importedAt = importedAt;
+      row.trade.importSource = 'IBKR_CSV';
+    }
+    importBatches.unshift(batchRecord);
+    user.importBatches = importBatches.slice(0, 50);
+    saveDB(db);
+    res.json({
+      ok: true,
+      batchId,
+      summary: {
+        imported: toInsert.length,
+        duplicates,
+        invalidRows,
+        skippedCashRows,
+        skippedNonTradeRows
+      },
+      errors: errors.slice(0, 100)
+    });
+  } catch (error) {
+    console.error('[IBKR Import] Failed to import CSV', error);
+    res.status(400).json({ error: error?.message || 'Failed to import IBKR CSV.' });
+  }
+});
+
+app.get('/api/trades/import/ibkr/history', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const batches = ensureImportBatches(user)
+    .filter(batch => String(batch.broker || '').toUpperCase() === 'IBKR')
+    .sort((a, b) => String(b.importedAt || '').localeCompare(String(a.importedAt || '')))
+    .slice(0, 25);
+  res.json({ batches });
+});
+
+app.delete('/api/trades/import/ibkr/:batchId', auth, (req, res) => {
+  const batchId = String(req.params.batchId || '').trim();
+  if (!batchId) return res.status(400).json({ error: 'Missing batch id.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const batches = ensureImportBatches(user);
+  const batch = batches.find(item => item.id === batchId && String(item.broker || '').toUpperCase() === 'IBKR');
+  if (!batch) return res.status(404).json({ error: 'Import batch not found.' });
+  if (batch.status === 'rolled_back') {
+    return res.status(409).json({ error: 'Import batch already removed.' });
+  }
+  const journal = ensureTradeJournal(user);
+  let removedCount = 0;
+  for (const [dateKey, trades] of Object.entries(journal)) {
+    if (!Array.isArray(trades) || !trades.length) continue;
+    const remaining = trades.filter((trade) => {
+      const matchesBatch = String(trade?.importBatchId || '') === batchId
+        && String(trade?.importSource || '').toUpperCase() === 'IBKR_CSV';
+      if (matchesBatch) {
+        removedCount += 1;
+        return false;
+      }
+      return true;
+    });
+    if (remaining.length) journal[dateKey] = remaining;
+    else delete journal[dateKey];
+  }
+  batch.status = 'rolled_back';
+  batch.removedAt = new Date().toISOString();
+  batch.removedCount = removedCount;
+  saveDB(db);
+  res.json({ ok: true, removedCount, batchId });
 });
 
 app.post('/api/trades', auth, async (req, res) => {
