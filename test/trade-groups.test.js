@@ -12,7 +12,9 @@ const {
   saveDB,
   loadDB,
   buildGroupCurrentPositions,
+  emitTradeGroupSellAlertForClosedTrade,
   emitTradeGroupAlertFromTrading212Fill,
+  processLeaderTradeDisappearancesAfterValidSnapshot,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts
 } = require('../server');
@@ -678,6 +680,8 @@ test('Trading212 fill-based leader alerts emit sell metadata and dedupe on fill 
   assert.equal(db.tradeGroupAlerts[0].alert_classification, 'partial_sell');
   assert.equal(db.tradeGroupAlerts[0].side, 'SELL');
   assert.equal(db.tradeGroupAlerts[0].stop_triggered, true);
+  assert.equal(db.tradeGroupAlerts[0].fill_price, null);
+  assert.equal(db.tradeGroupAlerts[0].quantity, null);
 
   const second = emitTradeGroupAlertFromTrading212Fill(db, leader, {
     fillId: 'fill-1',
@@ -688,4 +692,99 @@ test('Trading212 fill-based leader alerts emit sell metadata and dedupe on fill 
   });
   assert.equal(second.alertsCreated, 0);
   assert.equal(second.duplicates, 1);
+});
+
+test('snapshot disappearance requires confirmation and cancels on reappearance', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-disappear', leader_user_id: leader, name: 'Disappear Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gd-l', group_id: 'g-disappear', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gd-m', group_id: 'g-disappear', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  db.users[leader].tradeJournal = {
+    '2024-05-01': [{
+      id: 'trade-disappear',
+      symbol: 'KOS',
+      source: 'trading212',
+      status: 'open',
+      entry: 10,
+      trading212AccountId: 'acc-1',
+      trading212PositionKey: 'acc-1:KOS',
+      createdAt: now
+    }]
+  };
+  db.users[leader].trading212 = { leaderAlertState: { accounts: {} } };
+
+  processLeaderTradeDisappearancesAfterValidSnapshot(db, {
+    user: db.users[leader],
+    username: leader,
+    cfg: db.users[leader].trading212,
+    accountId: 'acc-1',
+    presentPositionByKey: {}
+  });
+  assert.equal(db.tradeGroupAlerts.length, 0);
+
+  processLeaderTradeDisappearancesAfterValidSnapshot(db, {
+    user: db.users[leader],
+    username: leader,
+    cfg: db.users[leader].trading212,
+    accountId: 'acc-1',
+    presentPositionByKey: { 'acc-1:KOS': 1 }
+  });
+  assert.equal(db.tradeGroupAlerts.length, 0);
+
+  processLeaderTradeDisappearancesAfterValidSnapshot(db, {
+    user: db.users[leader],
+    username: leader,
+    cfg: db.users[leader].trading212,
+    accountId: 'acc-1',
+    presentPositionByKey: {}
+  });
+  assert.equal(db.tradeGroupAlerts.length, 0);
+
+  processLeaderTradeDisappearancesAfterValidSnapshot(db, {
+    user: db.users[leader],
+    username: leader,
+    cfg: db.users[leader].trading212,
+    accountId: 'acc-1',
+    presentPositionByKey: {}
+  });
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  assert.equal(db.tradeGroupAlerts[0].side, 'SELL');
+  assert.equal(db.tradeGroupAlerts[0].alert_classification, 'full_close');
+});
+
+test('manual close sell alert dedupes against later reconciliation alert', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-manual', leader_user_id: leader, name: 'Manual Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gm-l', group_id: 'g-manual', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gm-m', group_id: 'g-manual', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  const trade = {
+    id: 'trade-manual',
+    symbol: 'KOS',
+    source: 'trading212',
+    status: 'closed',
+    closePrice: 14,
+    trading212AccountId: 'acc-1',
+    trading212PositionKey: 'acc-1:KOS',
+    createdAt: now
+  };
+  db.users[leader].tradeJournal = { '2024-05-01': [trade] };
+  const manual = emitTradeGroupSellAlertForClosedTrade(db, leader, trade, { reason: 'manual_close', classification: 'full_close' });
+  assert.equal(manual.alertsCreated, 1);
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  const reconcileAttempt = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'fill-manual',
+    side: 'SELL',
+    ticker: 'KOS',
+    sourceTradeId: 'trade-manual',
+    quantity: 1
+  });
+  assert.equal(reconcileAttempt.alertsCreated, 0);
+  assert.equal(reconcileAttempt.duplicates, 1);
+  assert.equal(db.tradeGroupAlerts.length, 1);
 });
