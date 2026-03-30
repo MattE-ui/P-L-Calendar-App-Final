@@ -7,7 +7,7 @@ const assert = require('node:assert');
 process.env.DATA_FILE = path.join(__dirname, 'data-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
 
-const { app, saveDB } = require('../server');
+const { app, loadDB, saveDB } = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
 const username = 'tester';
@@ -30,6 +30,7 @@ function seedDatabase() {
         portfolioHistory: {},
         netDepositsAnchor: null,
         trading212: {},
+        ibkr: {},
         security: {},
         tradeJournal: {}
       }
@@ -44,6 +45,10 @@ test.beforeEach(() => {
   if (server) server.close();
   if (marketDataServer) marketDataServer.close();
   delete process.env.MARKET_DATA_URL;
+  delete process.env.IBKR_OPTION_QUOTE_URL;
+  delete process.env.IBKR_OPTION_RESOLVE_URL;
+  delete process.env.POLYGON_API_KEY;
+  delete process.env.POLYGON_BASE_URL;
   server = app.listen(0);
   const port = server.address().port;
   baseUrl = `http://127.0.0.1:${port}`;
@@ -53,8 +58,21 @@ test.after(() => {
   if (server) server.close();
   if (marketDataServer) marketDataServer.close();
   delete process.env.MARKET_DATA_URL;
+  delete process.env.IBKR_OPTION_QUOTE_URL;
+  delete process.env.IBKR_OPTION_RESOLVE_URL;
+  delete process.env.POLYGON_API_KEY;
+  delete process.env.POLYGON_BASE_URL;
   fs.rmSync(DATA_FILE, { force: true });
 });
+
+function setIbkrState(patch = {}) {
+  const db = loadDB();
+  db.users[username].ibkr = {
+    ...(db.users[username].ibkr || {}),
+    ...patch
+  };
+  saveDB(db);
+}
 
 async function authedFetch(path, options = {}) {
   const headers = {
@@ -225,26 +243,28 @@ test('records partial trims when reducing units and includes trim pnl in final r
   assert.equal(closed.realizedPnlGBP, 70);
 });
 
-test('active option trades use option contract quote and never fall back to underlying stock quote', async () => {
+test('active option trades use IBKR primary contract quote and never fall back to underlying stock quote', async () => {
+  setIbkrState({
+    enabled: true,
+    mode: 'connector',
+    connectionStatus: 'online',
+    lastHeartbeatAt: new Date().toISOString(),
+    lastSnapshotAt: new Date().toISOString(),
+    lastConnectorStatus: { status: 'online' },
+    livePositions: []
+  });
   marketDataServer = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://127.0.0.1');
-    const symbol = url.searchParams.get('symbols');
-    const price = symbol === 'AAPL260619C00195000' ? 0.52 : 75.71;
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({
-      quoteResponse: {
-        result: [{
-          symbol,
-          regularMarketPrice: price,
-          currency: 'USD'
-        }]
-      }
-    }));
+    if (req.url.startsWith('/ibkr-option-quote')) {
+      res.end(JSON.stringify({ mark: 0.52, last: 0.5, currency: 'USD' }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'not found' }));
   });
   await new Promise(resolve => marketDataServer.listen(0, resolve));
-  const marketPort = marketDataServer.address().port;
-  process.env.MARKET_DATA_URL = `http://127.0.0.1:${marketPort}/quote`;
-
+  const optionPort = marketDataServer.address().port;
+  process.env.IBKR_OPTION_QUOTE_URL = `http://127.0.0.1:${optionPort}/ibkr-option-quote`;
   await authedFetch('/api/trades', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -268,44 +288,39 @@ test('active option trades use option contract quote and never fall back to unde
   assert.equal(data.trades.length, 1);
   assert.equal(data.trades[0].assetClass, 'options');
   assert.equal(data.trades[0].livePrice, 0.52);
-  assert.equal(data.trades[0].optionPremiumSource, 'last');
+  assert.equal(data.trades[0].optionPremiumSource, 'ibkr_mark');
+  assert.equal(data.trades[0].optionQuoteProvider, 'ibkr');
+  assert.equal(data.trades[0].optionUnavailableReason, undefined);
   assert.equal(data.trades[0].liveCurrency, 'USD');
   assert.equal(data.trades[0].sizeUnits, 200);
   assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
   assert.ok(data.trades[0].unrealizedGBP > 0);
 });
 
-test('active option trades fall back to contract previous close when live and last premium are unavailable', async () => {
+test('active option trades fall back to polygon contract previous close when IBKR cannot provide quote', async () => {
+  setIbkrState({
+    enabled: true,
+    mode: 'connector',
+    connectionStatus: 'online',
+    lastHeartbeatAt: new Date().toISOString(),
+    lastSnapshotAt: new Date().toISOString(),
+    lastConnectorStatus: { status: 'online' },
+    livePositions: []
+  });
   marketDataServer = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://127.0.0.1');
-    const symbol = url.searchParams.get('symbols');
     res.setHeader('Content-Type', 'application/json');
-    if (symbol === 'AAPL260619C00196000') {
-      res.end(JSON.stringify({
-        quoteResponse: {
-          result: [{
-            symbol,
-            marketState: 'CLOSED',
-            regularMarketPreviousClose: 0.44,
-            currency: 'USD'
-          }]
-        }
-      }));
+    if (req.url.startsWith('/v3/snapshot/options/AAPL/AAPL260619C00196000')) {
+      res.end(JSON.stringify({ results: { prev_day: { close: 0.44 } } }));
       return;
     }
-    res.end(JSON.stringify({
-      quoteResponse: {
-        result: [{
-          symbol,
-          regularMarketPrice: 199.33,
-          currency: 'USD'
-        }]
-      }
-    }));
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'Not found' }));
   });
   await new Promise(resolve => marketDataServer.listen(0, resolve));
-  const marketPort = marketDataServer.address().port;
-  process.env.MARKET_DATA_URL = `http://127.0.0.1:${marketPort}/quote`;
+  const optionPort = marketDataServer.address().port;
+  process.env.IBKR_OPTION_QUOTE_URL = `http://127.0.0.1:${optionPort}/ibkr-option-quote`;
+  process.env.POLYGON_API_KEY = 'test-key';
+  process.env.POLYGON_BASE_URL = `http://127.0.0.1:${optionPort}`;
 
   await authedFetch('/api/trades', {
     method: 'POST',
@@ -330,9 +345,51 @@ test('active option trades fall back to contract previous close when live and la
   assert.equal(data.trades.length, 1);
   assert.equal(data.trades[0].assetClass, 'options');
   assert.equal(data.trades[0].livePrice, 0.44);
-  assert.equal(data.trades[0].optionPremiumSource, 'close');
+  assert.equal(data.trades[0].optionPremiumSource, 'polygon_close');
+  assert.equal(data.trades[0].optionQuoteProvider, 'polygon');
   assert.equal(data.trades[0].liveCurrency, 'USD');
   assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
+});
+
+test('active option trades return unavailable reason when neither IBKR nor Polygon returns contract premium', async () => {
+  setIbkrState({
+    enabled: true,
+    mode: 'connector',
+    connectionStatus: 'offline'
+  });
+  marketDataServer = http.createServer((req, res) => {
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'not found' }));
+  });
+  await new Promise(resolve => marketDataServer.listen(0, resolve));
+  const optionPort = marketDataServer.address().port;
+  process.env.POLYGON_API_KEY = 'test-key';
+  process.env.POLYGON_BASE_URL = `http://127.0.0.1:${optionPort}`;
+
+  await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 0.33,
+      stop: 0.2,
+      riskPct: 1,
+      date: '2026-03-15',
+      symbol: 'AAPL',
+      assetClass: 'options',
+      optionType: 'call',
+      optionStrike: 197,
+      optionExpiration: '2026-06-19',
+      optionContracts: 2,
+      currency: 'USD'
+    })
+  });
+
+  const { res, data } = await authedFetch('/api/trades/active');
+  assert.equal(res.status, 200);
+  assert.equal(data.trades[0].livePrice, undefined);
+  assert.equal(data.trades[0].optionQuoteProvider, undefined);
+  assert.equal(data.trades[0].optionUnavailableReason, 'ibkr_unavailable_polygon_no_contract_quote');
 });
 
 test('persists and lists fully closed execution-leg trades', async () => {

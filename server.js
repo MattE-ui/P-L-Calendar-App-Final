@@ -13093,6 +13093,9 @@ function normalizeTradeMeta(trade = {}) {
 
 const marketCache = new Map();
 const dailyLowCache = new Map();
+const optionContractResolutionCache = new Map();
+const optionQuoteCache = new Map();
+const OPTION_QUOTE_CACHE_TTL_MS = Number(process.env.OPTION_QUOTE_CACHE_TTL_MS) || 10 * 1000;
 
 function getTimezoneOffset(date, timeZone) {
   const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
@@ -13512,93 +13515,304 @@ function buildOptionContractQuoteSymbol(trade) {
   return `${underlying}${yymmdd}${cp}${strikePart}`;
 }
 
-async function resolveOptionLiveQuoteForTrade(trade) {
+function extractOptionContractIdentity(trade) {
+  const optionType = normalizeOptionType(trade?.optionType);
+  const parsedFromIbkrSymbol = parseIbkrOptionSymbol(trade?.symbol || '');
+  const parsedFromOccSymbol = parseOccOptionSymbol(trade?.symbol || '')
+    || parseOccOptionSymbol(trade?.displaySymbol || '')
+    || parseOccOptionSymbol(trade?.rawBrokerSymbol || '');
+  const strike = Number(trade?.optionStrike ?? parsedFromIbkrSymbol?.strike ?? parsedFromOccSymbol?.strike);
+  const expiry = normalizeOptionExpiration(
+    trade?.optionExpiration || parsedFromIbkrSymbol?.expirationDate || parsedFromOccSymbol?.expirationDate
+  );
+  const underlyingTicker = String(
+    trade?.underlyingTicker
+    || parsedFromIbkrSymbol?.underlyingTicker
+    || parsedFromOccSymbol?.underlyingTicker
+    || trade?.ticker
+    || trade?.symbol
+    || ''
+  ).trim().toUpperCase().replace(/[^A-Z0-9._-]/g, '');
+  const multiplierRaw = Number(trade?.optionMultiplier);
+  const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 0 ? multiplierRaw : 100;
+  const currency = String(trade?.currency || 'USD').trim().toUpperCase() || 'USD';
+  const conid = trade?.ibkrConid ? String(trade.ibkrConid).trim() : '';
+  const ibkrOptionSymbol = String(trade?.symbol || trade?.displaySymbol || '').trim().toUpperCase();
+  const contractSymbol = buildOptionContractQuoteSymbol(trade);
+  return {
+    underlyingTicker,
+    optionType,
+    strike: Number.isFinite(strike) && strike > 0 ? strike : null,
+    expiry: /^\d{4}-\d{2}-\d{2}$/.test(expiry) ? expiry : '',
+    multiplier,
+    currency,
+    conid,
+    ibkrOptionSymbol,
+    contractSymbol
+  };
+}
+
+function selectBestOptionPremium(fields = {}) {
+  const markOrLive = parsePositiveNumber(fields.mark, fields.live);
+  const mid = computeMidPrice(fields.bid, fields.ask) ?? parsePositiveNumber(fields.mid);
+  const last = parsePositiveNumber(fields.last);
+  const close = parsePositiveNumber(fields.previousClose, fields.close);
+  if (Number.isFinite(markOrLive) && markOrLive > 0) return { source: 'mark', value: markOrLive };
+  if (Number.isFinite(mid) && mid > 0) return { source: 'mid', value: mid };
+  if (Number.isFinite(last) && last > 0) return { source: 'last', value: last };
+  if (Number.isFinite(close) && close > 0) return { source: 'close', value: close };
+  return null;
+}
+
+function isIbkrOptionQuoteAvailable(user) {
+  const cfg = user?.ibkr;
+  if (!cfg?.enabled || cfg?.mode !== 'connector') return { ok: false, reason: 'ibkr_not_enabled' };
+  updateIbkrConnectorStatus(cfg);
+  if (cfg.connectionStatus !== 'online') return { ok: false, reason: 'ibkr_not_connected' };
+  const authState = String(cfg?.lastConnectorStatus?.authStatus || '').toLowerCase();
+  if (authState && ['unauthorized', 'expired', 'forbidden'].includes(authState)) {
+    return { ok: false, reason: 'ibkr_session_unauthorized' };
+  }
+  return { ok: true, reason: null };
+}
+
+async function resolveIbkrConidForOptionContract(identity, diagnostics) {
+  if (identity.conid) return identity.conid;
+  if (!identity.contractSymbol) return '';
+  const cached = optionContractResolutionCache.get(identity.contractSymbol);
+  if (cached) return cached;
+  const baseUrl = String(process.env.IBKR_OPTION_RESOLVE_URL || '').trim();
+  if (!baseUrl) return '';
+  const url = new URL(baseUrl);
+  url.searchParams.set('underlying', identity.underlyingTicker);
+  url.searchParams.set('expiry', identity.expiry);
+  url.searchParams.set('right', identity.optionType === 'put' ? 'P' : 'C');
+  url.searchParams.set('strike', String(identity.strike));
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`ibkr_contract_resolution_http_${res.status}`);
+  const payload = await res.json();
+  const conid = String(payload?.conid || payload?.contract?.conid || '').trim();
+  if (!conid) throw new Error('ibkr_contract_resolution_failed');
+  optionContractResolutionCache.set(identity.contractSymbol, conid);
+  diagnostics.ibkrResolvedConid = conid;
+  return conid;
+}
+
+function findIbkrOptionQuoteFromLivePositions(user, identity) {
+  const positions = Array.isArray(user?.ibkr?.livePositions) ? user.ibkr.livePositions : [];
+  const normalizedSymbol = normalizeIbkrTicker(identity.ibkrOptionSymbol || identity.contractSymbol || identity.underlyingTicker);
+  for (const position of positions) {
+    const posConid = position?.conid ? String(position.conid) : '';
+    const posSymbol = normalizeIbkrTicker(position?.symbol || '');
+    if ((identity.conid && posConid === identity.conid) || (normalizedSymbol && posSymbol === normalizedSymbol)) {
+      return {
+        mark: parsePositiveNumber(position?.markPrice),
+        live: parsePositiveNumber(position?.marketPrice),
+        bid: parsePositiveNumber(position?.bid),
+        ask: parsePositiveNumber(position?.ask),
+        last: parsePositiveNumber(position?.lastPrice),
+        previousClose: parsePositiveNumber(position?.closePrice),
+        currency: position?.currency || identity.currency,
+        marketOpen: true
+      };
+    }
+  }
+  return null;
+}
+
+async function fetchIbkrOptionQuote(user, identity, diagnostics) {
+  const fromPositions = findIbkrOptionQuoteFromLivePositions(user, identity);
+  if (fromPositions) return fromPositions;
+  const baseUrl = String(process.env.IBKR_OPTION_QUOTE_URL || '').trim();
+  if (!baseUrl) throw new Error('ibkr_quote_endpoint_not_configured');
+  const url = new URL(baseUrl);
+  if (identity.conid) url.searchParams.set('conid', identity.conid);
+  if (!identity.conid && identity.ibkrOptionSymbol) url.searchParams.set('symbol', identity.ibkrOptionSymbol);
+  if (!identity.conid && !identity.ibkrOptionSymbol && identity.contractSymbol) url.searchParams.set('symbol', identity.contractSymbol);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) throw new Error('ibkr_session_unauthorized');
+    if (res.status === 404) throw new Error('ibkr_contract_not_found');
+    throw new Error(`ibkr_quote_http_${res.status}`);
+  }
+  const payload = await res.json();
+  diagnostics.ibkrRawQuote = {
+    hasBid: Number.isFinite(Number(payload?.bid)),
+    hasAsk: Number.isFinite(Number(payload?.ask)),
+    hasLast: Number.isFinite(Number(payload?.last)),
+    hasClose: Number.isFinite(Number(payload?.previousClose ?? payload?.close))
+  };
+  return {
+    mark: parsePositiveNumber(payload?.mark, payload?.marketPrice),
+    live: parsePositiveNumber(payload?.live, payload?.lastPrice),
+    bid: parsePositiveNumber(payload?.bid),
+    ask: parsePositiveNumber(payload?.ask),
+    mid: parsePositiveNumber(payload?.mid),
+    last: parsePositiveNumber(payload?.last, payload?.lastPrice),
+    previousClose: parsePositiveNumber(payload?.previousClose, payload?.close),
+    currency: payload?.currency || identity.currency,
+    marketOpen: payload?.marketOpen === true
+  };
+}
+
+async function fetchPolygonOptionQuote(identity, diagnostics) {
+  const apiKey = String(process.env.POLYGON_API_KEY || '').trim();
+  if (!apiKey) throw new Error('polygon_api_key_missing');
+  if (!identity.contractSymbol || !identity.underlyingTicker) throw new Error('polygon_missing_contract_symbol');
+  const baseUrl = (process.env.POLYGON_BASE_URL || 'https://api.polygon.io').replace(/\/+$/, '');
+  const snapshotUrl = `${baseUrl}/v3/snapshot/options/${encodeURIComponent(identity.underlyingTicker)}/${encodeURIComponent(identity.contractSymbol)}?apiKey=${encodeURIComponent(apiKey)}`;
+  const snapshotRes = await fetch(snapshotUrl);
+  if (!snapshotRes.ok) throw new Error(`polygon_snapshot_http_${snapshotRes.status}`);
+  const snapshot = await snapshotRes.json();
+  const result = snapshot?.results || {};
+  const quote = result?.quote || {};
+  const lastTrade = result?.last_trade || {};
+  const day = result?.day || {};
+  const prevDay = result?.prev_day || {};
+  diagnostics.polygonFields = {
+    hasBid: Number.isFinite(Number(quote?.bid_price)),
+    hasAsk: Number.isFinite(Number(quote?.ask_price)),
+    hasLast: Number.isFinite(Number(lastTrade?.price)),
+    hasClose: Number.isFinite(Number(prevDay?.close ?? day?.close))
+  };
+  return {
+    mark: parsePositiveNumber(result?.mark_price),
+    bid: parsePositiveNumber(quote?.bid_price),
+    ask: parsePositiveNumber(quote?.ask_price),
+    last: parsePositiveNumber(lastTrade?.price),
+    previousClose: parsePositiveNumber(prevDay?.close, day?.close),
+    currency: identity.currency,
+    marketOpen: null
+  };
+}
+
+async function resolveOptionLiveQuoteForTrade(trade, user = null) {
+  const identity = extractOptionContractIdentity(trade);
+  const cacheKey = [
+    identity.conid || '',
+    identity.contractSymbol || '',
+    identity.underlyingTicker,
+    identity.optionType,
+    identity.strike,
+    identity.expiry
+  ].join('|');
+  const now = Date.now();
+  const cached = optionQuoteCache.get(cacheKey);
+  if (cached && (now - cached.at) < OPTION_QUOTE_CACHE_TTL_MS) return cached.value;
   const diagnostics = {
     tradeId: trade?.id || '',
+    userId: trade?.username || '',
     accountContext: trade?.source || '',
     isOption: isOptionsTrade(trade),
-    ticker: String(trade?.underlyingTicker || trade?.ticker || trade?.symbol || '').trim().toUpperCase(),
-    optionType: normalizeOptionType(trade?.optionType),
-    strike: Number.isFinite(Number(trade?.optionStrike)) ? Number(trade.optionStrike) : null,
-    expiry: normalizeOptionExpiration(trade?.optionExpiration),
-    multiplier: Number.isFinite(Number(trade?.optionMultiplier)) ? Number(trade.optionMultiplier) : null,
-    quoteResolverChosen: 'option_contract',
-    resolvedContractSymbol: '',
-    requestedContractIdentifiers: [],
-    marketOpen: null,
-    livePremiumFound: false,
-    lastPremiumFound: false,
-    closePremiumFound: false,
+    ticker: identity.underlyingTicker,
+    optionType: identity.optionType,
+    strike: identity.strike,
+    expiry: identity.expiry,
+    multiplier: identity.multiplier,
+    currency: identity.currency,
+    storedConidPresent: Boolean(identity.conid),
+    storedBrokerOptionSymbolPresent: Boolean(identity.ibkrOptionSymbol),
+    resolverChosenFirst: 'ibkr',
+    ibkrSessionStatus: null,
+    ibkrContractIdentifierUsed: identity.conid || null,
+    ibkrFieldsReturned: null,
+    fallbackToPolygon: false,
+    polygonContractSymbolUsed: identity.contractSymbol || null,
+    polygonFieldsReturned: null,
     returnedPremium: null,
     selectedPremiumSource: 'unavailable',
-    equityFallbackAttempted: false,
     lookupSucceeded: false,
+    quoteProvider: null,
+    unavailableReason: null,
     failureReason: '',
     attempts: []
   };
-  const candidates = [];
-  const pushCandidate = (raw) => {
-    const value = String(raw || '').trim().toUpperCase();
-    if (!value) return;
-    if (!isValidOptionContractSymbol(value)) return;
-    if (!candidates.includes(value)) candidates.push(value);
-  };
-  pushCandidate(buildOptionContractQuoteSymbol(trade));
-  pushCandidate(trade?.symbol);
-  pushCandidate(trade?.displaySymbol);
-  pushCandidate(trade?.rawBrokerSymbol);
-  diagnostics.requestedContractIdentifiers = [...candidates];
-  diagnostics.resolvedContractSymbol = candidates[0] || '';
-  if (!candidates.length) {
-    diagnostics.failureReason = 'No valid option contract identifier could be resolved';
-    console.warn('[ACTIVE_OPTIONS_QUOTE] failed to resolve option contract symbol', diagnostics);
+  if (!identity.contractSymbol || !identity.underlyingTicker || !identity.expiry || !identity.strike || !identity.optionType) {
+    diagnostics.failureReason = 'invalid_option_contract_metadata';
+    diagnostics.unavailableReason = 'invalid_option_contract_metadata';
+    console.warn('[ACTIVE_OPTIONS_QUOTE] option quote lookup failed', diagnostics);
     return { quote: null, diagnostics };
   }
-  for (const symbol of candidates) {
+  const ibkrStatus = isIbkrOptionQuoteAvailable(user);
+  diagnostics.ibkrSessionStatus = ibkrStatus.ok ? 'online' : ibkrStatus.reason;
+  if (ibkrStatus.ok) {
     try {
-      const quote = await fetchMarketQuoteSnapshot(symbol);
-      const chosen = [
-        ['live', parsePositiveNumber(quote?.mark, quote?.live)],
-        ['mid', parsePositiveNumber(quote?.mid)],
-        ['last', parsePositiveNumber(quote?.last)],
-        ['close', parsePositiveNumber(quote?.previousClose)]
-      ].find(([, value]) => Number.isFinite(value) && value > 0) || null;
-      diagnostics.marketOpen = quote?.marketOpen === true;
-      diagnostics.livePremiumFound = Number.isFinite(parsePositiveNumber(quote?.mark, quote?.live));
-      diagnostics.lastPremiumFound = Number.isFinite(parsePositiveNumber(quote?.last));
-      diagnostics.closePremiumFound = Number.isFinite(parsePositiveNumber(quote?.previousClose));
+      if (!identity.conid) {
+        identity.conid = await resolveIbkrConidForOptionContract(identity, diagnostics);
+        diagnostics.ibkrContractIdentifierUsed = identity.conid || null;
+      }
+      const ibkrFields = await fetchIbkrOptionQuote(user, identity, diagnostics);
+      diagnostics.ibkrFieldsReturned = ibkrFields;
+      const chosen = selectBestOptionPremium(ibkrFields);
       if (chosen) {
-        const [source, premium] = chosen;
         diagnostics.lookupSucceeded = true;
-        diagnostics.resolvedContractSymbol = symbol;
-        diagnostics.returnedPremium = Number(premium);
-        diagnostics.selectedPremiumSource = source;
-        diagnostics.failureReason = '';
-        diagnostics.attempts.push({ symbol, ok: true, source });
-        console.info('[ACTIVE_OPTIONS_QUOTE] resolved option quote', {
-          ...diagnostics,
-          quoteCurrency: quote.currency || null
-        });
-        return {
+        diagnostics.returnedPremium = chosen.value;
+        diagnostics.quoteProvider = 'ibkr';
+        diagnostics.selectedPremiumSource = `ibkr_${chosen.source}`;
+        const result = {
           quote: {
-            symbol,
-            price: Number(premium),
-            currency: quote.currency || 'GBP',
-            source
+            symbol: identity.contractSymbol,
+            price: Number(chosen.value),
+            currency: ibkrFields.currency || identity.currency,
+            source: `ibkr_${chosen.source}`,
+            provider: 'ibkr',
+            bid: parsePositiveNumber(ibkrFields.bid),
+            ask: parsePositiveNumber(ibkrFields.ask),
+            last: parsePositiveNumber(ibkrFields.last),
+            previousClose: parsePositiveNumber(ibkrFields.previousClose)
           },
           diagnostics
         };
+        optionQuoteCache.set(cacheKey, { at: now, value: result });
+        console.info('[ACTIVE_OPTIONS_QUOTE] resolved option quote', diagnostics);
+        return result;
       }
-      diagnostics.attempts.push({ symbol, ok: false, reason: 'Quote returned without valid premium' });
+      diagnostics.attempts.push({ provider: 'ibkr', ok: false, reason: 'ibkr_no_valid_contract_premium' });
     } catch (error) {
-      const reason = error?.message || 'Unknown quote provider error';
-      diagnostics.attempts.push({ symbol, ok: false, reason });
+      diagnostics.attempts.push({ provider: 'ibkr', ok: false, reason: error?.message || 'ibkr_quote_error' });
     }
+  } else {
+    diagnostics.attempts.push({ provider: 'ibkr', ok: false, reason: ibkrStatus.reason });
   }
-  diagnostics.failureReason = diagnostics.attempts[diagnostics.attempts.length - 1]?.reason || 'Quote lookup failed';
+  diagnostics.fallbackToPolygon = true;
+  try {
+    const polygonFields = await fetchPolygonOptionQuote(identity, diagnostics);
+    diagnostics.polygonFieldsReturned = polygonFields;
+    const chosen = selectBestOptionPremium(polygonFields);
+    if (chosen) {
+      diagnostics.lookupSucceeded = true;
+      diagnostics.returnedPremium = chosen.value;
+      diagnostics.quoteProvider = 'polygon';
+      diagnostics.selectedPremiumSource = `polygon_${chosen.source}`;
+      const result = {
+        quote: {
+          symbol: identity.contractSymbol,
+          price: Number(chosen.value),
+          currency: polygonFields.currency || identity.currency,
+          source: `polygon_${chosen.source}`,
+          provider: 'polygon',
+          bid: parsePositiveNumber(polygonFields.bid),
+          ask: parsePositiveNumber(polygonFields.ask),
+          last: parsePositiveNumber(polygonFields.last),
+          previousClose: parsePositiveNumber(polygonFields.previousClose)
+        },
+        diagnostics
+      };
+      optionQuoteCache.set(cacheKey, { at: now, value: result });
+      console.info('[ACTIVE_OPTIONS_QUOTE] resolved option quote', diagnostics);
+      return result;
+    }
+    diagnostics.attempts.push({ provider: 'polygon', ok: false, reason: 'polygon_no_contract_quote' });
+  } catch (error) {
+    diagnostics.attempts.push({ provider: 'polygon', ok: false, reason: error?.message || 'polygon_quote_error' });
+  }
+  diagnostics.failureReason = diagnostics.attempts.map(a => a.reason).filter(Boolean).join('|') || 'option_quote_unavailable';
+  diagnostics.unavailableReason = 'ibkr_unavailable_polygon_no_contract_quote';
   console.info('[ACTIVE_OPTIONS_QUOTE] option quote resolution unavailable', diagnostics);
   console.warn('[ACTIVE_OPTIONS_QUOTE] option quote lookup failed', diagnostics);
-  return { quote: null, diagnostics };
+  const unresolved = { quote: null, diagnostics };
+  optionQuoteCache.set(cacheKey, { at: now, value: unresolved });
+  return unresolved;
 }
 
 function resolveTradeSizeUnits(trade) {
@@ -13740,18 +13954,23 @@ async function buildActiveTrades(user, rates = {}) {
     let liveCurrency = trade.currency || 'GBP';
     let optionQuoteDiagnostics = null;
     let optionPremiumSource = null;
+    let optionQuoteProvider = null;
+    let optionUnavailableReason = null;
     const tradeCurrency = trade.currency || 'GBP';
     const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
     const isProvider = isTrading212 || isIbkr;
     try {
       if (isOption) {
-        const result = await resolveOptionLiveQuoteForTrade(trade);
+        const result = await resolveOptionLiveQuoteForTrade(trade, user);
         optionQuoteDiagnostics = result.diagnostics;
         if (result.quote) {
           livePrice = Number(result.quote.price);
           liveCurrency = result.quote.currency || liveCurrency;
           optionPremiumSource = result.quote.source || null;
+          optionQuoteProvider = result.quote.provider || null;
+        } else {
+          optionUnavailableReason = result?.diagnostics?.unavailableReason || result?.diagnostics?.failureReason || null;
         }
       } else if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
         livePrice = Number(trade.lastSyncPrice);
@@ -13773,8 +13992,10 @@ async function buildActiveTrades(user, rates = {}) {
           resolvedContractSymbol: buildOptionContractQuoteSymbol(trade),
           lookupSucceeded: false,
           failureReason: e?.message || 'Unhandled option quote fetch error',
+          unavailableReason: e?.message || 'Unhandled option quote fetch error',
           attempts: []
         };
+        optionUnavailableReason = optionQuoteDiagnostics.unavailableReason;
         console.warn('[ACTIVE_OPTIONS_QUOTE] unexpected resolver error', optionQuoteDiagnostics);
       }
     }
@@ -13849,6 +14070,8 @@ async function buildActiveTrades(user, rates = {}) {
         optionContracts: trade.optionContracts,
         optionMultiplier: trade.optionMultiplier,
         optionPremiumSource: optionPremiumSource || optionQuoteDiagnostics?.selectedPremiumSource || undefined,
+        optionQuoteProvider: optionQuoteProvider || optionQuoteDiagnostics?.quoteProvider || undefined,
+        optionUnavailableReason: optionUnavailableReason || optionQuoteDiagnostics?.unavailableReason || undefined,
         optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
       continue;
@@ -13955,6 +14178,8 @@ async function buildActiveTrades(user, rates = {}) {
         optionContracts: trade.optionContracts,
         optionMultiplier: trade.optionMultiplier,
         optionPremiumSource: optionPremiumSource || optionQuoteDiagnostics?.selectedPremiumSource || undefined,
+        optionQuoteProvider: optionQuoteProvider || optionQuoteDiagnostics?.quoteProvider || undefined,
+        optionUnavailableReason: optionUnavailableReason || optionQuoteDiagnostics?.unavailableReason || undefined,
         optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
   }
