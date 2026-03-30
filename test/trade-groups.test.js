@@ -142,6 +142,106 @@ test('leader can create group, add friend, and member receives alert for qualify
   assert.equal(db.tradeGroupAlerts.length, 1);
 });
 
+test('emitTradeGroupAlertFromTrading212Fill emits SELL alerts for partial and full closes', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{
+    id: 'group-sell-1',
+    leader_user_id: leader,
+    name: 'Sell Group',
+    is_active: true,
+    created_at: now
+  }];
+  db.tradeGroupMembers = [{
+    id: 'member-sell-1',
+    group_id: 'group-sell-1',
+    user_id: leader,
+    role: 'leader',
+    status: 'active',
+    joined_at: now
+  }, {
+    id: 'member-sell-2',
+    group_id: 'group-sell-1',
+    user_id: member,
+    role: 'member',
+    status: 'active',
+    joined_at: now
+  }];
+  db.tradeGroupAlerts = [];
+  db.tradeGroupNotifications = [];
+  saveDB(db);
+
+  const partial = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'sell-fill-partial',
+    orderId: 'sell-order-1',
+    side: 'SELL',
+    ticker: 'AAPL',
+    quantity: 1,
+    remainingQuantity: 2,
+    tradeStatus: 'open',
+    filledAt: now,
+    sourceTradeId: 'trade-1'
+  });
+  const full = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'sell-fill-full',
+    orderId: 'sell-order-2',
+    side: 'SELL',
+    ticker: 'AAPL',
+    quantity: 2,
+    remainingQuantity: 0,
+    tradeStatus: 'closed',
+    filledAt: now,
+    sourceTradeId: 'trade-1'
+  });
+
+  assert.equal(partial.alertsCreated, 1);
+  assert.equal(full.alertsCreated, 1);
+  const sellAlerts = db.tradeGroupAlerts.filter((item) => item.side === 'SELL');
+  assert.equal(sellAlerts.length, 2);
+  assert.equal(sellAlerts[0].alert_classification, 'partial_sell');
+  assert.equal(sellAlerts[1].alert_classification, 'full_close');
+});
+
+test('derived fill identity dedupes repeated BUY events without fillId', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{
+    id: 'group-buy-1',
+    leader_user_id: leader,
+    name: 'Buy Group',
+    is_active: true,
+    created_at: now
+  }];
+  db.tradeGroupMembers = [{
+    id: 'member-buy-1',
+    group_id: 'group-buy-1',
+    user_id: leader,
+    role: 'leader',
+    status: 'active',
+    joined_at: now
+  }];
+  db.tradeGroupAlerts = [];
+  saveDB(db);
+
+  const fillEvent = {
+    fillId: '',
+    orderId: 'order-buy-1',
+    side: 'BUY',
+    ticker: 'NVDA',
+    quantity: 3,
+    filledAt: '2026-03-25T10:00:00Z',
+    sourceTradeId: 'trade-buy-1'
+  };
+  const first = emitTradeGroupAlertFromTrading212Fill(db, leader, fillEvent);
+  const second = emitTradeGroupAlertFromTrading212Fill(db, leader, fillEvent);
+
+  assert.equal(first.alertsCreated, 1);
+  assert.equal(second.alertsCreated, 0);
+  assert.equal(second.duplicates, 1);
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  assert.match(String(db.tradeGroupAlerts[0].broker_event_key || ''), /^derived\|/);
+});
+
 test('does not create group alert when stop or risk is missing and blocks non-members', async () => {
   const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
     method: 'POST',
@@ -214,6 +314,60 @@ test('leader can post/delete announcement, delete alert, and close group', async
   assert.equal(closeGroup.res.status, 200);
   const memberView = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}`);
   assert.equal(memberView.res.status, 404);
+});
+
+test('group detail refresh returns newly emitted alerts without requiring full page reload', async () => {
+  const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Refresh Group' })
+  });
+  assert.equal(created.res.status, 201);
+  const groupId = created.data.group.id;
+  await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ friend_user_id: member })
+  });
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteUnread.data.notifications[0].invite_id}/accept`, { method: 'POST' });
+
+  const db = loadDB();
+  emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'refresh-fill-1',
+    orderId: 'refresh-order-1',
+    side: 'BUY',
+    ticker: 'MSFT',
+    fillPrice: 410,
+    quantity: 1,
+    filledAt: '2026-03-20T10:00:00Z',
+    sourceTradeId: 'refresh-trade-1'
+  });
+  saveDB(db);
+
+  const firstFetch = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}`);
+  assert.equal(firstFetch.res.status, 200);
+  assert.equal(firstFetch.data.feed[0].id ? true : false, true);
+
+  const dbAfter = loadDB();
+  emitTradeGroupAlertFromTrading212Fill(dbAfter, leader, {
+    fillId: 'refresh-fill-2',
+    orderId: 'refresh-order-2',
+    side: 'SELL',
+    ticker: 'MSFT',
+    fillPrice: 420,
+    quantity: 1,
+    remainingQuantity: 0,
+    tradeStatus: 'closed',
+    filledAt: '2026-03-20T10:30:00Z',
+    sourceTradeId: 'refresh-trade-1'
+  });
+  saveDB(dbAfter);
+
+  const secondFetch = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}`);
+  assert.equal(secondFetch.res.status, 200);
+  assert.equal(secondFetch.data.feed[0].id === firstFetch.data.feed[0].id, false);
+  assert.equal(secondFetch.data.feed[0].side, 'SELL');
 });
 
 test('announcement push targets one active device after duplicate token cleanup', async () => {
