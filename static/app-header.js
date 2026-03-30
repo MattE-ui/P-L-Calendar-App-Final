@@ -417,8 +417,19 @@
 
   async function refreshTradeGroupNotifications() {
     try {
+      const previousTopId = Array.isArray(state.tradeGroupNotifications) && state.tradeGroupNotifications.length
+        ? String(state.tradeGroupNotifications[0].notification_id || '')
+        : '';
       const payload = await api('/api/social/trade-groups/notifications/unread');
       state.tradeGroupNotifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
+      const nextTopId = state.tradeGroupNotifications.length
+        ? String(state.tradeGroupNotifications[0].notification_id || '')
+        : '';
+      if (nextTopId && nextTopId !== previousTopId) {
+        window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT, {
+          detail: { reason: 'trade-group-notification-updated' }
+        }));
+      }
     } catch (_error) {
       state.tradeGroupNotifications = [];
     }
