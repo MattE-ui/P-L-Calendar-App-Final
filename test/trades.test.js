@@ -268,10 +268,71 @@ test('active option trades use option contract quote and never fall back to unde
   assert.equal(data.trades.length, 1);
   assert.equal(data.trades[0].assetClass, 'options');
   assert.equal(data.trades[0].livePrice, 0.52);
+  assert.equal(data.trades[0].optionPremiumSource, 'last');
   assert.equal(data.trades[0].liveCurrency, 'USD');
   assert.equal(data.trades[0].sizeUnits, 200);
   assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
   assert.ok(data.trades[0].unrealizedGBP > 0);
+});
+
+test('active option trades fall back to contract previous close when live and last premium are unavailable', async () => {
+  marketDataServer = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://127.0.0.1');
+    const symbol = url.searchParams.get('symbols');
+    res.setHeader('Content-Type', 'application/json');
+    if (symbol === 'AAPL260619C00196000') {
+      res.end(JSON.stringify({
+        quoteResponse: {
+          result: [{
+            symbol,
+            marketState: 'CLOSED',
+            regularMarketPreviousClose: 0.44,
+            currency: 'USD'
+          }]
+        }
+      }));
+      return;
+    }
+    res.end(JSON.stringify({
+      quoteResponse: {
+        result: [{
+          symbol,
+          regularMarketPrice: 199.33,
+          currency: 'USD'
+        }]
+      }
+    }));
+  });
+  await new Promise(resolve => marketDataServer.listen(0, resolve));
+  const marketPort = marketDataServer.address().port;
+  process.env.MARKET_DATA_URL = `http://127.0.0.1:${marketPort}/quote`;
+
+  await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 0.33,
+      stop: 0.2,
+      riskPct: 1,
+      date: '2026-03-15',
+      symbol: 'AAPL',
+      assetClass: 'options',
+      optionType: 'call',
+      optionStrike: 196,
+      optionExpiration: '2026-06-19',
+      optionContracts: 2,
+      currency: 'USD'
+    })
+  });
+
+  const { res, data } = await authedFetch('/api/trades/active');
+  assert.equal(res.status, 200);
+  assert.equal(data.trades.length, 1);
+  assert.equal(data.trades[0].assetClass, 'options');
+  assert.equal(data.trades[0].livePrice, 0.44);
+  assert.equal(data.trades[0].optionPremiumSource, 'close');
+  assert.equal(data.trades[0].liveCurrency, 'USD');
+  assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
 });
 
 test('persists and lists fully closed execution-leg trades', async () => {
