@@ -310,20 +310,22 @@ test('imports IBKR CSV trades, skips non-trades, and is idempotent on re-upload'
   assert.equal(listAfterRemove.data.trades.length, 0);
 });
 
-test('imports IBKR option symbols and applies closing rows as exits', async () => {
+test('imports IBKR option symbols and groups multiple option fills under one parent trade lifecycle', async () => {
   const csv = [
     'ClientAccountID,AssetClass,Symbol,Description,TradeID,DateTime,TradeDate,Quantity,TradePrice,Buy/Sell,IBCommission,NetCash,Exchange,CurrencyPrimary,Strike,Expiry,Put/Call,Multiplier,Open/CloseIndicator,TransactionType,LevelOfDetail',
-    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5001,20260301;101000,2026-03-01,2,2.5,BUY,-1.0,-500,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5001,20260301;101000,2026-03-01,3,2.5,BUY,-1.0,-750,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5004,20260302;101000,2026-03-02,1,2.8,BUY,-0.5,-280,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
     'U12345,OPT,NVDA  260417C00250000,NVDA Apr17 250 Call,5002,20260301;102000,2026-03-01,1,3.0,BUY,-0.5,-300,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
-    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5003,20260302;101000,2026-03-02,1,3.0,SELL,-0.5,300,CBOE,USD,,,,100,C,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5003,20260303;101000,2026-03-03,2,3.0,SELL,-0.5,600,CBOE,USD,,,,100,C,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260402P00656000,SPY Apr02 656 Put,5005,20260303;110000,2026-03-03,2,3.1,SELL,-0.5,620,CBOE,USD,,,,100,C,ExchTrade,EXECUTION',
     'U12345,CASH,USD.USD,FX Conversion,,20260302;102000,2026-03-02,1000,1.0,SELL,0,1000,IDEALPRO,USD,,,,,O,ExchTrade,EXECUTION'
   ].join('\n');
   const form = new FormData();
   form.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-options.csv');
   const imported = await authedFetch('/api/trades/import/ibkr', { method: 'POST', body: form });
   assert.equal(imported.res.status, 200);
-  assert.equal(imported.data.summary.importedOpenings, 2);
-  assert.equal(imported.data.summary.importedExits, 1);
+  assert.equal(imported.data.summary.importedOpenings, 3);
+  assert.equal(imported.data.summary.importedExits, 2);
   assert.equal(imported.data.summary.unmatchedClosingRows, 0);
   assert.equal(imported.data.summary.skippedCashRows, 1);
 
@@ -336,10 +338,20 @@ test('imports IBKR option symbols and applies closing rows as exits', async () =
   assert.equal(spyPut.optionType, 'put');
   assert.equal(spyPut.optionStrike, 656);
   assert.equal(spyPut.optionExpiration, '2026-04-02');
-  assert.equal(spyPut.totalEnteredQuantity, 200);
-  assert.equal(spyPut.totalExitedQuantity, 100);
-  assert.equal(spyPut.openQuantity, 100);
-  assert.equal(spyPut.status, 'partial');
+  assert.equal(spyPut.totalEnteredQuantity, 400);
+  assert.equal(spyPut.totalExitedQuantity, 400);
+  assert.equal(spyPut.openQuantity, 0);
+  assert.equal(spyPut.status, 'closed');
+  assert.equal(spyPut.entryExecutions.length, 2);
+  assert.equal(spyPut.exitExecutions.length, 2);
+  assert.equal(spyPut.entryExecutions[0].quantity, 300);
+  assert.equal(spyPut.entryExecutions[0].price, 2.5);
+  assert.equal(spyPut.entryExecutions[1].quantity, 100);
+  assert.equal(spyPut.entryExecutions[1].price, 2.8);
+  assert.equal(spyPut.exitExecutions[0].quantity, 200);
+  assert.equal(spyPut.exitExecutions[0].price, 3);
+  assert.equal(spyPut.exitExecutions[1].quantity, 200);
+  assert.equal(spyPut.exitExecutions[1].price, 3.1);
 
   const nvdaCall = list.data.trades.find(trade => trade.displaySymbol === 'NVDA');
   assert.ok(nvdaCall);

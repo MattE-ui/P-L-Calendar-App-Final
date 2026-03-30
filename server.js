@@ -13218,6 +13218,27 @@ function getTradeOpenQuantity(trade) {
   return Number(trade?.sizeUnits) || 0;
 }
 
+function buildIbkrParentGroupingIdentity(trade) {
+  if (!trade || typeof trade !== 'object') return '';
+  const assetClass = String(trade.assetClass || '').trim().toLowerCase();
+  if (assetClass !== 'options') return '';
+  const accountId = String(trade.ibkrAccountId || '').trim().toUpperCase();
+  const ticker = String(trade.underlyingTicker || trade.displaySymbol || trade.symbol || '').trim().toUpperCase();
+  const optionType = String(trade.optionType || '').trim().toUpperCase();
+  const expiration = String(trade.optionExpiration || '').trim();
+  const strikeRaw = Number(trade.optionStrike);
+  const strike = Number.isFinite(strikeRaw) && strikeRaw > 0 ? strikeRaw.toFixed(3) : '';
+  if (!accountId || !ticker || !optionType || !expiration || !strike) return '';
+  return [
+    accountId,
+    ticker,
+    'option',
+    optionType,
+    strike,
+    expiration
+  ].join('|');
+}
+
 app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
   if (rejectGuest(req, res)) return;
   try {
@@ -13437,19 +13458,6 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
     let importedExits = 0;
     let unmatchedClosingRows = 0;
 
-    const contractIdentityFor = (trade) => {
-      const assetClass = String(trade.assetClass || '').toLowerCase();
-      const symbol = String(trade.displaySymbol || trade.symbol || '').trim().toUpperCase();
-      if (assetClass !== 'options') {
-        return `stocks:${symbol}`;
-      }
-      const optionType = String(trade.optionType || '').toLowerCase();
-      const optionStrike = Number(trade.optionStrike);
-      const strikeKey = Number.isFinite(optionStrike) ? optionStrike.toFixed(3) : '';
-      const optionExpiration = String(trade.optionExpiration || '').trim();
-      return `options:${symbol}:${optionType}:${strikeKey}:${optionExpiration}`;
-    };
-
     const sortedRows = toProcess
       .slice()
       .sort((a, b) => String(a.trade.ibkrTradeDateTime || '').localeCompare(String(b.trade.ibkrTradeDateTime || '')));
@@ -13458,24 +13466,60 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
       row.trade.importBatchId = batchId;
       row.trade.importedAt = importedAt;
       row.trade.importSource = 'IBKR_CSV';
+      const groupingIdentity = buildIbkrParentGroupingIdentity(row.trade);
       if (row.openCloseIndicator === 'O') {
-        row.trade.executions = [
-          {
-            id: crypto.randomBytes(8).toString('hex'),
-            side: 'entry',
-            quantity: row.executionQuantity,
-            price: row.trade.entry,
-            date: row.dateKey,
-            fee: Math.abs(Number(row.trade.ibkrCommission) || 0),
-            brokerTradeId: row.brokerTradeId || undefined,
-            importFingerprint: row.fingerprint,
-            importBatchId: batchId,
-            importSource: 'IBKR_CSV',
-            openCloseIndicator: 'O'
+        const openingExecution = {
+          id: crypto.randomBytes(8).toString('hex'),
+          side: 'entry',
+          quantity: row.executionQuantity,
+          price: row.trade.entry,
+          date: row.dateKey,
+          fee: Math.abs(Number(row.trade.ibkrCommission) || 0),
+          brokerTradeId: row.brokerTradeId || undefined,
+          importFingerprint: row.fingerprint,
+          importBatchId: batchId,
+          importSource: 'IBKR_CSV',
+          openCloseIndicator: 'O'
+        };
+        let parentTrade = null;
+        if (groupingIdentity) {
+          const candidates = [];
+          for (const [tradeDateKey, trades] of Object.entries(journal)) {
+            for (const trade of (trades || [])) {
+              if (!trade || typeof trade !== 'object') continue;
+              if (buildIbkrParentGroupingIdentity(trade) !== groupingIdentity) continue;
+              candidates.push({ trade, tradeDateKey });
+            }
           }
-        ];
-        journal[row.dateKey] ||= [];
-        journal[row.dateKey].push(row.trade);
+          candidates.sort((a, b) => String(a.tradeDateKey).localeCompare(String(b.tradeDateKey)));
+          parentTrade = candidates.find(candidate => getTradeOpenQuantity(candidate.trade) > 0)?.trade
+            || candidates[0]?.trade
+            || null;
+        }
+        if (parentTrade) {
+          parentTrade.executions = normalizeExecutionLegs(parentTrade, parentTrade.openDate || row.dateKey);
+          parentTrade.executions.push(openingExecution);
+          const executionSummary = summarizeExecutionLegs(parentTrade, {});
+          parentTrade.executions = executionSummary.executions;
+          parentTrade.status = executionSummary.status;
+          parentTrade.sizeUnits = executionSummary.openQuantity;
+          parentTrade.closePrice = executionSummary.avgExit || undefined;
+          parentTrade.closeDate = executionSummary.lastExitDate || undefined;
+          parentTrade.realizedPnlGBP = executionSummary.realizedPnlGBP;
+          parentTrade.realizedPnlCurrency = executionSummary.realizedPnlCurrency;
+          if (!Number.isFinite(Number(parentTrade.optionContracts))) {
+            const multiplier = Number(parentTrade.ibkrMultiplier);
+            if (Number.isFinite(multiplier) && multiplier > 0) {
+              parentTrade.optionContracts = executionSummary.totalEntered / multiplier;
+            }
+          }
+        } else {
+          row.trade.executions = [
+            openingExecution
+          ];
+          journal[row.dateKey] ||= [];
+          journal[row.dateKey].push(row.trade);
+        }
         importedOpenings += 1;
         continue;
       }
@@ -13483,7 +13527,12 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
       for (const [tradeDateKey, trades] of Object.entries(journal)) {
         for (const trade of (trades || [])) {
           if (!trade || typeof trade !== 'object') continue;
-          if (contractIdentityFor(trade) !== contractIdentityFor(row.trade)) continue;
+          if (groupingIdentity && buildIbkrParentGroupingIdentity(trade) !== groupingIdentity) continue;
+          if (!groupingIdentity) {
+            const fallbackSymbol = String(trade.displaySymbol || trade.symbol || '').trim().toUpperCase();
+            const rowSymbol = String(row.trade.displaySymbol || row.trade.symbol || '').trim().toUpperCase();
+            if (!fallbackSymbol || fallbackSymbol !== rowSymbol) continue;
+          }
           const openQty = getTradeOpenQuantity(trade);
           if (!Number.isFinite(openQty) || openQty <= 0) continue;
           candidates.push({ trade, tradeDateKey, openQty });
