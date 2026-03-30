@@ -277,6 +277,8 @@ test('imports IBKR CSV trades, skips non-trades, and is idempotent on re-upload'
   assert.equal(optionTrade.optionStrike, 200);
   assert.equal(optionTrade.optionExpiration, '2026-03-20');
   assert.equal(optionTrade.optionContracts, 2);
+  assert.equal(optionTrade.totalEnteredQuantity, 200);
+  assert.equal(optionTrade.openQuantity, 200);
 
   const secondForm = new FormData();
   secondForm.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-sample.csv');
@@ -334,9 +336,9 @@ test('imports IBKR option symbols and applies closing rows as exits', async () =
   assert.equal(spyPut.optionType, 'put');
   assert.equal(spyPut.optionStrike, 656);
   assert.equal(spyPut.optionExpiration, '2026-04-02');
-  assert.equal(spyPut.totalEnteredQuantity, 2);
-  assert.equal(spyPut.totalExitedQuantity, 1);
-  assert.equal(spyPut.openQuantity, 1);
+  assert.equal(spyPut.totalEnteredQuantity, 200);
+  assert.equal(spyPut.totalExitedQuantity, 100);
+  assert.equal(spyPut.openQuantity, 100);
   assert.equal(spyPut.status, 'partial');
 
   const nvdaCall = list.data.trades.find(trade => trade.displaySymbol === 'NVDA');
@@ -344,4 +346,26 @@ test('imports IBKR option symbols and applies closing rows as exits', async () =
   assert.equal(nvdaCall.optionType, 'call');
   assert.equal(nvdaCall.optionStrike, 250);
   assert.equal(nvdaCall.optionExpiration, '2026-04-17');
+});
+
+test('imports IBKR option execution quantities using contracts × multiplier', async () => {
+  const csv = [
+    'ClientAccountID,AssetClass,Symbol,Description,TradeID,DateTime,TradeDate,Quantity,TradePrice,Buy/Sell,IBCommission,NetCash,Exchange,CurrencyPrimary,Strike,Expiry,Put/Call,Multiplier,Open/CloseIndicator,TransactionType,LevelOfDetail',
+    'U12345,OPT,TSLA  260417C00300000,TSLA Apr17 300 Call,8001,20260310;101000,2026-03-10,2,6.5,BUY,-1.0,-1300,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
+    'U12345,OPT,TSLA  260417C00300000,TSLA Apr17 300 Call,8002,20260311;101000,2026-03-11,1,7.2,SELL,-1.0,720,CBOE,USD,,,,100,C,ExchTrade,EXECUTION'
+  ].join('\n');
+  const form = new FormData();
+  form.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-option-qty.csv');
+  const imported = await authedFetch('/api/trades/import/ibkr', { method: 'POST', body: form });
+  assert.equal(imported.res.status, 200);
+
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const tslaCall = list.data.trades.find(trade => trade.displaySymbol === 'TSLA');
+  assert.ok(tslaCall);
+  assert.equal(tslaCall.optionContracts, 2);
+  assert.equal(tslaCall.totalEnteredQuantity, 200);
+  assert.equal(tslaCall.totalExitedQuantity, 100);
+  assert.equal(tslaCall.openQuantity, 100);
+  assert.equal(tslaCall.status, 'partial');
 });

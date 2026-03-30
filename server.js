@@ -13346,7 +13346,8 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
       const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 0 ? multiplierRaw : (assetClassRaw === 'OPT' ? 100 : 1);
       const quantityAbs = Math.abs(quantityRaw);
       const optionContracts = assetClassRaw === 'OPT' ? quantityAbs : undefined;
-      const sizeUnits = assetClassRaw === 'OPT' ? quantityAbs * multiplier : quantityAbs;
+      const normalizedShareQuantity = assetClassRaw === 'OPT' ? quantityAbs * multiplier : quantityAbs;
+      const sizeUnits = normalizedShareQuantity;
       const optionDetails = assetClassRaw === 'OPT' ? parseIbkrOptionDetails(row) : null;
       const optionType = optionDetails?.optionType;
       const optionStrike = optionDetails?.optionStrike;
@@ -13393,6 +13394,8 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
         ibkrDescription: description || undefined,
         ibkrOpenCloseIndicator: openCloseIndicator || undefined,
         ibkrMultiplier: multiplier,
+        ibkrRawContractQuantity: assetClassRaw === 'OPT' ? quantityAbs : undefined,
+        ibkrNormalizedShareQuantity: normalizedShareQuantity,
         rawBrokerSymbol: symbolRaw,
         underlyingTicker: optionDetails?.underlyingTicker || undefined,
         rawImportRow: row
@@ -13403,7 +13406,7 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
         dateKey: parsedDate.dateKey,
         brokerTradeId,
         fingerprint,
-        quantityAbs,
+        executionQuantity: normalizedShareQuantity,
         buySell,
         openCloseIndicator,
         assetClassRaw,
@@ -13460,7 +13463,7 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
           {
             id: crypto.randomBytes(8).toString('hex'),
             side: 'entry',
-            quantity: row.quantityAbs,
+            quantity: row.executionQuantity,
             price: row.trade.entry,
             date: row.dateKey,
             fee: Math.abs(Number(row.trade.ibkrCommission) || 0),
@@ -13487,7 +13490,7 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
         }
       }
       candidates.sort((a, b) => String(a.tradeDateKey).localeCompare(String(b.tradeDateKey)));
-      let remaining = row.quantityAbs;
+      let remaining = row.executionQuantity;
       for (const candidate of candidates) {
         if (remaining <= 0) break;
         const openQty = getTradeOpenQuantity(candidate.trade);
