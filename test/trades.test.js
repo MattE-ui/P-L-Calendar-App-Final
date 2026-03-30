@@ -381,3 +381,31 @@ test('imports IBKR option execution quantities using contracts × multiplier', a
   assert.equal(tslaCall.openQuantity, 100);
   assert.equal(tslaCall.status, 'partial');
 });
+
+test('imports IBKR closing rows with full normalized exit quantity even when spanning multiple entry fills', async () => {
+  const csv = [
+    'ClientAccountID,AssetClass,Symbol,Description,TradeID,DateTime,TradeDate,Quantity,TradePrice,Buy/Sell,IBCommission,NetCash,Exchange,CurrencyPrimary,Strike,Expiry,Put/Call,Multiplier,Open/CloseIndicator,TransactionType,LevelOfDetail',
+    'U12345,OPT,SPY   260417C00600000,SPY Apr17 600 Call,9001,20260320;101000,2026-03-20,3,5.8,BUY,-1.0,-1740,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260417C00600000,SPY Apr17 600 Call,9002,20260321;101000,2026-03-21,1,6.1,BUY,-1.0,-610,CBOE,USD,,,,100,O,ExchTrade,EXECUTION',
+    'U12345,OPT,SPY   260417C00600000,SPY Apr17 600 Call,9003,20260323;101000,2026-03-23,4,7.36,SELL,-1.0,2944,CBOE,USD,,,,100,C,ExchTrade,EXECUTION'
+  ].join('\n');
+  const form = new FormData();
+  form.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-option-close-qty.csv');
+  const imported = await authedFetch('/api/trades/import/ibkr', { method: 'POST', body: form });
+  assert.equal(imported.res.status, 200);
+  assert.equal(imported.data.summary.importedOpenings, 2);
+  assert.equal(imported.data.summary.importedExits, 1);
+  assert.equal(imported.data.summary.unmatchedClosingRows, 0);
+
+  const list = await authedFetch('/api/trades');
+  assert.equal(list.res.status, 200);
+  const spyCall = list.data.trades.find(trade => trade.displaySymbol === 'SPY');
+  assert.ok(spyCall);
+  assert.equal(spyCall.totalEnteredQuantity, 400);
+  assert.equal(spyCall.totalExitedQuantity, 400);
+  assert.equal(spyCall.openQuantity, 0);
+  assert.equal(spyCall.status, 'closed');
+  assert.equal(spyCall.exitExecutions.length, 1);
+  assert.equal(spyCall.exitExecutions[0].price, 7.36);
+  assert.equal(spyCall.exitExecutions[0].quantity, 400);
+});
