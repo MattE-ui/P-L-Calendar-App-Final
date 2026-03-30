@@ -3048,14 +3048,14 @@ async function initNotificationSettings() {
 
 window.addEventListener('DOMContentLoaded', () => {
   bindNav();
-  loadProfile({ refreshIntegrations: true });
+  loadProfile();
   loadIntegration();
   loadIbkrIntegration();
   loadIbkrDownloadMeta();
   if (profileRefreshTimer) clearInterval(profileRefreshTimer);
   profileRefreshTimer = setInterval(() => {
     if (Date.now() < suppressProfileAutoRefreshUntil || isAvatarInteractionLocked()) return;
-    loadProfile({ refreshIntegrations: true });
+    loadProfile();
   }, PROFILE_AUTO_REFRESH_MS);
   bindInvestorAccountToggle();
   bindInvestorActions();
@@ -3064,7 +3064,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 0);
   window.addEventListener('focus', () => {
     if (Date.now() < suppressProfileAutoRefreshUntil || isAvatarInteractionLocked()) return;
-    loadProfile({ refreshIntegrations: true });
+    loadProfile();
   });
   const rawModal = document.getElementById('t212-raw-modal');
   const rawContent = document.getElementById('t212-raw-content');

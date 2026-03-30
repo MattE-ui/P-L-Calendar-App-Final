@@ -7032,6 +7032,16 @@ async function fetchTrading212HistoryOrders(config, username, {
   const orders = parseTrading212HistoryOrders(payload);
   const importedOrderIds = orders.map(item => String(item.orderId || item.id || '')).filter(Boolean);
   const importedFillIds = orders.map(item => String(item.fillId || item.fill?.id || '')).filter(Boolean);
+  const parsedPreview = orders.slice(0, 5).map(item => ({
+    orderId: item.orderId || item.id || '',
+    fillId: item.fillId || item.fill?.id || '',
+    side: item.side || '',
+    status: item.status || '',
+    filledAt: item.filledAt || ''
+  }));
+  const firstPage = pages[0] || {};
+  const firstPageHeaders = debug.historyOrdersHeaders || null;
+  console.info(`[T212][history][summary] account=${accountId || 'default'} requestUrl=${firstPage.url || debug.historyOrdersRequestUrl || ''} status=${firstPage.status ?? debug.historyOrdersStatus ?? 'unknown'} x-ratelimit-limit=${firstPageHeaders?.['x-ratelimit-limit'] ?? 'n/a'} x-ratelimit-remaining=${firstPageHeaders?.['x-ratelimit-remaining'] ?? 'n/a'} x-ratelimit-reset=${firstPageHeaders?.['x-ratelimit-reset'] ?? 'n/a'} rawItemCount=${rawOrders.length} parsedItemCount=${orders.length} parsedPreview=${JSON.stringify(parsedPreview)}`);
   console.info(`[T212] history orders fetched account=${accountId || 'default'} rawCount=${rawOrders.length} completedCount=${orders.length}`);
   const response = {
     raw: payload,
@@ -7042,6 +7052,9 @@ async function fetchTrading212HistoryOrders(config, username, {
     debug: {
       pageLimit: safeLimit,
       pages,
+      parsedPreview,
+      rawItemCount: rawOrders.length,
+      parsedItemCount: orders.length,
       ...debug
     },
     fromCache: false
@@ -8209,6 +8222,29 @@ function recordTrading212EndpointAttempt(accountState, endpointKey, upstreamMeta
     accountState.lastSuccessByEndpoint[endpointKey] = endpointState.lastAttemptAt;
     delete endpointState.lastError;
   }
+  const minInterval = TRADING212_SYNC_MIN_INTERVALS_MS[endpointKey] || 30000;
+  const nextByCadence = Date.parse(endpointState.lastAttemptAt || '') + minInterval;
+  const cooldownTs = Date.parse(endpointState.cooldownUntil || '');
+  const nextAllowedTs = Math.max(
+    Number.isFinite(nextByCadence) ? nextByCadence : 0,
+    Number.isFinite(cooldownTs) ? cooldownTs : 0
+  );
+  if (nextAllowedTs > 0) {
+    endpointState.nextAllowedAt = new Date(nextAllowedTs).toISOString();
+  }
+}
+
+function recordTrading212Skip(accountState, endpointKey, gate = {}) {
+  if (!accountState || typeof accountState !== 'object') return;
+  accountState.lastSkip = {
+    endpoint: endpointKey,
+    reason: gate.reason || 'unknown',
+    until: gate.until || null,
+    at: new Date().toISOString()
+  };
+  if (endpointKey && accountState.endpoints?.[endpointKey]) {
+    accountState.endpoints[endpointKey].lastSkip = accountState.lastSkip;
+  }
 }
 
 async function syncTrading212ForUser(username, runDate = new Date(), options = {}) {
@@ -8216,6 +8252,16 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
   const existingLock = TRADING212_ACCOUNT_LOCKS.get(lockKey);
   if (existingLock) {
     console.info(`[T212][sync] skipped username=${username} reason=lock_in_progress`);
+    const db = loadDB();
+    const user = db.users?.[username];
+    if (user?.trading212 && typeof user.trading212 === 'object') {
+      user.trading212.lastSyncSkip = {
+        reason: 'lock_in_progress',
+        at: new Date().toISOString()
+      };
+      user.trading212.lastDataSource = 'cached_db';
+      saveDB(db);
+    }
     if (options.waitForExisting === true) {
       await existingLock.catch(() => null);
     }
@@ -8276,6 +8322,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         }
       } else {
         console.info(`[T212][sync] skipped endpoint=summary account=${accountId} reason=${summaryGate.reason} until=${summaryGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'summary', summaryGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
       }
 
       let ordersPayload = null;
@@ -8297,6 +8345,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         }
       } else {
         console.info(`[T212][sync] skipped endpoint=orders account=${accountId} reason=${ordersGate.reason} until=${ordersGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'orders', ordersGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
       }
 
       let historyOrdersPayload = null;
@@ -8324,6 +8374,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         }
       } else {
         console.info(`[T212][sync] skipped endpoint=historyOrders account=${accountId} reason=${historyGate.reason} until=${historyGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'historyOrders', historyGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
       }
 
       accountResults.push({
@@ -8912,6 +8964,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     cfg.lastSuccessfulSyncAt = cfg.lastSyncAt;
     cfg.lastDataSource = 'fresh_upstream';
     cfg.lastSyncError = null;
+    cfg.lastSyncSkip = null;
     cfg.syncInProgress = false;
     if (!cfg.minuteSync) {
       cfg.minuteSync = true;
@@ -9943,15 +9996,14 @@ app.post('/api/portfolio', auth, (req,res)=>{
 });
 
 app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
-  let db = loadDB();
-  let user = db.users[req.username];
+  const db = loadDB();
+  const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   const refreshIntegrations = ['1', 'true', 'yes'].includes(String(req.query?.refreshIntegrations || '').toLowerCase());
   if (refreshIntegrations) {
-    await refreshIntegratedTradingAccountsNow(req.username, user);
-    db = loadDB();
-    user = db.users[req.username];
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    refreshIntegratedTradingAccountsNow(req.username, user).catch(error => {
+      console.warn('[broker-sync] async profile-triggered refresh failed', error);
+    });
   }
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
@@ -12309,6 +12361,7 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     syncInProgress: !!cfg.syncInProgress,
     lastSyncError: cfg.lastSyncError || null,
     dataSource: cfg.lastDataSource || 'cached_db',
+    lastSyncSkip: cfg.lastSyncSkip || null,
     syncState: cfg.syncState || { accounts: {} }
   });
 });
