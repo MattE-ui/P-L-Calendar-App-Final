@@ -13337,22 +13337,74 @@ function isOptionsTrade(trade) {
   return String(trade?.assetClass || '').trim().toLowerCase() === 'options';
 }
 
+function normalizeOptionType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw.startsWith('c')) return 'call';
+  if (raw.startsWith('p')) return 'put';
+  return '';
+}
+
+function normalizeOptionExpiration(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{8}$/.test(raw)) {
+    return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+  }
+  if (/^\d{6}$/.test(raw)) {
+    const year = 2000 + Number(raw.slice(0, 2));
+    if (Number.isFinite(year)) {
+      return `${year}-${raw.slice(2, 4)}-${raw.slice(4, 6)}`;
+    }
+  }
+  return '';
+}
+
+function parseOccOptionSymbol(symbolRaw) {
+  const symbol = String(symbolRaw || '').trim().toUpperCase();
+  if (!symbol) return null;
+  const match = symbol.match(/^([A-Z]{1,6})(\d{6})([CP])(\d{8})$/);
+  if (!match) return null;
+  const [, underlying, expiryRaw, cpRaw, strikeRaw] = match;
+  const expiration = `20${expiryRaw.slice(0, 2)}-${expiryRaw.slice(2, 4)}-${expiryRaw.slice(4, 6)}`;
+  const strike = Number(strikeRaw) / 1000;
+  if (!Number.isFinite(strike) || strike <= 0) return null;
+  return {
+    underlyingTicker: underlying,
+    expirationDate: expiration,
+    optionType: cpRaw === 'P' ? 'put' : 'call',
+    strike
+  };
+}
+
 function buildOptionContractQuoteSymbol(trade) {
   if (!isOptionsTrade(trade)) return '';
-  const optionType = String(trade?.optionType || '').trim().toLowerCase();
-  const optionStrike = Number(trade?.optionStrike);
-  const optionExpiration = String(trade?.optionExpiration || '').trim();
+  const optionType = normalizeOptionType(trade?.optionType);
+  const parsedFromIbkrSymbol = parseIbkrOptionSymbol(trade?.symbol || '');
+  const parsedFromOccSymbol = parseOccOptionSymbol(trade?.symbol || '')
+    || parseOccOptionSymbol(trade?.displaySymbol || '')
+    || parseOccOptionSymbol(trade?.rawBrokerSymbol || '');
+  const optionStrike = Number(
+    trade?.optionStrike
+    ?? parsedFromIbkrSymbol?.strike
+    ?? parsedFromOccSymbol?.strike
+  );
+  const optionExpiration = normalizeOptionExpiration(
+    trade?.optionExpiration
+    || parsedFromIbkrSymbol?.expirationDate
+    || parsedFromOccSymbol?.expirationDate
+  );
   if (!/^\d{4}-\d{2}-\d{2}$/.test(optionExpiration)) return '';
   if (!Number.isFinite(optionStrike) || optionStrike <= 0) return '';
   if (optionType !== 'call' && optionType !== 'put') return '';
-  const parsedFromSymbol = parseIbkrOptionSymbol(trade?.symbol || '');
   const underlying = String(
     trade?.underlyingTicker
-    || parsedFromSymbol?.underlyingTicker
-    || trade?.displaySymbol
+    || parsedFromIbkrSymbol?.underlyingTicker
+    || parsedFromOccSymbol?.underlyingTicker
+    || trade?.ticker
     || trade?.symbol
     || ''
-  ).trim().toUpperCase();
+  ).trim().toUpperCase().replace(/[^A-Z0-9._-]/g, '');
   if (!underlying) return '';
   const yymmdd = optionExpiration.replace(/-/g, '').slice(2);
   const cp = optionType === 'put' ? 'P' : 'C';
@@ -13360,6 +13412,61 @@ function buildOptionContractQuoteSymbol(trade) {
   if (!Number.isFinite(strikeScaled) || strikeScaled <= 0) return '';
   const strikePart = String(strikeScaled).padStart(8, '0');
   return `${underlying}${yymmdd}${cp}${strikePart}`;
+}
+
+async function resolveOptionLiveQuoteForTrade(trade) {
+  const diagnostics = {
+    tradeId: trade?.id || '',
+    accountContext: trade?.source || '',
+    ticker: String(trade?.underlyingTicker || trade?.symbol || '').trim().toUpperCase(),
+    optionType: normalizeOptionType(trade?.optionType),
+    strike: Number.isFinite(Number(trade?.optionStrike)) ? Number(trade.optionStrike) : null,
+    expiry: normalizeOptionExpiration(trade?.optionExpiration),
+    multiplier: Number.isFinite(Number(trade?.optionMultiplier)) ? Number(trade.optionMultiplier) : null,
+    resolvedContractSymbol: '',
+    lookupSucceeded: false,
+    failureReason: '',
+    attempts: []
+  };
+  const candidates = [];
+  const pushCandidate = (raw) => {
+    const value = String(raw || '').trim().toUpperCase();
+    if (!value) return;
+    if (!candidates.includes(value)) candidates.push(value);
+  };
+  pushCandidate(buildOptionContractQuoteSymbol(trade));
+  pushCandidate(trade?.symbol);
+  pushCandidate(trade?.displaySymbol);
+  pushCandidate(trade?.rawBrokerSymbol);
+  diagnostics.resolvedContractSymbol = candidates[0] || '';
+  if (!candidates.length) {
+    diagnostics.failureReason = 'No valid option contract identifier could be resolved';
+    console.warn('[ACTIVE_OPTIONS_QUOTE] failed to resolve option contract symbol', diagnostics);
+    return { quote: null, diagnostics };
+  }
+  for (const symbol of candidates) {
+    try {
+      const quote = await fetchMarketPrice(symbol);
+      if (Number.isFinite(Number(quote?.price)) && Number(quote.price) > 0) {
+        diagnostics.lookupSucceeded = true;
+        diagnostics.resolvedContractSymbol = symbol;
+        diagnostics.failureReason = '';
+        diagnostics.attempts.push({ symbol, ok: true });
+        console.info('[ACTIVE_OPTIONS_QUOTE] resolved live option quote', {
+          ...diagnostics,
+          quoteCurrency: quote.currency || null
+        });
+        return { quote, diagnostics };
+      }
+      diagnostics.attempts.push({ symbol, ok: false, reason: 'Quote returned without valid premium' });
+    } catch (error) {
+      const reason = error?.message || 'Unknown quote provider error';
+      diagnostics.attempts.push({ symbol, ok: false, reason });
+    }
+  }
+  diagnostics.failureReason = diagnostics.attempts[diagnostics.attempts.length - 1]?.reason || 'Quote lookup failed';
+  console.warn('[ACTIVE_OPTIONS_QUOTE] option quote lookup failed', diagnostics);
+  return { quote: null, diagnostics };
 }
 
 function resolveTradeSizeUnits(trade) {
@@ -13496,9 +13603,10 @@ async function buildActiveTrades(user, rates = {}) {
   for (const trade of trades) {
     const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
     const quoteSymbol = normalizeTrading212Symbol(symbol);
-    const optionContractSymbol = buildOptionContractQuoteSymbol(trade);
+    const isOption = isOptionsTrade(trade);
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
+    let optionQuoteDiagnostics = null;
     const tradeCurrency = trade.currency || 'GBP';
     const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
@@ -13507,17 +13615,34 @@ async function buildActiveTrades(user, rates = {}) {
       if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
         livePrice = Number(trade.lastSyncPrice);
         liveCurrency = tradeCurrency;
-      } else if (optionContractSymbol) {
-        const quote = await fetchMarketPrice(optionContractSymbol);
-        livePrice = quote.price;
-        liveCurrency = quote.currency || liveCurrency;
+      } else if (isOption) {
+        const result = await resolveOptionLiveQuoteForTrade(trade);
+        optionQuoteDiagnostics = result.diagnostics;
+        if (result.quote) {
+          livePrice = Number(result.quote.price);
+          liveCurrency = result.quote.currency || liveCurrency;
+        }
       } else if (quoteSymbol) {
         const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
         liveCurrency = quote.currency || liveCurrency;
       }
     } catch (e) {
-      // ignore fetch failures; leave livePrice null
+      if (isOption) {
+        optionQuoteDiagnostics ||= {
+          tradeId: trade?.id || '',
+          ticker: String(trade?.underlyingTicker || trade?.symbol || '').trim().toUpperCase(),
+          optionType: normalizeOptionType(trade?.optionType),
+          strike: Number.isFinite(Number(trade?.optionStrike)) ? Number(trade.optionStrike) : null,
+          expiry: normalizeOptionExpiration(trade?.optionExpiration),
+          multiplier: Number.isFinite(Number(trade?.optionMultiplier)) ? Number(trade.optionMultiplier) : null,
+          resolvedContractSymbol: buildOptionContractQuoteSymbol(trade),
+          lookupSucceeded: false,
+          failureReason: e?.message || 'Unhandled option quote fetch error',
+          attempts: []
+        };
+        console.warn('[ACTIVE_OPTIONS_QUOTE] unexpected resolver error', optionQuoteDiagnostics);
+      }
     }
     const sizeUnits = resolveTradeSizeUnits(trade);
     const entry = Number(trade.entry);
@@ -13588,7 +13713,8 @@ async function buildActiveTrades(user, rates = {}) {
         optionStrike: trade.optionStrike,
         optionExpiration: trade.optionExpiration,
         optionContracts: trade.optionContracts,
-        optionMultiplier: trade.optionMultiplier
+        optionMultiplier: trade.optionMultiplier,
+        optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
       continue;
     }
@@ -13692,7 +13818,8 @@ async function buildActiveTrades(user, rates = {}) {
         optionStrike: trade.optionStrike,
         optionExpiration: trade.optionExpiration,
         optionContracts: trade.optionContracts,
-        optionMultiplier: trade.optionMultiplier
+        optionMultiplier: trade.optionMultiplier,
+        optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
   }
   return {

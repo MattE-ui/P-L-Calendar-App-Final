@@ -1690,13 +1690,25 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
 
     const details = document.createElement('dl');
     details.className = `trade-details trade-details-collapsible ${showPriceInfo ? '' : 'is-collapsed'}`.trim();
-    const livePriceLabel = (trade?.assetClass || '').toLowerCase() === 'options' ? 'Live Premium' : 'Live Price';
-    const detailItems = [
-      ['Buy Price', formatPrice(trade.entry, trade.currency, 2)],
-      ['Original Stop', formatPrice(trade.stop, trade.currency, 2)],
-      ...(currentStop !== null ? [['Current Stop', formatPrice(currentStop, trade.currency, 2)]] : []),
-      [livePriceLabel, formatPrice(livePrice, trade.currency, 2)]
-    ];
+    const isOptionTrade = (trade?.assetClass || '').toLowerCase() === 'options';
+    const livePriceLabel = isOptionTrade ? 'Live Premium' : 'Live Price';
+    const optionType = String(trade?.optionType || '').trim().toUpperCase();
+    const optionStrike = Number(trade?.optionStrike);
+    const optionExpiry = String(trade?.optionExpiration || '').trim();
+    const detailItems = isOptionTrade
+      ? [
+        ['Entry Premium', formatPrice(trade.entry, trade.currency, 2)],
+        ['Type', optionType || '—'],
+        ['Strike', Number.isFinite(optionStrike) ? formatPrice(optionStrike, trade.currency, 2) : '—'],
+        ['Expiry', optionExpiry || '—'],
+        [livePriceLabel, formatPrice(livePrice, trade.currency, 2)]
+      ]
+      : [
+        ['Buy Price', formatPrice(trade.entry, trade.currency, 2)],
+        ['Original Stop', formatPrice(trade.stop, trade.currency, 2)],
+        ...(currentStop !== null ? [['Current Stop', formatPrice(currentStop, trade.currency, 2)]] : []),
+        [livePriceLabel, formatPrice(livePrice, trade.currency, 2)]
+      ];
     detailItems.forEach(([label, value]) => {
       const dt = document.createElement('dt');
       dt.textContent = `${label}:`;
