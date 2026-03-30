@@ -59,6 +59,31 @@ const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const shareCardState = { blob: null, url: null, trade: null, orientation: 'landscape' };
 const viewAvgLabels = { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 const SAFE_SCREENSHOT_LABEL = 'Hidden';
+const DASHBOARD_LOADING_OVERLAY_CONFIG = {
+  enabled: true,
+  minimumVisibleMs: 650,
+  maximumWaitMs: 12000,
+  fadeOutMs: 380
+};
+const DASHBOARD_LOADING_QUOTES = [
+  'The stock market is a device for transferring money from the impatient to the patient. — Warren Buffett',
+  'Price is what you pay. Value is what you get. — Warren Buffett',
+  'The trend is your friend. — Martin Zweig',
+  'Risk comes from not knowing what you are doing. — Warren Buffett',
+  'In investing, what is comfortable is rarely profitable. — Robert Arnott',
+  'The most important quality for an investor is temperament, not intellect. — Warren Buffett',
+  'Cut losses quickly and let winners run. — Jesse Livermore',
+  'Investing should be more like watching paint dry than watching football. — Paul Samuelson',
+  'The goal of a successful trader is to make the best trades. Money is secondary. — Alexander Elder',
+  'Markets can remain irrational longer than you can remain solvent. — John Maynard Keynes',
+  'The four most dangerous words in investing are: this time it’s different. — Sir John Templeton',
+  'Know what you own, and know why you own it. — Peter Lynch'
+];
+const DASHBOARD_LOADING_STATUS_MESSAGES = [
+  'Preparing your dashboard',
+  'Syncing portfolio data',
+  'Loading active positions'
+];
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -83,6 +108,87 @@ function userIsActivelyInteracting() {
   const active = document.activeElement;
   if (isInteractionSensitiveElement(active)) return true;
   return (Date.now() - (state.lastUserInteractionAt || 0)) < 2000;
+}
+
+function chooseRandom(list = []) {
+  if (!Array.isArray(list) || !list.length) return '';
+  const index = Math.floor(Math.random() * list.length);
+  return list[index];
+}
+
+function createDashboardLoadingOverlayController() {
+  const root = $('#dashboard-loading-overlay');
+  const quoteEl = $('#dashboard-loading-quote');
+  const statusEl = $('#dashboard-loading-status');
+  const main = document.querySelector('main.container');
+  if (!root) {
+    return {
+      enabled: false,
+      show() {},
+      setStatus() {},
+      hide: async () => {}
+    };
+  }
+
+  let visibleSince = 0;
+  let hasBeenDismissed = false;
+  let maxWaitTimer = null;
+  let activeQuote = '';
+
+  const setStatus = (text) => {
+    if (statusEl && text) statusEl.textContent = text;
+  };
+
+  const show = () => {
+    if (!DASHBOARD_LOADING_OVERLAY_CONFIG.enabled) return;
+    visibleSince = Date.now();
+    hasBeenDismissed = false;
+    activeQuote = chooseRandom(DASHBOARD_LOADING_QUOTES);
+    if (quoteEl) quoteEl.textContent = activeQuote;
+    setStatus(chooseRandom(DASHBOARD_LOADING_STATUS_MESSAGES));
+    document.body.classList.add('dashboard-loading-active');
+    document.body.setAttribute('aria-busy', 'true');
+    if (main) main.setAttribute('aria-hidden', 'true');
+    root.classList.remove('hidden', 'is-exiting');
+    window.requestAnimationFrame(() => {
+      root.classList.add('is-visible');
+    });
+    window.clearTimeout(maxWaitTimer);
+    maxWaitTimer = window.setTimeout(() => {
+      setStatus('Loading is taking longer than expected. Showing available data.');
+      hide();
+    }, DASHBOARD_LOADING_OVERLAY_CONFIG.maximumWaitMs);
+  };
+
+  const hide = async () => {
+    if (hasBeenDismissed) return;
+    hasBeenDismissed = true;
+    window.clearTimeout(maxWaitTimer);
+    const elapsed = Date.now() - visibleSince;
+    const remaining = Math.max(0, DASHBOARD_LOADING_OVERLAY_CONFIG.minimumVisibleMs - elapsed);
+    if (remaining) {
+      await new Promise(resolve => window.setTimeout(resolve, remaining));
+    }
+    root.classList.add('is-exiting');
+    root.classList.remove('is-visible');
+    window.setTimeout(() => {
+      root.classList.add('hidden');
+      document.body.classList.remove('dashboard-loading-active');
+      document.body.removeAttribute('aria-busy');
+      if (main) main.removeAttribute('aria-hidden');
+    }, DASHBOARD_LOADING_OVERLAY_CONFIG.fadeOutMs);
+  };
+
+  return {
+    enabled: DASHBOARD_LOADING_OVERLAY_CONFIG.enabled,
+    show,
+    setStatus,
+    hide
+  };
+}
+
+function isCriticalDashboardDataReady(loadStatus) {
+  return Boolean(loadStatus?.portfolio && loadStatus?.calendar && loadStatus?.activeTrades);
 }
 
 async function api(path, opts = {}) {
@@ -3107,8 +3213,14 @@ async function saveUiPrefs() {
 }
 
 async function loadData() {
+  const loadStatus = {
+    calendar: false,
+    portfolio: false,
+    activeTrades: false
+  };
   try {
     state.data = await api('/api/pl');
+    loadStatus.calendar = true;
   } catch (e) {
     if (e?.message !== 'Profile incomplete') {
       console.error('Failed to load profit data', e);
@@ -3130,8 +3242,9 @@ async function loadData() {
     state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
-      return;
+      return loadStatus;
     }
+    loadStatus.portfolio = true;
   } catch (e) {
     console.error('Failed to load portfolio', e);
     state.portfolioGBP = 0;
@@ -3151,11 +3264,13 @@ async function loadData() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    loadStatus.activeTrades = true;
   } catch (e) {
     console.warn('Failed to load active trades', e);
     state.activeTrades = [];
     state.openLossPotentialGBP = 0;
   }
+  return loadStatus;
 }
 
 async function refreshActiveTrades() {
@@ -4228,6 +4343,10 @@ if (typeof module !== 'undefined') {
 }
 
 async function init() {
+  const dashboardLoadingOverlay = createDashboardLoadingOverlayController();
+  if (dashboardLoadingOverlay.enabled) {
+    dashboardLoadingOverlay.show();
+  }
   state.selected = startOfMonth(new Date());
   try {
     const saved = localStorage.getItem('plc-prefs');
@@ -4257,9 +4376,20 @@ async function init() {
   } catch (e) {
     console.warn(e);
   }
-  await loadData();
+  const initialLoadStatus = await loadData();
   updateDevtoolsNav();
   render();
+  if (dashboardLoadingOverlay.enabled) {
+    // The branded overlay stays up only for the first meaningful hydration.
+    // We require core dashboard datasets (portfolio metrics, calendar data, active trades)
+    // before dismissing, then rely on normal in-page refresh logic for later updates.
+    if (isCriticalDashboardDataReady(initialLoadStatus)) {
+      dashboardLoadingOverlay.setStatus('Dashboard ready');
+    } else {
+      dashboardLoadingOverlay.setStatus('Some sections are still loading. Displaying available data.');
+    }
+    await dashboardLoadingOverlay.hide();
+  }
   setInterval(() => {
     refreshActiveTrades();
   }, 15000);

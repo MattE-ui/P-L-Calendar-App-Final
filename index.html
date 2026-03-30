@@ -11,7 +11,18 @@
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body class="dashboard-home">
-  
+  <div id="dashboard-loading-overlay" class="dashboard-loading-overlay hidden" role="status" aria-live="polite" aria-atomic="true">
+    <div class="dashboard-loading-overlay__content">
+      <img class="dashboard-loading-overlay__logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
+      <figure class="dashboard-loading-overlay__quote-wrap">
+        <blockquote id="dashboard-loading-quote" class="dashboard-loading-overlay__quote"></blockquote>
+      </figure>
+      <p id="dashboard-loading-status" class="dashboard-loading-overlay__status">Preparing your dashboard</p>
+      <div class="dashboard-loading-overlay__progress" aria-hidden="true">
+        <span class="dashboard-loading-overlay__progress-line"></span>
+      </div>
+    </div>
+  </div>
 
   <main class="container">
     <section class="dashboard-top-content" aria-label="Dashboard portfolio overview">
