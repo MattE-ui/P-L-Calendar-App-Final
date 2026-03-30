@@ -3754,6 +3754,13 @@ function ensureTrading212Config(user) {
     cfg.symbolOverrides = {};
     mutated = true;
   }
+  if (!cfg.historySync || typeof cfg.historySync !== 'object' || Array.isArray(cfg.historySync)) {
+    cfg.historySync = { accounts: {} };
+    mutated = true;
+  } else if (!cfg.historySync.accounts || typeof cfg.historySync.accounts !== 'object' || Array.isArray(cfg.historySync.accounts)) {
+    cfg.historySync.accounts = {};
+    mutated = true;
+  }
   const accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
   const normalizedAccounts = accounts
     .filter(account => account && typeof account === 'object')
@@ -4362,6 +4369,7 @@ function normalizeTradeJournal(user) {
       const optionTypeRaw = typeof trade.optionType === 'string' ? trade.optionType.trim().toLowerCase() : '';
       const optionStrikeRaw = Number(trade.optionStrike);
       const optionContractsRaw = Number(trade.optionContracts);
+      const optionMultiplierRaw = Number(trade.optionMultiplier);
       const optionExpirationRaw = typeof trade.optionExpiration === 'string' ? trade.optionExpiration.trim() : '';
       const setupTags = sanitizeTagList(trade.setupTags ?? trade.tags ?? []);
       const emotionTags = sanitizeTagList(trade.emotionTags ?? []);
@@ -4435,6 +4443,7 @@ function normalizeTradeJournal(user) {
         optionType: OPTION_TYPES.includes(optionTypeRaw) ? optionTypeRaw : undefined,
         optionStrike: Number.isFinite(optionStrikeRaw) && optionStrikeRaw > 0 ? optionStrikeRaw : undefined,
         optionContracts: Number.isFinite(optionContractsRaw) && optionContractsRaw > 0 ? Math.floor(optionContractsRaw) : undefined,
+        optionMultiplier: Number.isFinite(optionMultiplierRaw) && optionMultiplierRaw > 0 ? optionMultiplierRaw : undefined,
         optionExpiration: /^\d{4}-\d{2}-\d{2}$/.test(optionExpirationRaw) ? optionExpirationRaw : undefined,
         strategyTag,
         marketCondition: MARKET_CONDITIONS.includes(conditionRaw) ? conditionRaw : '',
@@ -5479,6 +5488,111 @@ function parseTrading212Orders(payload) {
   });
 }
 
+function extractTrading212HistoryOrders(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.orders)) return payload.orders;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return null;
+}
+
+function parseTrading212OptionContract(raw = {}) {
+  const source = raw?.instrument || raw || {};
+  const optionTypeRaw = String(
+    source?.optionType
+    ?? source?.right
+    ?? source?.putOrCall
+    ?? source?.callPut
+    ?? ''
+  ).trim().toLowerCase();
+  const optionType = optionTypeRaw.startsWith('c')
+    ? 'call'
+    : (optionTypeRaw.startsWith('p') ? 'put' : '');
+  const optionStrike = parseTradingNumber(
+    source?.strike
+    ?? source?.strikePrice
+    ?? source?.exercisePrice
+  );
+  const optionExpirationRaw = String(
+    source?.expirationDate
+    ?? source?.expiry
+    ?? source?.expiration
+    ?? ''
+  ).trim();
+  const optionExpiration = /^\d{4}-\d{2}-\d{2}$/.test(optionExpirationRaw)
+    ? optionExpirationRaw
+    : '';
+  const optionMultiplier = parseTradingNumber(
+    source?.multiplier
+    ?? source?.contractMultiplier
+    ?? source?.lotSize
+  );
+  return {
+    optionType,
+    optionStrike: Number.isFinite(optionStrike) && optionStrike > 0 ? optionStrike : null,
+    optionExpiration,
+    optionMultiplier: Number.isFinite(optionMultiplier) && optionMultiplier > 0 ? optionMultiplier : null
+  };
+}
+
+function parseTrading212HistoryOrders(payload) {
+  const orders = extractTrading212HistoryOrders(payload);
+  if (!Array.isArray(orders)) return [];
+  const completedStatuses = new Set(['FILLED', 'EXECUTED', 'COMPLETED', 'PARTIALLY_FILLED', 'PARTIALLYFILLED']);
+  return orders.map(raw => {
+    const instrument = raw?.instrument || {};
+    const ticker = normalizeTrading212TickerValue(
+      instrument?.ticker ?? raw?.ticker ?? raw?.symbol ?? ''
+    );
+    const isin = String(instrument?.isin ?? raw?.isin ?? '').trim().toUpperCase();
+    const uid = String(instrument?.id ?? instrument?.uid ?? raw?.instrumentId ?? raw?.instrumentUid ?? '').trim();
+    const side = normalizeTrading212OrderStatus(raw?.side ?? raw?.direction ?? raw?.action ?? '');
+    const status = normalizeTrading212OrderStatus(raw?.status ?? raw?.state ?? raw?.orderStatus ?? '');
+    const quantity = parseTradingNumber(
+      raw?.filledQuantity
+      ?? raw?.filledUnits
+      ?? raw?.executedQuantity
+      ?? raw?.quantity
+      ?? raw?.qty
+      ?? raw?.units
+      ?? raw?.size
+    );
+    const fillPrice = parseTradingNumber(
+      raw?.fillPrice
+      ?? raw?.filledPrice
+      ?? raw?.averagePrice
+      ?? raw?.avgPrice
+      ?? raw?.executionPrice
+      ?? raw?.price
+    );
+    const filledAt = raw?.filledAt ?? raw?.updatedAt ?? raw?.executedAt ?? raw?.dateExecuted ?? raw?.createdAt ?? null;
+    const orderId = raw?.id ?? raw?.orderId ?? raw?.parentOrderId ?? null;
+    const fillId = raw?.fillId ?? raw?.executionId ?? raw?.tradeId ?? raw?.dealId ?? null;
+    const option = parseTrading212OptionContract(raw);
+    return {
+      id: orderId ? String(orderId) : '',
+      fillId: fillId ? String(fillId) : '',
+      instrumentTicker: ticker,
+      instrumentIsin: isin,
+      instrumentUid: uid,
+      side,
+      status,
+      quantity: Number.isFinite(quantity) ? Math.abs(quantity) : null,
+      fillPrice,
+      filledAt,
+      optionType: option.optionType || '',
+      optionStrike: option.optionStrike,
+      optionExpiration: option.optionExpiration || '',
+      optionMultiplier: option.optionMultiplier
+    };
+  }).filter(order => {
+    if (!completedStatuses.has(order.status)) return false;
+    if (!Number.isFinite(order.quantity) || order.quantity <= 0) return false;
+    if (!Number.isFinite(order.fillPrice) || order.fillPrice <= 0) return false;
+    return order.side === 'SELL' || order.side === 'BUY';
+  }).sort((a, b) => Date.parse(a.filledAt || '') - Date.parse(b.filledAt || ''));
+}
+
 const ibkrCache = new Map();
 const ibkrPositionSchema = z.object({});
 const ibkrOrderSchema = z.object({
@@ -6232,6 +6346,7 @@ function updateTrading212LayerMetadata(trade, {
   rawName,
   rawIsin,
   rawTickerValue,
+  optionContract,
   tradeCurrency,
   direction,
   currentPrice,
@@ -6254,6 +6369,12 @@ function updateTrading212LayerMetadata(trade, {
   if (rawName) trade.trading212Name = rawName;
   if (rawIsin) trade.trading212Isin = rawIsin;
   if (rawTickerValue) trade.trading212Ticker = rawTickerValue;
+  if (optionContract && typeof optionContract === 'object') {
+    if (optionContract.optionType) trade.optionType = optionContract.optionType;
+    if (Number.isFinite(optionContract.optionStrike)) trade.optionStrike = optionContract.optionStrike;
+    if (optionContract.optionExpiration) trade.optionExpiration = optionContract.optionExpiration;
+    if (Number.isFinite(optionContract.optionMultiplier)) trade.optionMultiplier = optionContract.optionMultiplier;
+  }
   if (Number.isFinite(currentPrice) && currentPrice > 0) {
     trade.lastSyncPrice = currentPrice;
   }
@@ -6660,6 +6781,218 @@ async function fetchTrading212Orders(config, username, { bypassCache = false, ac
     filteredCount,
     fromCache: false
   };
+}
+
+async function fetchTrading212HistoryOrders(config, username, { accountId = '' } = {}) {
+  if (!config?.apiKey || !config?.apiSecret) {
+    throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
+  }
+  const baseUrl = resolveTrading212BaseUrl(config);
+  const headers = buildTrading212AuthHeaders(config);
+  const endpoint = '/api/v0/equity/history/orders?limit=200';
+  const url = `${baseUrl}${endpoint}`;
+  console.info(`[T212] history orders fetch account=${accountId || 'default'} endpoint=${endpoint}`);
+  const payload = await requestTrading212RawEndpoint(url, headers, {
+    signal: AbortSignal.timeout(15000)
+  });
+  if (payload === null) {
+    return { raw: { items: [] }, orders: [] };
+  }
+  const rawOrders = extractTrading212HistoryOrders(payload);
+  if (!Array.isArray(rawOrders)) {
+    throw new Trading212ParseError('Trading 212 history orders response was in an unexpected format.', {
+      status: 200,
+      details: { sample: JSON.stringify(payload).slice(0, 500) }
+    });
+  }
+  const orders = parseTrading212HistoryOrders(payload);
+  console.info(`[T212] history orders fetched account=${accountId || 'default'} rawCount=${rawOrders.length} completedCount=${orders.length}`);
+  return { raw: payload, orders };
+}
+
+function ensureTrading212HistorySyncState(cfg) {
+  if (!cfg || typeof cfg !== 'object') return {};
+  if (!cfg.historySync || typeof cfg.historySync !== 'object' || Array.isArray(cfg.historySync)) {
+    cfg.historySync = {};
+  }
+  if (!cfg.historySync.accounts || typeof cfg.historySync.accounts !== 'object' || Array.isArray(cfg.historySync.accounts)) {
+    cfg.historySync.accounts = {};
+  }
+  return cfg.historySync.accounts;
+}
+
+function buildTrading212HistoryFillKey(fill = {}, accountId = '') {
+  return [
+    accountId || '',
+    fill.id || '',
+    fill.fillId || '',
+    fill.side || '',
+    fill.instrumentUid || fill.instrumentIsin || fill.instrumentTicker || '',
+    fill.quantity || '',
+    fill.fillPrice || '',
+    fill.filledAt || ''
+  ].join('|');
+}
+
+function tradeMatchesTrading212HistoryFill(trade, fill, accountId = '') {
+  if (!trade || !fill) return false;
+  if (trade.status === 'closed') return false;
+  if (accountId && trade.trading212AccountId && trade.trading212AccountId !== accountId) return false;
+  const direction = trade.direction === 'short' ? 'short' : 'long';
+  const expectedExitSide = direction === 'short' ? 'BUY' : 'SELL';
+  if (fill.side !== expectedExitSide) return false;
+  const tradeTicker = normalizeTrading212TickerValue(trade.trading212Ticker || '');
+  const tradeIsin = String(trade.trading212Isin || '').trim().toUpperCase();
+  const tradeUid = String(trade.trading212Id || '').trim();
+  const tickerMatch = tradeTicker && fill.instrumentTicker && tradeTicker === fill.instrumentTicker;
+  const isinMatch = tradeIsin && fill.instrumentIsin && tradeIsin === fill.instrumentIsin;
+  const uidMatch = tradeUid && fill.instrumentUid && (tradeUid === fill.instrumentUid || tradeUid.endsWith(`:${fill.instrumentUid}`));
+  if (!(tickerMatch || isinMatch || uidMatch)) return false;
+  const tradeOptionType = String(trade.optionType || '').trim().toLowerCase();
+  const tradeOptionExpiry = String(trade.optionExpiration || '').trim();
+  const tradeOptionStrike = Number(trade.optionStrike);
+  const fillHasOptionIdentity = !!(fill.optionType || fill.optionExpiration || Number.isFinite(fill.optionStrike));
+  const tradeHasOptionIdentity = !!(tradeOptionType || tradeOptionExpiry || Number.isFinite(tradeOptionStrike));
+  if (fillHasOptionIdentity || tradeHasOptionIdentity) {
+    if ((tradeOptionType || '') !== (fill.optionType || '')) return false;
+    if ((tradeOptionExpiry || '') !== (fill.optionExpiration || '')) return false;
+    if (Number.isFinite(tradeOptionStrike) || Number.isFinite(fill.optionStrike)) {
+      if (!Number.isFinite(tradeOptionStrike) || !Number.isFinite(fill.optionStrike)) return false;
+      if (Math.abs(tradeOptionStrike - fill.optionStrike) > 1e-8) return false;
+    }
+  }
+  return true;
+}
+
+function applyTrading212ExecutionSummary(trade, rates = {}) {
+  const executionSummary = summarizeExecutionLegs(trade, rates);
+  trade.executions = executionSummary.executions;
+  trade.sizeUnits = Math.max(0, executionSummary.openQuantity);
+  trade.status = executionSummary.status === 'closed' ? 'closed' : 'open';
+  if (Number.isFinite(executionSummary.avgExit) && executionSummary.avgExit > 0) {
+    trade.closePrice = executionSummary.avgExit;
+  }
+  if (executionSummary.lastExitDate) {
+    trade.closeDate = executionSummary.lastExitDate;
+  }
+  if (trade.status === 'closed') {
+    trade.closedAt = trade.closedAt || new Date().toISOString();
+  }
+  const pnl = computeRealizedPnl(trade, rates);
+  if (pnl) {
+    trade.realizedPnlGBP = pnl.realizedPnlGBP;
+    trade.realizedPnlCurrency = pnl.realizedPnlCurrency;
+    trade.rMultiple = pnl.rMultiple;
+  }
+}
+
+function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, accountId = '', activeOrdersPayload = null, rates = {}) {
+  const fills = Array.isArray(historyOrdersPayload?.orders) ? historyOrdersPayload.orders : [];
+  const historyState = ensureTrading212HistorySyncState(cfg);
+  const stateKey = accountId || '__default__';
+  const accountState = historyState[stateKey] && typeof historyState[stateKey] === 'object'
+    ? historyState[stateKey]
+    : { importedFillKeys: [], lastFilledAt: '' };
+  const importedKeys = new Set(Array.isArray(accountState.importedFillKeys) ? accountState.importedFillKeys : []);
+  const lastFilledAtTs = Date.parse(accountState.lastFilledAt || '');
+  const journal = ensureTradeJournal(user);
+  const openEntries = [];
+  for (const [tradeDate, items] of Object.entries(journal)) {
+    for (const trade of items || []) {
+      if (!trade || trade.status === 'closed') continue;
+      if (trade.source !== 'trading212' && !trade.trading212Id) continue;
+      openEntries.push({ tradeDate, trade });
+    }
+  }
+  const activeOrders = Array.isArray(activeOrdersPayload?.orders) ? activeOrdersPayload.orders : [];
+  let imported = 0;
+  let skipped = 0;
+  let maxFilledAt = Number.isFinite(lastFilledAtTs) ? lastFilledAtTs : 0;
+  console.info(`[T212] history reconcile account=${accountId || 'default'} fills=${fills.length}`);
+  for (const fill of fills) {
+    const fillKey = buildTrading212HistoryFillKey(fill, accountId);
+    const fillTs = Date.parse(fill.filledAt || '');
+    if (importedKeys.has(fillKey)) {
+      skipped += 1;
+      continue;
+    }
+    if (Number.isFinite(lastFilledAtTs) && Number.isFinite(fillTs) && fillTs < lastFilledAtTs) {
+      skipped += 1;
+      continue;
+    }
+    let remaining = Number(fill.quantity);
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      skipped += 1;
+      continue;
+    }
+    const candidates = openEntries
+      .filter(entry => tradeMatchesTrading212HistoryFill(entry.trade, fill, accountId))
+      .sort((a, b) => Date.parse(a.trade?.createdAt || a.tradeDate || '') - Date.parse(b.trade?.createdAt || b.tradeDate || ''));
+    if (!candidates.length) {
+      console.info(`[T212] history fill skipped no-match fillKey=${fillKey}`);
+      skipped += 1;
+      continue;
+    }
+    console.info(`[T212] history fill candidate fillKey=${fillKey} candidates=${candidates.length}`);
+    for (const candidate of candidates) {
+      if (remaining <= 1e-8) break;
+      const trade = candidate.trade;
+      const summary = summarizeExecutionLegs(trade, rates);
+      const openQty = Number(summary.openQuantity);
+      if (!Number.isFinite(openQty) || openQty <= 1e-8) continue;
+      const matchedQty = Math.min(openQty, remaining);
+      if (matchedQty <= 1e-8) continue;
+      const executionFingerprint = `${fillKey}|trade:${trade.id}|qty:${matchedQty}`;
+      const existing = Array.isArray(summary.executions)
+        ? summary.executions.find(leg => leg.side === 'exit' && leg.importFingerprint === executionFingerprint)
+        : null;
+      if (existing) {
+        console.info(`[T212] history fill already imported trade=${trade.id} fillKey=${fillKey}`);
+        remaining -= matchedQty;
+        continue;
+      }
+      const stopTriggered = (trade.t212StopOrderId && fill.id && trade.t212StopOrderId === fill.id)
+        || activeOrders.some(order => {
+          const orderIsStop = order.type === 'STOP' || order.type === 'STOP_LIMIT';
+          if (!orderIsStop) return false;
+          const tickerMatch = order.instrumentTicker && fill.instrumentTicker && order.instrumentTicker === fill.instrumentTicker;
+          const isinMatch = order.instrumentIsin && fill.instrumentIsin && order.instrumentIsin === fill.instrumentIsin;
+          return tickerMatch || isinMatch;
+        });
+      const executionDate = Number.isFinite(fillTs)
+        ? getNyDateKeyForDate(new Date(fillTs), false)
+        : currentDateKey();
+      const nextExecutions = Array.isArray(summary.executions) ? summary.executions.slice() : [];
+      nextExecutions.push({
+        id: crypto.randomBytes(8).toString('hex'),
+        side: 'exit',
+        quantity: matchedQty,
+        price: Number(fill.fillPrice),
+        date: executionDate,
+        brokerTradeId: fill.id || undefined,
+        importSource: 'trading212_history',
+        importFingerprint: executionFingerprint,
+        note: stopTriggered ? 'stop-triggered' : undefined
+      });
+      trade.executions = nextExecutions;
+      if (Number.isFinite(fill.optionMultiplier) && fill.optionMultiplier > 0) {
+        trade.optionMultiplier = fill.optionMultiplier;
+      }
+      applyTrading212ExecutionSummary(trade, rates);
+      console.info(`[T212] history fill matched trade=${trade.id} qty=${matchedQty} remainingAfter=${Math.max(0, Number(summary.openQuantity) - matchedQty)} status=${trade.status}`);
+      remaining -= matchedQty;
+      imported += 1;
+    }
+    importedKeys.add(fillKey);
+    if (Number.isFinite(fillTs) && fillTs > maxFilledAt) maxFilledAt = fillTs;
+  }
+  const retainedKeys = Array.from(importedKeys).slice(-5000);
+  historyState[stateKey] = {
+    importedFillKeys: retainedKeys,
+    lastFilledAt: maxFilledAt ? new Date(maxFilledAt).toISOString() : (accountState.lastFilledAt || '')
+  };
+  console.info(`[T212] history reconcile account=${accountId || 'default'} imported=${imported} skipped=${skipped}`);
+  return { imported, skipped };
 }
 
 function computeSourceKey(instrument = {}) {
@@ -7573,11 +7906,13 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       };
       const snapshot = await fetchTrading212Snapshot(accountConfig);
       const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+      const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, { accountId });
       return {
         accountId,
         accountConfig,
         snapshot,
-        ordersPayload
+        ordersPayload,
+        historyOrdersPayload
       };
     }));
     const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
@@ -7589,6 +7924,17 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     for (const result of fulfilled) {
       const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId, rates);
       totalStopUpdates += stopUpdates;
+      const historyResult = reconcileTrading212HistoricalExits(
+        user,
+        cfg,
+        result.historyOrdersPayload,
+        result.accountId,
+        result.ordersPayload,
+        rates
+      );
+      if (historyResult.imported > 0) {
+        console.info(`[T212] imported historical exits account=${result.accountId} imported=${historyResult.imported}`);
+      }
     }
     if (totalStopUpdates > 0) {
       console.info(`[T212] synced current stops for ${totalStopUpdates} trade(s)`);
@@ -7779,7 +8125,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       portfolio: result.snapshot?.raw || null,
       positions: result.snapshot?.positionsRaw || null,
       transactions: result.snapshot?.transactionsRaw || null,
-      orders: result.ordersPayload?.raw || null
+      orders: result.ordersPayload?.raw || null,
+      historyOrders: result.historyOrdersPayload?.raw || null
     }));
     const lastSnapshot = fulfilled[fulfilled.length - 1]?.snapshot;
     if (lastSnapshot?.baseUrl) {
@@ -7841,6 +8188,11 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         const raw = entry.position;
         const accountId = entry.accountId || '';
         const instrument = raw?.instrument || {};
+        const optionContract = parseTrading212OptionContract(raw);
+        const instrumentType = String(instrument?.type ?? raw?.instrumentType ?? '').trim().toLowerCase();
+        const assetClass = (instrumentType.includes('option') || optionContract.optionType)
+          ? 'options'
+          : 'stocks';
         const walletImpact = raw?.walletImpact || {};
         const rawName = instrument?.name ?? raw?.name ?? '';
         const rawIsin = instrument?.isin ?? raw?.isin ?? '';
@@ -7991,6 +8343,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               rawName,
               rawIsin,
               rawTickerValue,
+              optionContract,
               tradeCurrency,
               direction,
               currentPrice,
@@ -8039,6 +8392,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
               rawName,
               rawIsin,
               rawTickerValue,
+              optionContract,
               tradeCurrency,
               direction,
               currentPrice,
@@ -8082,7 +8436,7 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           direction,
           status: 'open',
           tradeType: 'day',
-          assetClass: 'stocks',
+          assetClass,
           source: 'trading212',
           trading212Id,
           trading212PositionKey,
@@ -8090,6 +8444,10 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
           trading212Name: rawName || undefined,
           trading212Isin: rawIsin || undefined,
           trading212Ticker: rawTickerValue || undefined,
+          optionType: optionContract.optionType || undefined,
+          optionStrike: Number.isFinite(optionContract.optionStrike) ? optionContract.optionStrike : undefined,
+          optionExpiration: optionContract.optionExpiration || undefined,
+          optionMultiplier: Number.isFinite(optionContract.optionMultiplier) ? optionContract.optionMultiplier : undefined,
           trading212RegistryId: registryEntry.id,
           canonicalTicker: resolvedCanonicalTicker || undefined,
           canonicalName: registryEntry.canonicalName || undefined,
@@ -11518,8 +11876,11 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         baseUrl: account.baseUrl || cfg.baseUrl
       };
       try {
-        const payload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
-        return { accountId, payload };
+        const [ordersPayload, historyOrdersPayload] = await Promise.all([
+          fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId }),
+          fetchTrading212HistoryOrders(accountConfig, req.username, { accountId })
+        ]);
+        return { accountId, ordersPayload, historyOrdersPayload };
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch orders.');
         wrapped.accountId = accountId;
@@ -11533,7 +11894,8 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       const existing = rawAccounts.find(entry => entry?.accountId === accountId) || {};
       const result = results.find(item => item.status === 'fulfilled' && item.value.accountId === accountId);
       const error = results.find(item => item.status === 'rejected' && item.reason?.accountId === accountId)?.reason;
-      const ordersPayload = result?.value?.payload?.raw ?? null;
+      const ordersPayload = result?.value?.ordersPayload?.raw ?? null;
+      const historyOrdersPayload = result?.value?.historyOrdersPayload?.raw ?? null;
       return {
         accountId,
         label: account.label || '',
@@ -11541,6 +11903,7 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         positions: existing.positions ?? null,
         transactions: existing.transactions ?? null,
         orders: ordersPayload ?? existing.orders ?? null,
+        historyOrders: historyOrdersPayload ?? existing.historyOrders ?? null,
         ordersError: error ? (error.message || 'Unable to fetch orders.') : null
       };
     });
@@ -11552,11 +11915,12 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       positions: primary.positions ?? null,
       transactions: primary.transactions ?? null,
       orders: primary.orders ?? null,
+      historyOrders: primary.historyOrders ?? null,
       ordersError: primary.ordersError ?? null,
       accounts: mergedAccounts
     });
   }
-  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null, historyOrders: null };
   return res.json({ ...raw, ordersError: null });
 });
 
@@ -14618,12 +14982,14 @@ module.exports = {
   filterTrades,
   cleanupExpiredGuests,
   parseTrading212Orders,
+  parseTrading212HistoryOrders,
   matchStopOrderForTrade,
   pickBestStopOrder,
   inferTrading212AddedEntryPrice,
   isTrading212AddToPosition,
   findTrading212OpenTradeMatch,
   upsertTrading212StopOrders,
+  reconcileTrading212HistoricalExits,
   extractIbkrPortfolioValue,
   mapIbkrPosition,
   parseIbkrOrders,
