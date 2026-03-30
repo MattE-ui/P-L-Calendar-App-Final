@@ -770,6 +770,59 @@ function exportCsv() {
   window.location.href = `/api/trades/export${query}`;
 }
 
+function setIbkrImportFeedback(message, kind = 'info') {
+  const panel = document.querySelector('#ibkr-import-summary');
+  if (!panel) return;
+  panel.classList.remove('is-hidden', 'success', 'error');
+  panel.textContent = message || '';
+  if (!message) {
+    panel.classList.add('is-hidden');
+    return;
+  }
+  if (kind === 'success') panel.classList.add('success');
+  if (kind === 'error') panel.classList.add('error');
+}
+
+async function importIbkrCsv(file) {
+  if (!file) return;
+  const importButton = document.querySelector('#import-ibkr-btn');
+  const fileInput = document.querySelector('#import-ibkr-file');
+  if (importButton) {
+    importButton.disabled = true;
+    importButton.textContent = 'Importing...';
+  }
+  setIbkrImportFeedback('Validating and importing IBKR CSV...');
+  try {
+    const formData = new FormData();
+    formData.append('file', file, file.name || 'ibkr-trades.csv');
+    const result = await api('/api/trades/import/ibkr', {
+      method: 'POST',
+      body: formData
+    });
+    const summary = result?.summary || {};
+    const imported = Number(summary.imported) || 0;
+    const duplicates = Number(summary.duplicates) || 0;
+    const invalidRows = Number(summary.invalidRows) || 0;
+    const skippedNonTradeRows = Number(summary.skippedNonTradeRows) || 0;
+    let message = `IBKR import complete — ${imported} imported, ${duplicates} skipped as duplicates, ${invalidRows} invalid rows, ${skippedNonTradeRows} skipped non-trade rows.`;
+    if (Array.isArray(result?.errors) && result.errors.length) {
+      const firstError = result.errors[0];
+      message += ` First issue: row ${firstError.rowNumber} (${firstError.error}).`;
+    }
+    setIbkrImportFeedback(message, imported > 0 ? 'success' : 'info');
+    await loadTrades();
+  } catch (error) {
+    const reason = error?.message || 'Failed to import CSV.';
+    setIbkrImportFeedback(`IBKR import failed: ${reason}`, 'error');
+  } finally {
+    if (importButton) {
+      importButton.disabled = false;
+      importButton.textContent = 'Import IBKR CSV';
+    }
+    if (fileInput) fileInput.value = '';
+  }
+}
+
 function bindNav() {
   const closeNav = setupNavDrawer();
   document.querySelector('#calendar-btn')?.addEventListener('click', () => window.location.href = '/');
@@ -816,6 +869,13 @@ function bindForm() {
   document.querySelector('#apply-filters-btn')?.addEventListener('click', applyFilters);
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
   document.querySelector('#export-csv-btn')?.addEventListener('click', exportCsv);
+  document.querySelector('#import-ibkr-btn')?.addEventListener('click', () => {
+    document.querySelector('#import-ibkr-file')?.click();
+  });
+  document.querySelector('#import-ibkr-file')?.addEventListener('change', (event) => {
+    const file = event?.target?.files?.[0];
+    importIbkrCsv(file);
+  });
   document.querySelector('#add-trade-btn')?.addEventListener('click', () => {
     resetForm();
     document.querySelector('#trade-form-modal')?.classList.remove('hidden');

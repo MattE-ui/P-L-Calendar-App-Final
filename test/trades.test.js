@@ -244,3 +244,46 @@ test('persists and lists fully closed execution-leg trades', async () => {
   assert.equal(trade.totalExitedQuantity, 3);
   assert.equal(trade.openQuantity, 0);
 });
+
+test('imports IBKR CSV trades, skips non-trades, and is idempotent on re-upload', async () => {
+  const csv = [
+    'ClientAccountID,AssetClass,Symbol,Description,TradeID,DateTime,TradeDate,Quantity,TradePrice,Buy/Sell,IBCommission,NetCash,Exchange,CurrencyPrimary,Strike,Expiry,Put/Call,Multiplier,Open/CloseIndicator,TransactionType',
+    'U12345,STK,AAPL,Apple Inc,1001,20260225;103454,2026-02-25,10,195.25,BUY,-1.2,-1953.7,NASDAQ,USD,,,,,O,',
+    'U12345,STK,AAPL,Apple Inc,1001,20260225;103454,2026-02-25,10,195.25,BUY,-1.2,-1953.7,NASDAQ,USD,,,,,O,ExchTrade',
+    'U12345,CASH,USD.USD,FX Conversion,,20260225;103500,2026-02-25,1000,1.00,SELL,0,1000,IDEALPRO,USD,,,,,O,ExchTrade',
+    'U12345,OPT,AAPL,APPLE 2026-03-20 200 C,2001,20260226;111500,2026-02-26,2,4.5,BUY,-0.9,-900,CBOE,USD,200,2026-03-20,Call,100,O,ExchTrade'
+  ].join('\n');
+  const form = new FormData();
+  form.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-sample.csv');
+
+  const first = await authedFetch('/api/trades/import/ibkr', {
+    method: 'POST',
+    body: form
+  });
+  assert.equal(first.res.status, 200);
+  assert.equal(first.data.summary.imported, 2);
+  assert.equal(first.data.summary.duplicates, 0);
+  assert.equal(first.data.summary.invalidRows, 0);
+  assert.equal(first.data.summary.skippedNonTradeRows, 2);
+
+  const listAfterFirst = await authedFetch('/api/trades');
+  assert.equal(listAfterFirst.res.status, 200);
+  assert.equal(listAfterFirst.data.trades.length, 2);
+  const optionTrade = listAfterFirst.data.trades.find(trade => trade.assetClass === 'options');
+  assert.ok(optionTrade);
+  assert.equal(optionTrade.optionType, 'call');
+  assert.equal(optionTrade.optionStrike, 200);
+  assert.equal(optionTrade.optionExpiration, '2026-03-20');
+  assert.equal(optionTrade.optionContracts, 2);
+
+  const secondForm = new FormData();
+  secondForm.append('file', new Blob([csv], { type: 'text/csv' }), 'ibkr-sample.csv');
+  const second = await authedFetch('/api/trades/import/ibkr', {
+    method: 'POST',
+    body: secondForm
+  });
+  assert.equal(second.res.status, 200);
+  assert.equal(second.data.summary.imported, 0);
+  assert.equal(second.data.summary.duplicates, 2);
+  assert.equal(second.data.summary.skippedNonTradeRows, 2);
+});

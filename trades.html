@@ -28,8 +28,11 @@
         <div class="filter-actions">
           <button id="trade-settings-btn" class="ghost">Quick settings</button>
           <button id="export-csv-btn" class="ghost">Export CSV</button>
+          <button id="import-ibkr-btn" class="ghost">Import IBKR CSV</button>
+          <input id="import-ibkr-file" type="file" accept=".csv,text/csv" class="is-hidden">
         </div>
       </div>
+      <div id="ibkr-import-summary" class="tool-note is-hidden" aria-live="polite"></div>
       <div id="filters-panel">
       <div class="filter-bar">
         <div class="tool-field">
