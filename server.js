@@ -5422,6 +5422,9 @@ function buildTrading212AuthHeaders(config) {
 
 const trading212OrdersCache = new Map();
 const TRADING212_ORDERS_CACHE_MS = 20000;
+const trading212HistoryOrdersCache = new Map();
+const TRADING212_HISTORY_ORDERS_CACHE_MS = 20000;
+const TRADING212_LIST_ENDPOINT_THROTTLE_MS = 350;
 
 function normalizeTrading212OrderStatus(raw) {
   return String(raw || '').trim().toUpperCase();
@@ -5574,17 +5577,35 @@ function parseTrading212HistoryOrders(payload) {
     const orderId = raw?.id ?? raw?.orderId ?? raw?.parentOrderId ?? null;
     const fillId = raw?.fillId ?? raw?.executionId ?? raw?.tradeId ?? raw?.dealId ?? null;
     const option = parseTrading212OptionContract(raw);
+    const normalizedOrderId = orderId ? String(orderId) : '';
+    const normalizedFillId = fillId ? String(fillId) : '';
+    const normalizedQuantity = Number.isFinite(quantity) ? Math.abs(quantity) : null;
     return {
-      id: orderId ? String(orderId) : '',
-      fillId: fillId ? String(fillId) : '',
+      id: normalizedOrderId,
+      orderId: normalizedOrderId,
+      fillId: normalizedFillId,
       instrumentTicker: ticker,
       instrumentIsin: isin,
       instrumentUid: uid,
       side,
       status,
-      quantity: Number.isFinite(quantity) ? Math.abs(quantity) : null,
+      quantity: normalizedQuantity,
       fillPrice,
       filledAt,
+      order: {
+        id: normalizedOrderId,
+        side,
+        ticker,
+        instrument: instrument?.ticker || ticker || '',
+        instrumentUid: uid,
+        instrumentIsin: isin
+      },
+      fill: {
+        id: normalizedFillId,
+        price: fillPrice,
+        quantity: normalizedQuantity,
+        filledAt
+      },
       optionType: option.optionType || '',
       optionStrike: option.optionStrike,
       optionExpiration: option.optionExpiration || '',
@@ -6804,70 +6825,115 @@ function buildTrading212HistoryOrdersEndpoint({ pageLimit = 50, cursor = '' } = 
   return `/api/v0/equity/history/orders?${params.toString()}`;
 }
 
-function resolveTrading212HistoryNextCursor(payload = {}) {
+function resolveTrading212HistoryNextPagePath(payload = {}) {
   if (!payload || typeof payload !== 'object') return '';
-  const direct = payload.cursor ?? payload.nextCursor ?? payload.next?.cursor ?? payload.pagination?.cursor ?? '';
-  if (direct) return String(direct);
-  const nextPagePath = payload.nextPagePath ?? payload.nextPageUrl ?? payload.next?.path ?? payload.pagination?.nextPagePath ?? '';
-  if (!nextPagePath) return '';
-  try {
-    const resolved = new URL(String(nextPagePath), 'https://placeholder.local');
-    return resolved.searchParams.get('cursor') || '';
-  } catch (_) {
-    return '';
-  }
+  const nextPagePath = payload.nextPagePath ?? '';
+  if (!nextPagePath || typeof nextPagePath !== 'string') return '';
+  return String(nextPagePath).trim();
 }
 
-async function fetchTrading212HistoryOrders(config, username, { accountId = '', pageLimit = 50 } = {}) {
+async function fetchTrading212HistoryOrders(config, username, { accountId = '', pageLimit = 50, ticker = '', cursor = '', bypassCache = false } = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
   const baseUrl = resolveTrading212BaseUrl(config);
   const headers = buildTrading212AuthHeaders(config);
   const safeLimit = Math.min(50, Math.max(1, Number(pageLimit) || 50));
+  const endpointBase = '/api/v0/equity/history/orders';
+  const cacheKey = `${String(username || '')}|${String(accountId || '')}|${baseUrl}|${safeLimit}|${String(ticker || '').trim().toUpperCase()}|${String(cursor || '')}`;
+  const cached = trading212HistoryOrdersCache.get(cacheKey);
+  if (!bypassCache && cached && Date.now() - cached.fetchedAt < TRADING212_HISTORY_ORDERS_CACHE_MS) {
+    console.info(`[T212] cache hit history orders key=${cacheKey}`);
+    return { ...cached.payload, fromCache: true };
+  }
+  console.info(`[T212] cache miss history orders key=${cacheKey}`);
   const rawItems = [];
   const pages = [];
-  let cursor = '';
+  let nextPagePath = '';
+  const firstParams = new URLSearchParams();
+  firstParams.set('limit', String(safeLimit));
+  if (ticker) firstParams.set('ticker', String(ticker));
+  if (cursor) firstParams.set('cursor', String(cursor));
+  let endpointPath = `${endpointBase}?${firstParams.toString()}`;
   let pageCount = 0;
+  const debug = {
+    historyOrdersRequestUrl: '',
+    historyOrdersStatus: null,
+    historyOrdersRawBody: '',
+    historyOrdersHeaders: null,
+    historyOrdersError: null,
+    historyOrdersItemCount: 0,
+    historyOrdersNextPagePath: ''
+  };
   do {
-    const endpoint = buildTrading212HistoryOrdersEndpoint({ pageLimit: safeLimit, cursor });
-    const url = `${baseUrl}${endpoint}`;
-    console.info(`[T212] history orders fetch account=${accountId || 'default'} page=${pageCount + 1} endpoint=${endpoint}`);
-    const upstream = await requestTrading212RawEndpoint(url, headers, {
-      includeMeta: true,
-      signal: AbortSignal.timeout(15000)
-    });
-    const payload = upstream?.payload ?? null;
-    console.info(`[T212][history][raw] account=${accountId || 'default'} page=${pageCount + 1} url=${upstream?.url || url} status=${upstream?.status ?? 'unknown'} body=${String(upstream?.bodyText || '').slice(0, 3000)}`);
-    const pageItems = extractTrading212HistoryOrders(payload);
-    if (payload === null || !Array.isArray(pageItems)) {
-      pages.push({
-        page: pageCount + 1,
-        url: upstream?.url || url,
-        status: upstream?.status ?? null,
-        bodyText: upstream?.bodyText || '',
-        count: 0,
-        nextCursor: ''
+    const normalizedPath = endpointPath.startsWith('http')
+      ? (() => {
+          const parsed = new URL(endpointPath);
+          return `${parsed.pathname}${parsed.search}`;
+        })()
+      : endpointPath;
+    if (!normalizedPath.startsWith(endpointBase)) {
+      const err = new Trading212ParseError(`Trading 212 history next page path must target ${endpointBase}.`, {
+        status: 200,
+        details: { endpointPath: normalizedPath }
       });
-      break;
+      err.debug = { ...debug, historyOrdersError: err.message };
+      throw err;
+    }
+    const url = `${baseUrl}${normalizedPath}`;
+    console.info(`[T212] history orders fetch account=${accountId || 'default'} page=${pageCount + 1} endpoint=${normalizedPath}`);
+    let upstream;
+    try {
+      upstream = await requestTrading212RawEndpoint(url, headers, {
+        includeMeta: true,
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (error) {
+      debug.historyOrdersRequestUrl = url;
+      debug.historyOrdersStatus = Number.isFinite(error?.status) ? Number(error.status) : null;
+      debug.historyOrdersError = error?.message || 'Trading 212 history orders request failed.';
+      error.debug = { ...(error?.debug || {}), ...debug };
+      throw error;
+    }
+    const payload = upstream?.payload ?? null;
+    const pageItems = extractTrading212HistoryOrders(payload);
+    const nextRaw = resolveTrading212HistoryNextPagePath(payload);
+    debug.historyOrdersRequestUrl = upstream?.url || url;
+    debug.historyOrdersStatus = upstream?.status ?? null;
+    debug.historyOrdersRawBody = upstream?.bodyText || '';
+    debug.historyOrdersHeaders = upstream?.headers || null;
+    debug.historyOrdersItemCount = Array.isArray(pageItems) ? pageItems.length : 0;
+    debug.historyOrdersNextPagePath = nextRaw || '';
+    console.info(`[T212][history][raw] account=${accountId || 'default'} page=${pageCount + 1} url=${debug.historyOrdersRequestUrl} status=${debug.historyOrdersStatus ?? 'unknown'} body=${String(debug.historyOrdersRawBody).slice(0, 3000)}`);
+    if (payload === null || !Array.isArray(pageItems)) {
+      const err = new Trading212ParseError('Trading 212 history orders response was in an unexpected format.', {
+        status: upstream?.status ?? 200,
+        details: { sample: String(upstream?.bodyText || '').slice(0, 500) }
+      });
+      debug.historyOrdersError = err.message;
+      err.debug = { ...debug };
+      throw err;
     }
     rawItems.push(...pageItems);
-    const nextCursor = resolveTrading212HistoryNextCursor(payload);
     pages.push({
       page: pageCount + 1,
       url: upstream?.url || url,
       status: upstream?.status ?? null,
       bodyText: upstream?.bodyText || '',
       count: pageItems.length,
-      nextCursor: nextCursor || ''
+      nextPagePath: nextRaw || ''
     });
-    cursor = nextCursor || '';
+    nextPagePath = nextRaw || '';
+    endpointPath = nextPagePath;
     pageCount += 1;
     if (pageCount >= 20) {
       console.warn(`[T212] history orders pagination stopped after ${pageCount} pages for account=${accountId || 'default'}`);
       break;
     }
-  } while (cursor);
+    if (nextPagePath) {
+      await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+    }
+  } while (nextPagePath);
   const payload = {
     items: rawItems,
     pageLimit: safeLimit,
@@ -6882,14 +6948,21 @@ async function fetchTrading212HistoryOrders(config, username, { accountId = '', 
   }
   const orders = parseTrading212HistoryOrders(payload);
   console.info(`[T212] history orders fetched account=${accountId || 'default'} rawCount=${rawOrders.length} completedCount=${orders.length}`);
-  return {
+  const response = {
     raw: payload,
     orders,
     debug: {
       pageLimit: safeLimit,
-      pages
-    }
+      pages,
+      ...debug
+    },
+    fromCache: false
   };
+  trading212HistoryOrdersCache.set(cacheKey, {
+    fetchedAt: Date.now(),
+    payload: response
+  });
+  return response;
 }
 
 function ensureTrading212HistorySyncState(cfg) {
@@ -6904,15 +6977,28 @@ function ensureTrading212HistorySyncState(cfg) {
 }
 
 function buildTrading212HistoryFillKey(fill = {}, accountId = '') {
+  const orderId = fill.orderId || fill.order?.id || fill.id || '';
+  const normalizedFillId = fill.fill?.id || fill.fillId || '';
+  const normalizedSide = fill.order?.side || fill.side || '';
+  const instrumentKey = fill.order?.instrumentUid
+    || fill.instrumentUid
+    || fill.order?.instrumentIsin
+    || fill.instrumentIsin
+    || fill.order?.ticker
+    || fill.instrumentTicker
+    || '';
+  const quantity = fill.fill?.quantity ?? fill.quantity ?? '';
+  const price = fill.fill?.price ?? fill.fillPrice ?? '';
+  const filledAt = fill.fill?.filledAt ?? fill.filledAt ?? '';
   return [
     accountId || '',
-    fill.id || '',
-    fill.fillId || '',
-    fill.side || '',
-    fill.instrumentUid || fill.instrumentIsin || fill.instrumentTicker || '',
-    fill.quantity || '',
-    fill.fillPrice || '',
-    fill.filledAt || ''
+    orderId,
+    normalizedFillId,
+    normalizedSide,
+    instrumentKey,
+    quantity,
+    price,
+    filledAt
   ].join('|');
 }
 
@@ -7033,7 +7119,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         remaining -= matchedQty;
         continue;
       }
-      const stopTriggered = (trade.t212StopOrderId && fill.id && trade.t212StopOrderId === fill.id)
+      const fillOrderId = fill.orderId || fill.order?.id || fill.id || '';
+      const stopTriggered = (trade.t212StopOrderId && fillOrderId && trade.t212StopOrderId === fillOrderId)
         || activeOrders.some(order => {
           const orderIsStop = order.type === 'STOP' || order.type === 'STOP_LIMIT';
           if (!orderIsStop) return false;
@@ -7051,7 +7138,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         quantity: matchedQty,
         price: Number(fill.fillPrice),
         date: executionDate,
-        brokerTradeId: fill.id || undefined,
+        brokerTradeId: fillOrderId || undefined,
         importSource: 'trading212_history',
         importFingerprint: executionFingerprint,
         note: stopTriggered ? 'stop-triggered' : undefined
@@ -7738,9 +7825,14 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
       try {
         const parsed = JSON.parse(bodyText);
         if (includeMeta) {
+          const responseHeaders = {};
+          for (const [key, value] of res.headers.entries()) {
+            responseHeaders[key] = value;
+          }
           return {
             url,
             status,
+            headers: responseHeaders,
             bodyText,
             payload: parsed
           };
@@ -7754,9 +7846,14 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
       }
     }
     if (includeMeta) {
+      const responseHeaders = {};
+      for (const [key, value] of res.headers.entries()) {
+        responseHeaders[key] = value;
+      }
       return {
         url,
         status,
+        headers: responseHeaders,
         bodyText: '',
         payload: null
       };
@@ -7995,7 +8092,8 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     delete cfg.cooldownUntil;
   }
   try {
-    const accountResults = await Promise.allSettled(accounts.map(async (account, index) => {
+    const accountResults = [];
+    for (const [index, account] of accounts.entries()) {
       const accountId = account.id || `account-${index + 1}`;
       const accountConfig = {
         ...cfg,
@@ -8004,17 +8102,29 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         mode: account.mode || cfg.mode,
         baseUrl: account.baseUrl || cfg.baseUrl
       };
-      const snapshot = await fetchTrading212Snapshot(accountConfig);
-      const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
-      const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, { accountId });
-      return {
-        accountId,
-        accountConfig,
-        snapshot,
-        ordersPayload,
-        historyOrdersPayload
-      };
-    }));
+      try {
+        const snapshot = await fetchTrading212Snapshot(accountConfig);
+        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+        const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+        const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, { accountId });
+        accountResults.push({
+          status: 'fulfilled',
+          value: {
+            accountId,
+            accountConfig,
+            snapshot,
+            ordersPayload,
+            historyOrdersPayload
+          }
+        });
+      } catch (reason) {
+        accountResults.push({
+          status: 'rejected',
+          reason
+        });
+      }
+    }
     const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
     const rejected = accountResults.filter(result => result.status === 'rejected').map(result => result.reason);
     if (!fulfilled.length) {
@@ -11971,7 +12081,8 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
   const accounts = getTrading212Accounts(cfg);
   if (accounts.length) {
     console.info(`[T212][raw] user=${req.username} configuredMode=${cfg.mode || 'live'} accountCount=${accounts.length}`);
-    const results = await Promise.allSettled(accounts.map(async (account, index) => {
+    const results = [];
+    for (const [index, account] of accounts.entries()) {
       const accountId = account.id || `account-${index + 1}`;
       const accountConfig = {
         ...cfg,
@@ -11982,17 +12093,16 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       };
       console.info(`[T212][raw] account=${accountId} mode=${accountConfig.mode || 'live'} baseUrl=${resolveTrading212BaseUrl(accountConfig)}`);
       try {
-        const [ordersPayload, historyOrdersPayload] = await Promise.all([
-          fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId }),
-          fetchTrading212HistoryOrders(accountConfig, req.username, { accountId })
-        ]);
-        return { accountId, ordersPayload, historyOrdersPayload };
+        const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
+        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+        const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, req.username, { accountId, bypassCache: true });
+        results.push({ status: 'fulfilled', value: { accountId, ordersPayload, historyOrdersPayload } });
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch orders.');
         wrapped.accountId = accountId;
-        throw wrapped;
+        results.push({ status: 'rejected', reason: wrapped });
       }
-    }));
+    }
     const lastRaw = cfg.lastRaw && typeof cfg.lastRaw === 'object' ? cfg.lastRaw : {};
     const rawAccounts = Array.isArray(lastRaw.accounts) ? lastRaw.accounts : [];
     const mergedAccounts = accounts.map((account, index) => {
@@ -12004,6 +12114,8 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       const historyOrdersPayload = result?.value?.historyOrdersPayload?.raw ?? null;
       const ordersDebug = result?.value?.ordersPayload?.debug ?? null;
       const historyOrdersDebug = result?.value?.historyOrdersPayload?.debug ?? null;
+      const historyError = error?.message || null;
+      const historyDebugFromError = error?.debug && typeof error.debug === 'object' ? error.debug : null;
       return {
         accountId,
         label: account.label || '',
@@ -12017,10 +12129,11 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         positions: existing.positions ?? null,
         transactions: existing.transactions ?? null,
         orders: ordersPayload ?? existing.orders ?? null,
-        historyOrders: historyOrdersPayload ?? existing.historyOrders ?? null,
+        historyOrders: historyOrdersPayload ?? null,
         ordersDebug,
-        historyOrdersDebug,
-        ordersError: error ? (error.message || 'Unable to fetch orders.') : null
+        historyOrdersDebug: historyOrdersDebug ?? historyDebugFromError,
+        ordersError: error ? (error.message || 'Unable to fetch orders.') : null,
+        historyOrdersError: historyError
       };
     });
     cfg.lastRaw = { accounts: mergedAccounts };
@@ -12035,6 +12148,7 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       ordersDebug: primary.ordersDebug ?? null,
       historyOrdersDebug: primary.historyOrdersDebug ?? null,
       ordersError: primary.ordersError ?? null,
+      historyOrdersError: primary.historyOrdersError ?? null,
       accounts: mergedAccounts
     });
   }
