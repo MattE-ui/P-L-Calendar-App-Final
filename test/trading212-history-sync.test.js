@@ -33,6 +33,35 @@ test('parseTrading212HistoryOrders keeps completed fills with actual fill price'
   assert.equal(parsed[0].quantity, 2);
 });
 
+test('parseTrading212HistoryOrders parses native fill object fields', () => {
+  const parsed = parseTrading212HistoryOrders({
+    items: [{
+      id: 'order-native-1',
+      status: 'FILLED',
+      side: 'BUY',
+      type: 'MARKET',
+      instrument: { ticker: 'NVDA_US_EQ', isin: 'US67066G1040', uid: 'inst-1' },
+      fill: {
+        id: 'fill-native-1',
+        price: 121.33,
+        quantity: 3,
+        filledAt: '2026-03-03T14:00:00Z'
+      },
+      walletImpact: { value: -363.99 }
+    }]
+  });
+
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].order.id, 'order-native-1');
+  assert.equal(parsed[0].order.side, 'BUY');
+  assert.equal(parsed[0].order.type, 'MARKET');
+  assert.equal(parsed[0].fill.id, 'fill-native-1');
+  assert.equal(parsed[0].fill.price, 121.33);
+  assert.equal(parsed[0].fill.quantity, 3);
+  assert.equal(parsed[0].fill.filledAt, '2026-03-03T14:00:00Z');
+  assert.equal(parsed[0].walletImpact, -363.99);
+});
+
 test('reconcileTrading212HistoricalExits imports partial then full closes idempotently', () => {
   const user = {
     tradeJournal: {

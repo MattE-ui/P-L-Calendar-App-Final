@@ -5611,8 +5611,10 @@ function parseTrading212HistoryOrders(payload) {
     const uid = String(instrument?.id ?? instrument?.uid ?? raw?.instrumentId ?? raw?.instrumentUid ?? '').trim();
     const side = normalizeTrading212OrderStatus(raw?.side ?? raw?.direction ?? raw?.action ?? '');
     const status = normalizeTrading212OrderStatus(raw?.status ?? raw?.state ?? raw?.orderStatus ?? '');
+    const fill = raw?.fill && typeof raw.fill === 'object' ? raw.fill : {};
     const quantity = parseTradingNumber(
-      raw?.filledQuantity
+      fill?.quantity
+      ?? raw?.filledQuantity
       ?? raw?.filledUnits
       ?? raw?.executedQuantity
       ?? raw?.quantity
@@ -5621,16 +5623,23 @@ function parseTrading212HistoryOrders(payload) {
       ?? raw?.size
     );
     const fillPrice = parseTradingNumber(
-      raw?.fillPrice
+      fill?.price
+      ?? raw?.fillPrice
       ?? raw?.filledPrice
       ?? raw?.averagePrice
       ?? raw?.avgPrice
       ?? raw?.executionPrice
       ?? raw?.price
     );
-    const filledAt = raw?.filledAt ?? raw?.updatedAt ?? raw?.executedAt ?? raw?.dateExecuted ?? raw?.createdAt ?? null;
+    const filledAt = fill?.filledAt ?? raw?.filledAt ?? raw?.updatedAt ?? raw?.executedAt ?? raw?.dateExecuted ?? raw?.createdAt ?? null;
     const orderId = raw?.id ?? raw?.orderId ?? raw?.parentOrderId ?? null;
-    const fillId = raw?.fillId ?? raw?.executionId ?? raw?.tradeId ?? raw?.dealId ?? null;
+    const fillId = fill?.id ?? raw?.fillId ?? raw?.executionId ?? raw?.tradeId ?? raw?.dealId ?? null;
+    const type = normalizeTrading212OrderStatus(raw?.type ?? raw?.orderType ?? raw?.orderTypeName ?? '');
+    const walletImpact = parseTradingNumber(
+      raw?.walletImpact?.value
+      ?? raw?.walletImpact?.amount
+      ?? raw?.walletImpact
+    );
     const option = parseTrading212OptionContract(raw);
     const normalizedOrderId = orderId ? String(orderId) : '';
     const normalizedFillId = fillId ? String(fillId) : '';
@@ -5643,13 +5652,16 @@ function parseTrading212HistoryOrders(payload) {
       instrumentIsin: isin,
       instrumentUid: uid,
       side,
+      type,
       status,
       quantity: normalizedQuantity,
       fillPrice,
       filledAt,
+      walletImpact: Number.isFinite(walletImpact) ? walletImpact : null,
       order: {
         id: normalizedOrderId,
         side,
+        type,
         ticker,
         instrument: instrument?.ticker || ticker || '',
         instrumentUid: uid,
@@ -6932,7 +6944,12 @@ async function fetchTrading212HistoryOrders(config, username, {
     historyOrdersHeaders: null,
     historyOrdersError: null,
     historyOrdersItemCount: 0,
-    historyOrdersNextPagePath: ''
+    historyOrdersNextPagePath: '',
+    upstreamRequestAttempted: false,
+    upstreamRequestSucceeded: false,
+    upstreamRateLimited: false,
+    returnedDataSource: 'none',
+    cooldownUntil: null
   };
   do {
     const normalizedPath = endpointPath.startsWith('http')
@@ -6953,6 +6970,7 @@ async function fetchTrading212HistoryOrders(config, username, {
     console.info(`[T212] history orders fetch account=${accountId || 'default'} page=${pageCount + 1} endpoint=${normalizedPath}`);
     let upstream;
     try {
+      debug.upstreamRequestAttempted = true;
       upstream = await requestTrading212RawEndpoint(url, headers, {
         includeMeta: true,
         signal: AbortSignal.timeout(15000),
@@ -6963,6 +6981,15 @@ async function fetchTrading212HistoryOrders(config, username, {
       debug.historyOrdersRequestUrl = url;
       debug.historyOrdersStatus = Number.isFinite(error?.status) ? Number(error.status) : null;
       debug.historyOrdersError = error?.message || 'Trading 212 history orders request failed.';
+      if (rawItems.length > 0 && error instanceof Trading212RateLimitError) {
+        debug.upstreamRateLimited = true;
+        const retryAfter = Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null;
+        if (Number.isFinite(retryAfter) && retryAfter > 0) {
+          debug.cooldownUntil = new Date(Date.now() + retryAfter * 1000).toISOString();
+        }
+        console.info(`[T212][history] account=${accountId || 'default'} preserving_partial_payload=true reason=rate_limited_after_success`);
+        break;
+      }
       error.debug = { ...(error?.debug || {}), ...debug };
       throw error;
     }
@@ -6975,6 +7002,10 @@ async function fetchTrading212HistoryOrders(config, username, {
     debug.historyOrdersHeaders = upstream?.headers || null;
     debug.historyOrdersItemCount = Array.isArray(pageItems) ? pageItems.length : 0;
     debug.historyOrdersNextPagePath = nextRaw || '';
+    debug.upstreamRequestSucceeded = true;
+    if (debug.upstreamRequestSucceeded) {
+      debug.returnedDataSource = 'fresh_upstream';
+    }
     console.info(`[T212][history][raw] account=${accountId || 'default'} page=${pageCount + 1} url=${debug.historyOrdersRequestUrl} status=${debug.historyOrdersStatus ?? 'unknown'} body=${String(debug.historyOrdersRawBody).slice(0, 3000)}`);
     if (payload === null || !Array.isArray(pageItems)) {
       const err = new Trading212ParseError('Trading 212 history orders response was in an unexpected format.', {
@@ -8209,7 +8240,14 @@ function recordTrading212EndpointAttempt(accountState, endpointKey, upstreamMeta
       remaining: rateHeaders.remaining,
       reset: rateHeaders.reset
     };
-    if (Number.isFinite(rateHeaders.reset) && rateHeaders.reset > 0) {
+    const statusCode = Number(upstreamMeta.status);
+    const applyCooldownAfterSuccess = statusCode >= 200
+      && statusCode < 400
+      && Number.isFinite(rateHeaders.remaining)
+      && rateHeaders.remaining <= 0
+      && Number.isFinite(rateHeaders.reset)
+      && rateHeaders.reset > 0;
+    if (applyCooldownAfterSuccess) {
       endpointState.cooldownUntil = new Date(now + (rateHeaders.reset * 1000)).toISOString();
     } else if (upstreamMeta.status !== 429) {
       delete endpointState.cooldownUntil;
@@ -8335,6 +8373,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             headers: ordersPayload?.debug?.headers || {}
           }, now);
           accountState.lastOrdersAt = new Date().toISOString();
+          console.info(`[T212][sync][orders] account=${accountId} status=${ordersPayload?.debug?.status ?? 200} parsed=true itemCount=${Array.isArray(ordersPayload?.orders) ? ordersPayload.orders.length : 0} persisted=${Boolean(ordersPayload)} cooldownAppliedAfterSuccess=${Boolean(accountState.endpoints?.orders?.cooldownUntil)} dataSource=fresh_upstream`);
           await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
         } catch (error) {
           recordTrading212EndpointAttempt(accountState, 'orders', {
@@ -8342,11 +8381,13 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
           }, now);
           console.info(`[T212][sync] skipped downstream update endpoint=orders account=${accountId} reason=${error?.message || 'request_failed'}`);
+          console.info(`[T212][sync][orders] account=${accountId} status=${Number.isFinite(error?.status) ? Number(error.status) : 'unknown'} parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${error?.message || 'request_failed'}`);
         }
       } else {
         console.info(`[T212][sync] skipped endpoint=orders account=${accountId} reason=${ordersGate.reason} until=${ordersGate.until || 'n/a'}`);
         recordTrading212Skip(accountState, 'orders', ordersGate);
         cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
+        console.info(`[T212][sync][orders] account=${accountId} status=skipped parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${ordersGate.reason}`);
       }
 
       let historyOrdersPayload = null;
@@ -8365,17 +8406,20 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             headers: historyOrdersPayload?.debug?.historyOrdersHeaders || {}
           }, now);
           accountState.lastHistoryOrdersAt = new Date().toISOString();
+          console.info(`[T212][sync][historyOrders] account=${accountId} status=${historyOrdersPayload?.debug?.historyOrdersStatus ?? 200} parsed=${Array.isArray(historyOrdersPayload?.orders)} itemCount=${Array.isArray(historyOrdersPayload?.orders) ? historyOrdersPayload.orders.length : 0} persisted=${Boolean(historyOrdersPayload)} cooldownAppliedAfterSuccess=${Boolean(accountState.endpoints?.historyOrders?.cooldownUntil)} dataSource=fresh_upstream`);
         } catch (error) {
           recordTrading212EndpointAttempt(accountState, 'historyOrders', {
             status: Number.isFinite(error?.status) ? Number(error.status) : 500,
             retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
           }, now);
           console.info(`[T212][sync] skipped downstream update endpoint=historyOrders account=${accountId} reason=${error?.message || 'request_failed'}`);
+          console.info(`[T212][sync][historyOrders] account=${accountId} status=${Number.isFinite(error?.status) ? Number(error.status) : 'unknown'} parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${error?.message || 'request_failed'}`);
         }
       } else {
         console.info(`[T212][sync] skipped endpoint=historyOrders account=${accountId} reason=${historyGate.reason} until=${historyGate.until || 'n/a'}`);
         recordTrading212Skip(accountState, 'historyOrders', historyGate);
         cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
+        console.info(`[T212][sync][historyOrders] account=${accountId} status=skipped parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${historyGate.reason}`);
       }
 
       accountResults.push({
@@ -8601,18 +8645,31 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       : updatedTotal;
     refreshAnchors(user, history);
     cfg.lastSyncAt = new Date().toISOString();
-    const rawAccounts = fulfilled.map(result => ({
-      accountId: result.accountId,
-      mode: result.accountConfig?.mode || cfg.mode || 'live',
-      resolvedBaseUrl: result.snapshot?.baseUrl || resolveTrading212BaseUrl(result.accountConfig || cfg),
-      portfolio: result.snapshot?.raw || null,
-      positions: result.snapshot?.positionsRaw || null,
-      transactions: result.snapshot?.transactionsRaw || null,
-      orders: result.ordersPayload?.raw || null,
-      historyOrders: result.historyOrdersPayload?.raw || null,
-      ordersDebug: result.ordersPayload?.debug || null,
-      historyOrdersDebug: result.historyOrdersPayload?.debug || null
-    }));
+    const previousAccounts = Array.isArray(cfg.lastRaw?.accounts) ? cfg.lastRaw.accounts : [];
+    const rawAccounts = fulfilled.map(result => {
+      const prev = previousAccounts.find(entry => entry?.accountId === result.accountId) || {};
+      const accountSyncState = ensureTrading212AccountSyncState(cfg, result.accountId);
+      const hasFreshSnapshot = Boolean(result.snapshot);
+      const hasFreshOrders = Boolean(result.ordersPayload);
+      const hasFreshHistory = Boolean(result.historyOrdersPayload);
+      return {
+        accountId: result.accountId,
+        mode: result.accountConfig?.mode || cfg.mode || 'live',
+        resolvedBaseUrl: result.snapshot?.baseUrl || prev.resolvedBaseUrl || resolveTrading212BaseUrl(result.accountConfig || cfg),
+        portfolio: result.snapshot?.raw ?? prev.portfolio ?? null,
+        positions: result.snapshot?.positionsRaw ?? prev.positions ?? null,
+        transactions: result.snapshot?.transactionsRaw ?? prev.transactions ?? null,
+        orders: result.ordersPayload?.raw ?? prev.orders ?? null,
+        historyOrders: result.historyOrdersPayload?.raw ?? prev.historyOrders ?? null,
+        upstreamRequestAttempted: true,
+        upstreamRequestSucceeded: hasFreshSnapshot || hasFreshOrders || hasFreshHistory,
+        upstreamRateLimited: false,
+        returnedDataSource: (hasFreshSnapshot || hasFreshOrders || hasFreshHistory) ? 'fresh_upstream' : 'cached_db',
+        cooldownUntil: accountSyncState?.endpoints?.historyOrders?.cooldownUntil || accountSyncState?.endpoints?.orders?.cooldownUntil || null,
+        ordersDebug: result.ordersPayload?.debug || prev.ordersDebug || null,
+        historyOrdersDebug: result.historyOrdersPayload?.debug || prev.historyOrdersDebug || null
+      };
+    });
     const lastSnapshot = fulfilled[fulfilled.length - 1]?.snapshot;
     if (lastSnapshot?.baseUrl) {
       cfg.lastBaseUrl = lastSnapshot.baseUrl;
@@ -12389,30 +12446,50 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         baseUrl: account.baseUrl || cfg.baseUrl
       };
       console.info(`[T212][raw] account=${accountId} mode=${accountConfig.mode || 'live'} baseUrl=${resolveTrading212BaseUrl(accountConfig)}`);
+      const fetchState = {
+        accountId,
+        ordersPayload: null,
+        historyOrdersPayload: null,
+        ordersError: null,
+        historyOrdersError: null
+      };
       try {
-        const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
-        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
-        const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, req.username, { accountId, bypassCache: true });
-        results.push({ status: 'fulfilled', value: { accountId, ordersPayload, historyOrdersPayload } });
+        fetchState.ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch orders.');
-        wrapped.accountId = accountId;
-        results.push({ status: 'rejected', reason: wrapped });
+        fetchState.ordersError = wrapped;
       }
+      await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+      try {
+        fetchState.historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, req.username, { accountId, bypassCache: true });
+      } catch (error) {
+        const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch history orders.');
+        fetchState.historyOrdersError = wrapped;
+      }
+      results.push(fetchState);
     }
     const lastRaw = cfg.lastRaw && typeof cfg.lastRaw === 'object' ? cfg.lastRaw : {};
     const rawAccounts = Array.isArray(lastRaw.accounts) ? lastRaw.accounts : [];
     const mergedAccounts = accounts.map((account, index) => {
       const accountId = account.id || `account-${index + 1}`;
       const existing = rawAccounts.find(entry => entry?.accountId === accountId) || {};
-      const result = results.find(item => item.status === 'fulfilled' && item.value.accountId === accountId);
-      const error = results.find(item => item.status === 'rejected' && item.reason?.accountId === accountId)?.reason;
-      const ordersPayload = result?.value?.ordersPayload?.raw ?? null;
-      const historyOrdersPayload = result?.value?.historyOrdersPayload?.raw ?? null;
-      const ordersDebug = result?.value?.ordersPayload?.debug ?? null;
-      const historyOrdersDebug = result?.value?.historyOrdersPayload?.debug ?? null;
-      const historyError = error?.message || null;
-      const historyDebugFromError = error?.debug && typeof error.debug === 'object' ? error.debug : null;
+      const hasExistingData = ['portfolio', 'positions', 'transactions', 'orders', 'historyOrders']
+        .some(key => existing?.[key] !== undefined && existing?.[key] !== null);
+      const result = results.find(item => item.accountId === accountId) || {};
+      const ordersPayload = result?.ordersPayload?.raw ?? null;
+      const historyOrdersPayload = result?.historyOrdersPayload?.raw ?? null;
+      const ordersDebug = result?.ordersPayload?.debug ?? null;
+      const historyOrdersDebug = result?.historyOrdersPayload?.debug ?? null;
+      const historyError = result?.historyOrdersError?.message || null;
+      const historyDebugFromError = result?.historyOrdersError?.debug && typeof result.historyOrdersError.debug === 'object'
+        ? result.historyOrdersError.debug
+        : null;
+      const ordersError = result?.ordersError?.message || null;
+      const hasFreshOrders = Boolean(result?.ordersPayload && !result.ordersError);
+      const hasFreshHistory = Boolean(result?.historyOrdersPayload && !result.historyOrdersError);
+      const returnedDataSource = hasFreshOrders || hasFreshHistory
+        ? 'fresh_upstream'
+        : (hasExistingData ? 'cached_db' : 'none');
       return {
         accountId,
         label: account.label || '',
@@ -12426,10 +12503,18 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         positions: existing.positions ?? null,
         transactions: existing.transactions ?? null,
         orders: ordersPayload ?? existing.orders ?? null,
-        historyOrders: historyOrdersPayload ?? null,
+        historyOrders: historyOrdersPayload ?? existing.historyOrders ?? null,
         ordersDebug,
         historyOrdersDebug: historyOrdersDebug ?? historyDebugFromError,
-        ordersError: error ? (error.message || 'Unable to fetch orders.') : null,
+        upstreamRequestAttempted: true,
+        upstreamRequestSucceeded: hasFreshOrders || hasFreshHistory,
+        upstreamRateLimited: Boolean(
+          result?.ordersError instanceof Trading212RateLimitError
+          || result?.historyOrdersError instanceof Trading212RateLimitError
+        ),
+        returnedDataSource,
+        cooldownUntil: historyOrdersDebug?.cooldownUntil || historyDebugFromError?.cooldownUntil || null,
+        ordersError,
         historyOrdersError: historyError
       };
     });
@@ -12442,6 +12527,11 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       transactions: primary.transactions ?? null,
       orders: primary.orders ?? null,
       historyOrders: primary.historyOrders ?? null,
+      upstreamRequestAttempted: primary.upstreamRequestAttempted ?? false,
+      upstreamRequestSucceeded: primary.upstreamRequestSucceeded ?? false,
+      upstreamRateLimited: primary.upstreamRateLimited ?? false,
+      returnedDataSource: primary.returnedDataSource ?? 'none',
+      cooldownUntil: primary.cooldownUntil ?? null,
       ordersDebug: primary.ordersDebug ?? null,
       historyOrdersDebug: primary.historyOrdersDebug ?? null,
       ordersError: primary.ordersError ?? null,
