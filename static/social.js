@@ -79,7 +79,8 @@ const socialState = {
   pendingTradeGroupInvites: [],
   createGroupBusy: false,
   eligibleTradeGroupFriends: [],
-  tradeGroupPollTimer: null
+  tradeGroupPollTimer: null,
+  lastSeenTradeGroupFeedId: ''
 };
 
 
@@ -804,6 +805,10 @@ async function loadTradeGroups() {
       await loadTradeGroupDetail(socialState.selectedTradeGroupId, { rerenderList: false });
       return;
     }
+    if (socialState.selectedTradeGroupId) {
+      await loadTradeGroupDetail(socialState.selectedTradeGroupId, { rerenderList: false, reason: 'groups_poll_refresh' });
+      return;
+    }
     renderTradeGroupSection();
   } catch (_error) {
     renderTradeGroupSection();
@@ -814,6 +819,7 @@ async function loadTradeGroups() {
 
 async function loadTradeGroupDetail(groupId, opts = {}) {
   if (!groupId) return;
+  const refreshReason = opts.reason || 'manual';
   try {
     const response = await socialApi(`/api/social/trade-groups/${encodeURIComponent(groupId)}`);
     socialState.selectedTradeGroupId = groupId;
@@ -822,6 +828,11 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
     socialState.selectedTradeGroupPositions = Array.isArray(response?.current_positions) ? response.current_positions : [];
     socialState.selectedTradeGroupAlerts = Array.isArray(response?.feed) ? response.feed : [];
     socialState.selectedTradeGroupRole = response?.group?.role || '';
+    const newestFeedId = socialState.selectedTradeGroupAlerts[0]?.id || '';
+    if (newestFeedId && newestFeedId !== socialState.lastSeenTradeGroupFeedId) {
+      console.info(`[social] trade-group feed updated group=${groupId} topFeedId=${newestFeedId} reason=${refreshReason}`);
+      socialState.lastSeenTradeGroupFeedId = newestFeedId;
+    }
     if (response?.group?.role === 'leader') {
       try {
         const eligibleResponse = await socialApi(`/api/social/trade-groups/${encodeURIComponent(groupId)}/eligible-friends`);

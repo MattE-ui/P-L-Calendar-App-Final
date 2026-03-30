@@ -1096,14 +1096,43 @@ function classifyTrading212SellAlert({ matchedQuantity = null, remainingQuantity
   return 'sell';
 }
 
+function buildTrading212FillEventKey(fillEvent = {}) {
+  const fillId = String(fillEvent?.fillId || '').trim();
+  if (fillId) return `fill:${fillId}`;
+  const orderId = String(fillEvent?.orderId || '').trim();
+  const side = String(fillEvent?.side || '').trim().toUpperCase();
+  const ticker = String(fillEvent?.ticker || '').trim().toUpperCase();
+  const filledAt = String(fillEvent?.filledAt || '').trim();
+  const sourceTradeId = String(fillEvent?.sourceTradeId || '').trim();
+  if (!side) return '';
+  return [
+    'derived',
+    orderId || 'no-order',
+    side,
+    ticker || 'no-ticker',
+    filledAt || 'no-filled-at',
+    sourceTradeId || 'no-trade'
+  ].join('|');
+}
+
 function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {}) {
   ensureSocialTables(db);
   const groups = getTradeGroupsLedByUser(db, leaderUsername);
-  if (!groups.length) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  if (!groups.length) {
+    console.info(`[TradeGroup][LeaderSync] alert skipped leader=${leaderUsername} reason=no_groups_led`);
+    return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  }
   const fillId = String(fillEvent?.fillId || '').trim();
-  if (!fillId) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const brokerEventKey = buildTrading212FillEventKey(fillEvent);
+  if (!brokerEventKey) {
+    console.info(`[TradeGroup][LeaderSync] alert skipped leader=${leaderUsername} reason=missing_fill_identity side=${String(fillEvent?.side || '').toUpperCase()}`);
+    return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  }
   const side = String(fillEvent?.side || '').toUpperCase();
-  if (side !== 'BUY' && side !== 'SELL') return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  if (side !== 'BUY' && side !== 'SELL') {
+    console.info(`[TradeGroup][LeaderSync] alert skipped leader=${leaderUsername} reason=invalid_side side=${side || 'n/a'} eventKey=${brokerEventKey}`);
+    return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  }
   const nowIso = new Date().toISOString();
   let alertsCreated = 0;
   let notificationsCreated = 0;
@@ -1112,11 +1141,14 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
     const duplicate = db.tradeGroupAlerts.find(alert => (
       alert.group_id === group.id
       && alert.broker_source === 'trading212'
-      && alert.broker_fill_id === fillId
+      && (
+        (fillId && alert.broker_fill_id === fillId)
+        || alert.broker_event_key === brokerEventKey
+      )
     ));
     if (duplicate) {
       duplicates += 1;
-      console.info(`[TradeGroup][LeaderSync] alert skipped as duplicate leader=${leaderUsername} group=${group.id} fillId=${fillId}`);
+      console.info(`[TradeGroup][LeaderSync] alert skipped as duplicate leader=${leaderUsername} group=${group.id} fillId=${fillId || 'n/a'} eventKey=${brokerEventKey}`);
       continue;
     }
     const classification = side === 'BUY'
@@ -1133,6 +1165,7 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       source_trade_id: fillEvent?.sourceTradeId || null,
       broker_source: 'trading212',
       broker_fill_id: fillId,
+      broker_event_key: brokerEventKey,
       broker_order_id: String(fillEvent?.orderId || '').trim() || null,
       account_id: String(fillEvent?.accountId || '').trim() || null,
       ticker: fillEvent?.ticker || '',
@@ -1149,7 +1182,7 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
     };
     db.tradeGroupAlerts.push(alert);
     alertsCreated += 1;
-    console.info(`[TradeGroup][LeaderSync] alert emitted leader=${leaderUsername} group=${group.id} fillId=${fillId} side=${side} classification=${classification}`);
+    console.info(`[TradeGroup][LeaderSync] alert emitted leader=${leaderUsername} group=${group.id} fillId=${fillId || 'n/a'} eventKey=${brokerEventKey} side=${side} classification=${classification}`);
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
     for (const member of activeMembers) {
@@ -1158,13 +1191,16 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
         groupId: group.id,
         type: 'trade_group_alert',
         alertId: alert.id,
-        dedupeKey: `t212-fill:${fillId}:${group.id}`
+        dedupeKey: `t212-fill:${brokerEventKey}:${group.id}`
       });
       if (created) {
         notificationsCreated += 1;
         triggerPushForTradeGroupNotification(db, created, { group });
       }
     }
+  }
+  if (side === 'SELL' && alertsCreated === 0 && duplicates === 0) {
+    console.info(`[TradeGroup][LeaderSync] sell alert skipped leader=${leaderUsername} reason=no_eligible_groups eventKey=${brokerEventKey}`);
   }
   return { alertsCreated, notificationsCreated, duplicates };
 }
@@ -9310,17 +9346,16 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         leaderState.lastRunAt = new Date().toISOString();
       }
     } else if (fulfilled.length) {
-      const closeDate = new Date(runDate).toISOString();
-      for (const entry of openTrades) {
+      const openTrading212Trades = openTrades.filter(entry => {
+        const trade = entry?.trade;
+        return trade && (trade.trading212Id || trade.source === 'trading212');
+      });
+      if (openTrading212Trades.length) {
+        console.info(`[T212][sync] preserving_open_positions_on_snapshot_gap username=${username} openTrades=${openTrading212Trades.length} reason=positions_snapshot_empty_or_unavailable`);
+      }
+      for (const entry of openTrading212Trades) {
         const trade = entry.trade;
-        if (!trade || (!trade.trading212Id && trade.source !== 'trading212')) continue;
-        trade.status = 'closed';
-        trade.closeDate = trade.closeDate || dateKeyInTimezone(timezone, runDate);
-        trade.closedAt = trade.closedAt || closeDate;
-        if (!Number.isFinite(Number(trade.closePrice)) && Number.isFinite(Number(trade.lastSyncPrice))) {
-          trade.closePrice = Number(trade.lastSyncPrice);
-        }
-        positionsMutated = true;
+        console.info(`[T212][sync] open trade retained trade=${trade.id} account=${trade.trading212AccountId || 'default'} reason=no_positive_close_evidence`);
       }
     }
     cfg.lastSyncAt = new Date().toISOString();
@@ -11224,6 +11259,11 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
     .slice(0, 50);
   const positions = buildGroupCurrentPositions(db, access.group);
+  if (feed[0]) {
+    console.info(`[TradeGroup][FrontendRefresh] group detail fetched user=${req.username} group=${access.group.id} topFeedId=${feed[0].id} topFeedType=${feed[0].type} topFeedCreatedAt=${feed[0].created_at || ''}`);
+  } else {
+    console.info(`[TradeGroup][FrontendRefresh] group detail fetched user=${req.username} group=${access.group.id} topFeedId=none`);
+  }
   saveDB(db);
   res.json({
     group: sanitizeTradeGroupForViewer(db, access.group, req.username),
