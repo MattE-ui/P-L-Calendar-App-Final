@@ -803,14 +803,15 @@ async function importIbkrCsv(file) {
     const imported = Number(summary.imported) || 0;
     const duplicates = Number(summary.duplicates) || 0;
     const invalidRows = Number(summary.invalidRows) || 0;
-    const skippedNonTradeRows = Number(summary.skippedNonTradeRows) || 0;
-    let message = `IBKR import complete — ${imported} imported, ${duplicates} skipped as duplicates, ${invalidRows} invalid rows, ${skippedNonTradeRows} skipped non-trade rows.`;
+    const skippedCashRows = Number(summary.skippedCashRows) || 0;
+    let message = `IBKR import complete — ${imported} imported, ${duplicates} skipped as duplicates, ${invalidRows} invalid rows, ${skippedCashRows} skipped CASH rows.`;
     if (Array.isArray(result?.errors) && result.errors.length) {
       const firstError = result.errors[0];
       message += ` First issue: row ${firstError.rowNumber} (${firstError.error}).`;
     }
     setIbkrImportFeedback(message, imported > 0 ? 'success' : 'info');
     await loadTrades();
+    await loadIbkrImportHistory();
   } catch (error) {
     const reason = error?.message || 'Failed to import CSV.';
     setIbkrImportFeedback(`IBKR import failed: ${reason}`, 'error');
@@ -820,6 +821,85 @@ async function importIbkrCsv(file) {
       importButton.textContent = 'Import IBKR CSV';
     }
     if (fileInput) fileInput.value = '';
+  }
+}
+
+function formatIsoDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+async function removeIbkrImportBatch(batch) {
+  if (!batch?.id) return;
+  const importedCount = Number(batch.importedCount) || 0;
+  const duplicateCount = Number(batch.duplicateCount) || 0;
+  const skippedCashCount = Number(batch.skippedCashCount) || 0;
+  const invalidCount = Number(batch.invalidCount) || 0;
+  const confirmed = window.confirm(
+    `Remove trades from import "${batch.originalFilename || 'upload.csv'}"?\n\n`
+    + `Imported: ${importedCount}\nDuplicates: ${duplicateCount}\nSkipped CASH: ${skippedCashCount}\nInvalid: ${invalidCount}\n\n`
+    + 'This only removes trades created by this import batch.'
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/trades/import/ibkr/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
+    setIbkrImportFeedback('Import batch removed. Trades linked to that batch were deleted.', 'success');
+    await Promise.all([loadTrades(), loadIbkrImportHistory()]);
+  } catch (error) {
+    setIbkrImportFeedback(`Failed to remove import batch: ${error?.message || 'Unknown error.'}`, 'error');
+  }
+}
+
+function renderIbkrImportHistory(batches = []) {
+  const container = document.querySelector('#ibkr-import-history');
+  if (!container) return;
+  if (!Array.isArray(batches) || !batches.length) {
+    container.textContent = 'No IBKR imports yet.';
+    return;
+  }
+  container.innerHTML = '';
+  const list = document.createElement('div');
+  list.className = 'leg-list';
+  batches.forEach((batch) => {
+    const row = document.createElement('div');
+    row.className = 'execution-leg-row';
+    const status = batch.status || 'completed';
+    const removed = status === 'rolled_back';
+    row.innerHTML = `
+      <div class="tool-field"><label>File</label><div>${batch.originalFilename || 'upload.csv'}</div></div>
+      <div class="tool-field"><label>Imported at</label><div>${formatIsoDateTime(batch.importedAt)}</div></div>
+      <div class="tool-field"><label>Imported</label><div>${Number(batch.importedCount) || 0}</div></div>
+      <div class="tool-field"><label>Duplicates</label><div>${Number(batch.duplicateCount) || 0}</div></div>
+      <div class="tool-field"><label>Skipped CASH</label><div>${Number(batch.skippedCashCount) || 0}</div></div>
+      <div class="tool-field"><label>Invalid</label><div>${Number(batch.invalidCount) || 0}</div></div>
+      <div class="tool-field"><label>Status</label><div>${removed ? 'Removed' : 'Completed'}</div></div>
+    `;
+    const actionWrap = document.createElement('div');
+    actionWrap.className = 'tool-field';
+    const label = document.createElement('label');
+    label.textContent = 'Action';
+    actionWrap.appendChild(label);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost small';
+    button.textContent = removed ? 'Already removed' : 'Remove imported trades';
+    button.disabled = removed;
+    button.addEventListener('click', () => removeIbkrImportBatch(batch));
+    actionWrap.appendChild(button);
+    row.appendChild(actionWrap);
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+}
+
+async function loadIbkrImportHistory() {
+  try {
+    const result = await api('/api/trades/import/ibkr/history');
+    renderIbkrImportHistory(Array.isArray(result?.batches) ? result.batches : []);
+  } catch (_error) {
+    renderIbkrImportHistory([]);
   }
 }
 
@@ -970,6 +1050,7 @@ async function init() {
   if (openInput && !openInput.value) openInput.value = today;
   resetForm();
   await loadTrades();
+  await loadIbkrImportHistory();
 }
 
 window.addEventListener('DOMContentLoaded', () => {

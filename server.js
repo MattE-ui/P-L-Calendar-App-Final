@@ -3671,6 +3671,14 @@ function ensureTradeJournal(user) {
   return user.tradeJournal;
 }
 
+function ensureImportBatches(user) {
+  if (!user) return [];
+  if (!Array.isArray(user.importBatches)) {
+    user.importBatches = [];
+  }
+  return user.importBatches;
+}
+
 function ensureTrading212Config(user) {
   if (!user) return { mutated: false, config: {} };
   let mutated = false;
@@ -4065,6 +4073,35 @@ function ensureUserShape(user, identifier) {
     user.tradeJournal = {};
     mutated = true;
   }
+  if (!Array.isArray(user.importBatches)) {
+    user.importBatches = [];
+    mutated = true;
+  } else {
+    const normalizedBatches = user.importBatches
+      .filter(batch => batch && typeof batch === 'object')
+      .map((batch) => {
+        const statusRaw = String(batch.status || '').trim().toLowerCase();
+        const status = ['completed', 'rolled_back', 'failed'].includes(statusRaw) ? statusRaw : 'completed';
+        return {
+          id: typeof batch.id === 'string' ? batch.id : crypto.randomUUID(),
+          broker: typeof batch.broker === 'string' ? batch.broker : 'IBKR',
+          sourceType: typeof batch.sourceType === 'string' ? batch.sourceType : 'csv',
+          originalFilename: typeof batch.originalFilename === 'string' ? batch.originalFilename : 'upload.csv',
+          importedAt: typeof batch.importedAt === 'string' ? batch.importedAt : new Date().toISOString(),
+          removedAt: typeof batch.removedAt === 'string' ? batch.removedAt : null,
+          status,
+          totalRows: Number.isFinite(Number(batch.totalRows)) ? Number(batch.totalRows) : 0,
+          importedCount: Number.isFinite(Number(batch.importedCount)) ? Number(batch.importedCount) : 0,
+          duplicateCount: Number.isFinite(Number(batch.duplicateCount)) ? Number(batch.duplicateCount) : 0,
+          skippedCashCount: Number.isFinite(Number(batch.skippedCashCount)) ? Number(batch.skippedCashCount) : 0,
+          invalidCount: Number.isFinite(Number(batch.invalidCount)) ? Number(batch.invalidCount) : 0,
+          removedCount: Number.isFinite(Number(batch.removedCount)) ? Number(batch.removedCount) : 0,
+          metadata: batch.metadata && typeof batch.metadata === 'object' ? batch.metadata : {}
+        };
+      });
+    if (normalizedBatches.length !== user.importBatches.length) mutated = true;
+    user.importBatches = normalizedBatches;
+  }
   if (!user.uiPrefs || typeof user.uiPrefs !== 'object') {
     user.uiPrefs = {};
     mutated = true;
@@ -4425,6 +4462,8 @@ function normalizeTradeJournal(user) {
       if (importFingerprintRaw) normalizedTrade.importFingerprint = importFingerprintRaw;
       const importSourceRaw = typeof trade.importSource === 'string' ? trade.importSource.trim() : '';
       if (importSourceRaw) normalizedTrade.importSource = importSourceRaw;
+      const importBatchIdRaw = typeof trade.importBatchId === 'string' ? trade.importBatchId.trim() : '';
+      if (importBatchIdRaw) normalizedTrade.importBatchId = importBatchIdRaw;
       const importedAtRaw = typeof trade.importedAt === 'string' ? trade.importedAt.trim() : '';
       if (importedAtRaw) normalizedTrade.importedAt = importedAtRaw;
       const rawImportRow = trade.rawImportRow && typeof trade.rawImportRow === 'object' ? trade.rawImportRow : null;
@@ -13167,9 +13206,11 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
       }
     }
 
+    const importBatches = ensureImportBatches(user);
     const dryRunRows = [];
     const errors = [];
     let skippedNonTradeRows = 0;
+    let skippedCashRows = 0;
     let invalidRows = 0;
     for (let index = 0; index < table.rows.length; index += 1) {
       const row = table.rows[index];
@@ -13181,7 +13222,7 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
       const assetClassRaw = String(row.AssetClass || '').trim().toUpperCase();
       const transactionType = String(row.TransactionType || '').trim();
       if (assetClassRaw === 'CASH') {
-        skippedNonTradeRows += 1;
+        skippedCashRows += 1;
         continue;
       }
       if (transactionType !== 'ExchTrade') {
@@ -13259,7 +13300,7 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
         broker: 'IBKR',
         brokerTradeId: brokerTradeId || undefined,
         importFingerprint: fingerprint,
-        importSource: 'ibkr-csv',
+        importSource: 'IBKR_CSV',
         importedAt: new Date().toISOString(),
         ibkrAccountId: String(row.ClientAccountID || '').trim() || undefined,
         ibkrTransactionType: transactionType,
@@ -13301,15 +13342,43 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
         journal[row.dateKey] = journal[row.dateKey].slice(-50);
       }
     }
-    if (toInsert.length) {
-      saveDB(db);
+    const batchId = crypto.randomUUID();
+    const importedAt = new Date().toISOString();
+    const batchRecord = {
+      id: batchId,
+      userId: req.username,
+      broker: 'IBKR',
+      sourceType: 'csv',
+      originalFilename: uploaded.filename || 'upload.csv',
+      importedAt,
+      removedAt: null,
+      status: 'completed',
+      totalRows: table.rows.length,
+      importedCount: toInsert.length,
+      duplicateCount: duplicates,
+      skippedCashCount: skippedCashRows,
+      invalidCount: invalidRows,
+      removedCount: 0,
+      metadata: {
+        skippedNonTradeRows
+      }
+    };
+    for (const row of toInsert) {
+      row.trade.importBatchId = batchId;
+      row.trade.importedAt = importedAt;
+      row.trade.importSource = 'IBKR_CSV';
     }
+    importBatches.unshift(batchRecord);
+    user.importBatches = importBatches.slice(0, 50);
+    saveDB(db);
     res.json({
       ok: true,
+      batchId,
       summary: {
         imported: toInsert.length,
         duplicates,
         invalidRows,
+        skippedCashRows,
         skippedNonTradeRows
       },
       errors: errors.slice(0, 100)
@@ -13318,6 +13387,55 @@ app.post('/api/trades/import/ibkr', auth, express.raw({ type: '*/*', limit: '10m
     console.error('[IBKR Import] Failed to import CSV', error);
     res.status(400).json({ error: error?.message || 'Failed to import IBKR CSV.' });
   }
+});
+
+app.get('/api/trades/import/ibkr/history', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const batches = ensureImportBatches(user)
+    .filter(batch => String(batch.broker || '').toUpperCase() === 'IBKR')
+    .sort((a, b) => String(b.importedAt || '').localeCompare(String(a.importedAt || '')))
+    .slice(0, 25);
+  res.json({ batches });
+});
+
+app.delete('/api/trades/import/ibkr/:batchId', auth, (req, res) => {
+  const batchId = String(req.params.batchId || '').trim();
+  if (!batchId) return res.status(400).json({ error: 'Missing batch id.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const batches = ensureImportBatches(user);
+  const batch = batches.find(item => item.id === batchId && String(item.broker || '').toUpperCase() === 'IBKR');
+  if (!batch) return res.status(404).json({ error: 'Import batch not found.' });
+  if (batch.status === 'rolled_back') {
+    return res.status(409).json({ error: 'Import batch already removed.' });
+  }
+  const journal = ensureTradeJournal(user);
+  let removedCount = 0;
+  for (const [dateKey, trades] of Object.entries(journal)) {
+    if (!Array.isArray(trades) || !trades.length) continue;
+    const remaining = trades.filter((trade) => {
+      const matchesBatch = String(trade?.importBatchId || '') === batchId
+        && String(trade?.importSource || '').toUpperCase() === 'IBKR_CSV';
+      if (matchesBatch) {
+        removedCount += 1;
+        return false;
+      }
+      return true;
+    });
+    if (remaining.length) journal[dateKey] = remaining;
+    else delete journal[dateKey];
+  }
+  batch.status = 'rolled_back';
+  batch.removedAt = new Date().toISOString();
+  batch.removedCount = removedCount;
+  saveDB(db);
+  res.json({ ok: true, removedCount, batchId });
 });
 
 app.post('/api/trades', auth, async (req, res) => {

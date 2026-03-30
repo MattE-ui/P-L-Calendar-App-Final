@@ -261,10 +261,12 @@ test('imports IBKR CSV trades, skips non-trades, and is idempotent on re-upload'
     body: form
   });
   assert.equal(first.res.status, 200);
+  assert.ok(first.data.batchId);
   assert.equal(first.data.summary.imported, 2);
   assert.equal(first.data.summary.duplicates, 0);
   assert.equal(first.data.summary.invalidRows, 0);
-  assert.equal(first.data.summary.skippedNonTradeRows, 2);
+  assert.equal(first.data.summary.skippedCashRows, 1);
+  assert.equal(first.data.summary.skippedNonTradeRows, 1);
 
   const listAfterFirst = await authedFetch('/api/trades');
   assert.equal(listAfterFirst.res.status, 200);
@@ -285,5 +287,23 @@ test('imports IBKR CSV trades, skips non-trades, and is idempotent on re-upload'
   assert.equal(second.res.status, 200);
   assert.equal(second.data.summary.imported, 0);
   assert.equal(second.data.summary.duplicates, 2);
-  assert.equal(second.data.summary.skippedNonTradeRows, 2);
+  assert.equal(second.data.summary.skippedCashRows, 1);
+  assert.equal(second.data.summary.skippedNonTradeRows, 1);
+
+  const history = await authedFetch('/api/trades/import/ibkr/history');
+  assert.equal(history.res.status, 200);
+  assert.ok(Array.isArray(history.data.batches));
+  const firstBatch = history.data.batches.find(batch => batch.id === first.data.batchId);
+  assert.ok(firstBatch);
+  assert.equal(firstBatch.importedCount, 2);
+
+  const remove = await authedFetch(`/api/trades/import/ibkr/${encodeURIComponent(first.data.batchId)}`, {
+    method: 'DELETE'
+  });
+  assert.equal(remove.res.status, 200);
+  assert.equal(remove.data.removedCount, 2);
+
+  const listAfterRemove = await authedFetch('/api/trades');
+  assert.equal(listAfterRemove.res.status, 200);
+  assert.equal(listAfterRemove.data.trades.length, 0);
 });
