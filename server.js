@@ -13117,6 +13117,92 @@ function getNyDateKey() {
   return getNyDateKeyForDate(new Date(), true);
 }
 async function fetchYahooQuote(symbol) {
+  const snapshot = await fetchYahooQuoteSnapshot(symbol);
+  if (!Number.isFinite(snapshot?.selectedPrice) || snapshot.selectedPrice <= 0) {
+    throw new Error('Yahoo quote not available');
+  }
+  return {
+    symbol: snapshot.symbol,
+    price: snapshot.selectedPrice,
+    currency: snapshot.currency,
+    isExtended: snapshot.isExtended,
+    marketState: snapshot.marketState
+  };
+}
+
+function parsePositiveNumber(...values) {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function computeMidPrice(bidRaw, askRaw) {
+  const bid = parsePositiveNumber(bidRaw);
+  const ask = parsePositiveNumber(askRaw);
+  if (!Number.isFinite(bid) || !Number.isFinite(ask)) return null;
+  return (bid + ask) / 2;
+}
+
+function marketStateIsOpen(marketStateRaw) {
+  const marketState = String(marketStateRaw || '').trim().toLowerCase();
+  return marketState === 'regular' || marketState === 'pre' || marketState === 'post';
+}
+
+function normalizeQuoteSnapshot(symbol, quote = {}) {
+  const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
+  const preferPre = marketState.startsWith('pre');
+  const preferPost = marketState.startsWith('post');
+  const preferredExtended = parsePositiveNumber(
+    preferPre ? quote?.preMarketPrice : null,
+    preferPost ? quote?.postMarketPrice : null,
+    quote?.extendedMarketPrice,
+    quote?.preMarketPrice,
+    quote?.postMarketPrice
+  );
+  const regularMarketPrice = parsePositiveNumber(
+    quote?.regularMarketPrice,
+    quote?.marketPrice,
+    quote?.price
+  );
+  const mark = parsePositiveNumber(quote?.mark, quote?.markPrice, quote?.midPrice);
+  const bid = parsePositiveNumber(quote?.bid, quote?.bidPrice);
+  const ask = parsePositiveNumber(quote?.ask, quote?.askPrice);
+  const mid = computeMidPrice(bid, ask) ?? parsePositiveNumber(quote?.mid, quote?.midPrice);
+  const last = parsePositiveNumber(
+    quote?.lastPrice,
+    quote?.regularMarketLastPrice,
+    regularMarketPrice
+  );
+  const previousClose = parsePositiveNumber(
+    quote?.regularMarketPreviousClose,
+    quote?.previousClose,
+    quote?.close
+  );
+  const marketOpen = marketStateIsOpen(marketState);
+  const live = parsePositiveNumber(
+    preferredExtended,
+    marketOpen ? regularMarketPrice : null
+  );
+  const selectedPrice = parsePositiveNumber(live, last, previousClose);
+  const isExtended = Number.isFinite(preferredExtended) && preferredExtended > 0;
+  return {
+    symbol,
+    currency: quote?.currency || 'GBP',
+    marketState,
+    marketOpen,
+    isExtended,
+    live,
+    mark,
+    mid,
+    last,
+    previousClose,
+    selectedPrice
+  };
+}
+
+async function fetchYahooQuoteSnapshot(symbol) {
   const baseUrls = [
     'https://query1.finance.yahoo.com/v7/finance/quote',
     'https://query2.finance.yahoo.com/v7/finance/quote'
@@ -13134,27 +13220,9 @@ async function fetchYahooQuote(symbol) {
     const data = await res.json();
     const quote = data?.quoteResponse?.result?.[0];
     if (!quote) continue;
-    const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
-    const preferPre = marketState.startsWith('pre');
-    const preferPost = marketState.startsWith('post');
-    const preferredExtended = (preferPre ? quote?.preMarketPrice : null)
-      ?? (preferPost ? quote?.postMarketPrice : null)
-      ?? quote?.extendedMarketPrice
-      ?? quote?.preMarketPrice
-      ?? quote?.postMarketPrice;
-    const price = preferredExtended
-      ?? quote?.regularMarketPrice
-      ?? quote?.regularMarketPreviousClose;
-    const currency = quote?.currency || 'GBP';
-    if (!Number.isFinite(price) || price <= 0) continue;
-    const isExtended = Number.isFinite(preferredExtended) && preferredExtended > 0;
-    return {
-      symbol: trimmed,
-      price,
-      currency,
-      isExtended,
-      marketState
-    };
+    const snapshot = normalizeQuoteSnapshot(trimmed, quote);
+    if (!Number.isFinite(snapshot.selectedPrice) || snapshot.selectedPrice <= 0) continue;
+    return snapshot;
   }
   throw new Error('Yahoo quote not available');
 }
@@ -13268,15 +13336,26 @@ async function fetchStooqQuote(symbol) {
 }
 
 async function fetchMarketPrice(symbol) {
+  const quote = await fetchMarketQuoteSnapshot(symbol);
+  return {
+    symbol: quote.symbol,
+    price: quote.selectedPrice,
+    currency: quote.currency,
+    isExtended: quote.isExtended,
+    marketState: quote.marketState
+  };
+}
+
+async function fetchMarketQuoteSnapshot(symbol) {
   const trimmed = (symbol || '').toUpperCase();
   if (!trimmed) throw new Error('Missing symbol');
   const cacheKey = trimmed;
   const cached = marketCache.get(cacheKey);
   const now = Date.now();
   if (cached && (now - cached.at) < 15 * 1000) {
-    return cached.quote;
+    return cached.snapshot;
   }
-  let normalized = null;
+  let snapshot = null;
   let yahooQuote = null;
   let yahooChart = null;
   if (process.env.MARKET_DATA_URL) {
@@ -13285,32 +13364,17 @@ async function fetchMarketPrice(symbol) {
     if (res.ok) {
       const data = await res.json();
       const quote = data?.quoteResponse?.result?.[0];
-      const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
-      const preferPre = marketState.startsWith('pre');
-      const preferPost = marketState.startsWith('post');
-      const preferredExtended = (preferPre ? quote?.preMarketPrice : null)
-        ?? (preferPost ? quote?.postMarketPrice : null)
-        ?? quote?.extendedMarketPrice
-        ?? quote?.preMarketPrice
-        ?? quote?.postMarketPrice;
-      const price = preferredExtended
-        ?? quote?.regularMarketPrice
-        ?? quote?.regularMarketPreviousClose;
-      const currency = quote?.currency || 'GBP';
-      if (Number.isFinite(price) && price > 0) {
-        normalized = {
-          symbol: trimmed,
-          price,
-          currency,
-          isExtended: Number.isFinite(preferredExtended) && preferredExtended > 0,
-          marketState
-        };
+      if (quote) {
+        const normalized = normalizeQuoteSnapshot(trimmed, quote);
+        if (Number.isFinite(normalized.selectedPrice) && normalized.selectedPrice > 0) {
+          snapshot = normalized;
+        }
       }
     }
   }
-  if (!normalized) {
+  if (!snapshot) {
     try {
-      yahooQuote = await fetchYahooQuote(trimmed);
+      yahooQuote = await fetchYahooQuoteSnapshot(trimmed);
     } catch (e) {
     }
     try {
@@ -13319,18 +13383,46 @@ async function fetchMarketPrice(symbol) {
       // ignore chart failures
     }
     if (yahooQuote?.isExtended) {
-      normalized = yahooQuote;
-    } else if (yahooChart?.price && (!yahooQuote?.price || Math.abs(yahooChart.price - yahooQuote.price) > 0.0001)) {
-      normalized = yahooChart;
+      snapshot = yahooQuote;
+    } else if (
+      yahooChart?.price
+      && (!yahooQuote?.selectedPrice || Math.abs(yahooChart.price - yahooQuote.selectedPrice) > 0.0001)
+    ) {
+      snapshot = {
+        symbol: trimmed,
+        currency: yahooChart.currency || 'GBP',
+        marketState: yahooChart.marketState || '',
+        marketOpen: marketStateIsOpen(yahooChart.marketState || ''),
+        isExtended: true,
+        live: yahooChart.price,
+        mark: null,
+        mid: null,
+        last: yahooChart.price,
+        previousClose: yahooQuote?.previousClose ?? null,
+        selectedPrice: yahooChart.price
+      };
     } else if (yahooQuote) {
-      normalized = yahooQuote;
+      snapshot = yahooQuote;
     }
-    if (!normalized) {
-      normalized = await fetchStooqQuote(trimmed);
+    if (!snapshot) {
+      const stooq = await fetchStooqQuote(trimmed);
+      snapshot = {
+        symbol: trimmed,
+        currency: stooq.currency || 'GBP',
+        marketState: '',
+        marketOpen: false,
+        isExtended: false,
+        live: null,
+        mark: null,
+        mid: null,
+        last: stooq.price,
+        previousClose: null,
+        selectedPrice: stooq.price
+      };
     }
   }
-  marketCache.set(cacheKey, { quote: normalized, at: now });
-  return normalized;
+  marketCache.set(cacheKey, { snapshot, at: now });
+  return snapshot;
 }
 
 function isOptionsTrade(trade) {
@@ -13433,7 +13525,12 @@ async function resolveOptionLiveQuoteForTrade(trade) {
     quoteResolverChosen: 'option_contract',
     resolvedContractSymbol: '',
     requestedContractIdentifiers: [],
+    marketOpen: null,
+    livePremiumFound: false,
+    lastPremiumFound: false,
+    closePremiumFound: false,
     returnedPremium: null,
+    selectedPremiumSource: 'unavailable',
     equityFallbackAttempted: false,
     lookupSucceeded: false,
     failureReason: '',
@@ -13459,18 +13556,38 @@ async function resolveOptionLiveQuoteForTrade(trade) {
   }
   for (const symbol of candidates) {
     try {
-      const quote = await fetchMarketPrice(symbol);
-      if (Number.isFinite(Number(quote?.price)) && Number(quote.price) > 0) {
+      const quote = await fetchMarketQuoteSnapshot(symbol);
+      const chosen = [
+        ['live', parsePositiveNumber(quote?.mark, quote?.live)],
+        ['mid', parsePositiveNumber(quote?.mid)],
+        ['last', parsePositiveNumber(quote?.last)],
+        ['close', parsePositiveNumber(quote?.previousClose)]
+      ].find(([, value]) => Number.isFinite(value) && value > 0) || null;
+      diagnostics.marketOpen = quote?.marketOpen === true;
+      diagnostics.livePremiumFound = Number.isFinite(parsePositiveNumber(quote?.mark, quote?.live));
+      diagnostics.lastPremiumFound = Number.isFinite(parsePositiveNumber(quote?.last));
+      diagnostics.closePremiumFound = Number.isFinite(parsePositiveNumber(quote?.previousClose));
+      if (chosen) {
+        const [source, premium] = chosen;
         diagnostics.lookupSucceeded = true;
         diagnostics.resolvedContractSymbol = symbol;
-        diagnostics.returnedPremium = Number(quote.price);
+        diagnostics.returnedPremium = Number(premium);
+        diagnostics.selectedPremiumSource = source;
         diagnostics.failureReason = '';
-        diagnostics.attempts.push({ symbol, ok: true });
-        console.info('[ACTIVE_OPTIONS_QUOTE] resolved live option quote', {
+        diagnostics.attempts.push({ symbol, ok: true, source });
+        console.info('[ACTIVE_OPTIONS_QUOTE] resolved option quote', {
           ...diagnostics,
           quoteCurrency: quote.currency || null
         });
-        return { quote, diagnostics };
+        return {
+          quote: {
+            symbol,
+            price: Number(premium),
+            currency: quote.currency || 'GBP',
+            source
+          },
+          diagnostics
+        };
       }
       diagnostics.attempts.push({ symbol, ok: false, reason: 'Quote returned without valid premium' });
     } catch (error) {
@@ -13479,6 +13596,7 @@ async function resolveOptionLiveQuoteForTrade(trade) {
     }
   }
   diagnostics.failureReason = diagnostics.attempts[diagnostics.attempts.length - 1]?.reason || 'Quote lookup failed';
+  console.info('[ACTIVE_OPTIONS_QUOTE] option quote resolution unavailable', diagnostics);
   console.warn('[ACTIVE_OPTIONS_QUOTE] option quote lookup failed', diagnostics);
   return { quote: null, diagnostics };
 }
@@ -13621,6 +13739,7 @@ async function buildActiveTrades(user, rates = {}) {
     let livePrice = null;
     let liveCurrency = trade.currency || 'GBP';
     let optionQuoteDiagnostics = null;
+    let optionPremiumSource = null;
     const tradeCurrency = trade.currency || 'GBP';
     const isTrading212 = trade.source === 'trading212' || trade.trading212Id;
     const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
@@ -13632,6 +13751,7 @@ async function buildActiveTrades(user, rates = {}) {
         if (result.quote) {
           livePrice = Number(result.quote.price);
           liveCurrency = result.quote.currency || liveCurrency;
+          optionPremiumSource = result.quote.source || null;
         }
       } else if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
         livePrice = Number(trade.lastSyncPrice);
@@ -13728,6 +13848,7 @@ async function buildActiveTrades(user, rates = {}) {
         optionExpiration: trade.optionExpiration,
         optionContracts: trade.optionContracts,
         optionMultiplier: trade.optionMultiplier,
+        optionPremiumSource: optionPremiumSource || optionQuoteDiagnostics?.selectedPremiumSource || undefined,
         optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
       continue;
@@ -13833,6 +13954,7 @@ async function buildActiveTrades(user, rates = {}) {
         optionExpiration: trade.optionExpiration,
         optionContracts: trade.optionContracts,
         optionMultiplier: trade.optionMultiplier,
+        optionPremiumSource: optionPremiumSource || optionQuoteDiagnostics?.selectedPremiumSource || undefined,
         optionQuoteDiagnostics: optionQuoteDiagnostics || undefined
       });
   }

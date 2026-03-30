@@ -1691,7 +1691,15 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     const details = document.createElement('dl');
     details.className = `trade-details trade-details-collapsible ${showPriceInfo ? '' : 'is-collapsed'}`.trim();
     const isOptionTrade = (trade?.assetClass || '').toLowerCase() === 'options';
-    const livePriceLabel = isOptionTrade ? 'Live Premium' : 'Live Price';
+    const optionPremiumSource = String(trade?.optionPremiumSource || '').toLowerCase();
+    const livePriceLabel = isOptionTrade
+      ? ({
+        live: 'Live Premium',
+        mid: 'Mid Premium',
+        last: 'Last Premium',
+        close: 'Close Premium'
+      }[optionPremiumSource] || 'Live Premium')
+      : 'Live Price';
     const optionType = String(trade?.optionType || '').trim().toUpperCase();
     const optionStrike = Number(trade?.optionStrike);
     const optionExpiry = String(trade?.optionExpiration || '').trim();
@@ -1712,6 +1720,7 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     detailItems.forEach(([label, value]) => {
       const dt = document.createElement('dt');
       dt.textContent = `${label}:`;
+      if (label === livePriceLabel) dt.dataset.role = 'detail-live-price-label';
       const dd = document.createElement('dd');
       dd.textContent = value;
       if (label === livePriceLabel) dd.dataset.role = 'detail-live-price';
@@ -1924,6 +1933,17 @@ function updateActiveTradeDisplay(trades) {
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
     const currentStopValue = Number(trade.currentStop);
     const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const optionPremiumSource = String(trade?.optionPremiumSource || '').toLowerCase();
+    const livePriceLabel = ((trade?.assetClass || '').toLowerCase() === 'options')
+      ? ({
+        live: 'Live Premium',
+        mid: 'Mid Premium',
+        last: 'Last Premium',
+        close: 'Close Premium'
+      }[optionPremiumSource] || 'Live Premium')
+      : 'Live Price';
+    const livePriceLabelEl = node.querySelector('[data-role="detail-live-price-label"]');
+    if (livePriceLabelEl) livePriceLabelEl.textContent = `${livePriceLabel}:`;
     const livePriceEl = node.querySelector('[data-role="detail-live-price"]');
     if (livePriceEl) livePriceEl.textContent = formatPrice(livePrice, trade.currency, 2);
     const currentStopEl = node.querySelector('[data-role="detail-current-stop"]');
