@@ -1423,6 +1423,7 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
 }
 
 function isTradeMissingActiveStop(trade) {
+  if ((trade?.assetClass || '').toLowerCase() === 'options') return false;
   const hasStop = Boolean(trade?.currentStop || trade?.stopPrice || trade?.stop_order_id || trade?.stopOrderActive);
   const staleStop = (trade?.source === 'trading212' || trade?.source === 'ibkr') && trade?.currentStopStale === true;
   return staleStop || !hasStop;
@@ -1689,18 +1690,19 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
 
     const details = document.createElement('dl');
     details.className = `trade-details trade-details-collapsible ${showPriceInfo ? '' : 'is-collapsed'}`.trim();
+    const livePriceLabel = (trade?.assetClass || '').toLowerCase() === 'options' ? 'Live Premium' : 'Live Price';
     const detailItems = [
       ['Buy Price', formatPrice(trade.entry, trade.currency, 2)],
       ['Original Stop', formatPrice(trade.stop, trade.currency, 2)],
       ...(currentStop !== null ? [['Current Stop', formatPrice(currentStop, trade.currency, 2)]] : []),
-      ['Live Price', formatPrice(livePrice, trade.currency, 2)]
+      [livePriceLabel, formatPrice(livePrice, trade.currency, 2)]
     ];
     detailItems.forEach(([label, value]) => {
       const dt = document.createElement('dt');
       dt.textContent = `${label}:`;
       const dd = document.createElement('dd');
       dd.textContent = value;
-      if (label === 'Live Price') dd.dataset.role = 'detail-live-price';
+      if (label === livePriceLabel) dd.dataset.role = 'detail-live-price';
       if (label === 'Current Stop') dd.dataset.role = 'detail-current-stop';
       details.append(dt, dd);
     });
