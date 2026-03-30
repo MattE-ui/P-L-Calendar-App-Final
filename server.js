@@ -13377,6 +13377,12 @@ function parseOccOptionSymbol(symbolRaw) {
   };
 }
 
+function isValidOptionContractSymbol(symbolRaw) {
+  const symbol = String(symbolRaw || '').trim().toUpperCase();
+  if (!symbol) return false;
+  return Boolean(parseOccOptionSymbol(symbol) || parseIbkrOptionSymbol(symbol));
+}
+
 function buildOptionContractQuoteSymbol(trade) {
   if (!isOptionsTrade(trade)) return '';
   const optionType = normalizeOptionType(trade?.optionType);
@@ -13418,12 +13424,17 @@ async function resolveOptionLiveQuoteForTrade(trade) {
   const diagnostics = {
     tradeId: trade?.id || '',
     accountContext: trade?.source || '',
-    ticker: String(trade?.underlyingTicker || trade?.symbol || '').trim().toUpperCase(),
+    isOption: isOptionsTrade(trade),
+    ticker: String(trade?.underlyingTicker || trade?.ticker || trade?.symbol || '').trim().toUpperCase(),
     optionType: normalizeOptionType(trade?.optionType),
     strike: Number.isFinite(Number(trade?.optionStrike)) ? Number(trade.optionStrike) : null,
     expiry: normalizeOptionExpiration(trade?.optionExpiration),
     multiplier: Number.isFinite(Number(trade?.optionMultiplier)) ? Number(trade.optionMultiplier) : null,
+    quoteResolverChosen: 'option_contract',
     resolvedContractSymbol: '',
+    requestedContractIdentifiers: [],
+    returnedPremium: null,
+    equityFallbackAttempted: false,
     lookupSucceeded: false,
     failureReason: '',
     attempts: []
@@ -13432,12 +13443,14 @@ async function resolveOptionLiveQuoteForTrade(trade) {
   const pushCandidate = (raw) => {
     const value = String(raw || '').trim().toUpperCase();
     if (!value) return;
+    if (!isValidOptionContractSymbol(value)) return;
     if (!candidates.includes(value)) candidates.push(value);
   };
   pushCandidate(buildOptionContractQuoteSymbol(trade));
   pushCandidate(trade?.symbol);
   pushCandidate(trade?.displaySymbol);
   pushCandidate(trade?.rawBrokerSymbol);
+  diagnostics.requestedContractIdentifiers = [...candidates];
   diagnostics.resolvedContractSymbol = candidates[0] || '';
   if (!candidates.length) {
     diagnostics.failureReason = 'No valid option contract identifier could be resolved';
@@ -13450,6 +13463,7 @@ async function resolveOptionLiveQuoteForTrade(trade) {
       if (Number.isFinite(Number(quote?.price)) && Number(quote.price) > 0) {
         diagnostics.lookupSucceeded = true;
         diagnostics.resolvedContractSymbol = symbol;
+        diagnostics.returnedPremium = Number(quote.price);
         diagnostics.failureReason = '';
         diagnostics.attempts.push({ symbol, ok: true });
         console.info('[ACTIVE_OPTIONS_QUOTE] resolved live option quote', {
@@ -13612,16 +13626,16 @@ async function buildActiveTrades(user, rates = {}) {
     const isIbkr = trade.source === 'ibkr' || trade.ibkrPositionId;
     const isProvider = isTrading212 || isIbkr;
     try {
-      if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
-        livePrice = Number(trade.lastSyncPrice);
-        liveCurrency = tradeCurrency;
-      } else if (isOption) {
+      if (isOption) {
         const result = await resolveOptionLiveQuoteForTrade(trade);
         optionQuoteDiagnostics = result.diagnostics;
         if (result.quote) {
           livePrice = Number(result.quote.price);
           liveCurrency = result.quote.currency || liveCurrency;
         }
+      } else if (isProvider && Number.isFinite(Number(trade.lastSyncPrice))) {
+        livePrice = Number(trade.lastSyncPrice);
+        liveCurrency = tradeCurrency;
       } else if (quoteSymbol) {
         const quote = await fetchMarketPrice(quoteSymbol);
         livePrice = quote.price;
