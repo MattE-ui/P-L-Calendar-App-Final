@@ -66,6 +66,26 @@ const T212_SYNC_INTERVAL_MS = (() => {
   if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
   return Math.min(parsed, 29 * 1000);
 })();
+const T212_LEADER_ALERT_SYNC_TICK_MS = (() => {
+  const parsed = Number(process.env.T212_LEADER_ALERT_SYNC_TICK_MS);
+  if (!Number.isFinite(parsed) || parsed < 5000) return 15000;
+  return Math.min(parsed, 60000);
+})();
+const T212_LEADER_ALERT_MARKET_HOURS_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.T212_LEADER_ALERT_MARKET_HOURS_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < 5000) return 20000;
+  return Math.min(parsed, 120000);
+})();
+const T212_LEADER_ALERT_OFF_HOURS_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.T212_LEADER_ALERT_OFF_HOURS_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < 30000) return 120000;
+  return Math.min(parsed, 15 * 60 * 1000);
+})();
+const T212_LEADER_ALERT_NO_POSITION_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.T212_LEADER_ALERT_NO_POSITION_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < 60000) return 5 * 60 * 1000;
+  return Math.min(parsed, 30 * 60 * 1000);
+})();
 const IBKR_SYNC_INTERVAL_MS = (() => {
   const parsed = Number(process.env.IBKR_SYNC_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
@@ -634,6 +654,10 @@ function getTradeGroupsLedByUser(db, username) {
   return db.tradeGroups.filter(group => group.leader_user_id === username && group.is_active !== false);
 }
 
+function userLeadsTradeGroups(db, username) {
+  return getTradeGroupsLedByUser(db, username).length > 0;
+}
+
 function getTradeGroupMembers(db, groupId, { status = 'active' } = {}) {
   ensureSocialTables(db);
   return db.tradeGroupMembers.filter(member => (
@@ -1063,6 +1087,86 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
     }
   }
   return { alertsCreated, notificationsCreated };
+}
+
+function classifyTrading212SellAlert({ matchedQuantity = null, remainingQuantity = null, tradeStatus = '' } = {}) {
+  if (Number.isFinite(remainingQuantity) && remainingQuantity <= 1e-8) return 'full_close';
+  if (String(tradeStatus || '').toLowerCase() === 'closed') return 'full_close';
+  if (Number.isFinite(matchedQuantity) && matchedQuantity > 0) return 'partial_sell';
+  return 'sell';
+}
+
+function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {}) {
+  ensureSocialTables(db);
+  const groups = getTradeGroupsLedByUser(db, leaderUsername);
+  if (!groups.length) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const fillId = String(fillEvent?.fillId || '').trim();
+  if (!fillId) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const side = String(fillEvent?.side || '').toUpperCase();
+  if (side !== 'BUY' && side !== 'SELL') return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const nowIso = new Date().toISOString();
+  let alertsCreated = 0;
+  let notificationsCreated = 0;
+  let duplicates = 0;
+  for (const group of groups) {
+    const duplicate = db.tradeGroupAlerts.find(alert => (
+      alert.group_id === group.id
+      && alert.broker_source === 'trading212'
+      && alert.broker_fill_id === fillId
+    ));
+    if (duplicate) {
+      duplicates += 1;
+      console.info(`[TradeGroup][LeaderSync] alert skipped as duplicate leader=${leaderUsername} group=${group.id} fillId=${fillId}`);
+      continue;
+    }
+    const classification = side === 'BUY'
+      ? 'buy'
+      : classifyTrading212SellAlert({
+        matchedQuantity: fillEvent?.quantity,
+        remainingQuantity: fillEvent?.remainingQuantity,
+        tradeStatus: fillEvent?.tradeStatus
+      });
+    const alert = {
+      id: crypto.randomUUID(),
+      group_id: group.id,
+      leader_user_id: leaderUsername,
+      source_trade_id: fillEvent?.sourceTradeId || null,
+      broker_source: 'trading212',
+      broker_fill_id: fillId,
+      broker_order_id: String(fillEvent?.orderId || '').trim() || null,
+      account_id: String(fillEvent?.accountId || '').trim() || null,
+      ticker: fillEvent?.ticker || '',
+      side,
+      alert_classification: classification,
+      fill_price: Number.isFinite(Number(fillEvent?.fillPrice)) ? Number(fillEvent.fillPrice) : null,
+      quantity: Number.isFinite(Number(fillEvent?.quantity)) ? Number(fillEvent.quantity) : null,
+      remaining_quantity: Number.isFinite(Number(fillEvent?.remainingQuantity)) ? Number(fillEvent.remainingQuantity) : null,
+      realized_pnl_gbp: Number.isFinite(Number(fillEvent?.realizedPnlGbp)) ? Number(fillEvent.realizedPnlGbp) : null,
+      realized_return_pct: Number.isFinite(Number(fillEvent?.realizedReturnPct)) ? Number(fillEvent.realizedReturnPct) : null,
+      stop_triggered: fillEvent?.stopTriggered === true,
+      filled_at: fillEvent?.filledAt || null,
+      created_at: nowIso
+    };
+    db.tradeGroupAlerts.push(alert);
+    alertsCreated += 1;
+    console.info(`[TradeGroup][LeaderSync] alert emitted leader=${leaderUsername} group=${group.id} fillId=${fillId} side=${side} classification=${classification}`);
+    const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
+      .filter(member => member.user_id !== leaderUsername);
+    for (const member of activeMembers) {
+      const created = createTradeGroupNotification(db, {
+        userId: member.user_id,
+        groupId: group.id,
+        type: 'trade_group_alert',
+        alertId: alert.id,
+        dedupeKey: `t212-fill:${fillId}:${group.id}`
+      });
+      if (created) {
+        notificationsCreated += 1;
+        triggerPushForTradeGroupNotification(db, created, { group });
+      }
+    }
+  }
+  return { alertsCreated, notificationsCreated, duplicates };
 }
 
 function createTrading212PendingAlertKey(leaderUsername, groupId, trade) {
@@ -5469,6 +5573,47 @@ function ensureTrading212AccountSyncState(cfg, accountId = '__default__') {
   return state;
 }
 
+function ensureTrading212LeaderAlertState(cfg, accountId = '__default__') {
+  if (!cfg || typeof cfg !== 'object') return {};
+  if (!cfg.leaderAlertState || typeof cfg.leaderAlertState !== 'object' || Array.isArray(cfg.leaderAlertState)) {
+    cfg.leaderAlertState = { accounts: {} };
+  }
+  if (!cfg.leaderAlertState.accounts || typeof cfg.leaderAlertState.accounts !== 'object' || Array.isArray(cfg.leaderAlertState.accounts)) {
+    cfg.leaderAlertState.accounts = {};
+  }
+  const key = accountId || '__default__';
+  if (!cfg.leaderAlertState.accounts[key] || typeof cfg.leaderAlertState.accounts[key] !== 'object' || Array.isArray(cfg.leaderAlertState.accounts[key])) {
+    cfg.leaderAlertState.accounts[key] = { positionByKey: {}, pendingChanges: [], lastRunAt: '' };
+  }
+  const state = cfg.leaderAlertState.accounts[key];
+  if (!state.positionByKey || typeof state.positionByKey !== 'object' || Array.isArray(state.positionByKey)) {
+    state.positionByKey = {};
+  }
+  if (!Array.isArray(state.pendingChanges)) {
+    state.pendingChanges = [];
+  }
+  return state;
+}
+
+function isUsMarketHours(now = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const weekday = String(map.weekday || '').toLowerCase();
+  const hour = Number(map.hour);
+  const minute = Number(map.minute);
+  if (!['mon', 'tue', 'wed', 'thu', 'fri'].includes(weekday)) return false;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+  const minuteOfDay = hour * 60 + minute;
+  return minuteOfDay >= (9 * 60 + 30) && minuteOfDay <= (16 * 60 + 10);
+}
+
 function parseTrading212RateLimitHeaders(headers) {
   const toInt = (value) => {
     const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -7210,6 +7355,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
   let maxFilledAt = Number.isFinite(lastFilledAtTs) ? lastFilledAtTs : 0;
   const importedOrderIds = new Set();
   const importedFillIds = new Set();
+  const importedFillEvents = [];
   console.info(`[T212] history reconcile account=${accountId || 'default'} fills=${fills.length}`);
   for (const fill of fills) {
     const fillKey = buildTrading212HistoryFillKey(fill, accountId);
@@ -7227,11 +7373,48 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
       skipped += 1;
       continue;
     }
+    const baseFillId = String(fill.fillId || fill.fill?.id || '');
+    const baseOrderId = String(fill.orderId || fill.order?.id || fill.id || '');
+    const baseTicker = normalizeTrading212Symbol(fill.instrumentTicker || '');
+    if (fill.side === 'BUY') {
+      importedFillEvents.push({
+        fillId: baseFillId,
+        orderId: baseOrderId,
+        accountId,
+        side: fill.side,
+        ticker: baseTicker,
+        fillPrice: Number(fill.fillPrice),
+        quantity: Number(fill.quantity),
+        remainingQuantity: null,
+        realizedPnlGbp: null,
+        tradeStatus: '',
+        stopTriggered: false,
+        filledAt: fill.filledAt || '',
+        sourceTradeId: null
+      });
+    }
     const candidates = openEntries
       .filter(entry => tradeMatchesTrading212HistoryFill(entry.trade, fill, accountId))
       .sort((a, b) => Date.parse(a.trade?.createdAt || a.tradeDate || '') - Date.parse(b.trade?.createdAt || b.tradeDate || ''));
     if (!candidates.length) {
       console.info(`[T212] history fill skipped no-match fillKey=${fillKey}`);
+      if (fill.side === 'SELL') {
+        importedFillEvents.push({
+          fillId: baseFillId,
+          orderId: baseOrderId,
+          accountId,
+          side: fill.side,
+          ticker: baseTicker,
+          fillPrice: Number(fill.fillPrice),
+          quantity: Number(fill.quantity),
+          remainingQuantity: null,
+          realizedPnlGbp: null,
+          tradeStatus: '',
+          stopTriggered: false,
+          filledAt: fill.filledAt || '',
+          sourceTradeId: null
+        });
+      }
       skipped += 1;
       continue;
     }
@@ -7255,7 +7438,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
       }
       const fillOrderId = fill.orderId || fill.order?.id || fill.id || '';
       if (fillOrderId) importedOrderIds.add(String(fillOrderId));
-      if (fill.fillId || fill.fill?.id) importedFillIds.add(String(fill.fillId || fill.fill?.id));
+      const normalizedFillId = String(fill.fillId || fill.fill?.id || '');
+      if (normalizedFillId) importedFillIds.add(normalizedFillId);
       const stopTriggered = (trade.t212StopOrderId && fillOrderId && trade.t212StopOrderId === fillOrderId)
         || activeOrders.some(order => {
           const orderIsStop = order.type === 'STOP' || order.type === 'STOP_LIMIT';
@@ -7284,6 +7468,23 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         trade.optionMultiplier = fill.optionMultiplier;
       }
       applyTrading212ExecutionSummary(trade, rates);
+      const remainingQuantity = Number(trade.sizeUnits);
+      const ticker = resolveCanonicalTickerForTrade(trade) || normalizeTrading212Symbol(fill.instrumentTicker || '');
+      importedFillEvents.push({
+        fillId: normalizedFillId,
+        orderId: fillOrderId || '',
+        accountId,
+        side: fill.side,
+        ticker,
+        fillPrice: Number(fill.fillPrice),
+        quantity: matchedQty,
+        remainingQuantity: Number.isFinite(remainingQuantity) ? remainingQuantity : null,
+        realizedPnlGbp: Number.isFinite(Number(trade.realizedPnlGBP)) ? Number(trade.realizedPnlGBP) : null,
+        tradeStatus: trade.status || '',
+        stopTriggered,
+        filledAt: fill.filledAt || '',
+        sourceTradeId: trade.id
+      });
       console.info(`[T212] history fill matched trade=${trade.id} qty=${matchedQty} remainingAfter=${Math.max(0, Number(summary.openQuantity) - matchedQty)} status=${trade.status}`);
       remaining -= matchedQty;
       imported += 1;
@@ -7302,7 +7503,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
     skipped,
     importedOrderIds: Array.from(importedOrderIds),
     importedFillIds: Array.from(importedFillIds),
-    lastFilledAt: maxFilledAt ? new Date(maxFilledAt).toISOString() : (accountState.lastFilledAt || '')
+    lastFilledAt: maxFilledAt ? new Date(maxFilledAt).toISOString() : (accountState.lastFilledAt || ''),
+    importedFillEvents
   };
 }
 
@@ -8086,6 +8288,34 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
   return { updated };
 }
 
+async function fetchTrading212Positions(config, options = {}) {
+  const baseUrl = resolveTrading212BaseUrl(config);
+  const headers = buildTrading212AuthHeaders(config);
+  const root = '/api/v0';
+  const candidates = [
+    `${root}/equity/positions`,
+    `${root}/equity/portfolio/positions`,
+    `${root}/equity/account/positions`,
+    `${root}/portfolio/positions`
+  ];
+  for (const candidate of candidates) {
+    try {
+      const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers, {
+        accountId: options.accountId || '',
+        endpoint: candidate
+      });
+      const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
+      if (Array.isArray(list)) {
+        return { positions: list, debug: { endpoint: candidate, status: 200 } };
+      }
+    } catch (error) {
+      if (error instanceof Trading212Error && error.status === 404) continue;
+      throw error;
+    }
+  }
+  throw new Trading212Error('Trading 212 positions endpoint not found.', { status: 404 });
+}
+
 async function fetchTrading212Snapshot(config, options = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
@@ -8208,6 +8438,7 @@ async function fetchTrading212Snapshot(config, options = {}) {
 }
 
 const trading212Jobs = new Map();
+const trading212LeaderJobs = new Map();
 const ibkrJobs = new Map();
 
 function shouldThrottleTrading212Endpoint(accountState, endpointKey, now = Date.now()) {
@@ -8286,10 +8517,11 @@ function recordTrading212Skip(accountState, endpointKey, gate = {}) {
 }
 
 async function syncTrading212ForUser(username, runDate = new Date(), options = {}) {
+  const lane = options?.lane === 'leader_alert' ? 'leader_alert' : 'normal';
   const lockKey = `t212-sync:${username}`;
   const existingLock = TRADING212_ACCOUNT_LOCKS.get(lockKey);
   if (existingLock) {
-    console.info(`[T212][sync] skipped username=${username} reason=lock_in_progress`);
+    console.info(`[T212][${lane}] sync skipped username=${username} reason=lock_in_progress`);
     const db = loadDB();
     const user = db.users?.[username];
     if (user?.trading212 && typeof user.trading212 === 'object') {
@@ -8314,6 +8546,10 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     const cfg = user.trading212;
     const accounts = getTrading212Accounts(cfg);
     if (!cfg || !cfg.enabled || !accounts.length) return { skipped: true, reason: 'integration_disabled' };
+    if (lane === 'leader_alert' && !userLeadsTradeGroups(db, username)) {
+      console.info(`[TradeGroup][LeaderSync] skipped leader=${username} reason=no_groups_led`);
+      return { skipped: true, reason: 'no_groups_led' };
+    }
 
     cfg.syncInProgress = true;
     cfg.lastDataSource = 'cached_db';
@@ -8335,6 +8571,20 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       };
       const accountState = ensureTrading212AccountSyncState(cfg, accountId);
       syncStates[accountId] = accountState;
+      const leaderAlertState = ensureTrading212LeaderAlertState(cfg, accountId);
+      const isLeaderLane = lane === 'leader_alert';
+      const shouldFetchSummary = !isLeaderLane;
+      const shouldFetchHistory = true;
+      const hasOpenTrading212Positions = Object.values(ensureTradeJournal(user)).flat().some(trade => (
+        trade
+        && trade.status !== 'closed'
+        && (trade.source === 'trading212' || trade.trading212Id)
+        && (!trade.trading212AccountId || trade.trading212AccountId === accountId)
+      ));
+      const shouldFetchOrders = !isLeaderLane || hasOpenTrading212Positions;
+      if (isLeaderLane) {
+        console.info(`[TradeGroup][LeaderSync] triggered leader=${username} account=${accountId}`);
+      }
 
       const summaryGate = shouldThrottleTrading212Endpoint(accountState, 'summary', now);
       const ordersGate = shouldThrottleTrading212Endpoint(accountState, 'orders', now);
@@ -8344,7 +8594,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         || (now - Date.parse(accountState.lastSnapshotAt || '')) > TRADING212_SYNC_MIN_INTERVALS_MS.summary;
 
       let snapshot = null;
-      if (!summaryGate.skip || snapshotStale) {
+      if (shouldFetchSummary && (!summaryGate.skip || snapshotStale)) {
         try {
           snapshot = await fetchTrading212Snapshot(accountConfig, { accountId });
           recordTrading212EndpointAttempt(accountState, 'summary', { status: 200, headers: {} }, now);
@@ -8358,14 +8608,23 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
           accountResults.push({ status: 'rejected', reason: error, accountId });
           continue;
         }
-      } else {
+      } else if (shouldFetchSummary) {
         console.info(`[T212][sync] skipped endpoint=summary account=${accountId} reason=${summaryGate.reason} until=${summaryGate.until || 'n/a'}`);
         recordTrading212Skip(accountState, 'summary', summaryGate);
         cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
+      } else {
+        const positionsPayload = await fetchTrading212Positions(accountConfig, { accountId });
+        snapshot = {
+          portfolioValue: Number(user.portfolio) || 0,
+          positions: positionsPayload.positions,
+          transactions: [],
+          raw: { positions: positionsPayload.positions, transactions: [] }
+        };
+        accountState.lastSnapshotAt = new Date().toISOString();
       }
 
       let ordersPayload = null;
-      if (!ordersGate.skip || !accountState.lastOrdersAt) {
+      if (shouldFetchOrders && (!ordersGate.skip || !accountState.lastOrdersAt)) {
         try {
           ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
           recordTrading212EndpointAttempt(accountState, 'orders', {
@@ -8383,23 +8642,25 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
           console.info(`[T212][sync] skipped downstream update endpoint=orders account=${accountId} reason=${error?.message || 'request_failed'}`);
           console.info(`[T212][sync][orders] account=${accountId} status=${Number.isFinite(error?.status) ? Number(error.status) : 'unknown'} parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${error?.message || 'request_failed'}`);
         }
-      } else {
+      } else if (shouldFetchOrders) {
         console.info(`[T212][sync] skipped endpoint=orders account=${accountId} reason=${ordersGate.reason} until=${ordersGate.until || 'n/a'}`);
         recordTrading212Skip(accountState, 'orders', ordersGate);
         cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
         console.info(`[T212][sync][orders] account=${accountId} status=skipped parsed=false itemCount=0 persisted=false cooldownAppliedAfterSuccess=false dataSource=cached_db reason=${ordersGate.reason}`);
+      } else if (isLeaderLane) {
+        console.info(`[TradeGroup][LeaderSync] skipped endpoint=orders account=${accountId} reason=no_open_positions`);
       }
 
       let historyOrdersPayload = null;
       const checkpoint = accountState.historyCheckpoint || { importedOrderIds: [], importedFillIds: [], lastFilledAt: '' };
-      if (!historyGate.skip || !accountState.lastHistoryOrdersAt) {
+      if (shouldFetchHistory && (!historyGate.skip || !accountState.lastHistoryOrdersAt)) {
         try {
           historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, {
             accountId,
-            pageLimit: 50,
+            pageLimit: isLeaderLane ? 20 : 50,
             cursor: '',
             checkpoint,
-            maxPages: 3
+            maxPages: isLeaderLane ? 1 : 3
           });
           recordTrading212EndpointAttempt(accountState, 'historyOrders', {
             status: Number(historyOrdersPayload?.debug?.historyOrdersStatus) || 200,
@@ -8457,6 +8718,18 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         };
         if (historyResult.imported > 0) {
           console.info(`[T212] imported historical exits account=${result.accountId} imported=${historyResult.imported}`);
+        }
+        if (lane === 'leader_alert' && userLeadsTradeGroups(db, username)) {
+          const leaderState = ensureTrading212LeaderAlertState(cfg, result.accountId);
+          for (const fillEvent of historyResult.importedFillEvents || []) {
+            if (!fillEvent?.fillId) continue;
+            console.info(`[TradeGroup][LeaderSync] new fill detected leader=${username} account=${result.accountId} fillId=${fillEvent.fillId} side=${fillEvent.side || ''}`);
+            const emitted = emitTradeGroupAlertFromTrading212Fill(db, username, fillEvent);
+            if (emitted.alertsCreated > 0) {
+              const pendingKey = `${String(fillEvent?.ticker || '').toUpperCase()}`;
+              leaderState.pendingChanges = leaderState.pendingChanges.filter(item => String(item.key || '') !== pendingKey);
+            }
+          }
         }
       }
     }
@@ -8720,6 +8993,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         openTrades.push({ tradeDate, trade });
       }
     }
+    const leaderPositionQuantityByAccount = {};
     if (positionEntries.length) {
       const sortedPositions = positionEntries.slice().sort((a, b) => {
         const aSymbol = String(a?.position?.instrument?.ticker ?? a?.position?.ticker ?? a?.position?.symbol ?? '').toUpperCase();
@@ -8815,6 +9089,11 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
           walletImpact?.pnl
         );
         if (!Number.isFinite(quantity) || !Number.isFinite(entryPrice)) continue;
+        if (lane === 'leader_alert') {
+          const positionKey = accountId ? `${accountId}:${symbol}` : symbol;
+          leaderPositionQuantityByAccount[accountId] ||= {};
+          leaderPositionQuantityByAccount[accountId][positionKey] = Math.abs(Number(quantity) || 0);
+        }
         const createdAt = Date.parse(raw?.createdAt || raw?.openDate || raw?.dateOpened || '');
         const createdAtDate = Number.isFinite(createdAt) ? new Date(createdAt) : runDate;
         const normalizedDate = dateKeyInTimezone(timezone, createdAtDate);
@@ -9003,6 +9282,33 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         scheduleTrading212TradeGroupAlertsForNewPosition(db, username, trade, new Date());
         positionsMutated = true;
       }
+    }
+    if (lane === 'leader_alert' && userLeadsTradeGroups(db, username)) {
+      for (const result of fulfilled) {
+        const accountId = result.accountId || '';
+        const leaderState = ensureTrading212LeaderAlertState(cfg, accountId);
+        const prev = leaderState.positionByKey || {};
+        const next = leaderPositionQuantityByAccount[accountId] || {};
+        for (const [key, qty] of Object.entries(next)) {
+          const previousQty = Number(prev[key] || 0);
+          if (Math.abs(previousQty - qty) > 1e-8) {
+            const existingPending = leaderState.pendingChanges.find(item => item.key === key);
+            if (!existingPending) {
+              leaderState.pendingChanges.push({
+                id: crypto.randomUUID(),
+                key,
+                previousQty,
+                nextQty: qty,
+                detectedAt: new Date().toISOString(),
+                status: 'pending_fill_confirmation'
+              });
+            }
+            console.info(`[TradeGroup][LeaderSync] position delta pending leader=${username} account=${accountId || 'default'} key=${key} from=${previousQty} to=${qty}`);
+          }
+        }
+        leaderState.positionByKey = next;
+        leaderState.lastRunAt = new Date().toISOString();
+      }
     } else if (fulfilled.length) {
       const closeDate = new Date(runDate).toISOString();
       for (const entry of openTrades) {
@@ -9095,6 +9401,11 @@ function stopTrading212Job(username) {
     }
     trading212Jobs.delete(username);
   }
+  const leaderJob = trading212LeaderJobs.get(username);
+  if (leaderJob) {
+    clearInterval(leaderJob.handle);
+    trading212LeaderJobs.delete(username);
+  }
 }
 
 function scheduleTrading212Job(username, user) {
@@ -9105,6 +9416,48 @@ function scheduleTrading212Job(username, user) {
     syncTrading212ForUser(username, new Date());
   }, T212_SYNC_INTERVAL_MS);
   trading212Jobs.set(username, { type: 'interval', handle });
+  if (userLeadsTradeGroups(loadDB(), username)) {
+    const leaderHandle = setInterval(async () => {
+      const db = loadDB();
+      const liveUser = db.users?.[username];
+      if (!liveUser?.trading212?.enabled) {
+        console.info(`[TradeGroup][LeaderSync] skipped leader=${username} reason=integration_disabled`);
+        return;
+      }
+      if (!userLeadsTradeGroups(db, username)) {
+        console.info(`[TradeGroup][LeaderSync] skipped leader=${username} reason=no_groups_led`);
+        return;
+      }
+      const hasOpenPositions = Object.values(ensureTradeJournal(liveUser)).flat().some(trade => (
+        trade
+        && trade.status !== 'closed'
+        && (trade.source === 'trading212' || trade.trading212Id)
+      ));
+      const cadence = hasOpenPositions
+        ? (isUsMarketHours(new Date()) ? T212_LEADER_ALERT_MARKET_HOURS_INTERVAL_MS : T212_LEADER_ALERT_OFF_HOURS_INTERVAL_MS)
+        : T212_LEADER_ALERT_NO_POSITION_INTERVAL_MS;
+      const cfg = liveUser.trading212;
+      const lastRunTs = Date.parse(cfg?.leaderAlertState?.lastRunAt || cfg?.lastLeaderAlertSyncAt || '');
+      if (Number.isFinite(lastRunTs) && (Date.now() - lastRunTs) < cadence) {
+        console.info(`[TradeGroup][LeaderSync] skipped leader=${username} reason=cadence`);
+        return;
+      }
+      const result = await syncTrading212ForUser(username, new Date(), { lane: 'leader_alert' });
+      if (!result?.skipped) {
+        const dbAfter = loadDB();
+        const latestUser = dbAfter.users?.[username];
+        if (latestUser?.trading212) {
+          latestUser.trading212.lastLeaderAlertSyncAt = new Date().toISOString();
+          if (!latestUser.trading212.leaderAlertState || typeof latestUser.trading212.leaderAlertState !== 'object') {
+            latestUser.trading212.leaderAlertState = {};
+          }
+          latestUser.trading212.leaderAlertState.lastRunAt = latestUser.trading212.lastLeaderAlertSyncAt;
+          saveDB(dbAfter);
+        }
+      }
+    }, T212_LEADER_ALERT_SYNC_TICK_MS);
+    trading212LeaderJobs.set(username, { type: 'interval', handle: leaderHandle });
+  }
 }
 
 function bootstrapPendingTradeGroupAlertSchedules() {
@@ -10838,7 +11191,15 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       id: alert.id,
       type: 'alert',
       ticker: alert.ticker,
+      side: alert.side || 'BUY',
+      alert_classification: alert.alert_classification || 'buy',
       entry_price: alert.entry_price,
+      fill_price: alert.fill_price ?? alert.entry_price ?? null,
+      quantity: alert.quantity ?? null,
+      remaining_quantity: alert.remaining_quantity ?? null,
+      realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
+      realized_return_pct: alert.realized_return_pct ?? null,
+      stop_triggered: alert.stop_triggered === true,
       stop_price: alert.stop_price,
       risk_pct: alert.risk_pct,
       created_at: alert.created_at,
@@ -11181,7 +11542,15 @@ app.get('/api/social/trade-groups/:groupId/alerts', auth, (req, res) => {
     .map(alert => ({
       id: alert.id,
       ticker: alert.ticker,
+      side: alert.side || 'BUY',
+      alert_classification: alert.alert_classification || 'buy',
       entry_price: alert.entry_price,
+      fill_price: alert.fill_price ?? alert.entry_price ?? null,
+      quantity: alert.quantity ?? null,
+      remaining_quantity: alert.remaining_quantity ?? null,
+      realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
+      realized_return_pct: alert.realized_return_pct ?? null,
+      stop_triggered: alert.stop_triggered === true,
       stop_price: alert.stop_price,
       risk_pct: alert.risk_pct,
       created_at: alert.created_at,
@@ -11270,7 +11639,15 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
         group_id: group.id,
         group_name: group.name,
         ticker: alert.ticker,
+        side: alert.side || 'BUY',
+        alert_classification: alert.alert_classification || 'buy',
         entry_price: alert.entry_price,
+        fill_price: alert.fill_price ?? alert.entry_price ?? null,
+        quantity: alert.quantity ?? null,
+        remaining_quantity: alert.remaining_quantity ?? null,
+        realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
+        realized_return_pct: alert.realized_return_pct ?? null,
+        stop_triggered: alert.stop_triggered === true,
         stop_price: alert.stop_price,
         risk_pct: alert.risk_pct,
         created_at: alert.created_at,
@@ -16185,6 +16562,7 @@ module.exports = {
   buildGroupCurrentPositions,
   resolveCanonicalTickerForTrade,
   createTradeGroupAlertsForNewTrade,
+  emitTradeGroupAlertFromTrading212Fill,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts,
   carryForwardTradingAccountDayValues,
