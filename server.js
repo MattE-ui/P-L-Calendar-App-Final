@@ -3761,6 +3761,13 @@ function ensureTrading212Config(user) {
     cfg.historySync.accounts = {};
     mutated = true;
   }
+  if (!cfg.syncState || typeof cfg.syncState !== 'object' || Array.isArray(cfg.syncState)) {
+    cfg.syncState = { accounts: {} };
+    mutated = true;
+  } else if (!cfg.syncState.accounts || typeof cfg.syncState.accounts !== 'object' || Array.isArray(cfg.syncState.accounts)) {
+    cfg.syncState.accounts = {};
+    mutated = true;
+  }
   const accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
   const normalizedAccounts = accounts
     .filter(account => account && typeof account === 'object')
@@ -5425,6 +5432,54 @@ const TRADING212_ORDERS_CACHE_MS = 20000;
 const trading212HistoryOrdersCache = new Map();
 const TRADING212_HISTORY_ORDERS_CACHE_MS = 20000;
 const TRADING212_LIST_ENDPOINT_THROTTLE_MS = 350;
+const TRADING212_ACCOUNT_LOCKS = new Map();
+const TRADING212_SYNC_MIN_INTERVALS_MS = {
+  summary: 8000,
+  orders: 60000,
+  historyOrders: 180000
+};
+
+function ensureTrading212SyncState(cfg) {
+  if (!cfg || typeof cfg !== 'object') return {};
+  if (!cfg.syncState || typeof cfg.syncState !== 'object' || Array.isArray(cfg.syncState)) {
+    cfg.syncState = {};
+  }
+  if (!cfg.syncState.accounts || typeof cfg.syncState.accounts !== 'object' || Array.isArray(cfg.syncState.accounts)) {
+    cfg.syncState.accounts = {};
+  }
+  return cfg.syncState.accounts;
+}
+
+function ensureTrading212AccountSyncState(cfg, accountId = '__default__') {
+  const accounts = ensureTrading212SyncState(cfg);
+  const key = accountId || '__default__';
+  if (!accounts[key] || typeof accounts[key] !== 'object' || Array.isArray(accounts[key])) {
+    accounts[key] = {};
+  }
+  const state = accounts[key];
+  if (!state.endpoints || typeof state.endpoints !== 'object' || Array.isArray(state.endpoints)) {
+    state.endpoints = {};
+  }
+  if (!state.lastSuccessByEndpoint || typeof state.lastSuccessByEndpoint !== 'object' || Array.isArray(state.lastSuccessByEndpoint)) {
+    state.lastSuccessByEndpoint = {};
+  }
+  if (!state.historyCheckpoint || typeof state.historyCheckpoint !== 'object' || Array.isArray(state.historyCheckpoint)) {
+    state.historyCheckpoint = { importedOrderIds: [], importedFillIds: [], lastFilledAt: '' };
+  }
+  return state;
+}
+
+function parseTrading212RateLimitHeaders(headers) {
+  const toInt = (value) => {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    limit: toInt(headers?.['x-ratelimit-limit']),
+    remaining: toInt(headers?.['x-ratelimit-remaining']),
+    reset: toInt(headers?.['x-ratelimit-reset'])
+  };
+}
 
 function normalizeTrading212OrderStatus(raw) {
   return String(raw || '').trim().toUpperCase();
@@ -6778,7 +6833,9 @@ async function fetchTrading212Orders(config, username, { bypassCache = false, ac
   console.info(`[T212] baseUrl=${baseUrl} endpoint=${endpoint}`);
   const upstream = await requestTrading212RawEndpoint(url, headers, {
     includeMeta: true,
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(15000),
+    accountId,
+    endpoint
   });
   const payload = upstream?.payload ?? null;
   console.info(`[T212][orders][raw] account=${accountId || 'default'} url=${upstream?.url || url} status=${upstream?.status ?? 'unknown'} body=${String(upstream?.bodyText || '').slice(0, 2000)}`);
@@ -6808,6 +6865,7 @@ async function fetchTrading212Orders(config, username, { bypassCache = false, ac
     debug: {
       requestUrl: upstream?.url || url,
       status: upstream?.status ?? null,
+      headers: upstream?.headers || null,
       bodyText: upstream?.bodyText || ''
     },
     orders,
@@ -6832,7 +6890,15 @@ function resolveTrading212HistoryNextPagePath(payload = {}) {
   return String(nextPagePath).trim();
 }
 
-async function fetchTrading212HistoryOrders(config, username, { accountId = '', pageLimit = 50, ticker = '', cursor = '', bypassCache = false } = {}) {
+async function fetchTrading212HistoryOrders(config, username, {
+  accountId = '',
+  pageLimit = 50,
+  ticker = '',
+  cursor = '',
+  bypassCache = false,
+  checkpoint = null,
+  maxPages = 20
+} = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
@@ -6850,6 +6916,9 @@ async function fetchTrading212HistoryOrders(config, username, { accountId = '', 
   const rawItems = [];
   const pages = [];
   let nextPagePath = '';
+  const knownOrderIds = new Set(Array.isArray(checkpoint?.importedOrderIds) ? checkpoint.importedOrderIds.map(item => String(item)) : []);
+  const knownFillIds = new Set(Array.isArray(checkpoint?.importedFillIds) ? checkpoint.importedFillIds.map(item => String(item)) : []);
+  const lastFilledAtTs = Date.parse(checkpoint?.lastFilledAt || '');
   const firstParams = new URLSearchParams();
   firstParams.set('limit', String(safeLimit));
   if (ticker) firstParams.set('ticker', String(ticker));
@@ -6886,7 +6955,9 @@ async function fetchTrading212HistoryOrders(config, username, { accountId = '', 
     try {
       upstream = await requestTrading212RawEndpoint(url, headers, {
         includeMeta: true,
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(15000),
+        accountId,
+        endpoint: endpointBase
       });
     } catch (error) {
       debug.historyOrdersRequestUrl = url;
@@ -6926,7 +6997,19 @@ async function fetchTrading212HistoryOrders(config, username, { accountId = '', 
     nextPagePath = nextRaw || '';
     endpointPath = nextPagePath;
     pageCount += 1;
-    if (pageCount >= 20) {
+    const pageHasOnlyKnownItems = Array.isArray(pageItems) && pageItems.length > 0 && pageItems.every(item => {
+      const orderId = String(item?.id ?? item?.orderId ?? '');
+      const fillId = String(item?.fillId ?? item?.executionId ?? item?.tradeId ?? item?.dealId ?? '');
+      const filledAt = Date.parse(item?.filledAt ?? item?.updatedAt ?? item?.executedAt ?? item?.dateExecuted ?? '');
+      const isKnown = (orderId && knownOrderIds.has(orderId)) || (fillId && knownFillIds.has(fillId));
+      const isOld = Number.isFinite(lastFilledAtTs) && Number.isFinite(filledAt) && filledAt <= lastFilledAtTs;
+      return isKnown || isOld;
+    });
+    if (pageHasOnlyKnownItems) {
+      console.info(`[T212] history orders incremental stop account=${accountId || 'default'} page=${pageCount + 1} reason=checkpoint_reached`);
+      break;
+    }
+    if (pageCount >= Math.max(1, Number(maxPages) || 1)) {
       console.warn(`[T212] history orders pagination stopped after ${pageCount} pages for account=${accountId || 'default'}`);
       break;
     }
@@ -6947,13 +7030,31 @@ async function fetchTrading212HistoryOrders(config, username, { accountId = '', 
     });
   }
   const orders = parseTrading212HistoryOrders(payload);
+  const importedOrderIds = orders.map(item => String(item.orderId || item.id || '')).filter(Boolean);
+  const importedFillIds = orders.map(item => String(item.fillId || item.fill?.id || '')).filter(Boolean);
+  const parsedPreview = orders.slice(0, 5).map(item => ({
+    orderId: item.orderId || item.id || '',
+    fillId: item.fillId || item.fill?.id || '',
+    side: item.side || '',
+    status: item.status || '',
+    filledAt: item.filledAt || ''
+  }));
+  const firstPage = pages[0] || {};
+  const firstPageHeaders = debug.historyOrdersHeaders || null;
+  console.info(`[T212][history][summary] account=${accountId || 'default'} requestUrl=${firstPage.url || debug.historyOrdersRequestUrl || ''} status=${firstPage.status ?? debug.historyOrdersStatus ?? 'unknown'} x-ratelimit-limit=${firstPageHeaders?.['x-ratelimit-limit'] ?? 'n/a'} x-ratelimit-remaining=${firstPageHeaders?.['x-ratelimit-remaining'] ?? 'n/a'} x-ratelimit-reset=${firstPageHeaders?.['x-ratelimit-reset'] ?? 'n/a'} rawItemCount=${rawOrders.length} parsedItemCount=${orders.length} parsedPreview=${JSON.stringify(parsedPreview)}`);
   console.info(`[T212] history orders fetched account=${accountId || 'default'} rawCount=${rawOrders.length} completedCount=${orders.length}`);
   const response = {
     raw: payload,
     orders,
+    importedOrderIds,
+    importedFillIds,
+    lastFilledAt: orders.length ? (orders[orders.length - 1]?.filledAt || '') : '',
     debug: {
       pageLimit: safeLimit,
       pages,
+      parsedPreview,
+      rawItemCount: rawOrders.length,
+      parsedItemCount: orders.length,
       ...debug
     },
     fromCache: false
@@ -7076,6 +7177,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
   let imported = 0;
   let skipped = 0;
   let maxFilledAt = Number.isFinite(lastFilledAtTs) ? lastFilledAtTs : 0;
+  const importedOrderIds = new Set();
+  const importedFillIds = new Set();
   console.info(`[T212] history reconcile account=${accountId || 'default'} fills=${fills.length}`);
   for (const fill of fills) {
     const fillKey = buildTrading212HistoryFillKey(fill, accountId);
@@ -7120,6 +7223,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         continue;
       }
       const fillOrderId = fill.orderId || fill.order?.id || fill.id || '';
+      if (fillOrderId) importedOrderIds.add(String(fillOrderId));
+      if (fill.fillId || fill.fill?.id) importedFillIds.add(String(fill.fillId || fill.fill?.id));
       const stopTriggered = (trade.t212StopOrderId && fillOrderId && trade.t212StopOrderId === fillOrderId)
         || activeOrders.some(order => {
           const orderIsStop = order.type === 'STOP' || order.type === 'STOP_LIMIT';
@@ -7161,7 +7266,13 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
     lastFilledAt: maxFilledAt ? new Date(maxFilledAt).toISOString() : (accountState.lastFilledAt || '')
   };
   console.info(`[T212] history reconcile account=${accountId || 'default'} imported=${imported} skipped=${skipped}`);
-  return { imported, skipped };
+  return {
+    imported,
+    skipped,
+    importedOrderIds: Array.from(importedOrderIds),
+    importedFillIds: Array.from(importedFillIds),
+    lastFilledAt: maxFilledAt ? new Date(maxFilledAt).toISOString() : (accountState.lastFilledAt || '')
+  };
 }
 
 function computeSourceKey(instrument = {}) {
@@ -7657,20 +7768,20 @@ async function requestTrading212Endpoint(url, headers, options = {}) {
       continue;
     }
     const status = res.status;
+    const headerMap = {};
+    for (const [key, value] of res.headers.entries()) {
+      headerMap[key] = value;
+    }
+    const rateLimitHeaders = parseTrading212RateLimitHeaders(headerMap);
     const contentType = res.headers.get('content-type') || '';
     const bodyText = await res.text().catch(() => '');
-    console.info(`Trading 212 request ${url} -> ${status}`);
+    console.info(`[T212][upstream] endpoint=${url} account=${options?.accountId || 'default'} url=${url} status=${status} x-ratelimit-limit=${rateLimitHeaders.limit ?? 'n/a'} x-ratelimit-remaining=${rateLimitHeaders.remaining ?? 'n/a'} x-ratelimit-reset=${rateLimitHeaders.reset ?? 'n/a'}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
       lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter
       });
-      const wait = retryAfter !== null ? Math.min(retryAfter * 1000, 5000) : Math.min(1000 * attempt, 5000);
-      if (attempt < maxAttempts) {
-        await sleep(wait);
-        continue;
-      }
       throw lastError;
     }
     if (status === 401 || status === 403) {
@@ -7792,19 +7903,23 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     const status = res.status;
     const contentType = res.headers.get('content-type') || '';
     const bodyText = await res.text().catch(() => '');
-    console.info(`Trading 212 request ${url} -> ${status}`);
+    const responseHeaders = {};
+    for (const [key, value] of res.headers.entries()) {
+      responseHeaders[key] = value;
+    }
+    const rateLimitHeaders = parseTrading212RateLimitHeaders(responseHeaders);
+    const accountId = options?.accountId || 'default';
+    const endpointLabel = options?.endpoint || '';
+    console.info(`[T212][upstream] endpoint=${endpointLabel || url} account=${accountId} url=${url} status=${status} x-ratelimit-limit=${rateLimitHeaders.limit ?? 'n/a'} x-ratelimit-remaining=${rateLimitHeaders.remaining ?? 'n/a'} x-ratelimit-reset=${rateLimitHeaders.reset ?? 'n/a'}`);
     console.info(`[T212] status=${status} content-type=${contentType} body=${bodyText.slice(0, 300)}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
+      const headerResetSeconds = Number.isFinite(rateLimitHeaders.reset) ? rateLimitHeaders.reset : null;
+      const effectiveRetryAfter = headerResetSeconds !== null && headerResetSeconds > 0 ? headerResetSeconds : retryAfter;
       lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
-        retryAfter
+        retryAfter: effectiveRetryAfter
       });
-      const wait = retryAfter !== null ? Math.min(retryAfter * 1000, 5000) : Math.min(1000 * attempt, 5000);
-      if (attempt < maxAttempts) {
-        await sleep(wait);
-        continue;
-      }
       throw lastError;
     }
     if (status === 401 || status === 403) {
@@ -7825,10 +7940,6 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
       try {
         const parsed = JSON.parse(bodyText);
         if (includeMeta) {
-          const responseHeaders = {};
-          for (const [key, value] of res.headers.entries()) {
-            responseHeaders[key] = value;
-          }
           return {
             url,
             status,
@@ -7846,10 +7957,6 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
       }
     }
     if (includeMeta) {
-      const responseHeaders = {};
-      for (const [key, value] of res.headers.entries()) {
-        responseHeaders[key] = value;
-      }
       return {
         url,
         status,
@@ -7948,7 +8055,7 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
   return { updated };
 }
 
-async function fetchTrading212Snapshot(config) {
+async function fetchTrading212Snapshot(config, options = {}) {
   if (!config?.apiKey || !config?.apiSecret) {
     throw new Trading212AuthError('Trading 212 credentials are incomplete.', { status: 401 });
   }
@@ -7986,7 +8093,7 @@ async function fetchTrading212Snapshot(config) {
     const endpoint = `${baseUrl}${pathSuffix}`;
     try {
       console.info(`[T212] baseUrl=${baseUrl} endpoint=${pathSuffix}`);
-      const snapshot = await requestTrading212Endpoint(endpoint, headers);
+      const snapshot = await requestTrading212Endpoint(endpoint, headers, { accountId: options.accountId || '' });
       const root = deriveTrading212Root(pathSuffix);
       const positionsEndpoints = [
         `${root}/equity/positions`,
@@ -8009,7 +8116,10 @@ async function fetchTrading212Snapshot(config) {
       let transactionsRaw = null;
       for (const candidate of positionsEndpoints) {
         try {
-          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers, {
+            accountId: options.accountId || '',
+            endpoint: candidate
+          });
           const list = Array.isArray(payload) ? payload : payload?.items || payload?.positions;
           if (Array.isArray(list)) {
             positions = list;
@@ -8022,7 +8132,10 @@ async function fetchTrading212Snapshot(config) {
       }
       for (const candidate of transactionEndpoints) {
         try {
-          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers);
+          const payload = await requestTrading212RawEndpoint(`${baseUrl}${candidate}`, headers, {
+            accountId: options.accountId || '',
+            endpoint: candidate
+          });
           const list = Array.isArray(payload) ? payload : payload?.items || payload?.transactions;
           if (Array.isArray(list)) {
             transactions = list;
@@ -8066,33 +8179,113 @@ async function fetchTrading212Snapshot(config) {
 const trading212Jobs = new Map();
 const ibkrJobs = new Map();
 
-async function syncTrading212ForUser(username, runDate = new Date()) {
-  const db = loadDB();
-  const user = db.users[username];
-  if (!user) return;
-  ensureUserShape(user, username);
-  const cfg = user.trading212;
-  const accounts = getTrading212Accounts(cfg);
-  if (!cfg || !cfg.enabled || !accounts.length) return;
-  const rates = await fetchRates();
-  const now = Date.now();
-  if (cfg.cooldownUntil) {
-    const cooldownTs = Date.parse(cfg.cooldownUntil);
-    if (!Number.isNaN(cooldownTs) && cooldownTs > now) {
-      const seconds = Math.max(1, Math.ceil((cooldownTs - now) / 1000));
-      cfg.lastStatus = {
-        ok: false,
-        status: 429,
-        retryAfter: seconds,
-        message: `Trading 212 asked us to wait ${seconds} seconds before the next sync.`
-      };
-      saveDB(db);
-      return;
-    }
-    delete cfg.cooldownUntil;
+function shouldThrottleTrading212Endpoint(accountState, endpointKey, now = Date.now()) {
+  const endpointState = accountState?.endpoints?.[endpointKey] || {};
+  const cooldownTs = Date.parse(endpointState.cooldownUntil || '');
+  if (Number.isFinite(cooldownTs) && cooldownTs > now) {
+    return { skip: true, reason: 'cooldown', until: endpointState.cooldownUntil };
   }
-  try {
+  const minInterval = TRADING212_SYNC_MIN_INTERVALS_MS[endpointKey] || 30000;
+  const lastAttemptTs = Date.parse(endpointState.lastAttemptAt || '');
+  if (Number.isFinite(lastAttemptTs) && (now - lastAttemptTs) < minInterval) {
+    return {
+      skip: true,
+      reason: 'cadence',
+      until: new Date(lastAttemptTs + minInterval).toISOString()
+    };
+  }
+  return { skip: false, reason: null, until: null };
+}
+
+function recordTrading212EndpointAttempt(accountState, endpointKey, upstreamMeta = {}, now = Date.now()) {
+  if (!accountState.endpoints[endpointKey]) accountState.endpoints[endpointKey] = {};
+  const endpointState = accountState.endpoints[endpointKey];
+  endpointState.lastAttemptAt = new Date(now).toISOString();
+  endpointState.lastStatus = upstreamMeta.status ?? null;
+  if (upstreamMeta.headers && typeof upstreamMeta.headers === 'object') {
+    const rateHeaders = parseTrading212RateLimitHeaders(upstreamMeta.headers);
+    endpointState.rateLimit = {
+      limit: rateHeaders.limit,
+      remaining: rateHeaders.remaining,
+      reset: rateHeaders.reset
+    };
+    if (Number.isFinite(rateHeaders.reset) && rateHeaders.reset > 0) {
+      endpointState.cooldownUntil = new Date(now + (rateHeaders.reset * 1000)).toISOString();
+    } else if (upstreamMeta.status !== 429) {
+      delete endpointState.cooldownUntil;
+    }
+  }
+  if (upstreamMeta.status === 429) {
+    const retryAfter = Number.isFinite(upstreamMeta.retryAfter) ? Number(upstreamMeta.retryAfter) : 5;
+    endpointState.cooldownUntil = new Date(now + (retryAfter * 1000)).toISOString();
+  } else if (upstreamMeta.status && upstreamMeta.status < 400) {
+    accountState.lastSuccessByEndpoint[endpointKey] = endpointState.lastAttemptAt;
+    delete endpointState.lastError;
+  }
+  const minInterval = TRADING212_SYNC_MIN_INTERVALS_MS[endpointKey] || 30000;
+  const nextByCadence = Date.parse(endpointState.lastAttemptAt || '') + minInterval;
+  const cooldownTs = Date.parse(endpointState.cooldownUntil || '');
+  const nextAllowedTs = Math.max(
+    Number.isFinite(nextByCadence) ? nextByCadence : 0,
+    Number.isFinite(cooldownTs) ? cooldownTs : 0
+  );
+  if (nextAllowedTs > 0) {
+    endpointState.nextAllowedAt = new Date(nextAllowedTs).toISOString();
+  }
+}
+
+function recordTrading212Skip(accountState, endpointKey, gate = {}) {
+  if (!accountState || typeof accountState !== 'object') return;
+  accountState.lastSkip = {
+    endpoint: endpointKey,
+    reason: gate.reason || 'unknown',
+    until: gate.until || null,
+    at: new Date().toISOString()
+  };
+  if (endpointKey && accountState.endpoints?.[endpointKey]) {
+    accountState.endpoints[endpointKey].lastSkip = accountState.lastSkip;
+  }
+}
+
+async function syncTrading212ForUser(username, runDate = new Date(), options = {}) {
+  const lockKey = `t212-sync:${username}`;
+  const existingLock = TRADING212_ACCOUNT_LOCKS.get(lockKey);
+  if (existingLock) {
+    console.info(`[T212][sync] skipped username=${username} reason=lock_in_progress`);
+    const db = loadDB();
+    const user = db.users?.[username];
+    if (user?.trading212 && typeof user.trading212 === 'object') {
+      user.trading212.lastSyncSkip = {
+        reason: 'lock_in_progress',
+        at: new Date().toISOString()
+      };
+      user.trading212.lastDataSource = 'cached_db';
+      saveDB(db);
+    }
+    if (options.waitForExisting === true) {
+      await existingLock.catch(() => null);
+    }
+    return { skipped: true, reason: 'lock_in_progress' };
+  }
+
+  const syncPromise = (async () => {
+    const db = loadDB();
+    const user = db.users[username];
+    if (!user) return { skipped: true, reason: 'user_missing' };
+    ensureUserShape(user, username);
+    const cfg = user.trading212;
+    const accounts = getTrading212Accounts(cfg);
+    if (!cfg || !cfg.enabled || !accounts.length) return { skipped: true, reason: 'integration_disabled' };
+
+    cfg.syncInProgress = true;
+    cfg.lastDataSource = 'cached_db';
+    const syncStates = ensureTrading212SyncState(cfg);
+    saveDB(db);
+
+    const rates = await fetchRates();
+    const now = Date.now();
     const accountResults = [];
+
     for (const [index, account] of accounts.entries()) {
       const accountId = account.id || `account-${index + 1}`;
       const accountConfig = {
@@ -8102,53 +8295,131 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
         mode: account.mode || cfg.mode,
         baseUrl: account.baseUrl || cfg.baseUrl
       };
-      try {
-        const snapshot = await fetchTrading212Snapshot(accountConfig);
-        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
-        const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
-        await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
-        const historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, { accountId });
-        accountResults.push({
-          status: 'fulfilled',
-          value: {
-            accountId,
-            accountConfig,
-            snapshot,
-            ordersPayload,
-            historyOrdersPayload
-          }
-        });
-      } catch (reason) {
-        accountResults.push({
-          status: 'rejected',
-          reason
-        });
+      const accountState = ensureTrading212AccountSyncState(cfg, accountId);
+      syncStates[accountId] = accountState;
+
+      const summaryGate = shouldThrottleTrading212Endpoint(accountState, 'summary', now);
+      const ordersGate = shouldThrottleTrading212Endpoint(accountState, 'orders', now);
+      const historyGate = shouldThrottleTrading212Endpoint(accountState, 'historyOrders', now);
+
+      const snapshotStale = !Number.isFinite(Date.parse(accountState.lastSnapshotAt || ''))
+        || (now - Date.parse(accountState.lastSnapshotAt || '')) > TRADING212_SYNC_MIN_INTERVALS_MS.summary;
+
+      let snapshot = null;
+      if (!summaryGate.skip || snapshotStale) {
+        try {
+          snapshot = await fetchTrading212Snapshot(accountConfig, { accountId });
+          recordTrading212EndpointAttempt(accountState, 'summary', { status: 200, headers: {} }, now);
+          accountState.lastSnapshotAt = new Date().toISOString();
+          await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+        } catch (error) {
+          recordTrading212EndpointAttempt(accountState, 'summary', {
+            status: Number.isFinite(error?.status) ? Number(error.status) : 500,
+            retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
+          }, now);
+          accountResults.push({ status: 'rejected', reason: error, accountId });
+          continue;
+        }
+      } else {
+        console.info(`[T212][sync] skipped endpoint=summary account=${accountId} reason=${summaryGate.reason} until=${summaryGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'summary', summaryGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
       }
+
+      let ordersPayload = null;
+      if (!ordersGate.skip || !accountState.lastOrdersAt) {
+        try {
+          ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+          recordTrading212EndpointAttempt(accountState, 'orders', {
+            status: Number(ordersPayload?.debug?.status) || 200,
+            headers: ordersPayload?.debug?.headers || {}
+          }, now);
+          accountState.lastOrdersAt = new Date().toISOString();
+          await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+        } catch (error) {
+          recordTrading212EndpointAttempt(accountState, 'orders', {
+            status: Number.isFinite(error?.status) ? Number(error.status) : 500,
+            retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
+          }, now);
+          console.info(`[T212][sync] skipped downstream update endpoint=orders account=${accountId} reason=${error?.message || 'request_failed'}`);
+        }
+      } else {
+        console.info(`[T212][sync] skipped endpoint=orders account=${accountId} reason=${ordersGate.reason} until=${ordersGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'orders', ordersGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
+      }
+
+      let historyOrdersPayload = null;
+      const checkpoint = accountState.historyCheckpoint || { importedOrderIds: [], importedFillIds: [], lastFilledAt: '' };
+      if (!historyGate.skip || !accountState.lastHistoryOrdersAt) {
+        try {
+          historyOrdersPayload = await fetchTrading212HistoryOrders(accountConfig, username, {
+            accountId,
+            pageLimit: 50,
+            cursor: '',
+            checkpoint,
+            maxPages: 3
+          });
+          recordTrading212EndpointAttempt(accountState, 'historyOrders', {
+            status: Number(historyOrdersPayload?.debug?.historyOrdersStatus) || 200,
+            headers: historyOrdersPayload?.debug?.historyOrdersHeaders || {}
+          }, now);
+          accountState.lastHistoryOrdersAt = new Date().toISOString();
+        } catch (error) {
+          recordTrading212EndpointAttempt(accountState, 'historyOrders', {
+            status: Number.isFinite(error?.status) ? Number(error.status) : 500,
+            retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
+          }, now);
+          console.info(`[T212][sync] skipped downstream update endpoint=historyOrders account=${accountId} reason=${error?.message || 'request_failed'}`);
+        }
+      } else {
+        console.info(`[T212][sync] skipped endpoint=historyOrders account=${accountId} reason=${historyGate.reason} until=${historyGate.until || 'n/a'}`);
+        recordTrading212Skip(accountState, 'historyOrders', historyGate);
+        cfg.lastSyncSkip = { accountId, ...accountState.lastSkip };
+      }
+
+      accountResults.push({
+        status: 'fulfilled',
+        value: { accountId, accountConfig, snapshot, ordersPayload, historyOrdersPayload }
+      });
     }
+
     const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
     const rejected = accountResults.filter(result => result.status === 'rejected').map(result => result.reason);
     if (!fulfilled.length) {
       throw rejected[0] || new Trading212Error('Trading 212 sync failed.');
     }
+
     let totalStopUpdates = 0;
     for (const result of fulfilled) {
-      const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId, rates);
-      totalStopUpdates += stopUpdates;
-      const historyResult = reconcileTrading212HistoricalExits(
-        user,
-        cfg,
-        result.historyOrdersPayload,
-        result.accountId,
-        result.ordersPayload,
-        rates
-      );
-      if (historyResult.imported > 0) {
-        console.info(`[T212] imported historical exits account=${result.accountId} imported=${historyResult.imported}`);
+      if (result.ordersPayload) {
+        const { updated: stopUpdates } = upsertTrading212StopOrders(user, result.ordersPayload, result.accountId, rates);
+        totalStopUpdates += stopUpdates;
+      }
+      if (result.historyOrdersPayload) {
+        const historyResult = reconcileTrading212HistoricalExits(
+          user,
+          cfg,
+          result.historyOrdersPayload,
+          result.accountId,
+          result.ordersPayload,
+          rates
+        );
+        const accountState = ensureTrading212AccountSyncState(cfg, result.accountId);
+        accountState.historyCheckpoint = {
+          importedOrderIds: Array.from(new Set((accountState.historyCheckpoint?.importedOrderIds || []).concat(historyResult.importedOrderIds || []))).slice(-1000),
+          importedFillIds: Array.from(new Set((accountState.historyCheckpoint?.importedFillIds || []).concat(historyResult.importedFillIds || []))).slice(-5000),
+          lastFilledAt: historyResult.lastFilledAt || accountState.historyCheckpoint?.lastFilledAt || ''
+        };
+        if (historyResult.imported > 0) {
+          console.info(`[T212] imported historical exits account=${result.accountId} imported=${historyResult.imported}`);
+        }
       }
     }
     if (totalStopUpdates > 0) {
       console.info(`[T212] synced current stops for ${totalStopUpdates} trade(s)`);
     }
+
     const history = ensurePortfolioHistory(user);
     normalizePortfolioHistory(user);
     const { total: currentTotal } = computeNetDepositsTotals(user, history);
@@ -8690,11 +8961,15 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       }
     }
     cfg.lastSyncAt = new Date().toISOString();
+    cfg.lastSuccessfulSyncAt = cfg.lastSyncAt;
+    cfg.lastDataSource = 'fresh_upstream';
+    cfg.lastSyncError = null;
+    cfg.lastSyncSkip = null;
+    cfg.syncInProgress = false;
     if (!cfg.minuteSync) {
       cfg.minuteSync = true;
       scheduleTrading212Job(username, user);
     }
-    delete cfg.cooldownUntil;
     if (rejected.length) {
       const rateLimit = rejected.find(err => err instanceof Trading212RateLimitError);
       if (rateLimit && rateLimit.retryAfter) {
@@ -8707,10 +8982,18 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
       };
     } else {
       cfg.lastStatus = { ok: true, status: 200 };
+      delete cfg.cooldownUntil;
     }
     processPendingTrading212GroupAlerts(db, { now: new Date() });
     saveDB(db);
-  } catch (e) {
+    return { ok: true };
+  })().catch((e) => {
+    const db = loadDB();
+    const user = db.users[username];
+    if (!user) return { ok: false, error: e };
+    ensureUserShape(user, username);
+    const cfg = user.trading212 || {};
+    const now = Date.now();
     cfg.lastSyncAt = new Date().toISOString();
     const retryAfter = e instanceof Trading212Error ? e.retryAfter : null;
     if (retryAfter !== null && retryAfter !== undefined) {
@@ -8722,18 +9005,27 @@ async function syncTrading212ForUser(username, runDate = new Date()) {
     if (e instanceof Trading212Error && e.endpoint) {
       cfg.lastEndpoint = e.endpoint;
     }
+    cfg.lastSyncError = e && e.message ? e.message : 'Unknown Trading 212 error';
     cfg.lastStatus = {
       ok: false,
       status: e instanceof Trading212Error && e.status !== undefined ? e.status : undefined,
       retryAfter: retryAfter !== null && retryAfter !== undefined ? retryAfter : undefined,
-      message: e && e.message ? e.message : 'Unknown Trading 212 error'
+      message: cfg.lastSyncError
     };
     if (e instanceof Trading212Error && e.raw) {
       cfg.lastRaw = e.raw;
     }
+    cfg.syncInProgress = false;
+    cfg.lastDataSource = 'cached_db';
     saveDB(db);
     console.error(`Trading 212 sync failed for ${username}`, e);
-  }
+    return { ok: false, error: e };
+  }).finally(() => {
+    TRADING212_ACCOUNT_LOCKS.delete(lockKey);
+  });
+
+  TRADING212_ACCOUNT_LOCKS.set(lockKey, syncPromise);
+  return syncPromise;
 }
 
 function stopTrading212Job(username) {
@@ -9704,15 +9996,14 @@ app.post('/api/portfolio', auth, (req,res)=>{
 });
 
 app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
-  let db = loadDB();
-  let user = db.users[req.username];
+  const db = loadDB();
+  const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   const refreshIntegrations = ['1', 'true', 'yes'].includes(String(req.query?.refreshIntegrations || '').toLowerCase());
   if (refreshIntegrations) {
-    await refreshIntegratedTradingAccountsNow(req.username, user);
-    db = loadDB();
-    user = db.users[req.username];
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    refreshIntegratedTradingAccountsNow(req.username, user).catch(error => {
+      console.warn('[broker-sync] async profile-triggered refresh failed', error);
+    });
   }
   let mutated = ensureUserShape(user, req.username);
   const history = ensurePortfolioHistory(user);
@@ -12065,7 +12356,13 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     lastSyncAt: cfg.lastSyncAt || null,
     lastStatus: cfg.lastStatus || null,
     lastRaw: cfg.lastRaw || null,
-    cooldownUntil: cfg.cooldownUntil || null
+    cooldownUntil: cfg.cooldownUntil || null,
+    lastSuccessfulSyncAt: cfg.lastSuccessfulSyncAt || null,
+    syncInProgress: !!cfg.syncInProgress,
+    lastSyncError: cfg.lastSyncError || null,
+    dataSource: cfg.lastDataSource || 'cached_db',
+    lastSyncSkip: cfg.lastSyncSkip || null,
+    syncState: cfg.syncState || { accounts: {} }
   });
 });
 

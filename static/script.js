@@ -3345,7 +3345,7 @@ async function refreshAutomatedCalendarData() {
   if (!hasEnabledAutomationIntegration()) return;
   state.backgroundRefreshInFlight = true;
   try {
-    await loadProfile({ refreshIntegrations: true });
+    await loadProfile();
     await loadData();
     if (!userIsActivelyInteracting()) {
       render();
