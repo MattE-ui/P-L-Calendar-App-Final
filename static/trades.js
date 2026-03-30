@@ -801,10 +801,13 @@ async function importIbkrCsv(file) {
     });
     const summary = result?.summary || {};
     const imported = Number(summary.imported) || 0;
+    const importedOpenings = Number(summary.importedOpenings) || 0;
+    const importedExits = Number(summary.importedExits) || 0;
     const duplicates = Number(summary.duplicates) || 0;
     const invalidRows = Number(summary.invalidRows) || 0;
     const skippedCashRows = Number(summary.skippedCashRows) || 0;
-    let message = `IBKR import complete — ${imported} imported, ${duplicates} skipped as duplicates, ${invalidRows} invalid rows, ${skippedCashRows} skipped CASH rows.`;
+    const unmatchedClosingRows = Number(summary.unmatchedClosingRows) || 0;
+    let message = `IBKR import complete — ${imported} imported (${importedOpenings} openings, ${importedExits} exits), ${duplicates} skipped as duplicates, ${invalidRows} invalid rows, ${skippedCashRows} skipped CASH rows, ${unmatchedClosingRows} unmatched closing rows.`;
     if (Array.isArray(result?.errors) && result.errors.length) {
       const firstError = result.errors[0];
       message += ` First issue: row ${firstError.rowNumber} (${firstError.error}).`;
@@ -840,7 +843,7 @@ async function removeIbkrImportBatch(batch) {
   const confirmed = window.confirm(
     `Remove trades from import "${batch.originalFilename || 'upload.csv'}"?\n\n`
     + `Imported: ${importedCount}\nDuplicates: ${duplicateCount}\nSkipped CASH: ${skippedCashCount}\nInvalid: ${invalidCount}\n\n`
-    + 'This only removes trades created by this import batch.'
+    + 'This only removes entries/exits created by this import batch.'
   );
   if (!confirmed) return;
   try {
@@ -871,9 +874,12 @@ function renderIbkrImportHistory(batches = []) {
       <div class="tool-field"><label>File</label><div>${batch.originalFilename || 'upload.csv'}</div></div>
       <div class="tool-field"><label>Imported at</label><div>${formatIsoDateTime(batch.importedAt)}</div></div>
       <div class="tool-field"><label>Imported</label><div>${Number(batch.importedCount) || 0}</div></div>
+      <div class="tool-field"><label>Openings</label><div>${Number(batch?.metadata?.importedOpenings) || 0}</div></div>
+      <div class="tool-field"><label>Exits</label><div>${Number(batch?.metadata?.importedExits) || 0}</div></div>
       <div class="tool-field"><label>Duplicates</label><div>${Number(batch.duplicateCount) || 0}</div></div>
       <div class="tool-field"><label>Skipped CASH</label><div>${Number(batch.skippedCashCount) || 0}</div></div>
       <div class="tool-field"><label>Invalid</label><div>${Number(batch.invalidCount) || 0}</div></div>
+      <div class="tool-field"><label>Unmatched closes</label><div>${Number(batch?.metadata?.unmatchedClosingRows) || 0}</div></div>
       <div class="tool-field"><label>Status</label><div>${removed ? 'Removed' : 'Completed'}</div></div>
     `;
     const actionWrap = document.createElement('div');
