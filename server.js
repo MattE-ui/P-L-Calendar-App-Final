@@ -11876,8 +11876,11 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         baseUrl: account.baseUrl || cfg.baseUrl
       };
       try {
-        const payload = await fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId });
-        return { accountId, payload };
+        const [ordersPayload, historyOrdersPayload] = await Promise.all([
+          fetchTrading212Orders(accountConfig, req.username, { bypassCache: true, accountId }),
+          fetchTrading212HistoryOrders(accountConfig, req.username, { accountId })
+        ]);
+        return { accountId, ordersPayload, historyOrdersPayload };
       } catch (error) {
         const wrapped = error instanceof Error ? error : new Trading212Error('Unable to fetch orders.');
         wrapped.accountId = accountId;
@@ -11891,7 +11894,8 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       const existing = rawAccounts.find(entry => entry?.accountId === accountId) || {};
       const result = results.find(item => item.status === 'fulfilled' && item.value.accountId === accountId);
       const error = results.find(item => item.status === 'rejected' && item.reason?.accountId === accountId)?.reason;
-      const ordersPayload = result?.value?.payload?.raw ?? null;
+      const ordersPayload = result?.value?.ordersPayload?.raw ?? null;
+      const historyOrdersPayload = result?.value?.historyOrdersPayload?.raw ?? null;
       return {
         accountId,
         label: account.label || '',
@@ -11899,6 +11903,7 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
         positions: existing.positions ?? null,
         transactions: existing.transactions ?? null,
         orders: ordersPayload ?? existing.orders ?? null,
+        historyOrders: historyOrdersPayload ?? existing.historyOrders ?? null,
         ordersError: error ? (error.message || 'Unable to fetch orders.') : null
       };
     });
@@ -11910,11 +11915,12 @@ app.get('/api/integrations/trading212/raw', auth, async (req, res) => {
       positions: primary.positions ?? null,
       transactions: primary.transactions ?? null,
       orders: primary.orders ?? null,
+      historyOrders: primary.historyOrders ?? null,
       ordersError: primary.ordersError ?? null,
       accounts: mergedAccounts
     });
   }
-  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null };
+  const raw = cfg.lastRaw || { portfolio: null, positions: null, transactions: null, orders: null, historyOrders: null };
   return res.json({ ...raw, ordersError: null });
 });
 

@@ -183,9 +183,24 @@ async function loadTrading212Payloads() {
         : (data.orders ?? null);
       ordersEl.textContent = data.ordersError ? data.ordersError : JSON.stringify(ordersPayload, null, 2);
     }
+    const historyOrdersEl = document.getElementById('devtools-history-orders');
+    if (historyOrdersEl) {
+      const historyOrdersPayload = accounts
+        ? accounts.map(account => ({
+          accountId: account.accountId,
+          historyOrders: account.historyOrders ?? null
+        }))
+        : (data.historyOrders ?? null);
+      historyOrdersEl.textContent = JSON.stringify(historyOrdersPayload, null, 2);
+    }
   } catch (e) {
     const message = e?.data?.error || e.message || 'Unable to load payloads.';
     document.getElementById('devtools-portfolio').textContent = message;
+    const fallbackIds = ['devtools-positions', 'devtools-transactions', 'devtools-orders', 'devtools-history-orders'];
+    fallbackIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = message;
+    });
   }
 }
 
