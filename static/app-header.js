@@ -508,7 +508,10 @@
       } else if (isMemberJoined) {
         text.textContent = `joined ${notification.group_name || 'your trade group'}.`;
       } else if (isAlert && notification.ticker) {
-        text.textContent = `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
+        const isSell = String(notification.side || '').toUpperCase() === 'SELL';
+        text.textContent = isSell
+          ? `${notification.group_name}: ${notification.leader_nickname || 'Leader'} closed ${notification.ticker}.`
+          : `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
       } else {
         text.textContent = `${notification.group_name}: New trade group activity.`;
       }

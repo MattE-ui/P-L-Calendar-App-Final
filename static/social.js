@@ -780,8 +780,19 @@ function renderTradeGroupSection() {
         const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(delBtn); row.appendChild(actionWrap);
       }
     } else {
-      row.appendChild(createIdentityRow(item.leader_nickname || 'Leader', item.created_at ? new Date(item.created_at).toLocaleString() : '', `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`, { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }));
-      const meta = document.createElement('div'); meta.className = 'helper'; meta.textContent = `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`; row.appendChild(meta);
+      const isSell = String(item.side || '').toUpperCase() === 'SELL';
+      row.appendChild(createIdentityRow(
+        item.leader_nickname || 'Leader',
+        item.created_at ? new Date(item.created_at).toLocaleString() : '',
+        isSell ? `${item.ticker} · Closed` : `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`,
+        { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }
+      ));
+      const meta = document.createElement('div');
+      meta.className = 'helper';
+      meta.textContent = isSell
+        ? `${item.leader_nickname || 'Leader'} closed ${item.ticker}.`
+        : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
+      row.appendChild(meta);
       if (isLeader) {
         const delBtn = createActionButton('Delete', 'danger outline');
         delBtn.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/alerts/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
