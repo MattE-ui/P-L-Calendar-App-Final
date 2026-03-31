@@ -1,0 +1,9 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Notifications</title><link rel="stylesheet" href="/static/style.css"></head><body>
+<main class="container profile-hub-container">
+<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Notifications</h1><p class="helper">Manage permission state, registered devices, and delivery preferences.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
+<section class="card profile-card"><h2>Permission status</h2><p id="notif-permission" class="helper">Checking browser permission…</p></section>
+<section class="card profile-card"><h2>Devices</h2><div id="notif-devices" class="investor-mini-list"></div></section>
+<section class="card profile-card"><h2>Delivery preferences</h2><div class="profile-field toggle-field"><label class="toggle"><input id="notif-criticalRiskAlerts" type="checkbox"><span>Critical risk alerts</span></label><label class="toggle"><input id="notif-tradeAlerts" type="checkbox"><span>Trade alerts</span></label><label class="toggle"><input id="notif-brokerSyncFailures" type="checkbox"><span>Broker sync failures</span></label><label class="toggle"><input id="notif-dailyRecap" type="checkbox"><span>Daily recap</span></label></div><div class="profile-actions"><button id="notif-save" class="primary" type="button">Save delivery preferences</button></div><div id="notif-status" class="status-line"></div></section>
+</main>
+<script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-notifications-page.js"></script>
+</body></html>
