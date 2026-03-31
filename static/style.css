@@ -6701,3 +6701,93 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+.notifications-dashboard { display: flex; flex-direction: column; gap: 0.85rem; }
+.notification-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.notification-kpi {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.notification-kpi span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.notification-kpi strong { font-size: 16px; }
+.notification-kpi-wide { grid-column: 1 / -1; }
+.notifications-middle-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 12px;
+  align-items: start;
+}
+.notifications-left-column { display: flex; flex-direction: column; gap: 12px; }
+.notification-device-list {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 270px;
+  overflow: auto;
+  padding: 4px;
+}
+.notification-device-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+}
+.notification-device-row:last-child { border-bottom: 0; }
+.notification-empty-state { padding: 12px; }
+.notification-alert-groups { display: flex; flex-direction: column; gap: 10px; }
+.notification-alert-row {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+}
+.notification-alert-controls {
+  display: grid;
+  grid-template-columns: auto;
+  gap: 6px;
+  min-width: 200px;
+}
+.notification-alert-controls label { margin: 0; font-size: 12px; color: var(--muted); }
+.notification-alert-controls select { min-width: 190px; }
+.notification-routing-grid { display: grid; gap: 10px; }
+.notification-routing-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+}
+.status-badge.inactive { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--border) 45%); background: color-mix(in srgb, var(--danger) 15%, transparent); }
+
+@media (max-width: 1020px) {
+  .notification-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .notifications-middle-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .notification-overview-grid,
+  .notification-alert-row,
+  .notification-device-row { grid-template-columns: 1fr; }
+}
