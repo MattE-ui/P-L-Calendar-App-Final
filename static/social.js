@@ -1565,7 +1565,10 @@ function renderSocialOverview() {
           });
 
           requestAnimationFrame(() => {
+            announcementWrap.classList.add('is-truncated');
             const isOverflowing = summary.scrollHeight > summary.clientHeight + 1;
+            announcementWrap.classList.toggle('is-truncated', isOverflowing);
+            if (!isOverflowing) setExpanded(false);
             toggleBtn.hidden = !isOverflowing;
           });
 
@@ -1583,7 +1586,7 @@ function renderSocialOverview() {
           keyline.textContent = formatBuyDecisionStrip(item);
           tradeRow.appendChild(keyline);
           const prefillPayload = normalizeAlertRiskPrefillPayload(item);
-          const sizeBtn = createActionButton('Size this trade', 'ghost social-size-alert-btn social-size-alert-btn--compact');
+          const sizeBtn = createActionButton('Size this trade', 'social-size-alert-btn social-size-alert-btn--compact');
           if (prefillPayload) {
             sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
           } else {
