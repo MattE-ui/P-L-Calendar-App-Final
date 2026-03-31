@@ -1,8 +1,53 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Security</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<main class="container profile-hub-container">
-<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Security</h1><p class="helper">Manage password and account protection controls.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
-<section class="card profile-card"><h2>Change password</h2><div class="profile-field"><label for="security-current">Current password</label><input id="security-current" type="password" autocomplete="current-password"></div><div class="profile-field"><label for="security-new">New password</label><input id="security-new" type="password" autocomplete="new-password"><p class="helper">At least 12 characters with uppercase, lowercase, number, and symbol.</p></div><div class="profile-actions"><button id="security-save" class="primary" type="button">Update password</button></div><div id="security-status" class="status-line"></div></section>
-<section class="card profile-card"><h2>Sessions & account protection</h2><p class="helper">Password changes immediately invalidate stale sessions on other devices.</p></section>
+<main class="container profile-hub-container security-dashboard-page">
+<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Security Dashboard</h1><p class="helper">Monitor account risk, authentication health, device sessions, and protection controls.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a><button id="security-improve" class="primary" type="button">Improve security</button></div></section>
+
+<section class="card profile-card security-overview-card">
+  <div class="security-overview-header"><h2>Security overview</h2><p id="security-overview-updated" class="helper">Loading security status…</p></div>
+  <div class="security-overview-grid">
+    <article class="security-metric"><p class="security-metric__label">Overall security</p><p id="security-status-level" class="security-metric__value status-neutral">Unknown</p></article>
+    <article class="security-metric"><p class="security-metric__label">Password status</p><p id="password-status-level" class="security-metric__value status-neutral">Unknown</p></article>
+    <article class="security-metric"><p class="security-metric__label">Two-factor authentication</p><p id="two-factor-status" class="security-metric__value status-neutral">Unknown</p></article>
+    <article class="security-metric"><p class="security-metric__label">Active sessions</p><p id="active-session-count" class="security-metric__value">—</p></article>
+    <article class="security-metric"><p class="security-metric__label">Last login</p><p id="last-login-time" class="security-metric__value">—</p></article>
+  </div>
+</section>
+
+<section class="security-main-grid">
+  <section class="card profile-card security-auth-card">
+    <h2>Authentication</h2>
+    <article class="security-control-row"><div><h3>Password</h3><p id="password-summary" class="helper">Status unavailable.</p><p id="password-updated-time" class="profile-date">Last updated: unavailable</p></div><details class="security-action-details"><summary class="ghost">Change password</summary><div class="security-password-form"><div class="profile-field"><label for="security-current">Current password</label><input id="security-current" type="password" autocomplete="current-password"></div><div class="profile-field"><label for="security-new">New password</label><input id="security-new" type="password" autocomplete="new-password"><p class="helper">At least 12 characters with uppercase, lowercase, number, and symbol.</p></div><div class="profile-actions"><button id="security-save" class="primary" type="button">Update password</button></div></div></details></article>
+    <article class="security-control-row"><div><h3>Two-factor authentication</h3><p id="two-factor-summary" class="helper">2FA adds a second proof of identity to protect your account from password-only attacks.</p></div><div class="profile-actions"><button id="two-factor-toggle" class="ghost" type="button">Enable 2FA</button></div></article>
+    <div id="security-auth-status" class="status-line"></div>
+  </section>
+
+  <section class="card profile-card security-sessions-card">
+    <h2>Sessions & devices</h2>
+    <p class="helper">Review signed-in devices and end sessions you no longer trust.</p>
+    <div id="security-session-list" class="security-session-list"></div>
+    <div class="profile-actions"><button id="logout-others" class="ghost" type="button">Log out all other sessions</button></div>
+    <div id="security-session-status" class="status-line"></div>
+  </section>
+</section>
+
+<section class="security-bottom-grid">
+  <section class="card profile-card">
+    <h2>Recent security activity</h2>
+    <p class="helper">Track recent account access and major security events.</p>
+    <ul id="security-activity-list" class="security-activity-list"></ul>
+  </section>
+
+  <section class="card profile-card">
+    <h2>Advanced protection</h2>
+    <div class="security-advanced-list">
+      <article><h3>Session protection</h3><p id="session-protection-status" class="helper">Monitoring active sessions.</p></article>
+      <article><h3>Auto logout</h3><p id="auto-logout-status" class="helper">Not configured.</p></article>
+      <article><h3>Login alerts</h3><p id="login-alerts-status" class="helper">Not configured.</p></article>
+    </div>
+    <div class="profile-actions"><button id="security-configure" class="ghost" type="button">Configure settings</button></div>
+    <div id="security-advanced-status" class="status-line"></div>
+  </section>
+</section>
 </main>
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-security-page.js"></script>
 </body></html>

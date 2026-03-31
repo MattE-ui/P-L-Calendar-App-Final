@@ -3112,6 +3112,112 @@ td .mapping-badge {
   background: rgba(255, 255, 255, 0.04);
   cursor: default;
 }
+.security-dashboard-page {
+  display: grid;
+  gap: 1rem;
+}
+.security-overview-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+.security-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+.security-metric {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent);
+}
+.security-metric__label {
+  margin: 0 0 0.4rem;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.security-metric__value {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+.status-secure { color: var(--ok); }
+.status-moderate { color: var(--warning); }
+.status-risk { color: var(--danger); }
+.status-neutral { color: var(--text); }
+.security-main-grid,
+.security-bottom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.security-control-row {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  padding: 0.85rem;
+}
+.security-control-row h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.security-action-details summary {
+  width: fit-content;
+  list-style: none;
+}
+.security-password-form {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.security-session-list,
+.security-activity-list,
+.security-advanced-list {
+  display: grid;
+  gap: 0.75rem;
+}
+.security-session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--surface-2) 85%, transparent);
+}
+.security-session-item h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.security-activity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.security-activity-list li {
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.security-activity-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+@media (max-width: 960px) {
+  .security-main-grid,
+  .security-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .automation-card .error { margin-top: -4px; }
 label { display:block; margin-top:10px; color: var(--muted); }
 input,
