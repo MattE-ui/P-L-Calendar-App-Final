@@ -10129,7 +10129,7 @@ app.get('/profile/security', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-manage.html'));
 });
 app.get('/profile/integrations', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.redirect(302, '/profile/trading-accounts');
 });
 app.get('/profile/billing', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-manage.html'));

@@ -23,7 +23,7 @@
         <p class="helper" id="profile-subsection-description"></p>
         <div class="profile-actions">
           <a class="ghost" href="/profile.html">Back to Account Center</a>
-          <a class="ghost" href="/profile/manage">View all account sections</a>
+          <a class="ghost" href="/profile.html">View all account sections</a>
         </div>
       </section>
       <header class="profile-header">
@@ -57,10 +57,10 @@
       </div>
       <div id="profile-error" class="error"></div>
     </section>
-    <section class="card profile-card security-card" id="account-security">
+    <section class="card profile-card security-card" id="account-profile-section">
       <header class="profile-automation-header">
-        <h2>Account &amp; security</h2>
-        <p class="helper">Update your login details. Password changes take effect immediately.</p>
+        <h2>Account identity</h2>
+        <p class="helper">Update your account identity details used across your profile and social views.</p>
       </header>
       <div class="profile-field">
         <label for="account-username">Username</label>
@@ -86,6 +86,18 @@
         <div id="account-avatar-error" class="error"></div>
       </div>
 
+      <div class="profile-actions">
+        <button id="account-nickname-submit" class="ghost">Update nickname</button>
+      </div>
+      <div id="account-nickname-status" class="status-line"></div>
+      <div id="account-nickname-error" class="error"></div>
+    </section>
+
+    <section class="card profile-card security-card" id="security-section">
+      <header class="profile-automation-header">
+        <h2>Account security</h2>
+        <p class="helper">Update your password and core sign-in controls for this account.</p>
+      </header>
       <div class="profile-field">
         <label for="account-password-current">Current password</label>
         <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password">
@@ -98,11 +110,6 @@
       <div class="profile-actions">
         <button id="account-password-submit" class="ghost">Update password</button>
       </div>
-      <div class="profile-actions">
-        <button id="account-nickname-submit" class="ghost">Update nickname</button>
-      </div>
-      <div id="account-nickname-status" class="status-line"></div>
-      <div id="account-nickname-error" class="error"></div>
       <div id="account-security-status" class="status-line"></div>
       <div id="account-security-error" class="error"></div>
     </section>
@@ -423,6 +430,18 @@
       <div id="ibkr-error" class="error"></div>
       <p id="ibkr-connector-banner" class="status-line"></p>
       <p id="ibkr-status" class="status-line"></p>
+    </section>
+    <section class="card profile-card" id="automation-overview-section">
+      <header class="profile-automation-header">
+        <h2>Automation workflows</h2>
+        <p class="helper">Automation controls are based on your connected broker accounts and notification preferences.</p>
+      </header>
+      <p class="helper">Use <strong>Trading Accounts</strong> to manage broker sync connections and run on-demand syncs.</p>
+      <p class="helper">Use <strong>Notifications</strong> to manage delivery preferences for sync failures and alert automation.</p>
+      <div class="profile-actions">
+        <a class="ghost" href="/profile/trading-accounts">Open Trading Accounts</a>
+        <a class="ghost" href="/profile/notifications">Open Notifications</a>
+      </div>
     </section>
     <section class="card profile-card" id="notification-settings-section">
       <header class="profile-automation-header">

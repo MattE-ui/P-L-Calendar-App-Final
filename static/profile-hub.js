@@ -50,25 +50,14 @@ async function loadHubData() {
     const connectedCount = tradingAccounts.filter(account => account?.integrationEnabled).length;
     setText('status-trading', `${connectedCount} connected`);
 
-    setText('status-investor', profile?.investorAccountsEnabled ? 'Master mode enabled' : 'Disabled');
+    setText('status-investor', profile?.investorAccountsEnabled ? 'Master mode enabled' : 'Investor mode off');
   } catch (error) {
     setText('hub-identity', 'Unable to load account summary');
     setText('status-trading', 'Status unavailable');
     setText('status-investor', 'Status unavailable');
   }
 
-  try {
-    const [t212, ibkr] = await Promise.all([
-      api('/api/t212/settings').catch(() => ({})),
-      api('/api/ibkr/settings').catch(() => ({}))
-    ]);
-    const enabled = [!!t212?.enabled, !!ibkr?.enabled].filter(Boolean).length;
-    setText('status-automation', enabled === 0 ? 'No automations enabled' : `${enabled} automation${enabled > 1 ? 's' : ''} enabled`);
-    setText('status-integrations', enabled === 0 ? 'No active integrations' : `${enabled} active integration${enabled > 1 ? 's' : ''}`);
-  } catch (error) {
-    setText('status-automation', 'Status unavailable');
-    setText('status-integrations', 'Status unavailable');
-  }
+  setText('status-automation', 'Manage sync and alert automation');
 
   const notificationPermission = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
   const notificationStatusMap = {
@@ -78,6 +67,16 @@ async function loadHubData() {
     unsupported: 'Not supported in this browser'
   };
   setText('status-notifications', notificationStatusMap[notificationPermission] || 'Status unavailable');
+
+  try {
+    const payload = await api('/api/notifications/devices');
+    const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+    if (notificationPermission === 'granted' && devices.length > 0) {
+      setText('status-notifications', `${devices.length} device${devices.length === 1 ? '' : 's'} registered`);
+    }
+  } catch (_error) {
+    // Keep permission-derived status when device metadata is unavailable.
+  }
 }
 
 loadHubData();
