@@ -1839,6 +1839,14 @@ select {
   font-weight: 600;
 }
 
+.risk-prefill-badge-secondary {
+  border-color: rgba(124, 190, 255, 0.45);
+  background: rgba(124, 190, 255, 0.14);
+  color: #9fd0ff;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
 .risk-linked-inputs {
   margin-top: 8px;
 }

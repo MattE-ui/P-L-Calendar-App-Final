@@ -130,12 +130,18 @@ function normalizeAlertRiskPrefillPayload(alert = {}) {
   const ticker = String(alert.ticker || '').trim().toUpperCase();
   const entryPrice = Number(alert.entry_price);
   const stopPrice = Number(alert.stop_price);
+  const rawRiskPercent = alert.risk_pct ?? alert.riskPercent ?? alert.riskPct ?? alert.risk_percentage;
+  const parsedRiskPercent = Number(rawRiskPercent);
   const sideRaw = String(alert.side || '').trim().toUpperCase();
   const side = sideRaw === 'BUY' || sideRaw === 'LONG' ? 'long' : sideRaw === 'SELL' || sideRaw === 'SHORT' ? 'short' : '';
   const assetType = String(alert.asset_type || alert.assetType || '').trim().toLowerCase();
   const unsupportedAsset = assetType === 'options' || assetType === 'multi_leg' || assetType === 'multileg';
   if (!ticker || !side || unsupportedAsset) return null;
   if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(stopPrice) || stopPrice <= 0 || entryPrice === stopPrice) return null;
+  if (rawRiskPercent !== undefined && rawRiskPercent !== null && (!Number.isFinite(parsedRiskPercent) || parsedRiskPercent <= 0)) {
+    console.info('[trade-group-alert] invalid alert risk percent ignored', { alertId: alert?.id, rawRiskPercent });
+  }
+  console.info('[trade-group-alert] raw alert risk field', { alertId: alert?.id, rawRiskPercent });
   return {
     source: 'trade_group_alert',
     alertId: String(alert.id || ''),
@@ -143,6 +149,7 @@ function normalizeAlertRiskPrefillPayload(alert = {}) {
     side,
     entryPrice,
     stopPrice,
+    riskPercent: Number.isFinite(parsedRiskPercent) && parsedRiskPercent > 0 ? parsedRiskPercent : undefined,
     assetType: assetType || null,
     groupId: String(socialState.selectedTradeGroupId || '')
   };
@@ -157,6 +164,7 @@ function normalizeAlertRiskPrefillPayload(alert = {}) {
  * @property {"long"|"short"} side
  * @property {number} entryPrice
  * @property {number} stopPrice
+ * @property {number=} riskPercent
  * @property {string|null=} assetType
  */
 
