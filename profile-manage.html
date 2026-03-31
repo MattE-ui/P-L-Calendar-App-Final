@@ -10,42 +10,77 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="container profile-hub-container">
-    <section class="card profile-subsection-card" aria-labelledby="section-title">
+  <main class="container profile-hub-container manage-profile-container">
+    <section class="card profile-subsection-card manage-profile-header" aria-labelledby="section-title">
       <p class="profile-hub-summary__eyebrow">Account center</p>
       <h1 id="section-title">Manage Profile</h1>
       <p class="helper">Update identity details, social avatar, and baseline portfolio profile fields.</p>
       <div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div>
     </section>
 
-    <section class="card profile-card">
-      <h2>Identity</h2>
-      <div class="profile-field"><label for="manage-username">Username</label><input id="manage-username" type="text" readonly></div>
-      <div class="profile-field"><label for="manage-email">Account email</label><input id="manage-email" type="text" readonly></div>
-      <div class="profile-field"><label for="manage-nickname">Nickname</label><input id="manage-nickname" type="text" maxlength="20"></div>
-      <div class="profile-actions"><button id="manage-save-nickname" class="primary" type="button">Save nickname</button></div>
-      <div id="manage-identity-status" class="status-line"></div>
-    </section>
-
-    <section class="card profile-card">
-      <h2>Avatar</h2>
-      <div class="profile-avatar-controls">
-        <div id="manage-avatar-preview" class="social-avatar-slot">VT</div>
-        <div class="profile-avatar-actions">
-          <input id="manage-avatar-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" class="hidden">
-          <button id="manage-avatar-upload" class="ghost" type="button">Upload avatar</button>
-          <button id="manage-avatar-remove" class="danger outline" type="button">Remove avatar</button>
+    <section class="manage-profile-grid" aria-label="Manage profile control panel">
+      <section class="card profile-card manage-profile-card" id="manage-identity-card">
+        <div class="manage-card-heading">
+          <h2>Identity</h2>
+          <p class="helper">Primary account identity fields.</p>
         </div>
-      </div>
-      <div id="manage-avatar-status" class="status-line"></div>
-    </section>
+        <div class="profile-field"><label for="manage-username">Username</label><input id="manage-username" type="text" readonly></div>
+        <div class="profile-field"><label for="manage-email">Account email</label><input id="manage-email" type="text" readonly></div>
+        <div class="profile-field"><label for="manage-nickname">Nickname</label><input id="manage-nickname" type="text" maxlength="20"></div>
+        <div class="profile-actions"><button id="manage-save-nickname" class="primary" type="button">Save nickname</button></div>
+        <div id="manage-identity-status" class="status-line"></div>
+      </section>
 
-    <section class="card profile-card">
-      <h2>Portfolio baseline</h2>
-      <div class="profile-field"><label for="manage-portfolio">Current portfolio value (£)</label><input id="manage-portfolio" type="number" step="0.01" min="0"></div>
-      <div class="profile-field"><label for="manage-net">Net deposits to date (£)</label><input id="manage-net" type="number" step="0.01"></div>
-      <div class="profile-actions"><button id="manage-save-baseline" class="primary" type="button">Save baseline</button></div>
-      <div id="manage-baseline-status" class="status-line"></div>
+      <section class="card profile-card manage-profile-card" id="manage-avatar-card">
+        <div class="manage-card-heading">
+          <h2>Avatar</h2>
+          <p class="helper">Social presence image and initials.</p>
+        </div>
+        <div class="profile-avatar-controls manage-avatar-controls">
+          <div id="manage-avatar-preview" class="social-avatar-slot manage-avatar-preview">VT</div>
+          <div class="profile-avatar-actions manage-avatar-actions">
+            <input id="manage-avatar-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" class="hidden">
+            <button id="manage-avatar-upload" class="ghost" type="button">Upload avatar</button>
+            <button id="manage-avatar-remove" class="danger outline" type="button">Remove avatar</button>
+          </div>
+        </div>
+        <div id="manage-avatar-status" class="status-line"></div>
+      </section>
+
+      <section class="card profile-card manage-profile-card" id="manage-baseline-card">
+        <div class="manage-card-heading">
+          <h2>Portfolio baseline</h2>
+          <p class="helper">Current totals with editable baseline inputs.</p>
+        </div>
+        <div class="manage-summary-strip" aria-label="Portfolio summary">
+          <article class="manage-summary-item">
+            <span>Current portfolio value</span>
+            <strong id="manage-summary-portfolio">£0.00</strong>
+          </article>
+          <article class="manage-summary-item">
+            <span>Net deposits</span>
+            <strong id="manage-summary-net">£0.00</strong>
+          </article>
+        </div>
+        <div class="profile-field"><label for="manage-portfolio">Current portfolio value (£)</label><input id="manage-portfolio" type="number" step="0.01" min="0"></div>
+        <div class="profile-field"><label for="manage-net">Net deposits to date (£)</label><input id="manage-net" type="number" step="0.01"></div>
+        <div class="profile-actions"><button id="manage-save-baseline" class="primary" type="button">Save baseline</button></div>
+        <div id="manage-baseline-status" class="status-line"></div>
+      </section>
+
+      <section class="card profile-card manage-profile-card manage-profile-card--subtle" id="manage-account-summary-card">
+        <div class="manage-card-heading">
+          <h2>Account summary</h2>
+          <p class="helper">Quick status across profile and account modules.</p>
+        </div>
+        <div class="manage-account-summary-list">
+          <p><span>Profile status</span><strong id="manage-summary-profile-status">Incomplete</strong></p>
+          <p><span>Trading accounts</span><strong id="manage-summary-trading-count">0</strong></p>
+          <p><span>Investor mode</span><strong id="manage-summary-investor-mode">Off</strong></p>
+          <p><span>Notifications</span><strong id="manage-summary-notifications">Unknown</strong></p>
+          <p><span>Last updated</span><strong id="manage-summary-last-updated">—</strong></p>
+        </div>
+      </section>
     </section>
   </main>
 
