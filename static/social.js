@@ -1393,12 +1393,23 @@ function renderSocialOverview() {
     || (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups[0] : null);
   if (selectedGroupEl) selectedGroupEl.textContent = group?.name || 'No group selected';
   if (groupMetaEl) {
-    const roleLabel = group?.role === 'leader' ? 'Leader' : group?.role ? 'Member' : '—';
+    const roleLabel = group?.role === 'leader' ? 'LEADER' : group?.role ? 'MEMBER' : '—';
     const memberCountLabel = Number.isFinite(Number(group?.member_count)) ? String(Number(group.member_count)) : '—';
-    groupMetaEl.textContent = `Role: ${roleLabel} • Members: ${memberCountLabel}`;
+    groupMetaEl.innerHTML = '';
+    if (group?.role) {
+      const roleBadge = document.createElement('span');
+      roleBadge.className = 'social-role-badge';
+      roleBadge.textContent = roleLabel;
+      groupMetaEl.appendChild(roleBadge);
+    }
+    const membersText = document.createTextNode(`${memberCountLabel} members`);
+    groupMetaEl.appendChild(membersText);
   }
   const latestAlert = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts[0] : null;
-  if (groupActivityEl) groupActivityEl.textContent = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
+  if (groupActivityEl) {
+    const recentActivity = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
+    groupActivityEl.textContent = `Last active: ${recentActivity || 'No recent activity'}`;
+  }
   if (groupFeedEl) {
     clearNode(groupFeedEl);
     const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 6) : [];
@@ -1454,9 +1465,9 @@ function renderSocialOverview() {
           const prices = document.createElement('div');
           prices.className = 'social-activity-price-grid';
           const entry = document.createElement('span');
-          entry.textContent = `Entry: ${Number(item.entry_price || 0).toFixed(2)}`;
+          entry.innerHTML = `<span class="social-activity-label">Entry</span> ${Number(item.entry_price || 0).toFixed(2)}`;
           const stop = document.createElement('span');
-          stop.textContent = `Stop: ${Number(item.stop_price || 0).toFixed(2)}`;
+          stop.innerHTML = `<span class="social-activity-label">Stop</span> ${Number(item.stop_price || 0).toFixed(2)}`;
           prices.appendChild(entry);
           prices.appendChild(stop);
           main.appendChild(prices);
@@ -1464,11 +1475,8 @@ function renderSocialOverview() {
 
         const footer = document.createElement('div');
         footer.className = 'social-activity-footer';
-        const detail = document.createElement('span');
-        detail.textContent = type === 'announcement' ? 'Group broadcast' : 'Trade signal';
         const timestamp = document.createElement('span');
         timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
-        footer.appendChild(detail);
         footer.appendChild(timestamp);
         main.appendChild(footer);
 
