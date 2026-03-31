@@ -60,6 +60,8 @@ const ACTIVE_TRADE_SORTS = new Set([
 ]);
 const SHOW_MAPPING_BADGE = false;
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
+const RISK_PREFILL_STORE_EVENT = 'risk-prefill:store';
+const RISK_PREFILL_APPLY_EVENT = 'risk-prefill:apply';
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const shareCardState = { blob: null, url: null, trade: null, orientation: 'landscape' };
@@ -4456,7 +4458,7 @@ function normalizeAlertPrefillPayload(payload = {}) {
 function applyRiskCalculatorPrefillPayload(payload) {
   const normalized = normalizeAlertPrefillPayload(payload);
   if (!normalized) {
-    console.info('[risk-prefill] calculator prefill rejected due to validation');
+    console.info('[risk-prefill] invalid prefill rejected', payload);
     return false;
   }
   const symbolInput = $('#risk-symbol-input');
@@ -4491,6 +4493,7 @@ function consumePendingRiskCalculatorPrefill() {
     if (!raw) return;
     payload = JSON.parse(raw);
     localStorage.removeItem(ALERT_RISK_PREFILL_STORAGE_KEY);
+    console.info('[risk-prefill] dashboard prefill consumed', payload);
   } catch (_error) {
     localStorage.removeItem(ALERT_RISK_PREFILL_STORAGE_KEY);
     return;
@@ -4555,6 +4558,15 @@ async function init() {
   await loadProfile();
   pruneLegacyMetricRenders();
   bindControls();
+  window.addEventListener(RISK_PREFILL_STORE_EVENT, (event) => {
+    const payload = event?.detail;
+    console.info('[risk-prefill] prefill state stored', payload);
+  });
+  window.addEventListener(RISK_PREFILL_APPLY_EVENT, (event) => {
+    const payload = event?.detail;
+    console.info('[risk-prefill] dashboard prefill consumed', payload);
+    applyRiskCalculatorPrefillPayload(payload);
+  });
   updatePeriodSelect();
   setActiveView();
   try {
