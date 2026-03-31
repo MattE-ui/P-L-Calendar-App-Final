@@ -10106,7 +10106,37 @@ app.get('/', (req, res) => {
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
 app.get('/profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'profile.html')); });
+app.get('/profile', (req, res) => {
+  res.sendFile(path.join(__dirname, 'profile.html'));
+});
 app.get('/social.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
+app.get('/profile/manage', (req, res) => {
+  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+});
+app.get('/profile/trading-accounts', (req, res) => {
+  res.redirect(302, '/profile/manage#trading-accounts-section');
+});
+app.get('/profile/investor-accounts', (req, res) => {
+  res.redirect(302, '/profile/manage#investor-section');
+});
+app.get('/profile/automation', (req, res) => {
+  res.redirect(302, '/profile/manage#automation-card');
+});
+app.get('/profile/notifications', (req, res) => {
+  res.redirect(302, '/profile/manage#notification-settings-section');
+});
+app.get('/profile/security', (req, res) => {
+  res.redirect(302, '/profile/manage#account-security');
+});
+app.get('/profile/integrations', (req, res) => {
+  res.redirect(302, '/profile/manage#ibkr-card');
+});
+app.get('/profile/billing', (req, res) => {
+  res.sendFile(path.join(__dirname, 'profile-billing.html'));
+});
+app.get('/profile/settings', (req, res) => {
+  res.redirect(302, '/profile/manage#profile-reset-card');
+});
 app.get('/investor/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'investor-login.html'));
 });
