@@ -7,7 +7,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
-  <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main class="container social-page">
@@ -72,7 +72,7 @@
               <summary>Members</summary>
               <form id="social-group-add-member-form" class="social-add-friend-form social-leader-only" novalidate>
                 <div class="social-add-friend-shell">
-                  <div class="social-add-friend-row">
+                  <div id="invite" class="social-add-friend-row">
                     <select id="social-group-friend-select" name="friend_user_id"></select>
                     <button id="social-group-add-member-btn" class="ghost" type="submit">Send invite</button>
                   </div>
@@ -90,7 +90,7 @@
             <div id="social-group-leader-announcement-wrap" class="social-leader-only"><div class="social-subpanel-head"><h4>Leader announcement</h4></div></div>
             <form id="social-group-announcement-form" class="social-add-friend-form social-leader-only" novalidate>
               <div class="social-add-friend-shell">
-                <div class="social-add-friend-row">
+                <div id="announcement" class="social-add-friend-row">
                   <input id="social-group-announcement-input" name="text" type="text" maxlength="500" placeholder="Market plan update..." autocomplete="off">
                   <button id="social-group-announcement-btn" class="ghost" type="submit">Post</button>
                 </div>
@@ -98,7 +98,7 @@
               </div>
             </form>
 
-            <details class="social-collapsible" open>
+            <details id="positions" class="social-collapsible" open>
               <summary>Current positions</summary>
               <div id="social-trade-group-positions" class="social-list"></div>
             </details>
@@ -115,10 +115,10 @@
     </section>
   </main>
 
-  <script src="static/theme-utils.js"></script>
-  <script src="static/social-avatar.js"></script>
-  <script src="static/app-header.js"></script>
-  <script src="static/guest.js"></script>
-  <script src="static/social.js?v=20260315"></script>
+  <script src="/static/theme-utils.js"></script>
+  <script src="/static/social-avatar.js"></script>
+  <script src="/static/app-header.js"></script>
+  <script src="/static/guest.js"></script>
+  <script src="/static/social.js?v=20260315"></script>
 </body>
 </html>

@@ -1382,12 +1382,58 @@ function renderSocialOverview() {
   }
 
   const selectedGroupEl = getEl('social-overview-selected-group');
+  const groupMetaEl = getEl('social-overview-group-meta');
   const groupActivityEl = getEl('social-overview-group-activity');
+  const groupFeedEl = getEl('social-overview-group-feed');
+  const openGroupActionEl = getEl('social-overview-open-group-action');
+  const inviteActionEl = getEl('social-overview-invite-action');
+  const announceActionEl = getEl('social-overview-announce-action');
+  const positionsActionEl = getEl('social-overview-positions-action');
   const group = (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : []).find(item => String(item.id) === String(socialState.selectedTradeGroupId))
     || (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups[0] : null);
   if (selectedGroupEl) selectedGroupEl.textContent = group?.name || 'No group selected';
+  if (groupMetaEl) {
+    const roleLabel = group?.role === 'leader' ? 'Leader' : group?.role ? 'Member' : '—';
+    const memberCountLabel = Number.isFinite(Number(group?.member_count)) ? String(Number(group.member_count)) : '—';
+    groupMetaEl.textContent = `Role: ${roleLabel} • Members: ${memberCountLabel}`;
+  }
   const latestAlert = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts[0] : null;
   if (groupActivityEl) groupActivityEl.textContent = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
+  if (groupFeedEl) {
+    clearNode(groupFeedEl);
+    const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 3) : [];
+    if (!group?.id) {
+      groupFeedEl.appendChild(createEmptyState('No active group selected', 'Open Groups to select or create a trading group.'));
+    } else if (!previewItems.length) {
+      groupFeedEl.appendChild(createEmptyState('No recent activity', 'Activity from your selected group will appear here.'));
+    } else {
+      previewItems.forEach(item => {
+        const row = document.createElement('article');
+        row.className = 'social-list-row social-list-row--request';
+        const summary = item.type === 'announcement'
+          ? `${item.leader_nickname || 'Leader'} posted an announcement`
+          : `${item.leader_nickname || 'Leader'} shared ${item.ticker || 'a trade alert'}`;
+        const subtitle = item.type === 'announcement'
+          ? (item.text || '').slice(0, 120)
+          : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
+        row.appendChild(createIdentityRow(summary, formatRelativeTimestamp(item.created_at || item.updated_at), item.type === 'announcement' ? 'Announcement' : 'Alert'));
+        const meta = document.createElement('div');
+        meta.className = 'helper';
+        meta.textContent = subtitle || 'Recent activity';
+        row.appendChild(meta);
+        groupFeedEl.appendChild(row);
+      });
+    }
+  }
+  const selectedGroupId = String(group?.id || '');
+  const groupsHref = selectedGroupId ? `/social/groups?group=${encodeURIComponent(selectedGroupId)}` : '/social/groups';
+  if (openGroupActionEl) openGroupActionEl.href = groupsHref;
+  if (inviteActionEl) inviteActionEl.href = `${groupsHref}#invite`;
+  if (announceActionEl) {
+    announceActionEl.href = `${groupsHref}#announcement`;
+    announceActionEl.classList.toggle('hidden', group?.role !== 'leader');
+  }
+  if (positionsActionEl) positionsActionEl.href = `${groupsHref}#positions`;
 
   const friendsPreviewEl = getEl('social-overview-friends-preview');
   if (friendsPreviewEl) {
