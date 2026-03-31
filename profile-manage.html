@@ -17,12 +17,21 @@
       Guest mode: account settings and exports are disabled. Create an account to unlock all features.
     </div>
     <div class="profile-container">
+      <section class="card profile-subsection-card is-hidden" id="profile-subsection-header" aria-live="polite">
+        <p class="profile-hub-summary__eyebrow">Account center</p>
+        <h2 id="profile-subsection-title">Profile section</h2>
+        <p class="helper" id="profile-subsection-description"></p>
+        <div class="profile-actions">
+          <a class="ghost" href="/profile.html">Back to Account Hub</a>
+          <a class="ghost" href="/profile/manage">View all profile sections</a>
+        </div>
+      </section>
       <header class="profile-header">
         <h1>Finish setting up your profile</h1>
         <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
       </header>
       <div class="profile-grid">
-      <section class="card profile-card">
+      <section class="card profile-card" id="profile-setup-section">
       <header class="profile-card-header">
         <h2>Profile Setup</h2>
       </header>
@@ -454,6 +463,17 @@
       <div id="notification-ios-onboarding" class="helper is-hidden">
         iPhone/iPad web push requires Veracity installed as a Home Screen app.<br>
         1) Tap Share → 2) Add to Home Screen → 3) Open Veracity from Home Screen icon → 4) Enable notifications.
+      </div>
+    </section>
+    <section class="card profile-card" id="billing-section">
+      <header class="profile-automation-header">
+        <h2>Billing &amp; subscription</h2>
+        <p class="helper">Billing controls are currently managed from your account workspace while dedicated subscription tooling is being expanded.</p>
+      </header>
+      <p class="helper">For now, continue managing your profile and integrations from this account center. Billing workflows will remain inside Veracity pages as this section evolves.</p>
+      <div class="profile-actions">
+        <a class="ghost" href="/profile/manage">Open all account settings</a>
+        <a class="ghost" href="/profile.html">Back to Account Hub</a>
       </div>
     </section>
       <section class="card profile-card danger-zone" id="profile-reset-card">
