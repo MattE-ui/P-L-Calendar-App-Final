@@ -705,6 +705,38 @@ function formatRelativeTimestamp(value) {
   return parsed.toLocaleString();
 }
 
+function truncateActivitySummary(text, maxLength = 96) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function summarizeSellActivity(item) {
+  const rawText = String(item?.text || '').trim();
+  const lower = rawText.toLowerCase();
+  if (!rawText) return 'Closed position';
+  if (/(partial|partially|scale|scaled)/.test(lower)) return 'Partial close';
+  if (/(trim|trimmed|reduce|reduced)/.test(lower)) return 'Trimmed position';
+  if (/stop/.test(lower)) {
+    const stopMatch = rawText.match(/(?:to|at)\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (stopMatch?.[1]) return `Stop moved to ${Number(stopMatch[1]).toFixed(2)}`;
+    return 'Stop moved';
+  }
+  if (/(close|closed|exit|exited)/.test(lower)) return 'Closed position';
+  return truncateActivitySummary(rawText, 60);
+}
+
+function formatBuyDecisionStrip(item) {
+  const entry = Number(item?.entry_price);
+  const stop = Number(item?.stop_price);
+  const risk = Number(item?.risk_pct);
+  const entryLabel = Number.isFinite(entry) ? entry.toFixed(2) : '—';
+  const stopLabel = Number.isFinite(stop) ? stop.toFixed(2) : '—';
+  const riskLabel = Number.isFinite(risk) ? `${risk.toFixed(2)}%` : '—';
+  return `Entry ${entryLabel} • Stop ${stopLabel} • Risk ${riskLabel}`;
+}
+
 async function respondToInviteFromPage(inviteId, action) {
   if (!inviteId || !action) return;
   const feedback = getEl('social-trade-group-notification-feedback');
@@ -1426,18 +1458,14 @@ function renderSocialOverview() {
         const isAnnouncement = rawType === 'announcement';
         const isSell = side === 'SELL' || rawType === 'closed';
         const isBuy = side === 'BUY' && !isSell;
-        const isUpdate = !isAnnouncement && !isBuy && !isSell;
         const badgeLabel = isAnnouncement
           ? 'ANNOUNCEMENT'
           : isSell
             ? 'SELL'
-            : isBuy
-              ? 'BUY'
-              : 'UPDATE';
+            : 'BUY';
         if (isBuy) row.classList.add('social-list-row--activity-buy');
         if (isSell) row.classList.add('social-list-row--activity-sell');
         if (isAnnouncement) row.classList.add('social-list-row--activity-announcement');
-        if (isUpdate) row.classList.add('social-list-row--activity-update');
         const avatarWrap = document.createElement('div');
         const avatar = window.VeracitySocialAvatar?.createAvatar({
           nickname: item.leader_nickname || 'Leader',
@@ -1459,9 +1487,9 @@ function renderSocialOverview() {
         user.textContent = item.leader_nickname || 'Leader';
         const ticker = document.createElement('span');
         ticker.className = 'social-activity-ticker';
-        ticker.textContent = String(item.ticker || (isAnnouncement ? 'GROUP ANNOUNCEMENT' : isSell ? 'POSITION CLOSE' : 'TRADE UPDATE'));
+        ticker.textContent = String(item.ticker || (isAnnouncement ? 'ANNOUNCEMENT' : isSell ? 'POSITION' : 'TRADE'));
         const badge = document.createElement('span');
-        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}${isUpdate ? ' is-update' : ''}`;
+        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}`;
         badge.textContent = badgeLabel;
         identity.appendChild(user);
         identity.appendChild(ticker);
@@ -1471,41 +1499,19 @@ function renderSocialOverview() {
 
         if (isAnnouncement) {
           const summary = document.createElement('p');
-          summary.className = 'social-activity-message';
-          summary.textContent = (item.text || 'Announcement posted to the group.').slice(0, 130);
+          summary.className = 'social-activity-message social-activity-keyline social-activity-keyline-announcement';
+          summary.textContent = truncateActivitySummary(item.text || 'Announcement posted to the group.', 96);
           main.appendChild(summary);
         } else if (isSell) {
           const summary = document.createElement('p');
-          summary.className = 'social-activity-message';
-          summary.textContent = `Closed ${item.ticker || 'position'}${item.text ? ` · ${item.text}` : '.'}`;
+          summary.className = 'social-activity-message social-activity-keyline';
+          summary.textContent = summarizeSellActivity(item);
           main.appendChild(summary);
         } else {
-          const prices = document.createElement('div');
-          prices.className = 'social-activity-price-grid';
-          const entry = document.createElement('span');
-          const entryLabel = document.createElement('span');
-          entryLabel.className = 'social-activity-label';
-          entryLabel.textContent = 'Entry';
-          entry.appendChild(entryLabel);
-          entry.append(` ${Number(item.entry_price || 0).toFixed(2)}`);
-          const stop = document.createElement('span');
-          const stopLabel = document.createElement('span');
-          stopLabel.className = 'social-activity-label';
-          stopLabel.textContent = 'Stop';
-          stop.appendChild(stopLabel);
-          stop.append(` ${Number(item.stop_price || 0).toFixed(2)}`);
-          prices.appendChild(entry);
-          prices.appendChild(stop);
-          if (Number.isFinite(Number(item.risk_pct))) {
-            const risk = document.createElement('span');
-            const riskLabel = document.createElement('span');
-            riskLabel.className = 'social-activity-label';
-            riskLabel.textContent = 'Risk';
-            risk.appendChild(riskLabel);
-            risk.append(` ${Number(item.risk_pct || 0).toFixed(2)}%`);
-            prices.appendChild(risk);
-          }
-          main.appendChild(prices);
+          const keyline = document.createElement('p');
+          keyline.className = 'social-activity-message social-activity-keyline social-activity-keyline-buy';
+          keyline.textContent = formatBuyDecisionStrip(item);
+          main.appendChild(keyline);
         }
 
         const footer = document.createElement('div');
