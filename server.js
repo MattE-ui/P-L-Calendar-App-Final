@@ -10114,28 +10114,28 @@ app.get('/profile/manage', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-manage.html'));
 });
 app.get('/profile/trading-accounts', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-trading-accounts.html'));
 });
 app.get('/profile/investor-accounts', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-investor-accounts.html'));
 });
 app.get('/profile/automation', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-automation.html'));
 });
 app.get('/profile/notifications', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-notifications.html'));
 });
 app.get('/profile/security', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-security.html'));
 });
 app.get('/profile/integrations', (req, res) => {
   res.redirect(302, '/profile/trading-accounts');
 });
 app.get('/profile/billing', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.redirect(302, '/profile.html');
 });
 app.get('/profile/settings', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-manage.html'));
+  res.sendFile(path.join(__dirname, 'profile-settings.html'));
 });
 app.get('/investor/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'investor-login.html'));
