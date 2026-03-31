@@ -1,9 +1,53 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Notifications</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<main class="container profile-hub-container">
-<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Notifications</h1><p class="helper">Manage permission state, registered devices, and delivery preferences.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
-<section class="card profile-card"><h2>Permission status</h2><p id="notif-permission" class="helper">Checking browser permission…</p></section>
-<section class="card profile-card"><h2>Devices</h2><div id="notif-devices" class="investor-mini-list"></div></section>
-<section class="card profile-card"><h2>Delivery preferences</h2><div class="profile-field toggle-field"><label class="toggle"><input id="notif-criticalRiskAlerts" type="checkbox"><span>Critical risk alerts</span></label><label class="toggle"><input id="notif-tradeAlerts" type="checkbox"><span>Trade alerts</span></label><label class="toggle"><input id="notif-brokerSyncFailures" type="checkbox"><span>Broker sync failures</span></label><label class="toggle"><input id="notif-dailyRecap" type="checkbox"><span>Daily recap</span></label></div><div class="profile-actions"><button id="notif-save" class="primary" type="button">Save delivery preferences</button></div><div id="notif-status" class="status-line"></div></section>
+<main class="container profile-hub-container notifications-dashboard">
+<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Notification Control Dashboard</h1><p class="helper">Monitor system health, permission state, device registration, alert groups, and delivery routing in one place.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
+
+<section class="card profile-card notification-overview-card">
+  <div class="section-header"><h2>Notification overview</h2><span id="notif-system-state-badge" class="status-badge">Unknown</span></div>
+  <div class="notification-overview-grid">
+    <div class="notification-kpi"><span>System status</span><strong id="notif-system-state">Checking…</strong></div>
+    <div class="notification-kpi"><span>Push status</span><strong id="notif-push-status">Checking…</strong></div>
+    <div class="notification-kpi"><span>Registered devices</span><strong id="notif-device-count">0</strong></div>
+    <div class="notification-kpi"><span>Alert configuration</span><strong id="notif-alert-config-state">Checking…</strong></div>
+    <div class="notification-kpi notification-kpi-wide"><span>Last alert sent</span><strong id="notif-last-alert">Not available</strong></div>
+  </div>
+</section>
+
+<section class="notifications-middle-grid">
+  <div class="notifications-left-column">
+    <section class="card profile-card">
+      <div class="section-header"><h2>Permission & setup</h2><span id="notif-permission-badge" class="status-badge">Unknown</span></div>
+      <p id="notif-permission" class="helper">Checking browser permission…</p>
+      <p class="helper">Enabling notifications allows real-time risk, trade, and system alerts to route to this device immediately.</p>
+      <div class="profile-actions">
+        <button id="notif-enable" class="primary" type="button">Enable notifications</button>
+      </div>
+      <p id="notif-permission-guidance" class="helper"></p>
+    </section>
+
+    <section class="card profile-card">
+      <div class="section-header"><h2>Devices</h2><span id="notif-devices-badge" class="status-badge">Checking…</span></div>
+      <div id="notif-devices" class="notification-device-list"></div>
+      <div class="profile-actions">
+        <button id="notif-register-device" class="ghost" type="button">Register this device</button>
+      </div>
+    </section>
+  </div>
+
+  <section class="card profile-card">
+    <h2>Alert types</h2>
+    <div id="notif-alert-groups" class="notification-alert-groups"></div>
+  </section>
+</section>
+
+<section class="card profile-card notification-routing-card">
+  <div class="section-header"><h2>Delivery routing</h2><button id="notif-configure-channels" class="ghost" type="button">Configure delivery channels</button></div>
+  <div class="notification-routing-grid">
+    <div class="notification-routing-row"><div><strong>Push notifications</strong><p class="helper">Browser and installed app routing.</p></div><span id="notif-routing-push" class="status-badge">Checking…</span></div>
+    <div class="notification-routing-row"><div><strong>Email notifications</strong><p class="helper">Email channel is not configured on this page yet.</p></div><span id="notif-routing-email" class="status-badge suspended">Disabled</span></div>
+  </div>
+  <p id="notif-status" class="status-line is-hidden"></p>
+</section>
 </main>
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-notifications-page.js"></script>
 </body></html>
