@@ -95,6 +95,7 @@ const feedbackTimers = new WeakMap();
 const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
+const DASHBOARD_ROUTE = '/dashboard';
 
 function isGuestSession() {
   return (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
@@ -147,7 +148,24 @@ function normalizeAlertRiskPrefillPayload(alert = {}) {
   };
 }
 
+/**
+ * @typedef {Object} RiskCalculatorPrefill
+ * @property {"trade_group_alert"} source
+ * @property {string} alertId
+ * @property {string=} groupId
+ * @property {string} ticker
+ * @property {"long"|"short"} side
+ * @property {number} entryPrice
+ * @property {number} stopPrice
+ * @property {string|null=} assetType
+ */
+
+function isDashboardRoute(pathname = window.location.pathname || '/') {
+  return pathname === '/' || pathname === '/dashboard';
+}
+
 function launchAlertRiskSizing(alert) {
+  /** @type {RiskCalculatorPrefill|null} */
   const payload = normalizeAlertRiskPrefillPayload(alert);
   console.info('[trade-group-alert] alert CTA clicked', { alertId: alert?.id, groupId: socialState.selectedTradeGroupId });
   window.dispatchEvent(new CustomEvent('analytics:event', { detail: { name: 'trade_alert_size_clicked', alertId: alert?.id } }));
@@ -155,8 +173,19 @@ function launchAlertRiskSizing(alert) {
     console.info('[trade-group-alert] calculator prefill rejected due to validation', { alertId: alert?.id });
     return;
   }
+
+  const currentPath = window.location.pathname || '/';
+  const routerTarget = isDashboardRoute(currentPath) ? currentPath : DASHBOARD_ROUTE;
+  console.info('[trade-group-alert] router target selected', { currentPath, routerTarget });
+
   localStorage.setItem(ALERT_RISK_PREFILL_STORAGE_KEY, JSON.stringify(payload));
-  window.location.href = '/index.html?openRiskCalculator=1';
+  console.info('[trade-group-alert] prefill state stored', { alertId: payload.alertId, ticker: payload.ticker, routerTarget });
+  window.dispatchEvent(new CustomEvent('risk-prefill:store', { detail: payload }));
+  if (isDashboardRoute(currentPath)) {
+    window.dispatchEvent(new CustomEvent('risk-prefill:apply', { detail: payload }));
+    return;
+  }
+  window.open(routerTarget, '_self');
 }
 
 function formatVerificationSource(source) {

@@ -10092,7 +10092,7 @@ app.get('/health', (req, res) => {
 });
 
 // pages
-app.get('/', (req, res) => {
+function sendDashboardPage(req, res) {
   const indexPath = path.join(__dirname, 'index.html');
   const themeEnabled = String(process.env.NEXT_PUBLIC_UI_THEME_V1 ?? 'true').toLowerCase() !== 'false';
   fs.readFile(indexPath, 'utf8', (err, html) => {
@@ -10102,6 +10102,12 @@ app.get('/', (req, res) => {
     }
     res.type('html').send(html.replace('__UI_THEME_V1__', themeEnabled ? 'true' : 'false'));
   });
+}
+
+app.get('/', sendDashboardPage);
+app.get('/dashboard', sendDashboardPage);
+app.get('/index.html', (req, res) => {
+  res.redirect(302, '/dashboard');
 });
 app.get('/login.html', (req,res)=>{ res.sendFile(path.join(__dirname,'login.html')); });
 app.get('/signup.html', (req,res)=>{ res.sendFile(path.join(__dirname,'signup.html')); });
@@ -10150,8 +10156,12 @@ app.get('/investor/preview', (req, res) => {
   res.sendFile(path.join(__dirname, 'investor-preview.html'));
 });
 app.get('/analytics.html', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
+app.get('/analytics', (req,res)=>{ res.sendFile(path.join(__dirname,'analytics.html')); });
 app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
+app.get('/trades', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
+app.get('/transactions', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
+app.get('/social', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
   if (req.user?.guest) {
