@@ -488,55 +488,55 @@ function applyGuestRestrictions() {
 
 const profileSubsectionRouteConfig = {
   '/profile/manage': {
-    title: '',
-    description: '',
-    sectionId: ''
+    title: 'Manage Profile',
+    description: 'Update your identity, avatar, and portfolio baseline details for accurate reporting.',
+    sectionIds: ['profile-setup-section', 'account-security']
   },
   '/profile/trading-accounts': {
     title: 'Trading Accounts',
-    description: 'Manage linked broker accounts and multi-account portfolio tracking inside your Veracity workspace.',
-    sectionId: 'trading-accounts-section'
+    description: 'Manage linked broker accounts, connection controls, and sync status from one place.',
+    sectionIds: ['trading-accounts-section', 'automation-card', 'ibkr-card']
   },
   '/profile/investor-accounts': {
     title: 'Investor Accounts',
-    description: 'Control investor access, profit splits, NAV updates, and investor account operations.',
-    sectionId: 'investor-section'
+    description: 'Control investor access, profit splits, NAV updates, and investor reporting operations.',
+    sectionIds: ['investor-section']
   },
   '/profile/automation': {
     title: 'Automation',
-    description: 'Configure Trading 212 and IBKR automation from the same authenticated app shell.',
-    sectionId: 'automation-card'
+    description: 'Configure sync cadence and background automation for your connected brokers.',
+    sectionIds: ['automation-card', 'notification-settings-section']
   },
   '/profile/notifications': {
     title: 'Notifications',
-    description: 'Manage notification preferences, permission status, and active devices.',
-    sectionId: 'notification-settings-section'
+    description: 'Manage permission status, registered devices, and notification preferences.',
+    sectionIds: ['notification-settings-section']
   },
   '/profile/security': {
     title: 'Security',
-    description: 'Update account nickname, avatar, and password controls.',
-    sectionId: 'account-security'
+    description: 'Update account password and secure access controls without mixing profile settings.',
+    sectionIds: ['account-security']
   },
   '/profile/integrations': {
     title: 'Integrations',
-    description: 'Manage broker integration credentials and connectivity settings.',
-    sectionId: 'ibkr-card'
+    description: 'Review broker integration connectivity and linked sync providers.',
+    sectionIds: ['automation-card', 'ibkr-card']
   },
   '/profile/billing': {
     title: 'Billing & Subscription',
-    description: 'Review current subscription details and billing status in the profile workspace.',
-    sectionId: 'billing-section'
+    description: 'Review your current plan and billing workspace details.',
+    sectionIds: ['billing-section']
   },
   '/profile/settings': {
     title: 'Settings',
-    description: 'Access account-level controls and advanced reset tools.',
-    sectionId: 'profile-reset-card'
+    description: 'Manage general app behaviors and account-level operational controls.',
+    sectionIds: ['profile-reset-card']
   }
 };
 
 function applySubsectionRouteMode() {
   const route = profileSubsectionRouteConfig[window.location.pathname];
-  if (!route || !route.sectionId) return;
+  if (!route || !Array.isArray(route.sectionIds)) return;
   const headerCard = document.getElementById('profile-subsection-header');
   const titleEl = document.getElementById('profile-subsection-title');
   const descriptionEl = document.getElementById('profile-subsection-description');
@@ -545,10 +545,11 @@ function applySubsectionRouteMode() {
   if (!profileGrid) return;
   if (headerCard) headerCard.classList.remove('is-hidden');
   if (profileHeader) profileHeader.classList.add('is-hidden');
-  if (titleEl) titleEl.textContent = route.title || 'Profile section';
+  if (titleEl) titleEl.textContent = route.title || 'Account Center section';
   if (descriptionEl) descriptionEl.textContent = route.description || '';
+  const visible = new Set(route.sectionIds);
   profileGrid.querySelectorAll('.profile-card').forEach(section => {
-    section.classList.toggle('is-hidden', section.id !== route.sectionId);
+    section.classList.toggle('is-hidden', !visible.has(section.id));
   });
 }
 
