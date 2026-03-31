@@ -6337,3 +6337,147 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+.investor-dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.investor-mode-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.investor-mode-metrics,
+.investor-summary-metrics {
+  margin: 0;
+}
+
+.investor-summary-metrics .metric-card,
+.investor-mode-metrics .metric-card {
+  min-height: 104px;
+}
+
+.investor-summary-metrics .metric-card.positive .metric-value,
+.investor-mode-metrics .metric-card.positive .metric-value { color: var(--ok); }
+.investor-summary-metrics .metric-card.negative .metric-value,
+.investor-mode-metrics .metric-card.negative .metric-value { color: var(--danger); }
+
+.investor-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.investor-account-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.investor-account-card.active {
+  border-color: color-mix(in srgb, var(--ok) 44%, var(--border) 56%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+.investor-account-card.suspended {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border) 62%);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-2) 92%);
+}
+
+.investor-account-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.investor-account-card__head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.investor-account-card__head .helper { margin: 4px 0 0; }
+
+.investor-account-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.investor-account-card__metrics article {
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background: color-mix(in srgb, var(--surface-1) 84%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.investor-account-card__metrics span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.investor-account-card__metrics strong { font-size: 15px; }
+.investor-account-card__metrics .pos { color: var(--ok); }
+.investor-account-card__metrics .neg { color: var(--danger); }
+
+.investor-account-card__actions {
+  margin-top: auto;
+}
+
+.investor-account-card__actions .ghost.small,
+.investor-account-card__actions .primary.small {
+  flex: 1;
+  min-width: 110px;
+}
+
+.investor-reporting-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.investor-report-card {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.investor-report-card span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.investor-report-card strong {
+  font-size: 15px;
+  color: var(--highlight);
+}
+
+@media (max-width: 1024px) {
+  .investor-card-grid { grid-template-columns: 1fr; }
+  .investor-reporting-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 720px) {
+  .investor-mode-header { flex-direction: column; }
+  .investor-account-card__metrics,
+  .investor-reporting-grid { grid-template-columns: 1fr; }
+}

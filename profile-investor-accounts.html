@@ -1,9 +1,58 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Investor Accounts</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<main class="container profile-hub-container">
-<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Investor Accounts</h1><p class="helper">Control investor mode, investor records, and performance/reporting configuration.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
-<section class="card profile-card"><h2>Access & permissions</h2><label class="toggle"><input id="investor-enabled" type="checkbox"><span>Enable investor accounts (Master mode)</span></label><div class="profile-actions"><button id="investor-save" class="primary" type="button">Save investor access</button></div><div id="investor-status" class="status-line"></div></section>
-<section class="card profile-card"><h2>Investor accounts</h2><div id="investor-list" class="investor-mini-list"></div></section>
-<section class="card profile-card"><h2>Performance/reporting configuration</h2><p class="helper">Configure profit split, NAV updates, and investor reporting in the master investor workspace.</p><div class="profile-actions"><a class="ghost" href="/investor-preview.html">Open investor preview</a></div></section>
+<main class="container profile-hub-container investor-dashboard-page">
+<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Investor Management</h1><p class="helper">Manage investor mode, capital performance, investor accounts, and reporting configuration.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
+
+<section class="card profile-card investor-mode-panel">
+  <div class="profile-card-header investor-mode-header">
+    <div>
+      <p class="profile-date">Investor mode control</p>
+      <h2>Investor Mode: <span id="investor-mode-label">Disabled</span></h2>
+      <p class="helper">Enable master investor operations to manage investor access, profit allocation, NAV-based performance, and reporting workflows.</p>
+    </div>
+    <span id="investor-mode-badge" class="status-badge suspended">Disabled</span>
+  </div>
+  <div id="investor-mode-metrics" class="hero-metrics key-metrics investor-mode-metrics"></div>
+  <div class="profile-actions">
+    <button id="investor-mode-toggle" class="primary" type="button">Enable investor mode</button>
+    <a id="investor-configure-link" class="ghost" href="/profile.html#investor-section">Configure</a>
+  </div>
+  <div id="investor-status" class="status-line"></div>
+</section>
+
+<section class="card profile-card">
+  <div class="profile-card-header"><h2>Investor Summary</h2></div>
+  <div id="investor-summary-metrics" class="hero-metrics key-metrics investor-summary-metrics"></div>
+</section>
+
+<section class="card profile-card">
+  <div class="profile-card-header"><h2>Investor Accounts</h2><p class="helper">Each account includes capital, performance, and direct operational actions.</p></div>
+  <div id="investor-list" class="investor-card-grid"></div>
+</section>
+
+<section class="card profile-card">
+  <div class="profile-card-header"><h2>Performance & Reporting</h2></div>
+  <div class="investor-reporting-grid">
+    <article class="investor-report-card">
+      <span>Profit split settings</span>
+      <strong id="report-profit-split">Not configured</strong>
+      <p class="helper">Investor share configuration across active accounts.</p>
+    </article>
+    <article class="investor-report-card">
+      <span>NAV update frequency</span>
+      <strong id="report-nav-frequency">No NAV history</strong>
+      <p class="helper">Derived from your recorded master valuations.</p>
+    </article>
+    <article class="investor-report-card">
+      <span>Reporting status</span>
+      <strong id="reporting-status">Offline</strong>
+      <p class="helper">Status of investor reporting readiness.</p>
+    </article>
+  </div>
+  <div class="profile-actions">
+    <a class="primary" href="/profile.html#investor-section">Configure settings</a>
+    <a class="ghost" href="/investor-dashboard.html">Open investor dashboard</a>
+  </div>
+</section>
 </main>
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-investor-accounts-page.js"></script>
 </body></html>
