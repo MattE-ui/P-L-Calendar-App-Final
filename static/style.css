@@ -7240,7 +7240,7 @@ textarea {
 
 .social-list-row--activity {
   align-items: flex-start;
-  padding: 10px;
+  padding: 9px 10px;
   border-left: 2px solid rgba(148, 163, 184, 0.3);
   transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
 }
@@ -7267,30 +7267,41 @@ textarea {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 5px;
 }
 
 .social-activity-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.social-activity-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .social-activity-user {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
+  line-height: 1.1;
 }
 
 .social-activity-badge {
   border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 10px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #cbd5e1;
   background: rgba(51, 65, 85, 0.35);
+  line-height: 1.2;
 }
 
 .social-activity-badge.is-buy {
@@ -7320,33 +7331,41 @@ textarea {
 .social-activity-ticker {
   display: inline-flex;
   width: fit-content;
+  max-width: 100%;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(79, 209, 167, 0.35);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  font-size: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(51, 65, 85, 0.28);
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.03em;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .social-activity-message {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.38;
 }
 
 .social-activity-price-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px 8px;
-  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text);
 }
 
 .social-activity-label {
   margin-right: 4px;
   color: var(--text-muted);
+  font-weight: 500;
 }
 
 .social-activity-footer {
@@ -7356,6 +7375,10 @@ textarea {
   gap: 8px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.social-activity-time {
+  margin-left: auto;
 }
 
 .social-size-alert-btn--compact {

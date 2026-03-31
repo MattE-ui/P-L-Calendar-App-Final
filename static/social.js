@@ -1452,20 +1452,22 @@ function renderSocialOverview() {
 
         const top = document.createElement('div');
         top.className = 'social-activity-top';
+        const identity = document.createElement('div');
+        identity.className = 'social-activity-identity';
         const user = document.createElement('span');
         user.className = 'social-activity-user';
         user.textContent = item.leader_nickname || 'Leader';
-        const badge = document.createElement('span');
-        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}${isUpdate ? ' is-update' : ''}`;
-        badge.textContent = badgeLabel;
-        top.appendChild(user);
-        top.appendChild(badge);
-        main.appendChild(top);
-
         const ticker = document.createElement('span');
         ticker.className = 'social-activity-ticker';
         ticker.textContent = String(item.ticker || (isAnnouncement ? 'GROUP ANNOUNCEMENT' : isSell ? 'POSITION CLOSE' : 'TRADE UPDATE'));
-        main.appendChild(ticker);
+        const badge = document.createElement('span');
+        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}${isUpdate ? ' is-update' : ''}`;
+        badge.textContent = badgeLabel;
+        identity.appendChild(user);
+        identity.appendChild(ticker);
+        top.appendChild(identity);
+        top.appendChild(badge);
+        main.appendChild(top);
 
         if (isAnnouncement) {
           const summary = document.createElement('p');
@@ -1475,7 +1477,7 @@ function renderSocialOverview() {
         } else if (isSell) {
           const summary = document.createElement('p');
           summary.className = 'social-activity-message';
-          summary.textContent = `${item.leader_nickname || 'Leader'} closed ${item.ticker || 'position'}${item.text ? ` · ${item.text}` : '.'}`;
+          summary.textContent = `Closed ${item.ticker || 'position'}${item.text ? ` · ${item.text}` : '.'}`;
           main.appendChild(summary);
         } else {
           const prices = document.createElement('div');
@@ -1509,8 +1511,8 @@ function renderSocialOverview() {
         const footer = document.createElement('div');
         footer.className = 'social-activity-footer';
         const timestamp = document.createElement('span');
+        timestamp.className = 'social-activity-time';
         timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
-        footer.appendChild(timestamp);
         if (isBuy) {
           const prefillPayload = normalizeAlertRiskPrefillPayload(item);
           const sizeBtn = createActionButton('Size this trade', 'ghost social-size-alert-btn social-size-alert-btn--compact');
@@ -1522,6 +1524,7 @@ function renderSocialOverview() {
           }
           footer.appendChild(sizeBtn);
         }
+        footer.appendChild(timestamp);
         main.appendChild(footer);
 
         row.appendChild(main);
