@@ -90,7 +90,7 @@
   fetch('/api/profile', { credentials: 'include' })
     .then((res) => (res.ok ? res.json() : null))
     .then((profile) => {
-      adminBtn.classList.toggle('is-hidden', !profile?.isAdmin);
+      adminBtn.classList.toggle('is-hidden', !profile?.isOwner);
     })
     .catch(() => {
       adminBtn.classList.add('is-hidden');

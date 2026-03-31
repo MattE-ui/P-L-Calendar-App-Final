@@ -59,6 +59,15 @@ Setup and testing instructions live in [`docs/web-push-notifications.md`](docs/w
 - All passwords are hashed with bcrypt and stored server-side; authentication cookies are HTTP-only.
 - You can update your password from the profile page at any time by supplying your current password and a new strong password. Updates take effect immediately—there is no email approval step.
 
+## Owner role bootstrap (backend-authoritative)
+- Users now have a backend role: `user`, `admin`, or `owner` (default for new users is `user`).
+- Site-wide announcement management is owner-only and enforced server-side.
+- To assign the single owner safely, set `OWNER_EMAIL` and run:
+  ```bash
+  npm run owner:bootstrap
+  ```
+- The bootstrap script is production-safe: it refuses to overwrite a different existing owner, refuses to continue if multiple owners already exist, and logs a clear error when `OWNER_EMAIL` does not match an existing account.
+
 ## Trading 212 automation
 1. Visit the profile page (link in the header) and scroll to the **Trading 212 automation** card.
 2. Enable the toggle, paste your Trading 212 API key **and API secret** (add multiple key/secret pairs if you have separate Invest/ISA/CFD accounts), pick whether you’re syncing a live or practice account (the server will still probe both sets of Trading 212 hosts if the selection is wrong), and choose the time of day (Europe/London) to record the snapshot.
