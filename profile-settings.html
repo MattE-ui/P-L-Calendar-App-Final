@@ -1,10 +1,80 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Settings</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<main class="container profile-hub-container">
-<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Settings</h1><p class="helper">Configure non-security account preferences and app behavior defaults.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
-<section class="card profile-card"><h2>General preferences</h2><div class="profile-field"><label for="settings-risk">Default risk % per trade</label><select id="settings-risk"><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="0.5">0.5%</option><option value="1">1%</option><option value="2">2%</option></select></div><div class="profile-field"><label for="settings-currency">Default currency</label><select id="settings-currency"><option value="GBP">GBP (£)</option><option value="USD">USD ($)</option></select></div></section>
-<section class="card profile-card"><h2>Display/defaults</h2><p class="helper">Defaults apply to trade entry and analytics displays across the app shell.</p></section>
-<section class="card profile-card"><h2>Data/export</h2><div class="profile-actions"><a class="ghost" href="/transactions.html">Open transactions for export workflows</a></div></section>
-<div class="profile-actions"><button id="settings-save" class="primary" type="button">Save preferences</button></div><div id="settings-status" class="status-line"></div>
+<main class="container profile-hub-container settings-config-layout">
+<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Environment Configuration</h1><p class="helper">Define trading defaults, interface behaviour, workflow controls, and export policy for your account workspace.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
+
+<section class="card profile-card settings-overview-card" aria-labelledby="settings-overview-title">
+  <div class="section-header">
+    <h2 id="settings-overview-title">Environment overview</h2>
+    <span class="pill" id="settings-last-updated">Last updated: --</span>
+  </div>
+  <div class="settings-overview-grid">
+    <article class="settings-overview-item"><span>Default risk</span><strong id="overview-risk">--</strong></article>
+    <article class="settings-overview-item"><span>Default currency</span><strong id="overview-currency">--</strong></article>
+    <article class="settings-overview-item"><span>Display mode</span><strong id="overview-display">--</strong></article>
+    <article class="settings-overview-item"><span>Behaviour profile</span><strong id="overview-behaviour">--</strong></article>
+  </div>
+</section>
+
+<div class="settings-grid settings-grid--middle">
+  <section class="card profile-card" aria-labelledby="settings-trading-title">
+    <div class="section-header"><h2 id="settings-trading-title">Trading defaults</h2><span class="helper">Synced where API support exists</span></div>
+    <div class="grid two-col">
+      <div class="profile-field"><label for="settings-risk">Default risk per trade</label><select id="settings-risk"><option value="0.1">0.1%</option><option value="0.25">0.25%</option><option value="0.5">0.5%</option><option value="1">1%</option><option value="2">2%</option></select></div>
+      <div class="profile-field"><label for="settings-currency">Default currency</label><select id="settings-currency"><option value="GBP">GBP (£)</option><option value="USD">USD ($)</option><option value="EUR">EUR (€)</option></select></div>
+      <div class="profile-field"><label for="settings-position-sizing">Position sizing method</label><select id="settings-position-sizing"><option value="risk">Risk % model</option><option value="fixed">Fixed notional size</option><option value="units">Fixed units/shares</option></select></div>
+      <div class="profile-field"><label for="settings-stoploss-policy">Stop-loss requirement</label><select id="settings-stoploss-policy"><option value="required">Require stop-loss before submit</option><option value="warn">Warn if stop-loss missing</option><option value="optional">Allow entries without stop-loss</option></select></div>
+    </div>
+    <div class="profile-actions"><button id="settings-save-trading" class="primary" type="button">Apply trading defaults</button></div>
+    <p class="status-line is-hidden" id="settings-status-trading" aria-live="polite"></p>
+  </section>
+
+  <section class="card profile-card" aria-labelledby="settings-display-title">
+    <div class="section-header"><h2 id="settings-display-title">Interface &amp; display</h2><span class="helper">Applies immediately on this device</span></div>
+    <div class="grid two-col">
+      <div class="profile-field"><label for="settings-layout-density">Layout density</label><select id="settings-layout-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div>
+      <div class="profile-field"><label for="settings-dashboard-view">Dashboard default view</label><select id="settings-dashboard-view"><option value="overview">Overview KPIs</option><option value="active">Active trades focus</option><option value="calendar">Calendar heatmap</option></select></div>
+      <div class="profile-field"><label for="settings-theme">Theme</label><select id="settings-theme"><option value="system">Follow system</option><option value="dark">Dark</option><option value="light">Light</option></select></div>
+      <div class="profile-field toggle-field"><label class="toggle" for="settings-animations"><input type="checkbox" id="settings-animations"><span>Enable interface animations</span></label></div>
+    </div>
+    <div class="profile-field">
+      <label>Metric visibility</label>
+      <div class="settings-checkbox-grid">
+        <label><input type="checkbox" id="settings-metric-pnlpct"> PnL %</label>
+        <label><input type="checkbox" id="settings-metric-rmultiple"> R multiple</label>
+        <label><input type="checkbox" id="settings-metric-winrate"> Win rate</label>
+        <label><input type="checkbox" id="settings-metric-drawdown"> Drawdown</label>
+      </div>
+    </div>
+    <p class="status-line is-hidden" id="settings-status-display" aria-live="polite"></p>
+  </section>
+</div>
+
+<div class="settings-grid settings-grid--bottom">
+  <section class="card profile-card" aria-labelledby="settings-workflow-title">
+    <div class="section-header"><h2 id="settings-workflow-title">Workflow &amp; behaviour</h2><span class="helper">Controls day-to-day trading flow</span></div>
+    <div class="settings-stacked-fields">
+      <label class="toggle" for="settings-auto-save"><input type="checkbox" id="settings-auto-save"><span>Auto-save trades while editing</span></label>
+      <label class="toggle" for="settings-require-stop"><input type="checkbox" id="settings-require-stop"><span>Require stop-loss on entry</span></label>
+      <div class="profile-field"><label for="settings-grouping">Default grouping</label><select id="settings-grouping"><option value="none">No automatic grouping</option><option value="symbol">Group by symbol</option><option value="strategy">Group by strategy</option><option value="day">Group by trading day</option></select></div>
+      <div class="profile-field"><label for="settings-autosync">Auto-sync behaviour</label><select id="settings-autosync"><option value="manual">Manual sync only</option><option value="startup">Sync on app start</option><option value="realtime">Continuous background sync</option></select></div>
+    </div>
+    <p class="status-line is-hidden" id="settings-status-workflow" aria-live="polite"></p>
+  </section>
+
+  <section class="card profile-card" aria-labelledby="settings-export-title">
+    <div class="section-header"><h2 id="settings-export-title">Data &amp; export</h2><span class="helper">Export profile for reports</span></div>
+    <div class="grid two-col">
+      <div class="profile-field"><label for="settings-export-format">Export format</label><select id="settings-export-format"><option value="csv">CSV</option><option value="json">JSON</option></select></div>
+      <div class="profile-field"><label for="settings-export-scope">Export scope</label><select id="settings-export-scope"><option value="all">All trades</option><option value="win">Winning trades only</option><option value="loss">Losing trades only</option></select></div>
+      <div class="profile-field toggle-field"><label class="toggle" for="settings-export-metrics"><input type="checkbox" id="settings-export-metrics"><span>Include performance metrics bundle</span></label></div>
+    </div>
+    <div class="profile-actions">
+      <button id="settings-export-transactions" class="ghost" type="button">Export transactions</button>
+      <button id="settings-export-performance" class="ghost" type="button">Export performance report</button>
+    </div>
+    <p class="status-line is-hidden" id="settings-status-export" aria-live="polite"></p>
+  </section>
+</div>
 </main>
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-settings-page.js"></script>
 </body></html>
