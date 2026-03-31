@@ -75,16 +75,19 @@ body {
   height: 100%;
   min-height: 62px;
   padding: 0 16px;
-  display: grid;
-  grid-template-columns: 1fr auto auto;
+  position: relative;
+  display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .app-shell-brand {
   display: inline-flex;
   align-items: center;
   justify-self: start;
+  position: relative;
+  z-index: 2;
 }
 
 .app-shell-brand__logo {
@@ -152,12 +155,21 @@ body {
 }
 
 .app-shell-mobile-panel {
-  display: contents;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 50%;
+  translate: 0 -50%;
+  display: block;
+  width: max-content;
+  max-width: calc(100% - 380px);
 }
 
 .app-shell-account {
   position: relative;
   justify-self: end;
+  margin-left: auto;
+  z-index: 2;
 }
 
 .app-shell-account-toggle {
@@ -173,7 +185,7 @@ body {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
-  min-width: 220px;
+  min-width: 236px;
   padding: 8px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, rgba(255, 255, 255, 0.08) 22%);
@@ -184,17 +196,22 @@ body {
 }
 
 .app-shell-account-menu.is-open {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .app-shell-account-item {
+  display: flex;
+  align-items: center;
   width: 100%;
   text-align: left;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.2;
   letter-spacing: 0.01em;
-  padding: 8px 10px;
+  min-height: 36px;
+  padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -202,21 +219,25 @@ body {
 }
 
 .app-shell-account-item:hover {
+  transform: none;
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border) 58%);
 }
 
 .app-shell-account-owner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 2px 0;
-  padding: 6px 0 4px;
+  padding: 8px 0;
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
 }
 
 .app-shell-account-owner__label {
   margin: 0;
-  padding: 0 10px 6px;
+  padding: 2px 12px 4px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -243,11 +264,7 @@ body {
   }
 
   .app-shell-header__inner {
-    grid-template-columns: 1fr;
-    height: auto;
-    min-height: 62px;
-    padding: 8px 16px;
-    gap: 8px;
+    padding: 0 14px;
   }
 
   .app-shell-brand__logo {
@@ -255,9 +272,8 @@ body {
   }
 
   .app-shell-nav {
-    overflow-x: auto;
-    scrollbar-width: thin;
-    padding-bottom: 2px;
+    overflow: hidden;
+    scrollbar-width: none;
   }
 
   .app-shell-account-toggle {
@@ -5571,9 +5587,15 @@ textarea {
   }
 
   .app-shell-mobile-panel {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+    translate: 0 0;
     grid-column: 1 / -1;
     display: none;
     width: 100%;
+    max-width: none;
     margin-top: 4px;
   }
 
