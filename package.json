@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "owner:bootstrap": "node scripts/bootstrap-owner.js",
     "tray:build": "npm --prefix tray-app run build:win",
     "tray:dev": "npm --prefix tray-app run dev",
     "connector:package": "npx pkg ibkr-connector/dist/index.js --targets node18-win-x64 --output connector/veracity-ibkr-connector.exe",

@@ -30,6 +30,7 @@ const DEFAULT_SETUP_TAGS = ['breakout', 'pullback', 'mean reversion', 'trend', '
 const DEFAULT_EMOTION_TAGS = ['FOMO', 'revenge', 'disciplined', 'hesitant', 'confident'];
 const DIRECTIONS = ['long', 'short'];
 const OPTION_TYPES = ['call', 'put'];
+const USER_ROLES = ['user', 'admin', 'owner'];
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('UnhandledRejection:', reason, { promise });
@@ -3305,6 +3306,12 @@ function loadDB() {
         mutated = true;
       }
     }
+    const ownerUsernames = Object.entries(db.users)
+      .filter(([username, user]) => getUserRole(user, username) === 'owner')
+      .map(([username]) => username);
+    if (ownerUsernames.length > 1) {
+      console.error(`[Auth] Invalid owner role configuration: multiple owners detected (${ownerUsernames.join(', ')}).`);
+    }
     if (mutated) {
       try {
         saveDB(db);
@@ -4309,6 +4316,11 @@ function ensureUserShape(user, identifier) {
   }
   if (user.emailVerified !== undefined) {
     delete user.emailVerified;
+    mutated = true;
+  }
+  const normalizedRole = normalizeUserRole(user.role);
+  if (normalizedRole !== user.role) {
+    user.role = normalizedRole;
     mutated = true;
   }
   if (!user.security || typeof user.security !== 'object') {
@@ -8169,13 +8181,36 @@ function nextInstrumentMappingId(mappings) {
 }
 
 function isAdminUser(user, username) {
-  if (user?.isAdmin === true) return true;
-  const list = String(process.env.ADMIN_USERS || '')
+  const role = getUserRole(user, username);
+  return role === 'admin' || role === 'owner';
+}
+
+function normalizeUserRole(role) {
+  const normalized = typeof role === 'string' ? role.trim().toLowerCase() : '';
+  return USER_ROLES.includes(normalized) ? normalized : 'user';
+}
+
+function legacyAdminUsersList() {
+  return String(process.env.ADMIN_USERS || '')
     .split(',')
     .map(item => item.trim())
     .filter(Boolean);
-  if (!list.length) return false;
-  return list.includes(username);
+}
+
+function getUserRole(user, username) {
+  const normalized = normalizeUserRole(user?.role);
+  if (normalized === 'admin' || normalized === 'owner') return normalized;
+  if (user?.isAdmin === true) return 'admin';
+  const adminList = legacyAdminUsersList();
+  if (adminList.includes(username)) return 'admin';
+  return 'user';
+}
+
+function requireAuthenticatedUser(req, res, next) {
+  if (!req.username || !req.user) {
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
+  return next();
 }
 
 const SITE_ANNOUNCEMENT_TYPES = ['maintenance', 'update', 'warning', 'info'];
@@ -8247,10 +8282,26 @@ function validateSiteAnnouncementInput(raw = {}, { partial = false } = {}) {
 }
 
 function requireAdmin(req, res, next) {
+  if (!req.username || !req.user) {
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
   const db = loadDB();
   const user = db.users[req.username];
   if (!isAdminUser(user, req.username)) {
     return res.status(403).json({ error: 'Admin access required.' });
+  }
+  req.authUser = user;
+  return next();
+}
+
+function requireOwner(req, res, next) {
+  if (!req.username || !req.user) {
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (getUserRole(user, req.username) !== 'owner') {
+    return res.status(403).json({ error: 'Owner access required.' });
   }
   req.authUser = user;
   return next();
@@ -10320,10 +10371,7 @@ app.get('/devtools.html', auth, (req, res) => {
   }
   res.sendFile(path.join(__dirname,'devtools.html'));
 });
-app.get('/site-announcements-admin.html', auth, (req, res) => {
-  if (!isAdminUser(req.user, req.username)) {
-    return res.status(403).send('Forbidden');
-  }
+app.get('/site-announcements-admin.html', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   res.sendFile(path.join(__dirname, 'site-announcements-admin.html'));
 });
 
@@ -11039,6 +11087,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   const portfolioValue = Number.isFinite(portfolioSnapshot.value)
     ? portfolioSnapshot.value
     : (portfolioBaseline || 0);
+  const role = getUserRole(user, req.username);
   res.json({
     profileComplete: !!user.profileComplete,
     portfolio: portfolioValue,
@@ -11056,7 +11105,9 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     avatarInitials: socialAvatarForUser(user).avatar_initials,
     friendCode: user.friendCode || '',
     isGuest: !!user.guest,
-    isAdmin: isAdminUser(user, req.username),
+    role,
+    isAdmin: role === 'admin' || role === 'owner',
+    isOwner: role === 'owner',
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
     tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]).map(account => ({
       id: account.id,
@@ -11124,7 +11175,7 @@ app.post('/api/site-announcements/:id/acknowledge', auth, (req, res) => {
   res.json({ ok: true, acknowledgedAt: nowIso });
 });
 
-app.get('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
+app.get('/api/admin/site-announcements', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   const db = loadDB();
   ensureSiteAnnouncementTables(db);
   const announcements = db.siteAnnouncements
@@ -11133,7 +11184,7 @@ app.get('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
   res.json({ announcements });
 });
 
-app.post('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
+app.post('/api/admin/site-announcements', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   const parsed = validateSiteAnnouncementInput(req.body || {}, { partial: false });
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error || 'Invalid announcement payload.' });
@@ -11163,7 +11214,7 @@ app.post('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
   res.status(201).json({ announcement: created });
 });
 
-(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/admin/site-announcements/:id', auth, requireAdmin, (req, res) => {
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/admin/site-announcements/:id', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   const parsed = validateSiteAnnouncementInput(req.body || {}, { partial: true });
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error || 'Invalid announcement payload.' });
@@ -11196,7 +11247,7 @@ app.post('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
   res.json({ announcement: db.siteAnnouncements[index] });
 });
 
-app.delete('/api/admin/site-announcements/:id', auth, requireAdmin, (req, res) => {
+app.delete('/api/admin/site-announcements/:id', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   const db = loadDB();
   ensureSiteAnnouncementTables(db);
   const before = db.siteAnnouncements.length;
