@@ -162,6 +162,16 @@
     const summaryNet = profile?.netDepositsTotal ?? profile?.initialNetDeposits ?? 0;
     setText('manage-summary-portfolio', money(summaryPortfolio));
     setText('manage-summary-net', money(summaryNet));
+    const performanceCard = document.getElementById('manage-summary-performance-card');
+    const performanceValue = Number(summaryPortfolio) - Number(summaryNet);
+    if (performanceCard && Number.isFinite(performanceValue) && Number.isFinite(Number(summaryNet))) {
+      const rate = Number(summaryNet) !== 0 ? (performanceValue / Number(summaryNet)) * 100 : null;
+      setText('manage-summary-performance', money(performanceValue));
+      setText('manage-summary-performance-rate', rate === null ? 'No % baseline' : `${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%`);
+      performanceCard.classList.remove('is-hidden');
+      performanceCard.classList.toggle('is-positive', performanceValue >= 0);
+      performanceCard.classList.toggle('is-negative', performanceValue < 0);
+    }
     updateProfileHealth(profile, tradingCount);
   }
 
