@@ -1498,10 +1498,38 @@ function renderSocialOverview() {
         main.appendChild(top);
 
         if (isAnnouncement) {
+          const announcementWrap = document.createElement('div');
+          announcementWrap.className = 'social-activity-announcement';
+
           const summary = document.createElement('p');
           summary.className = 'social-activity-message social-activity-keyline social-activity-keyline-announcement';
-          summary.textContent = truncateActivitySummary(item.text || 'Announcement posted to the group.', 96);
-          main.appendChild(summary);
+          summary.textContent = item.text || 'Announcement posted to the group.';
+          announcementWrap.appendChild(summary);
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = 'social-activity-announcement-toggle';
+          toggleBtn.textContent = 'View more';
+          toggleBtn.setAttribute('aria-expanded', 'false');
+          toggleBtn.hidden = true;
+          announcementWrap.appendChild(toggleBtn);
+
+          const setExpanded = (expanded) => {
+            announcementWrap.classList.toggle('is-expanded', expanded);
+            toggleBtn.textContent = expanded ? 'Show less' : 'View more';
+            toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+          };
+
+          toggleBtn.addEventListener('click', () => {
+            setExpanded(!announcementWrap.classList.contains('is-expanded'));
+          });
+
+          requestAnimationFrame(() => {
+            const isOverflowing = summary.scrollHeight > summary.clientHeight + 1;
+            toggleBtn.hidden = !isOverflowing;
+          });
+
+          main.appendChild(announcementWrap);
         } else if (isSell) {
           const summary = document.createElement('p');
           summary.className = 'social-activity-message social-activity-keyline';
