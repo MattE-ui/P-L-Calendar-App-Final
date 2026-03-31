@@ -1813,6 +1813,40 @@ select {
   border: 1px solid rgba(255,255,255,0.06);
   box-shadow: var(--shadow-soft);
 }
+
+#risk-card.prefill-highlight {
+  animation: riskPrefillPulse 1.2s ease;
+}
+
+.risk-prefill-banner {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.risk-prefill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(227, 194, 109, 0.45);
+  background: rgba(227, 194, 109, 0.12);
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.risk-linked-inputs {
+  margin-top: 8px;
+}
+
+@keyframes riskPrefillPulse {
+  0% { box-shadow: 0 0 0 0 rgba(227, 194, 109, 0.45); }
+  100% { box-shadow: 0 0 0 12px rgba(227, 194, 109, 0); }
+}
 #active-trades-card .active-trades-layout {
   display: flex;
   flex-direction: column;
@@ -5276,6 +5310,10 @@ textarea {
 .social-trade-groups-grid {
   display: grid;
   gap: 14px;
+}
+
+.social-size-alert-btn {
+  white-space: nowrap;
 }
 
 .social-subpanel-head--alerts {

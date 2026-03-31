@@ -94,6 +94,7 @@ const feedbackTimers = new WeakMap();
 
 const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
+const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 
 function isGuestSession() {
   return (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
@@ -122,6 +123,40 @@ async function socialApi(path, opts = {}) {
 
 function getEl(id) {
   return document.getElementById(id);
+}
+
+function normalizeAlertRiskPrefillPayload(alert = {}) {
+  const ticker = String(alert.ticker || '').trim().toUpperCase();
+  const entryPrice = Number(alert.entry_price);
+  const stopPrice = Number(alert.stop_price);
+  const sideRaw = String(alert.side || '').trim().toUpperCase();
+  const side = sideRaw === 'BUY' || sideRaw === 'LONG' ? 'long' : sideRaw === 'SELL' || sideRaw === 'SHORT' ? 'short' : '';
+  const assetType = String(alert.asset_type || alert.assetType || '').trim().toLowerCase();
+  const unsupportedAsset = assetType === 'options' || assetType === 'multi_leg' || assetType === 'multileg';
+  if (!ticker || !side || unsupportedAsset) return null;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(stopPrice) || stopPrice <= 0 || entryPrice === stopPrice) return null;
+  return {
+    source: 'trade_group_alert',
+    alertId: String(alert.id || ''),
+    ticker,
+    side,
+    entryPrice,
+    stopPrice,
+    assetType: assetType || null,
+    groupId: String(socialState.selectedTradeGroupId || '')
+  };
+}
+
+function launchAlertRiskSizing(alert) {
+  const payload = normalizeAlertRiskPrefillPayload(alert);
+  console.info('[trade-group-alert] alert CTA clicked', { alertId: alert?.id, groupId: socialState.selectedTradeGroupId });
+  window.dispatchEvent(new CustomEvent('analytics:event', { detail: { name: 'trade_alert_size_clicked', alertId: alert?.id } }));
+  if (!payload) {
+    console.info('[trade-group-alert] calculator prefill rejected due to validation', { alertId: alert?.id });
+    return;
+  }
+  localStorage.setItem(ALERT_RISK_PREFILL_STORAGE_KEY, JSON.stringify(payload));
+  window.location.href = '/index.html?openRiskCalculator=1';
 }
 
 function formatVerificationSource(source) {
@@ -781,6 +816,9 @@ function renderTradeGroupSection() {
       }
     } else {
       const isSell = String(item.side || '').toUpperCase() === 'SELL';
+      const prefillPayload = normalizeAlertRiskPrefillPayload(item);
+      const canSizeTrade = !isSell && !!prefillPayload;
+      const missingStop = !isSell && Number(item.stop_price) <= 0;
       row.appendChild(createIdentityRow(
         item.leader_nickname || 'Leader',
         item.created_at ? new Date(item.created_at).toLocaleString() : '',
@@ -793,10 +831,27 @@ function renderTradeGroupSection() {
         ? `${item.leader_nickname || 'Leader'} closed ${item.ticker}.`
         : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
       row.appendChild(meta);
-      if (isLeader) {
-        const delBtn = createActionButton('Delete', 'danger outline');
-        delBtn.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/alerts/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
-        const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(delBtn); row.appendChild(actionWrap);
+      if (canSizeTrade || isLeader || missingStop) {
+        const actionWrap = document.createElement('div');
+        actionWrap.className = 'social-row-actions';
+        if (!isLeader) {
+          const sizeBtn = createActionButton('Size This Trade', 'ghost social-size-alert-btn');
+          if (missingStop) {
+            sizeBtn.disabled = true;
+            sizeBtn.title = 'Stop required for risk sizing';
+          } else if (canSizeTrade) {
+            sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
+          } else {
+            sizeBtn.disabled = true;
+          }
+          actionWrap.appendChild(sizeBtn);
+        }
+        if (isLeader) {
+          const delBtn = createActionButton('Delete', 'danger outline');
+          delBtn.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/alerts/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
+          actionWrap.appendChild(delBtn);
+        }
+        row.appendChild(actionWrap);
       }
     }
     alertsEl?.appendChild(row);
