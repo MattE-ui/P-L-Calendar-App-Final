@@ -455,7 +455,11 @@ function renderLeaderboardSection() {
     }
   }
 
-  const hasEntries = Array.isArray(socialState.leaderboardEntries) && socialState.leaderboardEntries.length > 0;
+  const previewLimit = Number(listEl?.dataset?.previewLimit || 0);
+  const leaderboardEntries = previewLimit > 0
+    ? (Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries.slice(0, previewLimit) : [])
+    : (Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries : []);
+  const hasEntries = leaderboardEntries.length > 0;
   if (emptyEl) emptyEl.classList.toggle('hidden', socialState.leaderboardLoading || !!socialState.leaderboardError || hasEntries);
 
   if (!listEl) {
@@ -469,7 +473,7 @@ function renderLeaderboardSection() {
     return;
   }
 
-  socialState.leaderboardEntries.forEach(entry => {
+  leaderboardEntries.forEach(entry => {
     const row = document.createElement('article');
     row.className = 'social-list-row social-list-row--leaderboard';
     if (entry.rank <= 3) row.classList.add('is-top-rank');
@@ -690,6 +694,17 @@ function formatInviteTimestamp(value) {
   return parsed.toLocaleString();
 }
 
+function formatRelativeTimestamp(value) {
+  if (!value) return 'No recent activity';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'No recent activity';
+  const deltaMs = Date.now() - parsed.getTime();
+  if (deltaMs < 60_000) return 'Just now';
+  if (deltaMs < 3_600_000) return `${Math.floor(deltaMs / 60_000)}m ago`;
+  if (deltaMs < 86_400_000) return `${Math.floor(deltaMs / 3_600_000)}h ago`;
+  return parsed.toLocaleString();
+}
+
 async function respondToInviteFromPage(inviteId, action) {
   if (!inviteId || !action) return;
   const feedback = getEl('social-trade-group-notification-feedback');
@@ -799,7 +814,7 @@ function renderTradeGroupSection() {
     inviteShortcutBtn.onclick = () => getEl('social-group-friend-select')?.focus();
   }
   if (settingsShortcutBtn) {
-    settingsShortcutBtn.onclick = () => getEl('social-settings-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    settingsShortcutBtn.onclick = () => { window.location.href = '/social/profile'; };
   }
   if (leaveGroupBtn) {
     leaveGroupBtn.disabled = isLeader || !socialState.profile?.user_id;
@@ -1364,6 +1379,33 @@ function renderSocialOverview() {
   if (verificationEl) {
     const status = socialState.settings?.verification_status || socialState.profile?.verification_status || 'none';
     verificationEl.textContent = getVerificationDisplay(status, socialState.settings?.verification_source).label;
+  }
+
+  const selectedGroupEl = getEl('social-overview-selected-group');
+  const groupActivityEl = getEl('social-overview-group-activity');
+  const group = (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : []).find(item => String(item.id) === String(socialState.selectedTradeGroupId))
+    || (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups[0] : null);
+  if (selectedGroupEl) selectedGroupEl.textContent = group?.name || 'No group selected';
+  const latestAlert = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts[0] : null;
+  if (groupActivityEl) groupActivityEl.textContent = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
+
+  const friendsPreviewEl = getEl('social-overview-friends-preview');
+  if (friendsPreviewEl) {
+    clearNode(friendsPreviewEl);
+    const previewFriends = Array.isArray(socialState.friends) ? socialState.friends.slice(0, 3) : [];
+    if (!previewFriends.length) {
+      friendsPreviewEl.appendChild(createEmptyState('No friends yet', 'Add traders in Network to build your list.'));
+    } else {
+      previewFriends.forEach(friend => {
+        const row = document.createElement('article');
+        row.className = 'social-list-row social-list-row--friend';
+        row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', '', {
+          avatar_url: friend.avatar_url,
+          avatar_initials: friend.avatar_initials
+        }));
+        friendsPreviewEl.appendChild(row);
+      });
+    }
   }
 }
 

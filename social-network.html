@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Network | P&L Calendar</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <main class="container social-page">
+    <nav class="social-tabs" aria-label="Social sections">
+      <a class="social-tab" href="/social">Overview</a>
+      <a class="social-tab" href="/social/groups">Groups</a>
+      <a class="social-tab is-active" href="/social/network">Network</a>
+      <a class="social-tab" href="/social/profile">Profile</a>
+    </nav>
+
+    <section class="card social-card" aria-labelledby="social-friends-title">
+      <header class="social-header">
+        <p class="tool-overline">Network</p>
+        <h1 id="social-friends-title">Friends &amp; requests</h1>
+      </header>
+      <div id="social-friends-disabled" class="helper hidden"></div>
+      <div class="social-friends-grid">
+        <section class="social-friends-block" aria-labelledby="social-add-friend-title">
+          <header class="social-friends-block-header"><h3 id="social-add-friend-title">Add friend</h3></header>
+          <form id="social-add-friend-form" class="social-add-friend-form" novalidate>
+            <div class="social-add-friend-shell">
+              <label for="social-add-friend-code" class="helper">Enter a trader's friend code</label>
+              <div class="social-add-friend-row">
+                <input id="social-add-friend-code" name="friendCode" type="text" maxlength="32" autocomplete="off" placeholder="ABCD-1234" aria-describedby="social-add-friend-helper">
+                <button id="social-add-friend-btn" class="primary" type="submit">Send</button>
+              </div>
+              <p id="social-add-friend-helper" class="helper">Use a verified friend code to send a direct request.</p>
+              <p id="social-add-friend-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+            </div>
+          </form>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-requests-title">
+          <header class="social-friends-block-header"><h3 id="social-requests-title">Requests</h3></header>
+          <div class="social-request-group" aria-labelledby="social-incoming-title">
+            <div class="social-subpanel-head"><h4 id="social-incoming-title">Incoming</h4><span class="social-subpanel-caption">Needs your decision</span></div>
+            <div id="social-incoming-requests" class="social-list"></div>
+          </div>
+          <div class="social-request-group" aria-labelledby="social-outgoing-title">
+            <div class="social-subpanel-head"><h4 id="social-outgoing-title">Outgoing</h4><span class="social-subpanel-caption">Waiting on response</span></div>
+            <div id="social-outgoing-requests" class="social-list"></div>
+          </div>
+        </section>
+
+        <section class="social-friends-block" aria-labelledby="social-friends-list-title">
+          <header class="social-friends-block-header"><h3 id="social-friends-list-title">Current friends</h3></header>
+          <div id="social-friends-list" class="social-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="static/theme-utils.js"></script>
+  <script src="static/social-avatar.js"></script>
+  <script src="static/app-header.js"></script>
+  <script src="static/guest.js"></script>
+  <script src="static/social.js?v=20260315"></script>
+</body>
+</html>

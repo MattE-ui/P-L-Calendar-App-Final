@@ -821,7 +821,7 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
   const normalizedType = normalizeTradeGroupNotificationType(notification.type);
   const resolvedGroup = group || db.tradeGroups.find((item) => item.id === notification.group_id && item.is_active !== false);
   if (!resolvedGroup) return null;
-  const fallbackLink = `/social.html?group=${encodeURIComponent(resolvedGroup.id)}`;
+  const fallbackLink = `/social/groups?group=${encodeURIComponent(resolvedGroup.id)}`;
   if (normalizedType === 'trade_group_alert') {
     const alert = db.tradeGroupAlerts.find((item) => item.id === notification.alert_id);
     const ticker = String(alert?.ticker || '').trim().toUpperCase();
@@ -2712,42 +2712,42 @@ function buildNotificationEvent(type, context = {}) {
       ...base, category: 'tradeAlerts', title: 'Trade closed', body: `${context.symbol || 'A trade'} was closed.`, link: context.link || `/trades.html${context.tradeId ? `?trade=${encodeURIComponent(context.tradeId)}` : ''}`
     }),
     leader_new_position: () => ({
-      ...base, category: 'tradeGroupAlerts', title: 'New leader position', body: `${context.leader || 'Group leader'} opened a new position in ${context.groupName || 'your trading group'}.`, link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      ...base, category: 'tradeGroupAlerts', title: 'New leader position', body: `${context.leader || 'Group leader'} opened a new position in ${context.groupName || 'your trading group'}.`, link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     trade_group_alert: () => ({
       ...base,
       category: 'tradeGroupAlerts',
       title: `${context.groupName || 'Trade group'} alert`,
       body: context.body || 'A new group alert is available.',
-      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     trade_group_alert_banner: () => ({
       ...base,
       category: 'tradeGroupAlerts',
       title: `${context.groupName || 'Trade group'} alert`,
       body: context.body || 'A new group alert is available.',
-      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     trade_group_announcement: () => ({
       ...base,
       category: 'tradeGroupAlerts',
       title: `${context.groupName || 'Trading group'} announcement`,
       body: context.announcementText || context.body || 'A new group announcement is available.',
-      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     trade_group_invite: () => ({
       ...base,
       category: 'tradeGroupAlerts',
       title: 'Trading group invite',
       body: `You were invited to join ${context.groupName || 'a trading group'}.`,
-      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     trade_group_member_joined: () => ({
       ...base,
       category: 'tradeGroupAlerts',
       title: `${context.groupName || 'Trading group'} update`,
       body: `${context.joinedNickname || 'A member'} joined your trading group.`,
-      link: context.link || `/social.html${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
+      link: context.link || `/social/groups${context.groupId ? `?group=${encodeURIComponent(context.groupId)}` : ''}`
     }),
     broker_sync_failed: () => ({
       ...base, category: 'brokerSyncFailures', title: 'Broker sync failed', body: context.body || 'Broker integration sync failed. Review settings.', link: context.link || '/profile.html#integration-section', requireInteraction: true
@@ -10127,6 +10127,9 @@ app.get('/profile', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile.html'));
 });
 app.get('/social.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
+app.get('/social-groups.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social-groups.html')); });
+app.get('/social-network.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social-network.html')); });
+app.get('/social-profile.html', (req,res)=>{ res.sendFile(path.join(__dirname,'social-profile.html')); });
 app.get('/profile/manage', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-manage.html'));
 });
@@ -10173,6 +10176,9 @@ app.get('/trades', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html'))
 app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
 app.get('/transactions', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
 app.get('/social', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
+app.get('/social/groups', (req,res)=>{ res.sendFile(path.join(__dirname,'social-groups.html')); });
+app.get('/social/network', (req,res)=>{ res.sendFile(path.join(__dirname,'social-network.html')); });
+app.get('/social/profile', (req,res)=>{ res.sendFile(path.join(__dirname,'social-profile.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
   if (req.user?.guest) {

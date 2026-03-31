@@ -7,7 +7,7 @@
     if (path.endsWith('/analytics.html')) return 'analytics';
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
-    if (path.endsWith('/social.html')) return 'social';
+    if (path.endsWith('/social.html') || path === '/social' || path.startsWith('/social/')) return 'social';
     if (path.endsWith('/profile.html') || path.startsWith('/profile/')) return 'profile';
     if (isDashboardRoute) return 'dashboard';
     return '';
@@ -18,7 +18,7 @@
     { key: 'trades', label: 'Trades', href: '/trades.html' },
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
     { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
-    { key: 'social', label: 'Social', href: '/social.html' },
+    { key: 'social', label: 'Social', href: '/social' },
     { key: 'profile', label: 'Profile', href: '/profile.html' }
   ];
 
@@ -537,7 +537,7 @@
         `;
         actions.querySelector('[data-social-alert-action="open"]')?.addEventListener('click', async () => {
           await dismissTradeGroupNotification(notification.notification_id);
-          window.location.href = `/social.html?group=${encodeURIComponent(notification.group_id)}`;
+          window.location.href = `/social/groups?group=${encodeURIComponent(notification.group_id)}`;
         });
         actions.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
           await dismissTradeGroupNotification(notification.notification_id);
