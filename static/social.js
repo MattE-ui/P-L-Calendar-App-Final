@@ -19,8 +19,8 @@ const SOCIAL_SETTING_KEYS = [
   'leaderboard_data_source'
 ];
 
-const LEADERBOARD_PERIODS = ['7D', '30D', '90D', 'YTD', 'ALL'];
-const LEADERBOARD_MODES = ['trade', 'account'];
+const LEADERBOARD_PERIODS = ['7D', '30D', 'YTD'];
+const LEADERBOARD_MODES = ['trade'];
 const DEFAULT_LEADERBOARD_PERIOD = '30D';
 const DEFAULT_LEADERBOARD_MODE = 'trade';
 
@@ -458,10 +458,16 @@ function renderLeaderboardSection() {
   const hasEntries = Array.isArray(socialState.leaderboardEntries) && socialState.leaderboardEntries.length > 0;
   if (emptyEl) emptyEl.classList.toggle('hidden', socialState.leaderboardLoading || !!socialState.leaderboardError || hasEntries);
 
-  if (!listEl) return;
+  if (!listEl) {
+    renderSocialOverview();
+    return;
+  }
   clearNode(listEl);
   listEl.classList.toggle('hidden', !hasEntries || !!socialState.leaderboardError);
-  if (!hasEntries || socialState.leaderboardError) return;
+  if (!hasEntries || socialState.leaderboardError) {
+    renderSocialOverview();
+    return;
+  }
 
   socialState.leaderboardEntries.forEach(entry => {
     const row = document.createElement('article');
@@ -525,6 +531,7 @@ function renderLeaderboardSection() {
     row.appendChild(right);
     listEl.appendChild(row);
   });
+  renderSocialOverview();
 }
 
 async function loadLeaderboard() {
@@ -672,6 +679,7 @@ function renderFriendSection() {
       friendsEl?.appendChild(row);
     });
   }
+  renderSocialOverview();
 }
 
 
@@ -747,20 +755,24 @@ function renderTradeGroupSection() {
     listEl?.appendChild(createEmptyState('No active trade groups yet', 'Accept an invitation or create a private group to get started.'));
     if (detailPanelEl) detailPanelEl.classList.add('hidden');
     if (detailContentEl) detailContentEl.classList.add('hidden');
+    renderSocialOverview();
     return;
   }
 
   groups.forEach(group => {
     const row = document.createElement('article');
     row.className = 'social-list-row social-list-row--friend';
+    row.classList.toggle('is-selected', group.id === socialState.selectedTradeGroupId);
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
     row.appendChild(createIdentityRow(group.name || 'Unnamed group', `${group.member_count || 0} members`, group.role === 'leader' ? 'Leader' : 'Member', group?.leader || {}));
-    const openBtn = createActionButton('Open', 'ghost');
-    openBtn.disabled = socialState.tradeGroupsLoading;
-    openBtn.addEventListener('click', () => loadTradeGroupDetail(group.id));
-    const actionWrap = document.createElement('div');
-    actionWrap.className = 'social-row-actions';
-    actionWrap.appendChild(openBtn);
-    row.appendChild(actionWrap);
+    row.addEventListener('click', () => loadTradeGroupDetail(group.id));
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        loadTradeGroupDetail(group.id);
+      }
+    });
     listEl?.appendChild(row);
   });
 
@@ -768,6 +780,7 @@ function renderTradeGroupSection() {
   if (!selected) {
     if (detailPanelEl) detailPanelEl.classList.add('hidden');
     if (detailContentEl) detailContentEl.classList.add('hidden');
+    renderSocialOverview();
     return;
   }
 
@@ -775,8 +788,31 @@ function renderTradeGroupSection() {
   if (detailContentEl) detailContentEl.classList.remove('hidden');
   if (headingEl) headingEl.textContent = `${selected.name} • ${selected.role === 'leader' ? 'Leader view' : 'Member view'}`;
 
+  const inviteShortcutBtn = getEl('social-group-invite-shortcut');
+  const leaveGroupBtn = getEl('social-group-leave-btn');
+  const settingsShortcutBtn = getEl('social-group-settings-shortcut');
+
   const isLeader = selected.role === 'leader';
   leaderOnlyNodes.forEach(node => node.classList.toggle('hidden', !isLeader));
+  if (inviteShortcutBtn) {
+    inviteShortcutBtn.disabled = !isLeader;
+    inviteShortcutBtn.onclick = () => getEl('social-group-friend-select')?.focus();
+  }
+  if (settingsShortcutBtn) {
+    settingsShortcutBtn.onclick = () => getEl('social-settings-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (leaveGroupBtn) {
+    leaveGroupBtn.disabled = isLeader || !socialState.profile?.user_id;
+    leaveGroupBtn.title = isLeader ? 'Leaders can delete the group instead.' : '';
+    leaveGroupBtn.onclick = async () => {
+      if (!socialState.profile?.user_id || !socialState.selectedTradeGroupId) return;
+      if (!window.confirm('Leave this trade group?')) return;
+      try {
+        await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members/${encodeURIComponent(socialState.profile.user_id)}`, { method: 'DELETE' });
+        await loadTradeGroups();
+      } catch (_error) {}
+    };
+  }
 
   if (friendSelect) {
     friendSelect.innerHTML = '';
@@ -893,6 +929,7 @@ function renderTradeGroupSection() {
     }
     alertsEl?.appendChild(row);
   });
+  renderSocialOverview();
 }
 
 
@@ -1308,6 +1345,28 @@ function applyVerification(profile, settings) {
   if (descriptionEl) descriptionEl.textContent = view.description;
 }
 
+function renderSocialOverview() {
+  const friendsEl = getEl('social-overview-friends');
+  const groupsEl = getEl('social-overview-groups');
+  const rankEl = getEl('social-overview-rank');
+  const verificationEl = getEl('social-overview-verification');
+
+  if (friendsEl) friendsEl.textContent = String(Array.isArray(socialState.friends) ? socialState.friends.length : 0);
+  if (groupsEl) groupsEl.textContent = String(Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups.length : 0);
+
+  if (rankEl) {
+    const myNickname = String(socialState.nickname || '').trim().toLowerCase();
+    const myEntry = (Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries : [])
+      .find(entry => String(entry?.nickname || '').trim().toLowerCase() === myNickname);
+    rankEl.textContent = myEntry?.rank ? `#${myEntry.rank}` : '—';
+  }
+
+  if (verificationEl) {
+    const status = socialState.settings?.verification_status || socialState.profile?.verification_status || 'none';
+    verificationEl.textContent = getVerificationDisplay(status, socialState.settings?.verification_source).label;
+  }
+}
+
 function applyProfile(profile) {
   const friendCodeEl = getEl('social-friend-code');
   if (friendCodeEl) {
@@ -1327,6 +1386,7 @@ function applyProfile(profile) {
     }, 'md') || document.createTextNode(''));
   }
   applyVerification(profile, socialState.settings);
+  renderSocialOverview();
 }
 
 
