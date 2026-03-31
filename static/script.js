@@ -36,6 +36,7 @@ const state = {
   riskPct: 1,
   riskAmount: 0,
   riskInputSource: 'percent',
+  riskSource: 'user_default',
   prefilledFromAlert: false,
   alertPrefillPayload: null,
   safeScreenshot: false,
@@ -329,6 +330,7 @@ function getPortfolioInRiskCurrency() {
 function clearRiskPrefillState(clearInputs = false) {
   state.prefilledFromAlert = false;
   state.alertPrefillPayload = null;
+  if (state.riskSource === 'alert') state.riskSource = 'manual';
   const banner = $('#risk-prefill-banner');
   if (banner) banner.classList.add('hidden');
   const riskCard = $('#risk-card');
@@ -1154,6 +1156,8 @@ function renderRiskCalculator() {
   syncRiskLinkedInputs(state.riskInputSource === 'amount' ? 'amount' : 'percent');
   const prefillBanner = $('#risk-prefill-banner');
   if (prefillBanner) prefillBanner.classList.toggle('hidden', !state.prefilledFromAlert);
+  const importedRiskBadge = $('#risk-alert-risk-badge');
+  if (importedRiskBadge) importedRiskBadge.classList.toggle('hidden', state.riskSource !== 'alert');
   const dateInput = $('#risk-date-input');
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
@@ -3294,8 +3298,14 @@ async function loadUiPrefs() {
       }
       await saveUiPrefs();
     }
-    state.riskPct = state.defaultRiskPct;
-    state.riskInputSource = 'percent';
+    if (state.riskSource !== 'alert' && state.riskSource !== 'manual') {
+      state.riskPct = state.defaultRiskPct;
+      state.riskInputSource = 'percent';
+      state.riskSource = 'user_default';
+      console.info('[risk-prefill] calculator init source selected', { source: 'user_default', phase: 'loadUiPrefs' });
+    } else {
+      console.info('[risk-prefill] prevented default risk overwrite after prefill/manual state', { riskSource: state.riskSource });
+    }
     state.riskCurrency = state.defaultRiskCurrency;
     persistLocalPrefs();
   } catch (e) {
@@ -4200,10 +4210,18 @@ function bindControls() {
   });
   $('#risk-percent-input')?.addEventListener('input', () => {
     state.riskInputSource = 'percent';
+    if (state.riskSource !== 'manual') {
+      state.riskSource = 'manual';
+      console.info('[risk-prefill] manual override activated', { field: 'riskPercent' });
+    }
     calculateRiskPosition(false);
   });
   $('#risk-amount-input')?.addEventListener('input', () => {
     state.riskInputSource = 'amount';
+    if (state.riskSource !== 'manual') {
+      state.riskSource = 'manual';
+      console.info('[risk-prefill] manual override activated', { field: 'riskAmount' });
+    }
     calculateRiskPosition(false);
   });
   const stopInput = $('#risk-stop-input');
@@ -4243,6 +4261,10 @@ function bindControls() {
       if (!Number.isFinite(pct) || pct <= 0) return;
       state.riskInputSource = 'percent';
       state.riskPct = pct;
+      if (state.riskSource !== 'manual') {
+        state.riskSource = 'manual';
+        console.info('[risk-prefill] manual override activated', { field: 'riskPercentToggle' });
+      }
       const pctInput = $('#risk-percent-input');
       if (pctInput) pctInput.value = String(pct);
       renderRiskCalculator();
@@ -4275,7 +4297,15 @@ function bindControls() {
     const cur = curSel?.value;
     if (Number.isFinite(pct) && pct > 0) {
       state.defaultRiskPct = pct;
-      state.riskPct = pct;
+      if (state.riskSource !== 'alert') {
+        state.riskPct = pct;
+        state.riskSource = 'user_default';
+      } else {
+        console.info('[risk-prefill] prevented default risk overwrite after prefill/manual state', {
+          riskSource: state.riskSource,
+          phase: 'quick_settings_save'
+        });
+      }
     }
     if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) {
       state.defaultRiskCurrency = cur;
@@ -4439,9 +4469,14 @@ function normalizeAlertPrefillPayload(payload = {}) {
   const normalizedSide = sideRaw === 'SELL' || sideRaw === 'SHORT' ? 'short' : sideRaw === 'BUY' || sideRaw === 'LONG' ? 'long' : '';
   const entryPrice = Number(payload.entryPrice);
   const stopPrice = Number(payload.stopPrice);
+  const rawRiskPercent = payload.riskPercent ?? payload.risk_pct ?? payload.riskPct ?? payload.risk_percentage;
+  const parsedRiskPercent = Number(rawRiskPercent);
   const ticker = String(payload.ticker || '').trim().toUpperCase();
   if (!ticker || !normalizedSide || !Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || entryPrice <= 0 || stopPrice <= 0 || entryPrice === stopPrice) {
     return null;
+  }
+  if (rawRiskPercent !== undefined && rawRiskPercent !== null && (!Number.isFinite(parsedRiskPercent) || parsedRiskPercent <= 0)) {
+    console.info('[risk-prefill] invalid riskPercent in payload ignored', { rawRiskPercent, payload });
   }
   return {
     source: String(payload.source || ''),
@@ -4451,6 +4486,7 @@ function normalizeAlertPrefillPayload(payload = {}) {
     side: normalizedSide,
     entryPrice,
     stopPrice,
+    riskPercent: Number.isFinite(parsedRiskPercent) && parsedRiskPercent > 0 ? parsedRiskPercent : undefined,
     assetType: String(payload.assetType || '').trim().toLowerCase() || null
   };
 }
@@ -4464,6 +4500,7 @@ function applyRiskCalculatorPrefillPayload(payload) {
   const symbolInput = $('#risk-symbol-input');
   const entryInput = $('#risk-entry-input');
   const stopInput = $('#risk-stop-input');
+  const riskPctInput = $('#risk-percent-input');
   if (!symbolInput || !entryInput || !stopInput) return false;
   symbolInput.value = normalized.ticker;
   entryInput.value = String(normalized.entryPrice);
@@ -4472,6 +4509,16 @@ function applyRiskCalculatorPrefillPayload(payload) {
   state.prefilledFromAlert = true;
   state.alertPrefillPayload = normalized;
   state.manualStopOverride = true;
+  if (Number.isFinite(normalized.riskPercent) && normalized.riskPercent > 0) {
+    state.riskPct = normalized.riskPercent;
+    state.riskInputSource = 'percent';
+    state.riskSource = 'alert';
+    if (riskPctInput) riskPctInput.value = normalized.riskPercent.toFixed(2);
+    console.info('[risk-prefill] calculator init source selected', { source: 'alert', riskPercent: normalized.riskPercent });
+  } else {
+    state.riskSource = 'user_default';
+    console.info('[risk-prefill] calculator init source selected', { source: 'user_default' });
+  }
   renderRiskCalculator();
   calculateRiskPosition(true);
   const riskCard = $('#risk-card');
@@ -4545,6 +4592,7 @@ async function init() {
       if (typeof prefs?.safeScreenshot === 'boolean') state.safeScreenshot = prefs.safeScreenshot;
       state.riskPct = state.defaultRiskPct;
       state.riskInputSource = 'percent';
+      state.riskSource = 'user_default';
       state.riskCurrency = state.defaultRiskCurrency;
     }
     const savedTradeSort = localStorage.getItem('plc-active-trade-sort');
