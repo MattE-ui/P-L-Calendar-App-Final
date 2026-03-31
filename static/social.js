@@ -1401,7 +1401,7 @@ function renderSocialOverview() {
   if (groupActivityEl) groupActivityEl.textContent = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
   if (groupFeedEl) {
     clearNode(groupFeedEl);
-    const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 3) : [];
+    const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 6) : [];
     if (!group?.id) {
       groupFeedEl.appendChild(createEmptyState('No active group selected', 'Open Groups to select or create a trading group.'));
     } else if (!previewItems.length) {
@@ -1409,18 +1409,70 @@ function renderSocialOverview() {
     } else {
       previewItems.forEach(item => {
         const row = document.createElement('article');
-        row.className = 'social-list-row social-list-row--request';
-        const summary = item.type === 'announcement'
-          ? `${item.leader_nickname || 'Leader'} posted an announcement`
-          : `${item.leader_nickname || 'Leader'} shared ${item.ticker || 'a trade alert'}`;
-        const subtitle = item.type === 'announcement'
-          ? (item.text || '').slice(0, 120)
-          : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
-        row.appendChild(createIdentityRow(summary, formatRelativeTimestamp(item.created_at || item.updated_at), item.type === 'announcement' ? 'Announcement' : 'Alert'));
-        const meta = document.createElement('div');
-        meta.className = 'helper';
-        meta.textContent = subtitle || 'Recent activity';
-        row.appendChild(meta);
+        row.className = 'social-list-row social-list-row--request social-list-row--activity';
+        const type = String(item.type || '').toLowerCase();
+        const badgeLabel = type === 'announcement'
+          ? 'ANNOUNCEMENT'
+          : type === 'closed'
+            ? 'CLOSED'
+            : 'ALERT';
+        const avatarWrap = document.createElement('div');
+        const avatar = window.VeracitySocialAvatar?.createAvatar({
+          nickname: item.leader_nickname || 'Leader',
+          avatar_url: item.leader_avatar_url,
+          avatar_initials: item.leader_avatar_initials
+        }, 'sm');
+        if (avatar) avatarWrap.appendChild(avatar);
+        row.appendChild(avatarWrap);
+
+        const main = document.createElement('div');
+        main.className = 'social-activity-main';
+
+        const top = document.createElement('div');
+        top.className = 'social-activity-top';
+        const user = document.createElement('span');
+        user.className = 'social-activity-user';
+        user.textContent = item.leader_nickname || 'Leader';
+        const badge = document.createElement('span');
+        badge.className = `social-activity-badge${type === 'closed' ? ' is-closed' : ''}${type === 'announcement' ? ' is-announcement' : ''}`;
+        badge.textContent = badgeLabel;
+        top.appendChild(user);
+        top.appendChild(badge);
+        main.appendChild(top);
+
+        const ticker = document.createElement('span');
+        ticker.className = 'social-activity-ticker';
+        ticker.textContent = String(item.ticker || (type === 'announcement' ? 'GROUP UPDATE' : 'TRADE'));
+        main.appendChild(ticker);
+
+        if (type === 'announcement') {
+          const summary = document.createElement('p');
+          summary.className = 'social-empty-state-detail';
+          summary.textContent = (item.text || 'Announcement posted to the group.').slice(0, 130);
+          main.appendChild(summary);
+        } else {
+          const prices = document.createElement('div');
+          prices.className = 'social-activity-price-grid';
+          const entry = document.createElement('span');
+          entry.textContent = `Entry: ${Number(item.entry_price || 0).toFixed(2)}`;
+          const stop = document.createElement('span');
+          stop.textContent = `Stop: ${Number(item.stop_price || 0).toFixed(2)}`;
+          prices.appendChild(entry);
+          prices.appendChild(stop);
+          main.appendChild(prices);
+        }
+
+        const footer = document.createElement('div');
+        footer.className = 'social-activity-footer';
+        const detail = document.createElement('span');
+        detail.textContent = type === 'announcement' ? 'Group broadcast' : 'Trade signal';
+        const timestamp = document.createElement('span');
+        timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
+        footer.appendChild(detail);
+        footer.appendChild(timestamp);
+        main.appendChild(footer);
+
+        row.appendChild(main);
         groupFeedEl.appendChild(row);
       });
     }
