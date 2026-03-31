@@ -476,7 +476,7 @@ function applyGuestRestrictions() {
       }
     }
   });
-  const sections = ['account-security', 'profile-reset-card', 'automation-card'];
+  const sections = ['account-profile-section', 'security-section', 'profile-reset-card', 'automation-card'];
   sections.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('guest-disabled', disable);
@@ -490,11 +490,11 @@ const profileSubsectionRouteConfig = {
   '/profile/manage': {
     title: 'Manage Profile',
     description: 'Update your identity, avatar, and portfolio baseline details for accurate reporting.',
-    sectionIds: ['profile-setup-section', 'account-security']
+    sectionIds: ['profile-setup-section', 'account-profile-section']
   },
   '/profile/trading-accounts': {
     title: 'Trading Accounts',
-    description: 'Manage linked broker accounts, connection controls, and sync status from one place.',
+    description: 'Manage linked broker accounts, connection controls, and broker sync status from one place.',
     sectionIds: ['trading-accounts-section', 'automation-card', 'ibkr-card']
   },
   '/profile/investor-accounts': {
@@ -504,8 +504,8 @@ const profileSubsectionRouteConfig = {
   },
   '/profile/automation': {
     title: 'Automation',
-    description: 'Configure sync cadence and background automation for your connected brokers.',
-    sectionIds: ['automation-card', 'notification-settings-section']
+    description: 'Manage background sync workflows and automation behavior for your account.',
+    sectionIds: ['automation-overview-section']
   },
   '/profile/notifications': {
     title: 'Notifications',
@@ -515,12 +515,7 @@ const profileSubsectionRouteConfig = {
   '/profile/security': {
     title: 'Security',
     description: 'Update account password and secure access controls without mixing profile settings.',
-    sectionIds: ['account-security']
-  },
-  '/profile/integrations': {
-    title: 'Integrations',
-    description: 'Review broker integration connectivity and linked sync providers.',
-    sectionIds: ['automation-card', 'ibkr-card']
+    sectionIds: ['security-section']
   },
   '/profile/billing': {
     title: 'Billing & Subscription',

@@ -8,7 +8,7 @@
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
     if (path.endsWith('/social.html')) return 'social';
-    if (path.endsWith('/profile.html')) return 'profile';
+    if (path.endsWith('/profile.html') || path.startsWith('/profile/')) return 'profile';
     if (isDashboardRoute) return 'dashboard';
     return '';
   })();
@@ -29,7 +29,7 @@
   header.innerHTML = `
     <div class="app-shell-header__inner">
       <a class="app-shell-brand" href="/" aria-label="Veracity dashboard home">
-        <img class="app-shell-brand__logo" src="static/veracity-logo.png" alt="Veracity Trading Suite">
+        <img class="app-shell-brand__logo" src="/static/veracity-logo.png" alt="Veracity Trading Suite">
       </a>
       <button id="app-shell-menu-toggle" class="ghost app-shell-menu-toggle" type="button" aria-expanded="false" aria-controls="app-shell-mobile-panel">
         Menu
