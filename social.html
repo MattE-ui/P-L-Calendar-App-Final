@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Social | P&L Calendar</title>
+  <title>Social Overview | P&L Calendar</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
@@ -11,9 +11,14 @@
 </head>
 <body>
   <main class="container social-page">
-    <p class="social-opt-in-note" aria-live="polite">
-      Social settings are opt-in and can be updated anytime.
-    </p>
+    <p class="social-opt-in-note" aria-live="polite">Social settings are opt-in and can be updated anytime.</p>
+
+    <nav class="social-tabs" aria-label="Social sections">
+      <a class="social-tab is-active" href="/social">Overview</a>
+      <a class="social-tab" href="/social/groups">Groups</a>
+      <a class="social-tab" href="/social/network">Network</a>
+      <a class="social-tab" href="/social/profile">Profile</a>
+    </nav>
 
     <section id="social-nickname-gate" class="card social-card social-gate hidden" aria-live="polite">
       <p class="tool-overline">Nickname required</p>
@@ -35,340 +40,40 @@
       </div>
     </section>
 
-    <section class="card social-card social-groups-primary" aria-labelledby="social-trade-groups-title">
-      <header class="social-header">
-        <p class="tool-overline">Primary workflow</p>
-        <h2 id="social-trade-groups-title">Trading groups</h2>
-      </header>
-      <p id="social-trade-group-notification-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+    <section class="social-overview-preview-grid">
+      <article class="card social-card" aria-labelledby="social-overview-groups-preview-title">
+        <header class="social-header social-overview-preview-header">
+          <h2 id="social-overview-groups-preview-title">Trading group preview</h2>
+          <a class="ghost" href="/social/groups">Open groups</a>
+        </header>
+        <p class="helper">Selected group</p>
+        <p id="social-overview-selected-group" class="social-overview-preview-value">No group selected</p>
+        <p class="helper">Last activity</p>
+        <p id="social-overview-group-activity" class="social-overview-preview-value">No recent activity</p>
+      </article>
 
-      <div class="social-command-center-grid">
-        <aside class="social-groups-nav" aria-label="Group navigation">
-          <section class="social-friends-block" aria-labelledby="social-create-trade-group-title">
-            <header class="social-friends-block-header">
-              <h3 id="social-create-trade-group-title">Create group</h3>
-            </header>
-            <form id="social-create-group-form" class="social-add-friend-form" novalidate>
-              <div class="social-add-friend-shell">
-                <label for="social-group-name" class="helper">Group name</label>
-                <div class="social-add-friend-row">
-                  <input id="social-group-name" name="name" type="text" maxlength="64" placeholder="Swing Team" autocomplete="off">
-                  <button id="social-create-group-btn" class="primary" type="submit">Create</button>
-                </div>
-                <p id="social-group-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
-              </div>
-            </form>
-          </section>
+      <article class="card social-card" aria-labelledby="social-overview-network-preview-title">
+        <header class="social-header social-overview-preview-header">
+          <h2 id="social-overview-network-preview-title">Friends preview</h2>
+          <a class="ghost" href="/social/network">Open network</a>
+        </header>
+        <div id="social-overview-friends-preview" class="social-list"></div>
+      </article>
 
-          <section class="social-friends-block" aria-labelledby="social-your-trade-groups-title">
-            <header class="social-friends-block-header">
-              <h3 id="social-your-trade-groups-title">Your groups</h3>
-            </header>
-            <div id="social-trade-groups-list" class="social-list"></div>
-          </section>
-
-          <section class="social-friends-block" aria-labelledby="social-trade-group-invitations-title">
-            <header class="social-friends-block-header">
-              <h3 id="social-trade-group-invitations-title">Pending invitations</h3>
-            </header>
-            <div id="social-trade-group-invitations" class="social-list"></div>
-          </section>
-        </aside>
-
-        <section id="social-trade-group-detail-panel" class="social-friends-block social-group-active-panel" aria-labelledby="social-trade-group-detail-title">
-          <header class="social-friends-block-header social-group-active-header">
-            <div>
-              <h3 id="social-trade-group-detail-title">Active group</h3>
-              <p id="social-group-detail-heading" class="helper">Select a group to view members and alerts.</p>
-            </div>
-            <div class="social-group-quick-actions">
-              <button id="social-group-invite-shortcut" class="ghost" type="button">Invite</button>
-              <button id="social-group-leave-btn" class="danger outline" type="button">Leave</button>
-              <button id="social-group-settings-shortcut" class="ghost" type="button">Settings</button>
-            </div>
-          </header>
-
-          <div id="social-group-detail-empty" class="social-list"></div>
-
-          <div id="social-group-detail-content" class="social-group-detail-content">
-            <details class="social-collapsible" open>
-              <summary>Members</summary>
-              <form id="social-group-add-member-form" class="social-add-friend-form social-leader-only" novalidate>
-                <div class="social-add-friend-shell">
-                  <div class="social-add-friend-row">
-                    <select id="social-group-friend-select" name="friend_user_id"></select>
-                    <button id="social-group-add-member-btn" class="ghost" type="submit">Send invite</button>
-                  </div>
-                  <p id="social-group-member-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
-                </div>
-              </form>
-              <div id="social-trade-group-members" class="social-list"></div>
-            </details>
-
-            <div id="social-group-leader-pending-wrap" class="social-leader-only">
-              <div class="social-subpanel-head"><h4>Pending invites</h4></div>
-              <div id="social-trade-group-pending-invites" class="social-list"></div>
-            </div>
-
-            <div id="social-group-leader-announcement-wrap" class="social-leader-only">
-              <div class="social-subpanel-head"><h4>Leader announcement</h4></div>
-            </div>
-            <form id="social-group-announcement-form" class="social-add-friend-form social-leader-only" novalidate>
-              <div class="social-add-friend-shell">
-                <div class="social-add-friend-row">
-                  <input id="social-group-announcement-input" name="text" type="text" maxlength="500" placeholder="Market plan update..." autocomplete="off">
-                  <button id="social-group-announcement-btn" class="ghost" type="submit">Post</button>
-                </div>
-                <p id="social-group-announcement-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
-              </div>
-            </form>
-
-            <details class="social-collapsible" open>
-              <summary>Current positions</summary>
-              <div id="social-trade-group-positions" class="social-list"></div>
-            </details>
-
-            <div class="social-subpanel-head social-subpanel-head--alerts"><h4>Recent activity</h4></div>
-            <div id="social-trade-group-alerts" class="social-list"></div>
-
-            <div id="social-group-delete-wrap" class="social-add-friend-row social-leader-only" style="margin-top:8px;">
-              <button id="social-group-delete-btn" class="danger outline" type="button">Delete group</button>
-            </div>
-          </div>
-        </section>
-      </div>
-    </section>
-
-    <section class="card social-card" aria-labelledby="social-friends-title">
-      <header class="social-header">
-        <p class="tool-overline">Network</p>
-        <h2 id="social-friends-title">Friends &amp; network</h2>
-      </header>
-      <div id="social-friends-disabled" class="helper hidden"></div>
-      <div class="social-friends-grid">
-        <section class="social-friends-block" aria-labelledby="social-add-friend-title">
-          <header class="social-friends-block-header"><h3 id="social-add-friend-title">Add friend</h3></header>
-          <form id="social-add-friend-form" class="social-add-friend-form" novalidate>
-            <div class="social-add-friend-shell">
-              <label for="social-add-friend-code" class="helper">Enter a trader's friend code</label>
-              <div class="social-add-friend-row">
-                <input id="social-add-friend-code" name="friendCode" type="text" maxlength="32" autocomplete="off" placeholder="ABCD-1234" aria-describedby="social-add-friend-helper">
-                <button id="social-add-friend-btn" class="primary" type="submit">Send</button>
-              </div>
-              <p id="social-add-friend-helper" class="helper">Use a verified friend code to send a direct request.</p>
-              <p id="social-add-friend-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
-            </div>
-          </form>
-        </section>
-
-        <section class="social-friends-block" aria-labelledby="social-requests-title">
-          <header class="social-friends-block-header"><h3 id="social-requests-title">Requests</h3></header>
-          <div class="social-request-group" aria-labelledby="social-incoming-title">
-            <div class="social-subpanel-head"><h4 id="social-incoming-title">Incoming</h4><span class="social-subpanel-caption">Needs your decision</span></div>
-            <div id="social-incoming-requests" class="social-list"></div>
-          </div>
-          <div class="social-request-group" aria-labelledby="social-outgoing-title">
-            <div class="social-subpanel-head"><h4 id="social-outgoing-title">Outgoing</h4><span class="social-subpanel-caption">Waiting on response</span></div>
-            <div id="social-outgoing-requests" class="social-list"></div>
-          </div>
-        </section>
-
-        <section class="social-friends-block" aria-labelledby="social-friends-list-title">
-          <header class="social-friends-block-header"><h3 id="social-friends-list-title">Current friends</h3></header>
-          <div id="social-friends-list" class="social-list"></div>
-        </section>
-      </div>
-    </section>
-
-    <section class="card social-card" aria-labelledby="social-leaderboard-section-title">
-      <header class="social-header social-leaderboard-header">
-        <div>
-          <p class="tool-overline">Visibility</p>
-          <h2 id="social-leaderboard-section-title">Leaderboard</h2>
-          <p id="social-leaderboard-helper" class="helper">Rankings based on realized trade performance.</p>
+      <article class="card social-card" aria-labelledby="social-overview-leaderboard-preview-title">
+        <header class="social-header social-overview-preview-header">
+          <h2 id="social-overview-leaderboard-preview-title">Leaderboard preview</h2>
+          <a class="ghost" href="/social/profile">Profile controls</a>
+        </header>
+        <p id="social-leaderboard-helper" class="helper">Rankings based on realized trade performance.</p>
+        <div id="social-leaderboard-loading" class="helper">Loading leaderboard…</div>
+        <div id="social-leaderboard-error" class="social-empty-state is-error hidden" role="alert"></div>
+        <div id="social-leaderboard-empty" class="social-empty-state hidden">
+          <p class="social-empty-state-title">No traders available yet</p>
+          <p class="social-empty-state-detail">Leaderboard rankings are opt-in and trusted-first.</p>
         </div>
-        <div class="social-leaderboard-controls">
-          <div id="social-leaderboard-periods" class="social-period-filter" role="group" aria-label="Leaderboard timeframe"></div>
-        </div>
-      </header>
-      <div id="social-leaderboard-loading" class="helper">Loading leaderboard…</div>
-      <div id="social-leaderboard-error" class="social-empty-state is-error hidden" role="alert"></div>
-      <div id="social-leaderboard-empty" class="social-empty-state hidden">
-        <p class="social-empty-state-title">No traders available yet</p>
-        <p class="social-empty-state-detail">Leaderboard rankings are opt-in and trusted-first. Eligible traders will appear once they choose to participate.</p>
-      </div>
-      <div id="social-leaderboard-list" class="social-list hidden" aria-live="polite"></div>
-      <div id="social-leaderboard-modes" class="social-mode-filter hidden" role="group" aria-label="Leaderboard mode"></div>
-    </section>
-
-    <section class="card social-card" aria-labelledby="social-profile-title">
-      <header class="social-header">
-        <p class="tool-overline">Profile &amp; privacy</p>
-        <h2 id="social-profile-title">Profile and controls</h2>
-      </header>
-
-      <div id="social-profile-loading" class="helper">Loading your social profile...</div>
-      <div id="social-profile-error" class="error hidden" role="alert"></div>
-
-      <div id="social-profile-content" class="social-profile-content hidden">
-        <div class="social-identity-panel">
-          <div id="social-profile-avatar" class="social-avatar-slot"></div>
-          <div class="social-identity-copy">
-            <p class="helper">Nickname</p>
-            <p id="social-profile-nickname" class="social-profile-nickname">—</p>
-          </div>
-        </div>
-
-        <div class="social-friend-code-wrap">
-          <p class="helper">Friend code</p>
-          <div class="social-friend-code-row">
-            <code id="social-friend-code" class="social-friend-code">—</code>
-            <button id="social-copy-code-btn" class="ghost" type="button">Copy</button>
-          </div>
-          <p class="helper">Share this code with traders you trust. Regenerating it immediately invalidates your old code.</p>
-          <div class="social-inline-actions">
-            <button id="social-regenerate-btn" class="danger outline" type="button">Regenerate code</button>
-            <span id="social-regenerate-feedback" class="helper" aria-live="polite"></span>
-          </div>
-        </div>
-
-        <div class="social-verification-wrap">
-          <p class="helper">Verification status</p>
-          <div class="social-verification-row">
-            <span id="social-verification-badge" class="social-status-pill">Unverified</span>
-            <span id="social-verification-source" class="helper"></span>
-          </div>
-          <p id="social-verification-description" class="helper"></p>
-        </div>
-      </div>
-
-      <form id="social-settings-form" class="social-settings-form" novalidate>
-        <div id="social-settings-disabled" class="helper hidden"></div>
-
-        <section class="social-settings-group" aria-labelledby="social-discoverability-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-discoverability-title">Discoverability</h3>
-            <p class="helper">Control whether traders can find and connect with you using your friend code.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Allow friend requests</span>
-                <input type="checkbox" name="allow_friend_requests">
-              </span>
-              <span class="helper">Let other traders send you a friend request using your friend code.</span>
-            </label>
-          </div>
-        </section>
-
-        <section class="social-settings-group" aria-labelledby="social-leaderboard-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-leaderboard-title">Leaderboard</h3>
-            <p class="helper">Choose whether your verified ranking can appear and who can view it.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Leaderboard enabled</span>
-                <input type="checkbox" name="leaderboard_enabled">
-              </span>
-              <span class="helper">Allow your verified return percentage to appear on opt-in leaderboards.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="leaderboard">
-              <span class="social-setting-title">Leaderboard visibility</span>
-              <select name="leaderboard_visibility">
-                <option value="private">Private</option>
-                <option value="friends_only">Friends only</option>
-                <option value="public">Public</option>
-              </select>
-              <span class="helper">Control who can see your leaderboard presence.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="leaderboard">
-              <span class="social-setting-title">Leaderboard data source</span>
-              <select name="leaderboard_data_source">
-                <option value="auto">Auto</option>
-                <option value="trading212">Trading 212</option>
-                <option value="ibkr">IBKR</option>
-                <option value="manual">Manual/platform</option>
-              </select>
-              <span class="helper">Choose which source powers leaderboard participation. Unavailable sources are disabled.</span>
-            </label>
-          </div>
-        </section>
-
-        <section class="social-settings-group" aria-labelledby="social-sharing-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-sharing-title">Trade sharing</h3>
-            <p class="helper">Configure if and how trades are shared once social sharing experiences are enabled.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Trade sharing enabled</span>
-                <input type="checkbox" name="trade_sharing_enabled">
-              </span>
-              <span class="helper">Allow eligible trades to be shared according to your trade visibility rules.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-title">Trade sharing scope</span>
-              <select name="trade_sharing_scope">
-                <option value="private">Private</option>
-                <option value="friends_only">Friends only</option>
-                <option value="public">Public</option>
-              </select>
-              <span class="helper">Control who can see your shared trades.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Share open trades</span>
-                <input type="checkbox" name="share_open_trades">
-              </span>
-              <span class="helper">Allow open positions to be visible where sharing is enabled.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Share closed trades</span>
-                <input type="checkbox" name="share_closed_trades">
-              </span>
-              <span class="helper">Allow closed trades to be visible where sharing is enabled.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Show PnL %</span>
-                <input type="checkbox" name="show_pnl_percent">
-              </span>
-              <span class="helper">Show percentage performance on shared trades.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Show PnL currency</span>
-                <input type="checkbox" name="show_pnl_currency">
-              </span>
-              <span class="helper">Show cash profit/loss amounts on shared trades.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Show position size</span>
-                <input type="checkbox" name="show_position_size">
-              </span>
-              <span class="helper">Show share/contract size or capital exposure on shared trades.</span>
-            </label>
-          </div>
-        </section>
-
-        <div class="social-settings-actions">
-          <button id="social-save-btn" class="primary" type="submit">Save settings</button>
-          <span id="social-settings-feedback" class="helper" aria-live="polite"></span>
-        </div>
-      </form>
+        <div id="social-leaderboard-list" class="social-list hidden" aria-live="polite" data-preview-limit="3"></div>
+      </article>
     </section>
   </main>
 

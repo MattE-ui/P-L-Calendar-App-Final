@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Groups | P&L Calendar</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <main class="container social-page">
+    <nav class="social-tabs" aria-label="Social sections">
+      <a class="social-tab" href="/social">Overview</a>
+      <a class="social-tab is-active" href="/social/groups">Groups</a>
+      <a class="social-tab" href="/social/network">Network</a>
+      <a class="social-tab" href="/social/profile">Profile</a>
+    </nav>
+
+    <section class="card social-card social-groups-primary" aria-labelledby="social-trade-groups-title">
+      <header class="social-header">
+        <p class="tool-overline">Primary workflow</p>
+        <h1 id="social-trade-groups-title">Trading groups</h1>
+      </header>
+      <p id="social-trade-group-notification-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+
+      <div class="social-command-center-grid">
+        <aside class="social-groups-nav" aria-label="Group navigation">
+          <section class="social-friends-block" aria-labelledby="social-create-trade-group-title">
+            <header class="social-friends-block-header"><h3 id="social-create-trade-group-title">Create group</h3></header>
+            <form id="social-create-group-form" class="social-add-friend-form" novalidate>
+              <div class="social-add-friend-shell">
+                <label for="social-group-name" class="helper">Group name</label>
+                <div class="social-add-friend-row">
+                  <input id="social-group-name" name="name" type="text" maxlength="64" placeholder="Swing Team" autocomplete="off">
+                  <button id="social-create-group-btn" class="primary" type="submit">Create</button>
+                </div>
+                <p id="social-group-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+              </div>
+            </form>
+          </section>
+
+          <section class="social-friends-block" aria-labelledby="social-your-trade-groups-title">
+            <header class="social-friends-block-header"><h3 id="social-your-trade-groups-title">Your groups</h3></header>
+            <div id="social-trade-groups-list" class="social-list"></div>
+          </section>
+
+          <section class="social-friends-block" aria-labelledby="social-trade-group-invitations-title">
+            <header class="social-friends-block-header"><h3 id="social-trade-group-invitations-title">Pending invitations</h3></header>
+            <div id="social-trade-group-invitations" class="social-list"></div>
+          </section>
+        </aside>
+
+        <section id="social-trade-group-detail-panel" class="social-friends-block social-group-active-panel" aria-labelledby="social-trade-group-detail-title">
+          <header class="social-friends-block-header social-group-active-header">
+            <div>
+              <h3 id="social-trade-group-detail-title">Active group</h3>
+              <p id="social-group-detail-heading" class="helper">Select a group to view members and alerts.</p>
+            </div>
+            <div class="social-group-quick-actions">
+              <button id="social-group-invite-shortcut" class="ghost" type="button">Invite</button>
+              <button id="social-group-leave-btn" class="danger outline" type="button">Leave</button>
+              <button id="social-group-settings-shortcut" class="ghost" type="button">Settings</button>
+            </div>
+          </header>
+
+          <div id="social-group-detail-empty" class="social-list"></div>
+
+          <div id="social-group-detail-content" class="social-group-detail-content">
+            <details class="social-collapsible" open>
+              <summary>Members</summary>
+              <form id="social-group-add-member-form" class="social-add-friend-form social-leader-only" novalidate>
+                <div class="social-add-friend-shell">
+                  <div class="social-add-friend-row">
+                    <select id="social-group-friend-select" name="friend_user_id"></select>
+                    <button id="social-group-add-member-btn" class="ghost" type="submit">Send invite</button>
+                  </div>
+                  <p id="social-group-member-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+                </div>
+              </form>
+              <div id="social-trade-group-members" class="social-list"></div>
+            </details>
+
+            <div id="social-group-leader-pending-wrap" class="social-leader-only">
+              <div class="social-subpanel-head"><h4>Pending invites</h4></div>
+              <div id="social-trade-group-pending-invites" class="social-list"></div>
+            </div>
+
+            <div id="social-group-leader-announcement-wrap" class="social-leader-only"><div class="social-subpanel-head"><h4>Leader announcement</h4></div></div>
+            <form id="social-group-announcement-form" class="social-add-friend-form social-leader-only" novalidate>
+              <div class="social-add-friend-shell">
+                <div class="social-add-friend-row">
+                  <input id="social-group-announcement-input" name="text" type="text" maxlength="500" placeholder="Market plan update..." autocomplete="off">
+                  <button id="social-group-announcement-btn" class="ghost" type="submit">Post</button>
+                </div>
+                <p id="social-group-announcement-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+              </div>
+            </form>
+
+            <details class="social-collapsible" open>
+              <summary>Current positions</summary>
+              <div id="social-trade-group-positions" class="social-list"></div>
+            </details>
+
+            <div class="social-subpanel-head social-subpanel-head--alerts"><h4>Recent activity</h4></div>
+            <div id="social-trade-group-alerts" class="social-list"></div>
+
+            <div id="social-group-delete-wrap" class="social-add-friend-row social-leader-only" style="margin-top:8px;">
+              <button id="social-group-delete-btn" class="danger outline" type="button">Delete group</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="static/theme-utils.js"></script>
+  <script src="static/social-avatar.js"></script>
+  <script src="static/app-header.js"></script>
+  <script src="static/guest.js"></script>
+  <script src="static/social.js?v=20260315"></script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Profile | P&L Calendar</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <main class="container social-page">
+    <nav class="social-tabs" aria-label="Social sections">
+      <a class="social-tab" href="/social">Overview</a>
+      <a class="social-tab" href="/social/groups">Groups</a>
+      <a class="social-tab" href="/social/network">Network</a>
+      <a class="social-tab is-active" href="/social/profile">Profile</a>
+    </nav>
+
+    <section id="social-nickname-gate" class="card social-card social-gate hidden" aria-live="polite">
+      <p class="tool-overline">Nickname required</p>
+      <h2>Set your nickname before using Social</h2>
+      <p class="helper">For privacy, Social features only use nicknames. Add one on your Profile page to send requests, manage friends, and participate in social settings.</p>
+      <a class="primary social-gate-link" href="/profile.html">Set nickname in Profile</a>
+    </section>
+
+    <section class="card social-card" aria-labelledby="social-profile-title">
+      <header class="social-header">
+        <p class="tool-overline">Profile &amp; privacy</p>
+        <h1 id="social-profile-title">Profile and controls</h1>
+      </header>
+
+      <div id="social-profile-loading" class="helper">Loading your social profile...</div>
+      <div id="social-profile-error" class="error hidden" role="alert"></div>
+
+      <div id="social-profile-content" class="social-profile-content hidden">
+        <div class="social-identity-panel">
+          <div id="social-profile-avatar" class="social-avatar-slot"></div>
+          <div class="social-identity-copy">
+            <p class="helper">Nickname</p>
+            <p id="social-profile-nickname" class="social-profile-nickname">—</p>
+          </div>
+        </div>
+
+        <div class="social-friend-code-wrap">
+          <p class="helper">Friend code</p>
+          <div class="social-friend-code-row">
+            <code id="social-friend-code" class="social-friend-code">—</code>
+            <button id="social-copy-code-btn" class="ghost" type="button">Copy</button>
+          </div>
+          <p class="helper">Share this code with traders you trust. Regenerating it immediately invalidates your old code.</p>
+          <div class="social-inline-actions">
+            <button id="social-regenerate-btn" class="danger outline" type="button">Regenerate code</button>
+            <span id="social-regenerate-feedback" class="helper" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <div class="social-verification-wrap">
+          <p class="helper">Verification status</p>
+          <div class="social-verification-row">
+            <span id="social-verification-badge" class="social-status-pill">Unverified</span>
+            <span id="social-verification-source" class="helper"></span>
+          </div>
+          <p id="social-verification-description" class="helper"></p>
+        </div>
+      </div>
+
+      <form id="social-settings-form" class="social-settings-form" novalidate>
+        <div id="social-settings-disabled" class="helper hidden"></div>
+
+        <section class="social-settings-group" aria-labelledby="social-discoverability-title">
+          <header class="social-settings-group-header">
+            <h3 id="social-discoverability-title">Discoverability</h3>
+            <p class="helper">Control whether traders can find and connect with you using your friend code.</p>
+          </header>
+          <div class="social-setting-list">
+            <label class="social-setting-row">
+              <span class="social-setting-main">
+                <span class="social-setting-title">Allow friend requests</span>
+                <input type="checkbox" name="allow_friend_requests">
+              </span>
+              <span class="helper">Let other traders send you a friend request using your friend code.</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="social-settings-group" aria-labelledby="social-leaderboard-title">
+          <header class="social-settings-group-header">
+            <h3 id="social-leaderboard-title">Leaderboard</h3>
+            <p class="helper">Choose whether your verified ranking can appear and who can view it.</p>
+          </header>
+          <div class="social-setting-list">
+            <label class="social-setting-row">
+              <span class="social-setting-main">
+                <span class="social-setting-title">Leaderboard enabled</span>
+                <input type="checkbox" name="leaderboard_enabled">
+              </span>
+              <span class="helper">Allow your verified return percentage to appear on opt-in leaderboards.</span>
+            </label>
+
+            <label class="social-setting-row" data-social-dependent="leaderboard">
+              <span class="social-setting-title">Leaderboard visibility</span>
+              <select name="leaderboard_visibility">
+                <option value="private">Private</option>
+                <option value="friends_only">Friends only</option>
+                <option value="public">Public</option>
+              </select>
+              <span class="helper">Control who can see your leaderboard presence.</span>
+            </label>
+
+            <label class="social-setting-row" data-social-dependent="leaderboard">
+              <span class="social-setting-title">Leaderboard data source</span>
+              <select name="leaderboard_data_source">
+                <option value="auto">Auto</option>
+                <option value="trading212">Trading 212</option>
+                <option value="ibkr">IBKR</option>
+                <option value="manual">Manual/platform</option>
+              </select>
+              <span class="helper">Choose which source powers leaderboard participation. Unavailable sources are disabled.</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="social-settings-group" aria-labelledby="social-sharing-title">
+          <header class="social-settings-group-header">
+            <h3 id="social-sharing-title">Trade sharing</h3>
+            <p class="helper">Configure if and how trades are shared once social sharing experiences are enabled.</p>
+          </header>
+          <div class="social-setting-list">
+            <label class="social-setting-row">
+              <span class="social-setting-main">
+                <span class="social-setting-title">Trade sharing enabled</span>
+                <input type="checkbox" name="trade_sharing_enabled">
+              </span>
+              <span class="helper">Allow eligible trades to be shared according to your trade visibility rules.</span>
+            </label>
+
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-title">Trade sharing scope</span>
+              <select name="trade_sharing_scope">
+                <option value="private">Private</option>
+                <option value="friends_only">Friends only</option>
+                <option value="public">Public</option>
+              </select>
+              <span class="helper">Control who can see your shared trades.</span>
+            </label>
+
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-main"><span class="social-setting-title">Share open trades</span><input type="checkbox" name="share_open_trades"></span>
+              <span class="helper">Allow open positions to be visible where sharing is enabled.</span>
+            </label>
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-main"><span class="social-setting-title">Share closed trades</span><input type="checkbox" name="share_closed_trades"></span>
+              <span class="helper">Allow closed trades to be visible where sharing is enabled.</span>
+            </label>
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-main"><span class="social-setting-title">Show PnL %</span><input type="checkbox" name="show_pnl_percent"></span>
+              <span class="helper">Show percentage performance on shared trades.</span>
+            </label>
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-main"><span class="social-setting-title">Show PnL currency</span><input type="checkbox" name="show_pnl_currency"></span>
+              <span class="helper">Show cash profit/loss amounts on shared trades.</span>
+            </label>
+            <label class="social-setting-row" data-social-dependent="trade-sharing">
+              <span class="social-setting-main"><span class="social-setting-title">Show position size</span><input type="checkbox" name="show_position_size"></span>
+              <span class="helper">Show share/contract size or capital exposure on shared trades.</span>
+            </label>
+          </div>
+        </section>
+
+        <div class="social-settings-actions">
+          <button id="social-save-btn" class="primary" type="submit">Save settings</button>
+          <span id="social-settings-feedback" class="helper" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script src="static/theme-utils.js"></script>
+  <script src="static/social-avatar.js"></script>
+  <script src="static/app-header.js"></script>
+  <script src="static/guest.js"></script>
+  <script src="static/social.js?v=20260315"></script>
+</body>
+</html>
