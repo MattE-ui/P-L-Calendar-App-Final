@@ -1412,7 +1412,7 @@ function renderSocialOverview() {
   }
   if (groupFeedEl) {
     clearNode(groupFeedEl);
-    const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 6) : [];
+    const previewItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts.slice(0, 4) : [];
     if (!group?.id) {
       groupFeedEl.appendChild(createEmptyState('No active group selected', 'Open Groups to select or create a trading group.'));
     } else if (!previewItems.length) {
@@ -1421,12 +1421,23 @@ function renderSocialOverview() {
       previewItems.forEach(item => {
         const row = document.createElement('article');
         row.className = 'social-list-row social-list-row--request social-list-row--activity';
-        const type = String(item.type || '').toLowerCase();
-        const badgeLabel = type === 'announcement'
+        const rawType = String(item.type || '').toLowerCase();
+        const side = String(item.side || '').toUpperCase();
+        const isAnnouncement = rawType === 'announcement';
+        const isSell = side === 'SELL' || rawType === 'closed';
+        const isBuy = side === 'BUY' && !isSell;
+        const isUpdate = !isAnnouncement && !isBuy && !isSell;
+        const badgeLabel = isAnnouncement
           ? 'ANNOUNCEMENT'
-          : type === 'closed'
-            ? 'CLOSED'
-            : 'ALERT';
+          : isSell
+            ? 'SELL'
+            : isBuy
+              ? 'BUY'
+              : 'UPDATE';
+        if (isBuy) row.classList.add('social-list-row--activity-buy');
+        if (isSell) row.classList.add('social-list-row--activity-sell');
+        if (isAnnouncement) row.classList.add('social-list-row--activity-announcement');
+        if (isUpdate) row.classList.add('social-list-row--activity-update');
         const avatarWrap = document.createElement('div');
         const avatar = window.VeracitySocialAvatar?.createAvatar({
           nickname: item.leader_nickname || 'Leader',
@@ -1445,7 +1456,7 @@ function renderSocialOverview() {
         user.className = 'social-activity-user';
         user.textContent = item.leader_nickname || 'Leader';
         const badge = document.createElement('span');
-        badge.className = `social-activity-badge${type === 'closed' ? ' is-closed' : ''}${type === 'announcement' ? ' is-announcement' : ''}`;
+        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}${isUpdate ? ' is-update' : ''}`;
         badge.textContent = badgeLabel;
         top.appendChild(user);
         top.appendChild(badge);
@@ -1453,23 +1464,45 @@ function renderSocialOverview() {
 
         const ticker = document.createElement('span');
         ticker.className = 'social-activity-ticker';
-        ticker.textContent = String(item.ticker || (type === 'announcement' ? 'GROUP UPDATE' : 'TRADE'));
+        ticker.textContent = String(item.ticker || (isAnnouncement ? 'GROUP ANNOUNCEMENT' : isSell ? 'POSITION CLOSE' : 'TRADE UPDATE'));
         main.appendChild(ticker);
 
-        if (type === 'announcement') {
+        if (isAnnouncement) {
           const summary = document.createElement('p');
-          summary.className = 'social-empty-state-detail';
+          summary.className = 'social-activity-message';
           summary.textContent = (item.text || 'Announcement posted to the group.').slice(0, 130);
+          main.appendChild(summary);
+        } else if (isSell) {
+          const summary = document.createElement('p');
+          summary.className = 'social-activity-message';
+          summary.textContent = `${item.leader_nickname || 'Leader'} closed ${item.ticker || 'position'}${item.text ? ` · ${item.text}` : '.'}`;
           main.appendChild(summary);
         } else {
           const prices = document.createElement('div');
           prices.className = 'social-activity-price-grid';
           const entry = document.createElement('span');
-          entry.innerHTML = `<span class="social-activity-label">Entry</span> ${Number(item.entry_price || 0).toFixed(2)}`;
+          const entryLabel = document.createElement('span');
+          entryLabel.className = 'social-activity-label';
+          entryLabel.textContent = 'Entry';
+          entry.appendChild(entryLabel);
+          entry.append(` ${Number(item.entry_price || 0).toFixed(2)}`);
           const stop = document.createElement('span');
-          stop.innerHTML = `<span class="social-activity-label">Stop</span> ${Number(item.stop_price || 0).toFixed(2)}`;
+          const stopLabel = document.createElement('span');
+          stopLabel.className = 'social-activity-label';
+          stopLabel.textContent = 'Stop';
+          stop.appendChild(stopLabel);
+          stop.append(` ${Number(item.stop_price || 0).toFixed(2)}`);
           prices.appendChild(entry);
           prices.appendChild(stop);
+          if (Number.isFinite(Number(item.risk_pct))) {
+            const risk = document.createElement('span');
+            const riskLabel = document.createElement('span');
+            riskLabel.className = 'social-activity-label';
+            riskLabel.textContent = 'Risk';
+            risk.appendChild(riskLabel);
+            risk.append(` ${Number(item.risk_pct || 0).toFixed(2)}%`);
+            prices.appendChild(risk);
+          }
           main.appendChild(prices);
         }
 
@@ -1478,6 +1511,17 @@ function renderSocialOverview() {
         const timestamp = document.createElement('span');
         timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
         footer.appendChild(timestamp);
+        if (isBuy) {
+          const prefillPayload = normalizeAlertRiskPrefillPayload(item);
+          const sizeBtn = createActionButton('Size this trade', 'ghost social-size-alert-btn social-size-alert-btn--compact');
+          if (prefillPayload) {
+            sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
+          } else {
+            sizeBtn.disabled = true;
+            sizeBtn.title = 'Price and stop are required for risk sizing';
+          }
+          footer.appendChild(sizeBtn);
+        }
         main.appendChild(footer);
 
         row.appendChild(main);
