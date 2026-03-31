@@ -7423,13 +7423,6 @@ textarea {
 .social-activity-keyline-announcement {
   position: relative;
   margin: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  line-clamp: 2;
-  max-height: calc(1.35em * 2);
-  transition: max-height 180ms ease-out;
   color: rgba(203, 213, 225, 0.84);
 }
 
@@ -7438,7 +7431,17 @@ textarea {
   gap: 3px;
 }
 
-.social-activity-announcement:not(.is-expanded) .social-activity-keyline-announcement::after {
+.social-activity-announcement.is-truncated:not(.is-expanded) .social-activity-keyline-announcement {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  max-height: calc(1.35em * 2);
+  transition: max-height 180ms ease-out;
+}
+
+.social-activity-announcement.is-truncated:not(.is-expanded) .social-activity-keyline-announcement::after {
   content: '';
   position: absolute;
   left: 0;
@@ -7449,7 +7452,7 @@ textarea {
   pointer-events: none;
 }
 
-.social-activity-announcement.is-expanded .social-activity-keyline-announcement {
+.social-activity-announcement.is-truncated.is-expanded .social-activity-keyline-announcement {
   display: block;
   -webkit-line-clamp: initial;
   line-clamp: initial;
@@ -7474,9 +7477,9 @@ textarea {
 
 .social-activity-trade-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -7518,11 +7521,27 @@ textarea {
 }
 
 .social-size-alert-btn--compact {
-  padding: 2px 8px;
-  font-size: 10px;
-  border-radius: 8px;
-  border-color: rgba(148, 163, 184, 0.4);
-  color: #cbd5e1;
+  margin-top: 1px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  border-radius: 9px;
+  border: 1px solid rgba(52, 211, 153, 0.65);
+  color: #d1fae5;
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.24), rgba(6, 95, 70, 0.38));
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.12);
+}
+
+.social-size-alert-btn--compact:hover {
+  color: #ecfdf5;
+  border-color: rgba(52, 211, 153, 0.85);
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.34), rgba(6, 95, 70, 0.5));
+}
+
+.social-size-alert-btn--compact:focus-visible {
+  outline: 2px solid rgba(110, 231, 183, 0.95);
+  outline-offset: 2px;
 }
 
 @keyframes socialLivePulse {
