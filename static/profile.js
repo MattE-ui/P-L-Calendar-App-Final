@@ -486,6 +486,72 @@ function applyGuestRestrictions() {
   });
 }
 
+const profileSubsectionRouteConfig = {
+  '/profile/manage': {
+    title: '',
+    description: '',
+    sectionId: ''
+  },
+  '/profile/trading-accounts': {
+    title: 'Trading Accounts',
+    description: 'Manage linked broker accounts and multi-account portfolio tracking inside your Veracity workspace.',
+    sectionId: 'trading-accounts-section'
+  },
+  '/profile/investor-accounts': {
+    title: 'Investor Accounts',
+    description: 'Control investor access, profit splits, NAV updates, and investor account operations.',
+    sectionId: 'investor-section'
+  },
+  '/profile/automation': {
+    title: 'Automation',
+    description: 'Configure Trading 212 and IBKR automation from the same authenticated app shell.',
+    sectionId: 'automation-card'
+  },
+  '/profile/notifications': {
+    title: 'Notifications',
+    description: 'Manage notification preferences, permission status, and active devices.',
+    sectionId: 'notification-settings-section'
+  },
+  '/profile/security': {
+    title: 'Security',
+    description: 'Update account nickname, avatar, and password controls.',
+    sectionId: 'account-security'
+  },
+  '/profile/integrations': {
+    title: 'Integrations',
+    description: 'Manage broker integration credentials and connectivity settings.',
+    sectionId: 'ibkr-card'
+  },
+  '/profile/billing': {
+    title: 'Billing & Subscription',
+    description: 'Review current subscription details and billing status in the profile workspace.',
+    sectionId: 'billing-section'
+  },
+  '/profile/settings': {
+    title: 'Settings',
+    description: 'Access account-level controls and advanced reset tools.',
+    sectionId: 'profile-reset-card'
+  }
+};
+
+function applySubsectionRouteMode() {
+  const route = profileSubsectionRouteConfig[window.location.pathname];
+  if (!route || !route.sectionId) return;
+  const headerCard = document.getElementById('profile-subsection-header');
+  const titleEl = document.getElementById('profile-subsection-title');
+  const descriptionEl = document.getElementById('profile-subsection-description');
+  const profileHeader = document.querySelector('.profile-header');
+  const profileGrid = document.querySelector('.profile-grid');
+  if (!profileGrid) return;
+  if (headerCard) headerCard.classList.remove('is-hidden');
+  if (profileHeader) profileHeader.classList.add('is-hidden');
+  if (titleEl) titleEl.textContent = route.title || 'Profile section';
+  if (descriptionEl) descriptionEl.textContent = route.description || '';
+  profileGrid.querySelectorAll('.profile-card').forEach(section => {
+    section.classList.toggle('is-hidden', section.id !== route.sectionId);
+  });
+}
+
 
 function isAvatarInteractionLocked() {
   return profileState.avatarBusy || avatarEditorState.open || avatarEditorState.saving;
@@ -3047,6 +3113,7 @@ async function initNotificationSettings() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  applySubsectionRouteMode();
   bindNav();
   loadProfile();
   loadIntegration();
