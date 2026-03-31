@@ -6481,3 +6481,223 @@ textarea {
   .investor-account-card__metrics,
   .investor-reporting-grid { grid-template-columns: 1fr; }
 }
+
+.automation-dashboard {
+  display: grid;
+  gap: 12px;
+}
+
+.automation-dashboard__header {
+  display: grid;
+  gap: 8px;
+}
+
+.automation-dashboard__header .profile-actions {
+  margin-top: 2px;
+}
+
+.automation-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.automation-section-heading h2,
+.automation-section-heading h3 {
+  margin: 0;
+}
+
+.automation-overview {
+  display: grid;
+  gap: 10px;
+}
+
+.automation-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.automation-metric-card {
+  margin: 0;
+  padding: 11px 12px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  display: grid;
+  gap: 4px;
+}
+
+.automation-metric-card p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.automation-metric-card strong {
+  font-size: 15px;
+}
+
+.automation-metric-card small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.automation-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.automation-pill--active {
+  color: #d6ffef;
+  background: color-mix(in srgb, var(--success) 20%, transparent);
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
+}
+
+.automation-pill--idle {
+  color: #ffe4a0;
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 58%, transparent);
+}
+
+.automation-pill--error {
+  color: #ffd1d1;
+  background: color-mix(in srgb, var(--danger) 20%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 58%, transparent);
+}
+
+.automation-pill--disconnected {
+  color: #c5cbd6;
+  background: color-mix(in srgb, #7f8a9a 24%, transparent);
+  border-color: color-mix(in srgb, #7f8a9a 58%, transparent);
+}
+
+.automation-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.automation-status-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.automation-status-list strong {
+  color: var(--text);
+}
+
+.automation-status-list strong.is-active {
+  color: var(--success);
+}
+
+.automation-status-list strong.is-idle {
+  color: var(--warning);
+}
+
+.automation-status-list strong.is-error {
+  color: var(--danger);
+}
+
+.automation-status-list strong.is-disconnected {
+  color: var(--text-dim);
+}
+
+.automation-engines {
+  display: grid;
+  gap: 10px;
+}
+
+.automation-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.automation-engine-card {
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  padding: 11px;
+  display: grid;
+  gap: 8px;
+}
+
+.automation-engine-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-engine-card header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.automation-engine-card dl {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.automation-engine-card dl > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+}
+
+.automation-engine-card dt {
+  color: var(--text-dim);
+}
+
+.automation-engine-card dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.automation-engine-actions {
+  margin-top: 2px;
+}
+
+.automation-engine-actions button {
+  min-width: 120px;
+}
+
+.automation-bottom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .automation-overview-grid,
+  .automation-engine-grid,
+  .automation-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,9 +1,153 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Veracity Trading Suite - Automation</title><link rel="stylesheet" href="/static/style.css"></head><body>
-<main class="container profile-hub-container">
-<section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Automation</h1><p class="helper">Configure broker sync cadence and workflow automation settings.</p><div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div></section>
-<section class="card profile-card"><h2>Sync automation</h2><label class="toggle"><input id="auto-t212-enabled" type="checkbox"><span>Enable Trading 212 sync automation</span></label><div class="profile-field"><label for="auto-t212-mode">Trading 212 mode</label><select id="auto-t212-mode"><option value="live">Live</option><option value="practice">Practice</option></select></div><div class="profile-actions"><button id="auto-save-t212" class="primary" type="button">Save Trading 212 automation</button><button id="auto-run-t212" class="ghost" type="button">Run sync now</button></div><div id="auto-t212-status" class="status-line"></div></section>
-<section class="card profile-card"><h2>Alert automation</h2><p class="helper">Alert delivery preferences are configured in Notifications.</p><div class="profile-actions"><a class="ghost" href="/profile/notifications">Open Notifications</a></div></section>
-<section class="card profile-card"><h2>Advanced automation</h2><p id="auto-ibkr-status" class="helper">IBKR connector heartbeat and sync status are available here for workflow monitoring.</p><div class="profile-actions"><button id="auto-refresh-ibkr" class="ghost" type="button">Refresh IBKR status</button></div></section>
-</main>
-<script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-automation-page.js"></script>
-</body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veracity Trading Suite - Automation</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container profile-hub-container automation-dashboard">
+    <section class="card profile-subsection-card automation-dashboard__header">
+      <p class="profile-hub-summary__eyebrow">Account center</p>
+      <h1>Automation Control Panel</h1>
+      <p class="helper">Monitor automation runtime health, broker sync engines, and alert delivery from one system-level dashboard.</p>
+      <div class="profile-actions">
+        <a class="ghost" href="/profile.html">Back to Account Center</a>
+        <button id="auto-refresh-overview" class="ghost" type="button">Refresh status</button>
+      </div>
+    </section>
+
+    <section class="card profile-card automation-overview" aria-live="polite">
+      <div class="automation-section-heading">
+        <h2>Automation overview</h2>
+        <span id="automation-overall-pill" class="automation-pill automation-pill--disconnected">Paused</span>
+      </div>
+      <div class="automation-overview-grid">
+        <article class="automation-metric-card">
+          <p>Automation status</p>
+          <strong id="automation-status">Unavailable</strong>
+          <small id="automation-auto-sync">Auto-sync: unavailable</small>
+        </article>
+        <article class="automation-metric-card">
+          <p>Last run</p>
+          <strong id="automation-last-run">Unavailable</strong>
+          <small id="automation-last-result">Result: unavailable</small>
+        </article>
+        <article class="automation-metric-card">
+          <p>Next scheduled run</p>
+          <strong id="automation-next-run">Unavailable</strong>
+          <small id="automation-next-helper">Schedule data is surfaced when available.</small>
+        </article>
+        <article class="automation-metric-card">
+          <p>Broker sync states</p>
+          <ul id="automation-broker-states" class="automation-status-list"></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="card profile-card automation-engines">
+      <div class="automation-section-heading">
+        <h2>Sync engines</h2>
+        <p class="helper">Each broker runs as an independent automation module.</p>
+      </div>
+      <div class="automation-engine-grid">
+        <article class="automation-engine-card" id="engine-t212-card">
+          <header>
+            <h3>Trading 212</h3>
+            <span id="engine-t212-status" class="automation-pill automation-pill--disconnected">Disconnected</span>
+          </header>
+          <dl>
+            <div><dt>Mode</dt><dd id="engine-t212-mode">Unavailable</dd></div>
+            <div><dt>Last run</dt><dd id="engine-t212-last-run">Unavailable</dd></div>
+            <div><dt>Last result</dt><dd id="engine-t212-last-result">Unavailable</dd></div>
+            <div><dt>Next run</dt><dd id="engine-t212-next-run">Unavailable</dd></div>
+          </dl>
+          <div class="profile-actions automation-engine-actions">
+            <button id="engine-t212-run" class="primary" type="button">Run now</button>
+            <button id="engine-t212-toggle" class="ghost" type="button">Resume</button>
+            <button id="engine-t212-configure" class="ghost" type="button">Configure</button>
+            <button id="engine-t212-connect" class="ghost" type="button">Connect</button>
+          </div>
+          <p id="engine-t212-feedback" class="status-line is-hidden"></p>
+        </article>
+
+        <article class="automation-engine-card" id="engine-ibkr-card">
+          <header>
+            <h3>IBKR connector</h3>
+            <span id="engine-ibkr-status" class="automation-pill automation-pill--disconnected">Disconnected</span>
+          </header>
+          <dl>
+            <div><dt>Mode</dt><dd id="engine-ibkr-mode">Unavailable</dd></div>
+            <div><dt>Last run</dt><dd id="engine-ibkr-last-run">Unavailable</dd></div>
+            <div><dt>Last result</dt><dd id="engine-ibkr-last-result">Unavailable</dd></div>
+            <div><dt>Next run</dt><dd id="engine-ibkr-next-run">Unavailable</dd></div>
+          </dl>
+          <div class="profile-actions automation-engine-actions">
+            <button id="engine-ibkr-run" class="primary" type="button">Run now</button>
+            <button id="engine-ibkr-toggle" class="ghost" type="button">Resume</button>
+            <button id="engine-ibkr-configure" class="ghost" type="button">Configure</button>
+            <button id="engine-ibkr-connect" class="ghost" type="button">Connect</button>
+          </div>
+          <p id="engine-ibkr-feedback" class="status-line is-hidden"></p>
+        </article>
+      </div>
+    </section>
+
+    <section class="automation-bottom-grid">
+      <section class="card profile-card automation-alerts">
+        <div class="automation-section-heading">
+          <h2>Alert automation</h2>
+        </div>
+        <ul class="automation-status-list">
+          <li>
+            <span>Trade alerts</span>
+            <strong id="alerts-trade">Unavailable</strong>
+          </li>
+          <li>
+            <span>Push notifications</span>
+            <strong id="alerts-push">Unavailable</strong>
+          </li>
+          <li>
+            <span>Group alerts</span>
+            <strong id="alerts-group">Unavailable</strong>
+          </li>
+        </ul>
+        <div class="profile-actions">
+          <a class="ghost" href="/profile/notifications">Configure alerts</a>
+        </div>
+      </section>
+
+      <section class="card profile-card automation-system-status">
+        <div class="automation-section-heading">
+          <h2>System status / diagnostics</h2>
+        </div>
+        <ul class="automation-status-list">
+          <li>
+            <span>IBKR connector</span>
+            <strong id="system-ibkr-connector">Unavailable</strong>
+          </li>
+          <li>
+            <span>Background worker</span>
+            <strong id="system-worker">Unavailable</strong>
+          </li>
+          <li>
+            <span>Queue / processing</span>
+            <strong id="system-queue">Unavailable</strong>
+          </li>
+        </ul>
+        <p id="system-details" class="helper">Runtime diagnostics are populated from available integration telemetry.</p>
+        <div class="profile-actions">
+          <button id="auto-refresh-ibkr" class="ghost" type="button">Refresh status</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/theme-utils.js"></script>
+  <script src="/static/app-header.js"></script>
+  <script src="/static/guest.js"></script>
+  <script src="/static/account-center-common.js"></script>
+  <script src="/static/profile-automation-page.js"></script>
+</body>
+</html>
