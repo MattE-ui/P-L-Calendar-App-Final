@@ -7199,8 +7199,9 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.86);
+  transition: color 180ms ease-out;
 }
 
 .social-live-dot {
@@ -7208,7 +7209,53 @@ textarea {
   height: 7px;
   border-radius: 50%;
   background: #2ee18b;
-  box-shadow: 0 0 0 5px rgba(46, 225, 139, 0.18);
+  box-shadow: 0 0 0 4px rgba(46, 225, 139, 0.14);
+  animation: socialLivePulse 2.2s ease-out infinite;
+}
+
+.social-live-indicator.is-flashing {
+  color: #c9f7e2;
+}
+
+.social-live-indicator.is-flashing .social-live-dot {
+  animation: socialLivePulse 2.2s ease-out infinite, socialLiveFlash 520ms ease-out 1;
+}
+
+.social-overview-feed-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.social-feed-filter {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+  padding: 2px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.social-feed-filter-btn {
+  border: 0;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.92);
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.social-feed-filter-btn.is-active {
+  color: #e2e8f0;
+  background: rgba(71, 85, 105, 0.45);
+}
+
+.social-feed-filter-btn:focus-visible {
+  outline: 2px solid rgba(147, 197, 253, 0.9);
+  outline-offset: 1px;
 }
 
 .social-overview-group-feed {
@@ -7240,7 +7287,7 @@ textarea {
 
 .social-list-row--activity {
   align-items: flex-start;
-  padding: 9px 10px;
+  padding: 8px 9px;
   border-left: 2px solid rgba(148, 163, 184, 0.3);
   transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
 }
@@ -7254,7 +7301,7 @@ textarea {
 }
 
 .social-list-row--activity.social-list-row--activity-announcement {
-  border-left-color: rgba(96, 165, 250, 0.75);
+  border-left-color: rgba(96, 165, 250, 0.5);
 }
 
 .social-list-row--activity:hover {
@@ -7267,7 +7314,7 @@ textarea {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 
 .social-activity-top {
@@ -7286,9 +7333,10 @@ textarea {
 }
 
 .social-activity-user {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.1;
+  color: #f8fafc;
 }
 
 .social-activity-badge {
@@ -7317,9 +7365,9 @@ textarea {
 }
 
 .social-activity-badge.is-announcement {
-  color: #bfdbfe;
-  border-color: rgba(96, 165, 250, 0.5);
-  background: rgba(30, 64, 175, 0.22);
+  color: #cbd5e1;
+  border-color: rgba(96, 165, 250, 0.32);
+  background: rgba(30, 64, 175, 0.14);
 }
 
 .social-activity-badge.is-update {
@@ -7348,7 +7396,7 @@ textarea {
 .social-activity-message {
   margin: 0;
   color: rgba(226, 232, 240, 0.92);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.35;
 }
 
@@ -7382,6 +7430,7 @@ textarea {
   line-clamp: 2;
   max-height: calc(1.35em * 2);
   transition: max-height 180ms ease-out;
+  color: rgba(203, 213, 225, 0.84);
 }
 
 .social-activity-announcement {
@@ -7396,7 +7445,7 @@ textarea {
   right: 0;
   bottom: 0;
   height: 1.5em;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.95));
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0), rgba(15, 23, 42, 0.92));
   pointer-events: none;
 }
 
@@ -7411,8 +7460,8 @@ textarea {
   width: fit-content;
   border: 0;
   background: transparent;
-  color: #93c5fd;
-  font-size: 12px;
+  color: #9cb6d5;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1.2;
   padding: 0;
@@ -7420,7 +7469,15 @@ textarea {
 }
 
 .social-activity-announcement-toggle:hover {
-  color: #bfdbfe;
+  color: #c7ddf6;
+}
+
+.social-activity-trade-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
 .social-activity-announcement-toggle:focus-visible {
@@ -7447,23 +7504,46 @@ textarea {
 
 .social-activity-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
-  color: rgba(148, 163, 184, 0.84);
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.74);
 }
 
 .social-activity-time {
   margin-left: auto;
-  font-size: 10px;
-  color: rgba(148, 163, 184, 0.8);
+  font-size: 9px;
+  color: rgba(148, 163, 184, 0.72);
 }
 
 .social-size-alert-btn--compact {
-  padding: 3px 8px;
-  font-size: 11px;
+  padding: 2px 8px;
+  font-size: 10px;
   border-radius: 8px;
+  border-color: rgba(148, 163, 184, 0.4);
+  color: #cbd5e1;
+}
+
+@keyframes socialLivePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(46, 225, 139, 0.24);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(46, 225, 139, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 225, 139, 0);
+  }
+}
+
+@keyframes socialLiveFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(46, 225, 139, 0.34);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(46, 225, 139, 0);
+  }
 }
 
 @media (max-width: 1100px) {
@@ -7476,5 +7556,10 @@ textarea {
   .social-overview-group-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .social-overview-feed-tools {
+    width: 100%;
+    justify-content: space-between;
   }
 }

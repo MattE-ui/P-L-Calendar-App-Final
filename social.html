@@ -64,7 +64,14 @@
         </div>
         <div class="social-subpanel-head">
           <h4>Recent activity</h4>
-          <span class="social-live-indicator" aria-live="polite"><span class="social-live-dot" aria-hidden="true"></span>Live updates</span>
+          <div class="social-overview-feed-tools">
+            <div id="social-overview-feed-filter" class="social-feed-filter" role="tablist" aria-label="Filter recent activity">
+              <button type="button" class="social-feed-filter-btn is-active" data-feed-filter="all" role="tab" aria-selected="true">All</button>
+              <button type="button" class="social-feed-filter-btn" data-feed-filter="trades" role="tab" aria-selected="false">Trades</button>
+              <button type="button" class="social-feed-filter-btn" data-feed-filter="announcements" role="tab" aria-selected="false">Announcements</button>
+            </div>
+            <span id="social-live-indicator" class="social-live-indicator" aria-live="polite"><span class="social-live-dot" aria-hidden="true"></span>Live updates</span>
+          </div>
         </div>
         <div id="social-overview-group-feed" class="social-list social-overview-group-feed"></div>
       </article>
