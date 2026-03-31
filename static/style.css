@@ -6897,3 +6897,81 @@ textarea {
   .notification-alert-row,
   .notification-device-row { grid-template-columns: 1fr; }
 }
+
+.settings-config-layout {
+  max-width: 1260px;
+  display: grid;
+  gap: 14px;
+}
+
+.settings-overview-card {
+  gap: 0.75rem;
+}
+
+.settings-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-overview-item {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface-2) 84%, transparent);
+  display: grid;
+  gap: 4px;
+}
+
+.settings-overview-item span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.settings-overview-item strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-grid--middle,
+.settings-grid--bottom {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-stacked-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+
+.settings-checkbox-grid label {
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 980px) {
+  .settings-overview-grid,
+  .settings-grid--middle,
+  .settings-grid--bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+}
