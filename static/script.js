@@ -33,6 +33,11 @@ const state = {
   },
   direction: 'long',
   defaultRiskPct: 1,
+  riskPct: 1,
+  riskAmount: 0,
+  riskInputSource: 'percent',
+  prefilledFromAlert: false,
+  alertPrefillPayload: null,
   safeScreenshot: false,
   fees: 0,
   slippage: 0,
@@ -54,6 +59,7 @@ const ACTIVE_TRADE_SORTS = new Set([
   'worst-amount'
 ]);
 const SHOW_MAPPING_BADGE = false;
+const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const shareCardState = { blob: null, url: null, trade: null, orientation: 'landscape' };
@@ -310,6 +316,52 @@ function formatShares(value) {
   if (!Number.isFinite(value)) return '—';
   if (Math.abs(value) >= 1) return value.toFixed(2);
   return value.toFixed(4);
+}
+
+function getPortfolioInRiskCurrency() {
+  const portfolioGBP = getLatestPortfolioGBP();
+  const riskCurrency = state.riskCurrency || 'GBP';
+  return currencyAmount(portfolioGBP, riskCurrency);
+}
+
+function clearRiskPrefillState(clearInputs = false) {
+  state.prefilledFromAlert = false;
+  state.alertPrefillPayload = null;
+  const banner = $('#risk-prefill-banner');
+  if (banner) banner.classList.add('hidden');
+  const riskCard = $('#risk-card');
+  if (riskCard) riskCard.classList.remove('prefill-highlight');
+  if (clearInputs) {
+    const symbolInput = $('#risk-symbol-input');
+    const entryInput = $('#risk-entry-input');
+    const stopInput = $('#risk-stop-input');
+    if (symbolInput) symbolInput.value = '';
+    if (entryInput) entryInput.value = '';
+    if (stopInput) stopInput.value = '';
+    state.manualStopOverride = false;
+  }
+}
+
+function syncRiskLinkedInputs(source = state.riskInputSource || 'percent') {
+  const pctInput = $('#risk-percent-input');
+  const amountInput = $('#risk-amount-input');
+  const portfolioInRiskCurrency = getPortfolioInRiskCurrency();
+  if (!pctInput || !amountInput || !Number.isFinite(portfolioInRiskCurrency) || portfolioInRiskCurrency <= 0) return;
+  if (source === 'amount') {
+    const amount = Number(amountInput.value);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const pct = (amount / portfolioInRiskCurrency) * 100;
+    state.riskPct = pct;
+    state.riskAmount = amount;
+    pctInput.value = pct.toFixed(2);
+    return;
+  }
+  const pct = Number(pctInput.value);
+  if (!Number.isFinite(pct) || pct <= 0) return;
+  const amount = portfolioInRiskCurrency * (pct / 100);
+  state.riskPct = pct;
+  state.riskAmount = amount;
+  amountInput.value = amount.toFixed(2);
 }
 
 function computeRiskPlan({
@@ -985,11 +1037,15 @@ function calculateRiskPosition(showErrors = false) {
   const entryInput = $('#risk-entry-input');
   const stopInput = $('#risk-stop-input');
   const riskPctInput = $('#risk-percent-input');
+  const riskAmountInput = $('#risk-amount-input');
   const errorEl = $('#risk-error');
   if (!entryInput || !stopInput || !riskPctInput) return;
 
   const entryRaw = Number(entryInput.value);
   const stopRaw = Number(stopInput.value);
+  if (riskAmountInput) {
+    syncRiskLinkedInputs(state.riskInputSource || 'percent');
+  }
   const riskPct = Number(state.riskPct ?? riskPctInput.value);
   const portfolioGBP = getLatestPortfolioGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
@@ -1002,6 +1058,9 @@ function calculateRiskPosition(showErrors = false) {
   const entryGBP = toGBP(entryRaw, riskCurrency);
   const stopGBP = toGBP(stopRaw, riskCurrency);
   const portfolioInRiskCurrency = currencyAmount(portfolioGBP, riskCurrency);
+  if (!state.direction || !['long', 'short'].includes(state.direction)) {
+    error = 'Select trade direction before sizing.';
+  }
   const computed = computeRiskPlan({
     entry: entryRaw,
     stop: stopRaw,
@@ -1026,7 +1085,9 @@ function calculateRiskPosition(showErrors = false) {
     return;
   }
 
-  const riskAmountInCurrency = currencyAmount(portfolioGBP * (riskPct / 100), riskCurrency) ?? (portfolioGBP * (riskPct/100));
+  const riskAmountInCurrency = state.riskInputSource === 'amount' && Number.isFinite(Number(riskAmountInput?.value))
+    ? Number(riskAmountInput.value)
+    : (currencyAmount(portfolioGBP * (riskPct / 100), riskCurrency) ?? (portfolioGBP * (riskPct / 100)));
   const shares = computed.shares;
   const positionInCurrency = computed.positionValue;
   const positionGBP = toGBP(positionInCurrency, riskCurrency);
@@ -1075,13 +1136,22 @@ function renderRiskCalculator() {
   const portfolioEl = $('#risk-portfolio-display');
   if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
+  const amountInput = $('#risk-amount-input');
   if (pctInput) {
     const pctVal = Number(state.riskPct) || Number(pctInput.value) || 1;
-    pctInput.value = String(pctVal);
+    pctInput.value = pctVal.toFixed(2);
+  }
+  if (amountInput) {
+    const symbolForCurrency = currencySymbols[state.riskCurrency] || '£';
+    amountInput.placeholder = `Risk ${symbolForCurrency}`;
   }
   $$('#risk-percent-toggle button').forEach(btn => {
-    btn.classList.toggle('active', Number(btn.dataset.riskPct) === Number(state.riskPct || pctInput?.value || 1));
+    const pct = Number(state.riskPct || pctInput?.value || 1);
+    btn.classList.toggle('active', Math.abs(Number(btn.dataset.riskPct) - pct) < 0.001);
   });
+  syncRiskLinkedInputs(state.riskInputSource === 'amount' ? 'amount' : 'percent');
+  const prefillBanner = $('#risk-prefill-banner');
+  if (prefillBanner) prefillBanner.classList.toggle('hidden', !state.prefilledFromAlert);
   const dateInput = $('#risk-date-input');
   if (dateInput && !dateInput.value) {
     dateInput.valueAsDate = new Date();
@@ -3223,6 +3293,7 @@ async function loadUiPrefs() {
       await saveUiPrefs();
     }
     state.riskPct = state.defaultRiskPct;
+    state.riskInputSource = 'percent';
     state.riskCurrency = state.defaultRiskCurrency;
     persistLocalPrefs();
   } catch (e) {
@@ -4122,8 +4193,16 @@ function bindControls() {
   const markAuto = value => {
     isAutoStopUpdate = value;
   };
-  ['#risk-entry-input', '#risk-stop-input', '#risk-percent-input'].forEach(sel => {
+  ['#risk-entry-input', '#risk-stop-input'].forEach(sel => {
     $(sel)?.addEventListener('input', () => calculateRiskPosition(false));
+  });
+  $('#risk-percent-input')?.addEventListener('input', () => {
+    state.riskInputSource = 'percent';
+    calculateRiskPosition(false);
+  });
+  $('#risk-amount-input')?.addEventListener('input', () => {
+    state.riskInputSource = 'amount';
+    calculateRiskPosition(false);
   });
   const stopInput = $('#risk-stop-input');
   if (stopInput) {
@@ -4160,11 +4239,16 @@ function bindControls() {
     btn.addEventListener('click', () => {
       const pct = Number(btn.dataset.riskPct);
       if (!Number.isFinite(pct) || pct <= 0) return;
+      state.riskInputSource = 'percent';
       state.riskPct = pct;
       const pctInput = $('#risk-percent-input');
       if (pctInput) pctInput.value = String(pct);
       renderRiskCalculator();
     });
+  });
+  $('#risk-clear-prefill-btn')?.addEventListener('click', () => {
+    clearRiskPrefillState(true);
+    calculateRiskPosition(false);
   });
   const openQuickSettings = () => {
     setNavOpen(false);
@@ -4348,6 +4432,73 @@ if (typeof module !== 'undefined') {
   module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
+function normalizeAlertPrefillPayload(payload = {}) {
+  const sideRaw = String(payload.side || '').trim().toUpperCase();
+  const normalizedSide = sideRaw === 'SELL' || sideRaw === 'SHORT' ? 'short' : sideRaw === 'BUY' || sideRaw === 'LONG' ? 'long' : '';
+  const entryPrice = Number(payload.entryPrice);
+  const stopPrice = Number(payload.stopPrice);
+  const ticker = String(payload.ticker || '').trim().toUpperCase();
+  if (!ticker || !normalizedSide || !Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || entryPrice <= 0 || stopPrice <= 0 || entryPrice === stopPrice) {
+    return null;
+  }
+  return {
+    source: String(payload.source || ''),
+    alertId: String(payload.alertId || ''),
+    groupId: String(payload.groupId || ''),
+    ticker,
+    side: normalizedSide,
+    entryPrice,
+    stopPrice,
+    assetType: String(payload.assetType || '').trim().toLowerCase() || null
+  };
+}
+
+function applyRiskCalculatorPrefillPayload(payload) {
+  const normalized = normalizeAlertPrefillPayload(payload);
+  if (!normalized) {
+    console.info('[risk-prefill] calculator prefill rejected due to validation');
+    return false;
+  }
+  const symbolInput = $('#risk-symbol-input');
+  const entryInput = $('#risk-entry-input');
+  const stopInput = $('#risk-stop-input');
+  if (!symbolInput || !entryInput || !stopInput) return false;
+  symbolInput.value = normalized.ticker;
+  entryInput.value = String(normalized.entryPrice);
+  stopInput.value = String(normalized.stopPrice);
+  state.direction = normalized.side;
+  state.prefilledFromAlert = true;
+  state.alertPrefillPayload = normalized;
+  state.manualStopOverride = true;
+  renderRiskCalculator();
+  calculateRiskPosition(true);
+  const riskCard = $('#risk-card');
+  if (riskCard) {
+    riskCard.classList.remove('prefill-highlight');
+    window.requestAnimationFrame(() => riskCard.classList.add('prefill-highlight'));
+    riskCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  entryInput.focus();
+  console.info('[risk-prefill] calculator prefill payload accepted', normalized);
+  window.dispatchEvent(new CustomEvent('analytics:event', { detail: { name: 'trade_alert_prefill_loaded', payload: normalized } }));
+  return true;
+}
+
+function consumePendingRiskCalculatorPrefill() {
+  let payload = null;
+  try {
+    const raw = localStorage.getItem(ALERT_RISK_PREFILL_STORAGE_KEY);
+    if (!raw) return;
+    payload = JSON.parse(raw);
+    localStorage.removeItem(ALERT_RISK_PREFILL_STORAGE_KEY);
+  } catch (_error) {
+    localStorage.removeItem(ALERT_RISK_PREFILL_STORAGE_KEY);
+    return;
+  }
+  if (!payload) return;
+  applyRiskCalculatorPrefillPayload(payload);
+}
+
 async function updateDevtoolsNav() {
   try {
     const profile = await api('/api/profile');
@@ -4390,6 +4541,7 @@ async function init() {
       if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
       if (typeof prefs?.safeScreenshot === 'boolean') state.safeScreenshot = prefs.safeScreenshot;
       state.riskPct = state.defaultRiskPct;
+      state.riskInputSource = 'percent';
       state.riskCurrency = state.defaultRiskCurrency;
     }
     const savedTradeSort = localStorage.getItem('plc-active-trade-sort');
@@ -4413,6 +4565,7 @@ async function init() {
   const initialLoadStatus = await loadData();
   updateDevtoolsNav();
   render();
+  consumePendingRiskCalculatorPrefill();
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
     // We require core dashboard datasets (portfolio metrics, calendar data, active trades)
