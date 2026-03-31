@@ -2284,6 +2284,15 @@ select {
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding: clamp(10px, 2.4vw, 24px); }
 .modal-card { background: var(--surface-1); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(840px, 100%); box-shadow: var(--shadow), var(--glow-emerald); max-height: 90vh; overflow-y: auto; }
+.site-announcement-modal__card { width: min(640px, 100%); border-color: rgba(212, 175, 55, 0.35); }
+.site-announcement-modal__head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.site-announcement-modal__body { white-space: pre-wrap; line-height: 1.5; max-height: min(45vh, 300px); overflow: auto; padding-right: 4px; margin-bottom: 12px; }
+.site-announcement-modal__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.site-announcement-badge { display: inline-flex; width: fit-content; padding: 4px 10px; border-radius: 999px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--border); }
+.site-announcement-badge--maintenance { background: rgba(255, 145, 77, 0.14); border-color: rgba(255, 145, 77, 0.4); color: #ffbe89; }
+.site-announcement-badge--update { background: rgba(82, 177, 255, 0.16); border-color: rgba(82, 177, 255, 0.38); color: #95d3ff; }
+.site-announcement-badge--warning { background: rgba(255, 107, 107, 0.14); border-color: rgba(255, 107, 107, 0.38); color: #ffb0b0; }
+.site-announcement-badge--info { background: rgba(212, 175, 55, 0.14); border-color: rgba(212, 175, 55, 0.35); color: #f3dc92; }
 .modal-header { display:flex; justify-content: space-between; align-items: center; gap: 8px; }
 .share-card-modal {
   width: min(1000px, 100%);

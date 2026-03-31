@@ -2308,6 +2308,11 @@ function ensureNotificationTables(db) {
   if (!Array.isArray(db.notificationPushDedupe)) db.notificationPushDedupe = [];
 }
 
+function ensureSiteAnnouncementTables(db) {
+  if (!Array.isArray(db.siteAnnouncements)) db.siteAnnouncements = [];
+  if (!Array.isArray(db.siteAnnouncementStates)) db.siteAnnouncementStates = [];
+}
+
 function getNotificationConfig() {
   return {
     apiKey: FCM_API_KEY,
@@ -3282,6 +3287,7 @@ function loadDB() {
     }
     db.investorSessions ||= {};
     ensureNotificationTables(db);
+    ensureSiteAnnouncementTables(db);
     ensureSocialTables(db);
     let mutated = reconcileIbkrTokenSecret(db);
     for (const [username, user] of Object.entries(db.users)) {
@@ -3327,6 +3333,8 @@ function loadDB() {
       investorSessions: {},
       notificationDevices: [],
       notificationEvents: [],
+      siteAnnouncements: [],
+      siteAnnouncementStates: [],
       socialProfiles: [],
       socialSettings: [],
       friendRequests: [],
@@ -8170,6 +8178,129 @@ function isAdminUser(user, username) {
   return list.includes(username);
 }
 
+const SITE_ANNOUNCEMENT_TYPES = ['maintenance', 'update', 'warning', 'info'];
+function normalizeSiteAnnouncementInput(raw = {}, { partial = false } = {}) {
+  const pick = (key, fallback) => (Object.prototype.hasOwnProperty.call(raw, key) ? raw[key] : fallback);
+  const payload = {
+    title: pick('title', partial ? undefined : ''),
+    body: pick('body', partial ? undefined : ''),
+    type: pick('type', undefined),
+    priority: pick('priority', undefined),
+    isPublished: pick('isPublished', undefined),
+    startsAt: pick('startsAt', undefined),
+    endsAt: pick('endsAt', undefined),
+    requireAcknowledgement: pick('requireAcknowledgement', undefined),
+    ctaLabel: pick('ctaLabel', undefined),
+    ctaUrl: pick('ctaUrl', undefined)
+  };
+  if (payload.priority !== undefined && payload.priority !== null && payload.priority !== '') payload.priority = Number(payload.priority);
+  if (payload.isPublished !== undefined) payload.isPublished = payload.isPublished === true || payload.isPublished === 'true' || payload.isPublished === 1 || payload.isPublished === '1';
+  if (payload.requireAcknowledgement !== undefined) payload.requireAcknowledgement = payload.requireAcknowledgement === true || payload.requireAcknowledgement === 'true' || payload.requireAcknowledgement === 1 || payload.requireAcknowledgement === '1';
+  if (payload.startsAt === '') payload.startsAt = null;
+  if (payload.endsAt === '') payload.endsAt = null;
+  if (payload.ctaLabel === '') payload.ctaLabel = null;
+  if (payload.ctaUrl === '') payload.ctaUrl = null;
+  return payload;
+}
+
+function validateSiteAnnouncementInput(raw = {}, { partial = false } = {}) {
+  const payload = normalizeSiteAnnouncementInput(raw, { partial });
+  if (!partial || payload.title !== undefined) {
+    if (!String(payload.title || '').trim() || String(payload.title).trim().length > 180) {
+      return { success: false, error: 'Title is required and must be 180 characters or fewer.' };
+    }
+  }
+  if (!partial || payload.body !== undefined) {
+    if (!String(payload.body || '').trim() || String(payload.body).trim().length > 12000) {
+      return { success: false, error: 'Body is required and must be 12000 characters or fewer.' };
+    }
+  }
+  if (payload.type !== undefined && payload.type !== null && !SITE_ANNOUNCEMENT_TYPES.includes(payload.type)) {
+    return { success: false, error: `type must be one of: ${SITE_ANNOUNCEMENT_TYPES.join(', ')}.` };
+  }
+  if (payload.priority !== undefined && payload.priority !== null) {
+    if (!Number.isFinite(payload.priority) || payload.priority < 0 || payload.priority > 1000 || Math.floor(payload.priority) !== payload.priority) {
+      return { success: false, error: 'Priority must be an integer between 0 and 1000.' };
+    }
+  }
+  if (payload.startsAt) {
+    const startTs = Date.parse(payload.startsAt);
+    if (Number.isNaN(startTs)) return { success: false, error: 'startsAt must be a valid datetime.' };
+  }
+  if (payload.endsAt) {
+    const endTs = Date.parse(payload.endsAt);
+    if (Number.isNaN(endTs)) return { success: false, error: 'endsAt must be a valid datetime.' };
+  }
+  if (payload.startsAt && payload.endsAt && Date.parse(payload.endsAt) < Date.parse(payload.startsAt)) {
+    return { success: false, error: 'endsAt must be after startsAt.' };
+  }
+  if ((payload.ctaLabel && !payload.ctaUrl) || (!payload.ctaLabel && payload.ctaUrl)) {
+    return { success: false, error: 'ctaLabel and ctaUrl must be provided together.' };
+  }
+  if (payload.ctaLabel && String(payload.ctaLabel).trim().length > 80) {
+    return { success: false, error: 'ctaLabel must be 80 characters or fewer.' };
+  }
+  if (payload.ctaUrl && String(payload.ctaUrl).length > 2000) {
+    return { success: false, error: 'ctaUrl must be 2000 characters or fewer.' };
+  }
+  return { success: true, data: payload };
+}
+
+function requireAdmin(req, res, next) {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!isAdminUser(user, req.username)) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+  req.authUser = user;
+  return next();
+}
+
+function normalizeOptionalDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+function sanitizeSiteAnnouncement(record) {
+  return {
+    id: String(record.id),
+    title: String(record.title || ''),
+    body: String(record.body || ''),
+    type: SITE_ANNOUNCEMENT_TYPES.includes(record.type) ? record.type : 'info',
+    priority: Number.isFinite(Number(record.priority)) ? Number(record.priority) : 0,
+    isPublished: !!record.isPublished,
+    startsAt: normalizeOptionalDate(record.startsAt),
+    endsAt: normalizeOptionalDate(record.endsAt),
+    requireAcknowledgement: !!record.requireAcknowledgement,
+    ctaLabel: record.ctaLabel ? String(record.ctaLabel) : null,
+    ctaUrl: record.ctaUrl ? String(record.ctaUrl) : null,
+    createdBy: String(record.createdBy || ''),
+    createdAt: normalizeOptionalDate(record.createdAt) || new Date().toISOString(),
+    updatedAt: normalizeOptionalDate(record.updatedAt) || new Date().toISOString()
+  };
+}
+
+function isSiteAnnouncementActive(record, now = Date.now()) {
+  if (!record?.isPublished) return false;
+  const startTs = record.startsAt ? Date.parse(record.startsAt) : NaN;
+  const endTs = record.endsAt ? Date.parse(record.endsAt) : NaN;
+  if (!Number.isNaN(startTs) && now < startTs) return false;
+  if (!Number.isNaN(endTs) && now > endTs) return false;
+  return true;
+}
+
+function getUserAnnouncementStateMap(db, username) {
+  ensureSiteAnnouncementTables(db);
+  const map = new Map();
+  for (const row of db.siteAnnouncementStates) {
+    if (row?.userId !== username) continue;
+    map.set(String(row.announcementId), row);
+  }
+  return map;
+}
+
 function canAccessDevtools(user, username) {
   if (isAdminUser(user, username)) return true;
   return username === 'mevs.0404@gmail.com' || username === 'dummy1';
@@ -10189,6 +10320,12 @@ app.get('/devtools.html', auth, (req, res) => {
   }
   res.sendFile(path.join(__dirname,'devtools.html'));
 });
+app.get('/site-announcements-admin.html', auth, (req, res) => {
+  if (!isAdminUser(req.user, req.username)) {
+    return res.status(403).send('Forbidden');
+  }
+  res.sendFile(path.join(__dirname, 'site-announcements-admin.html'));
+});
 
 // --- auth api ---
 function currentDateKey() {
@@ -10933,6 +11070,144 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     investorPortalAvailable: true
   });
 }));
+
+app.get('/api/site-announcements/active', auth, (req, res) => {
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const now = Date.now();
+  const stateByAnnouncementId = getUserAnnouncementStateMap(db, req.username);
+  const active = db.siteAnnouncements
+    .map(sanitizeSiteAnnouncement)
+    .filter((announcement) => isSiteAnnouncementActive(announcement, now))
+    .filter((announcement) => {
+      const seen = stateByAnnouncementId.get(announcement.id);
+      if (!seen) return true;
+      if (seen.dismissedAt) return false;
+      if (seen.acknowledgedAt) return false;
+      return true;
+    })
+    .sort((a, b) => (b.priority - a.priority) || (Date.parse(b.createdAt) - Date.parse(a.createdAt)));
+  res.json({ announcements: active });
+});
+
+app.post('/api/site-announcements/:id/dismiss', auth, (req, res) => {
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const announcement = db.siteAnnouncements.map(sanitizeSiteAnnouncement).find(item => item.id === req.params.id);
+  if (!announcement) return res.status(404).json({ error: 'Announcement not found.' });
+  const nowIso = new Date().toISOString();
+  let row = db.siteAnnouncementStates.find(item => String(item.announcementId) === announcement.id && item.userId === req.username);
+  if (!row) {
+    row = { id: crypto.randomUUID(), announcementId: announcement.id, userId: req.username, dismissedAt: nowIso, acknowledgedAt: null, createdAt: nowIso };
+    db.siteAnnouncementStates.push(row);
+  } else {
+    row.dismissedAt = nowIso;
+  }
+  saveDB(db);
+  res.json({ ok: true, dismissedAt: nowIso });
+});
+
+app.post('/api/site-announcements/:id/acknowledge', auth, (req, res) => {
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const announcement = db.siteAnnouncements.map(sanitizeSiteAnnouncement).find(item => item.id === req.params.id);
+  if (!announcement) return res.status(404).json({ error: 'Announcement not found.' });
+  const nowIso = new Date().toISOString();
+  let row = db.siteAnnouncementStates.find(item => String(item.announcementId) === announcement.id && item.userId === req.username);
+  if (!row) {
+    row = { id: crypto.randomUUID(), announcementId: announcement.id, userId: req.username, dismissedAt: null, acknowledgedAt: nowIso, createdAt: nowIso };
+    db.siteAnnouncementStates.push(row);
+  } else {
+    row.acknowledgedAt = nowIso;
+  }
+  saveDB(db);
+  res.json({ ok: true, acknowledgedAt: nowIso });
+});
+
+app.get('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const announcements = db.siteAnnouncements
+    .map(sanitizeSiteAnnouncement)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  res.json({ announcements });
+});
+
+app.post('/api/admin/site-announcements', auth, requireAdmin, (req, res) => {
+  const parsed = validateSiteAnnouncementInput(req.body || {}, { partial: false });
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error || 'Invalid announcement payload.' });
+  }
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const nowIso = new Date().toISOString();
+  const payload = parsed.data;
+  const created = sanitizeSiteAnnouncement({
+    id: crypto.randomUUID(),
+    title: String(payload.title || '').trim(),
+    body: String(payload.body || '').trim(),
+    type: payload.type || 'info',
+    priority: Number.isFinite(payload.priority) ? payload.priority : 0,
+    isPublished: payload.isPublished === true,
+    startsAt: normalizeOptionalDate(payload.startsAt),
+    endsAt: normalizeOptionalDate(payload.endsAt),
+    requireAcknowledgement: payload.requireAcknowledgement === true,
+    ctaLabel: payload.ctaLabel ? String(payload.ctaLabel).trim() : null,
+    ctaUrl: payload.ctaUrl ? String(payload.ctaUrl).trim() : null,
+    createdBy: req.username,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  });
+  db.siteAnnouncements.push(created);
+  saveDB(db);
+  res.status(201).json({ announcement: created });
+});
+
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/admin/site-announcements/:id', auth, requireAdmin, (req, res) => {
+  const parsed = validateSiteAnnouncementInput(req.body || {}, { partial: true });
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error || 'Invalid announcement payload.' });
+  }
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const index = db.siteAnnouncements.findIndex(item => String(item.id) === req.params.id);
+  if (index < 0) return res.status(404).json({ error: 'Announcement not found.' });
+  const existing = sanitizeSiteAnnouncement(db.siteAnnouncements[index]);
+  const normalizedPatch = {
+    ...parsed.data,
+    title: parsed.data.title !== undefined ? String(parsed.data.title).trim() : undefined,
+    body: parsed.data.body !== undefined ? String(parsed.data.body).trim() : undefined,
+    ctaLabel: parsed.data.ctaLabel !== undefined ? (parsed.data.ctaLabel ? String(parsed.data.ctaLabel).trim() : null) : undefined,
+    ctaUrl: parsed.data.ctaUrl !== undefined ? (parsed.data.ctaUrl ? String(parsed.data.ctaUrl).trim() : null) : undefined
+  };
+  const next = { ...existing, ...normalizedPatch };
+  const checked = validateSiteAnnouncementInput(next, { partial: false });
+  if (!checked.success) {
+    return res.status(400).json({ error: checked.error || 'Invalid announcement payload.' });
+  }
+  db.siteAnnouncements[index] = sanitizeSiteAnnouncement({
+    ...existing,
+    ...checked.data,
+    startsAt: normalizeOptionalDate(checked.data.startsAt),
+    endsAt: normalizeOptionalDate(checked.data.endsAt),
+    updatedAt: new Date().toISOString()
+  });
+  saveDB(db);
+  res.json({ announcement: db.siteAnnouncements[index] });
+});
+
+app.delete('/api/admin/site-announcements/:id', auth, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureSiteAnnouncementTables(db);
+  const before = db.siteAnnouncements.length;
+  db.siteAnnouncements = db.siteAnnouncements.filter(item => String(item.id) !== req.params.id);
+  if (db.siteAnnouncements.length === before) {
+    return res.status(404).json({ error: 'Announcement not found.' });
+  }
+  db.siteAnnouncementStates = db.siteAnnouncementStates.filter(item => String(item.announcementId) !== req.params.id);
+  saveDB(db);
+  res.json({ ok: true });
+});
 
 app.get('/api/notifications/config', auth, (req, res) => {
   const config = getNotificationConfig();

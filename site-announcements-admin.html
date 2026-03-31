@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Announcements Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <section class="card" style="margin-top:24px;">
+      <h1>Global site announcements</h1>
+      <p class="helper">Create and manage maintenance notices, warnings, and update notes.</p>
+      <p id="announcement-admin-feedback" class="helper" aria-live="polite"></p>
+      <form id="announcement-admin-form" class="modal-field" novalidate>
+        <input type="hidden" id="announcement-id">
+        <label for="announcement-title">Title</label>
+        <input id="announcement-title" required maxlength="180">
+        <label for="announcement-body">Body</label>
+        <textarea id="announcement-body" required rows="6" maxlength="12000"></textarea>
+        <div class="modal-field two-col">
+          <div>
+            <label for="announcement-type">Type</label>
+            <select id="announcement-type"><option value="maintenance">maintenance</option><option value="update">update</option><option value="warning">warning</option><option value="info" selected>info</option></select>
+          </div>
+          <div>
+            <label for="announcement-priority">Priority</label>
+            <input id="announcement-priority" type="number" min="0" max="1000" value="0">
+          </div>
+        </div>
+        <div class="modal-field two-col">
+          <div>
+            <label for="announcement-starts">Starts at</label>
+            <input id="announcement-starts" type="datetime-local">
+          </div>
+          <div>
+            <label for="announcement-ends">Ends at</label>
+            <input id="announcement-ends" type="datetime-local">
+          </div>
+        </div>
+        <div class="modal-field two-col">
+          <div>
+            <label for="announcement-cta-label">CTA label</label>
+            <input id="announcement-cta-label" maxlength="80">
+          </div>
+          <div>
+            <label for="announcement-cta-url">CTA URL</label>
+            <input id="announcement-cta-url" type="url" maxlength="2000">
+          </div>
+        </div>
+        <label><input id="announcement-published" type="checkbox"> Published</label>
+        <label><input id="announcement-require-ack" type="checkbox"> Require acknowledgement</label>
+        <div class="modal-actions">
+          <button id="announcement-form-reset" class="ghost" type="button">Reset</button>
+          <button class="primary" type="submit">Save announcement</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" style="margin-top:18px;">
+      <h2>Preview</h2>
+      <div id="announcement-preview" class="site-announcement-modal__card">
+        <span id="announcement-preview-badge" class="site-announcement-badge site-announcement-badge--info">INFO</span>
+        <h3 id="announcement-preview-title">Announcement title</h3>
+        <div id="announcement-preview-body" class="site-announcement-modal__body">Preview text.</div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:18px; margin-bottom:40px;">
+      <h2>All announcements</h2>
+      <div id="announcement-admin-list" class="stack"></div>
+    </section>
+  </main>
+  <script src="/static/app-header.js"></script>
+  <script src="/static/site-announcements-admin.js"></script>
+</body>
+</html>
