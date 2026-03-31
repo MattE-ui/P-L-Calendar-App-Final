@@ -240,6 +240,116 @@ async function api(path, opts = {}) {
   return data;
 }
 
+const SITE_ANNOUNCEMENT_SESSION_KEY = 'plc-site-announcement-shown-v1';
+
+function getShownAnnouncementIds() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(SITE_ANNOUNCEMENT_SESSION_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function markAnnouncementShown(id) {
+  const ids = new Set(getShownAnnouncementIds());
+  ids.add(String(id));
+  sessionStorage.setItem(SITE_ANNOUNCEMENT_SESSION_KEY, JSON.stringify(Array.from(ids)));
+}
+
+function ensureSiteAnnouncementModal() {
+  let root = document.getElementById('site-announcement-modal');
+  if (root) return root;
+  root = document.createElement('div');
+  root.id = 'site-announcement-modal';
+  root.className = 'modal hidden site-announcement-modal';
+  root.innerHTML = `
+    <div class="modal-card site-announcement-modal__card">
+      <div class="site-announcement-modal__head">
+        <span id="site-announcement-type" class="site-announcement-badge">Info</span>
+        <h3 id="site-announcement-title"></h3>
+      </div>
+      <div id="site-announcement-body" class="site-announcement-modal__body"></div>
+      <a id="site-announcement-cta" class="primary outline hidden" target="_blank" rel="noopener noreferrer"></a>
+      <div class="site-announcement-modal__actions">
+        <button id="site-announcement-dismiss" class="ghost" type="button">Dismiss</button>
+        <button id="site-announcement-ack" class="primary" type="button">Acknowledge</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  return root;
+}
+
+async function loadSiteAnnouncementsOnBoot() {
+  if (isGuestSession()) return;
+  try {
+    const payload = await api('/api/site-announcements/active');
+    const announcements = Array.isArray(payload?.announcements) ? payload.announcements : [];
+    const shown = new Set(getShownAnnouncementIds());
+    const queue = announcements.filter(item => !shown.has(String(item.id)));
+    if (!queue.length) return;
+    await presentAnnouncementQueue(queue);
+  } catch (error) {
+    console.warn('Site announcement load failed:', error?.message || error);
+  }
+}
+
+async function presentAnnouncementQueue(queue) {
+  let index = 0;
+  while (index < queue.length) {
+    const announcement = queue[index];
+    if (!announcement) {
+      index += 1;
+      continue;
+    }
+    await presentSingleAnnouncement(announcement);
+    markAnnouncementShown(announcement.id);
+    index += 1;
+  }
+}
+
+function presentSingleAnnouncement(announcement) {
+  const root = ensureSiteAnnouncementModal();
+  const typeEl = document.getElementById('site-announcement-type');
+  const titleEl = document.getElementById('site-announcement-title');
+  const bodyEl = document.getElementById('site-announcement-body');
+  const dismissBtn = document.getElementById('site-announcement-dismiss');
+  const ackBtn = document.getElementById('site-announcement-ack');
+  const ctaEl = document.getElementById('site-announcement-cta');
+  const needsAck = !!announcement.requireAcknowledgement;
+  root.classList.remove('hidden');
+  root.classList.toggle('site-announcement-modal--high-priority', Number(announcement.priority) >= 80);
+  typeEl.textContent = String(announcement.type || 'info').toUpperCase();
+  typeEl.className = `site-announcement-badge site-announcement-badge--${announcement.type || 'info'}`;
+  titleEl.textContent = announcement.title || 'Announcement';
+  bodyEl.textContent = announcement.body || '';
+  const hasCta = announcement.ctaLabel && announcement.ctaUrl;
+  ctaEl.classList.toggle('hidden', !hasCta);
+  if (hasCta) {
+    ctaEl.textContent = announcement.ctaLabel;
+    ctaEl.href = announcement.ctaUrl;
+  }
+  dismissBtn.classList.toggle('hidden', needsAck);
+  ackBtn.classList.toggle('hidden', !needsAck);
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      dismissBtn.onclick = null;
+      ackBtn.onclick = null;
+      root.classList.add('hidden');
+      resolve();
+    };
+    dismissBtn.onclick = async () => {
+      try { await api(`/api/site-announcements/${encodeURIComponent(announcement.id)}/dismiss`, { method: 'POST' }); } catch (_error) {}
+      cleanup();
+    };
+    ackBtn.onclick = async () => {
+      try { await api(`/api/site-announcements/${encodeURIComponent(announcement.id)}/acknowledge`, { method: 'POST' }); } catch (_error) {}
+      cleanup();
+    };
+  });
+}
+
 function startOfMonth(date) {
   const d = new Date(date);
   d.setDate(1);
@@ -4626,6 +4736,7 @@ async function init() {
   updateDevtoolsNav();
   render();
   consumePendingRiskCalculatorPrefill();
+  loadSiteAnnouncementsOnBoot();
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
     // We require core dashboard datasets (portfolio metrics, calendar data, active trades)

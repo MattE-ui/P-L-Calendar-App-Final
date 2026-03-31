@@ -45,6 +45,7 @@
         </nav>
         <div class="app-shell-actions">
           <button id="quick-settings-btn" class="ghost app-shell-action-btn" type="button">Settings</button>
+          <a id="site-announcements-admin-btn" class="ghost app-shell-action-btn is-hidden" href="/site-announcements-admin.html">Site announcements</a>
           <button id="devtools-btn" class="ghost app-shell-action-btn is-hidden" type="button">Devtools</button>
           <button id="logout-btn" class="ghost app-shell-action-btn" type="button">Logout</button>
         </div>
@@ -81,6 +82,19 @@
       if (window.innerWidth > 760) closeMobileMenu();
     });
   }
+})();
+
+(function initOwnerActions() {
+  const adminBtn = document.getElementById('site-announcements-admin-btn');
+  if (!adminBtn) return;
+  fetch('/api/profile', { credentials: 'include' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((profile) => {
+      adminBtn.classList.toggle('is-hidden', !profile?.isAdmin);
+    })
+    .catch(() => {
+      adminBtn.classList.add('is-hidden');
+    });
 })();
 
 (function initFriendRequestAlertPolling() {
