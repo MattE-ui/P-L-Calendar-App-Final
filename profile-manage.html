@@ -17,7 +17,7 @@
       <p class="helper">Update identity details, social avatar, and baseline portfolio profile fields.</p>
       <div class="manage-profile-status-strip" aria-live="polite">
         <span id="manage-profile-health-badge" class="manage-status-chip manage-status-chip--attention">Setup incomplete</span>
-        <p id="manage-profile-health-copy" class="helper">Complete key profile fields to unlock full account readiness.</p>
+        <p id="manage-profile-health-copy" class="helper manage-profile-health-copy">Complete key profile fields to unlock full account readiness.</p>
       </div>
       <nav class="manage-profile-quick-nav" aria-label="Account center sections">
         <a class="manage-profile-quick-nav__item is-active" href="/profile/manage" aria-current="page">Manage Profile</a>
@@ -25,7 +25,7 @@
         <a class="manage-profile-quick-nav__item" href="/profile/trading-accounts">Trading Accounts</a>
         <a class="manage-profile-quick-nav__item" href="/profile/automation">Automation</a>
       </nav>
-      <div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div>
+      <div class="profile-actions manage-profile-header__back"><a class="ghost" href="/profile.html">Back to Account Center</a></div>
     </section>
 
     <section class="manage-profile-grid" aria-label="Manage profile control panel">
@@ -34,12 +34,18 @@
           <h2>Identity</h2>
           <p class="helper">Primary account identity fields.</p>
         </div>
-        <div class="profile-field"><label for="manage-username">Username</label><input id="manage-username" type="text" readonly></div>
+        <div class="profile-field profile-field--readonly profile-field--structured">
+          <label for="manage-username">Username</label>
+          <div class="manage-readonly-input-wrap">
+            <input id="manage-username" type="text" readonly aria-readonly="true">
+            <span class="manage-readonly-hint" aria-hidden="true">Locked</span>
+          </div>
+        </div>
         <div class="profile-field profile-field--readonly">
           <label for="manage-email">Login email</label>
           <div class="manage-readonly-input-wrap">
             <input id="manage-email" type="text" readonly aria-readonly="true">
-            <span class="manage-readonly-hint" aria-hidden="true">🔒 Read-only</span>
+            <span class="manage-readonly-hint" aria-hidden="true">Locked</span>
           </div>
         </div>
         <div class="profile-field"><label for="manage-nickname">Nickname</label><input id="manage-nickname" type="text" maxlength="20"></div>
@@ -50,7 +56,7 @@
       <section class="card profile-card manage-profile-card" id="manage-avatar-card">
         <div class="manage-card-heading">
           <h2>Avatar</h2>
-          <p class="helper">Social presence image and initials.</p>
+          <p class="helper">Account avatar shown across profile surfaces.</p>
         </div>
         <div class="profile-avatar-controls manage-avatar-controls">
           <div id="manage-avatar-preview" class="social-avatar-slot manage-avatar-preview">VT</div>
@@ -77,6 +83,11 @@
             <span>Net deposits</span>
             <strong id="manage-summary-net">£0.00</strong>
           </article>
+          <article id="manage-summary-performance-card" class="manage-summary-item manage-summary-item--performance is-hidden">
+            <span>P/L vs deposits</span>
+            <strong id="manage-summary-performance">£0.00</strong>
+            <em id="manage-summary-performance-rate">0.00%</em>
+          </article>
         </div>
         <div class="profile-field"><label for="manage-portfolio">Current portfolio value (£)</label><input id="manage-portfolio" type="number" step="0.01" min="0"></div>
         <div class="profile-field"><label for="manage-net">Net deposits to date (£)</label><input id="manage-net" type="number" step="0.01"></div>
@@ -95,7 +106,7 @@
           <p><span>Investor mode</span><strong id="manage-summary-investor-mode">Off</strong></p>
           <p><span>Automation</span><strong id="manage-summary-automation">Configurable</strong></p>
           <p><span>Notifications</span><strong id="manage-summary-notifications">Not configured</strong></p>
-          <p><span>Last updated</span><strong id="manage-summary-last-updated">—</strong></p>
+          <p class="manage-account-summary-list__meta"><span>Last updated</span><strong id="manage-summary-last-updated">—</strong></p>
           <p><span>Portfolio sync</span><strong id="manage-summary-portfolio-sync">—</strong></p>
         </div>
       </section>
