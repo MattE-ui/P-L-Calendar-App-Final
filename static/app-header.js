@@ -43,11 +43,33 @@
             return `<a id="${item.key}-btn" class="app-shell-nav__link ${activeKey === item.key ? 'is-active' : ''}" href="${item.href}">${labelHtml}</a>`;
           }).join('')}
         </nav>
-        <div class="app-shell-actions">
-          <button id="quick-settings-btn" class="ghost app-shell-action-btn" type="button">Settings</button>
-          <a id="site-announcements-admin-btn" class="ghost app-shell-action-btn is-hidden" href="/site-announcements-admin.html">Site announcements</a>
-          <button id="devtools-btn" class="ghost app-shell-action-btn is-hidden" type="button">Devtools</button>
-          <button id="logout-btn" class="ghost app-shell-action-btn" type="button">Logout</button>
+      </div>
+      <div class="app-shell-account">
+        <button
+          id="app-shell-account-toggle"
+          class="ghost app-shell-account-toggle"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="app-shell-account-menu"
+        >
+          Account
+        </button>
+        <div id="app-shell-account-menu" class="app-shell-account-menu" role="menu" aria-label="Account menu">
+          <button id="quick-settings-btn" class="ghost app-shell-account-item" type="button" role="menuitem">Settings</button>
+          <div id="app-shell-owner-tools" class="app-shell-account-owner is-hidden">
+            <p class="app-shell-account-owner__label">Admin tools</p>
+            <a
+              id="site-announcements-admin-btn"
+              class="ghost app-shell-account-item"
+              href="/site-announcements-admin.html"
+              role="menuitem"
+            >
+              Site announcements
+            </a>
+            <button id="devtools-btn" class="ghost app-shell-account-item" type="button" role="menuitem">Devtools</button>
+          </div>
+          <button id="logout-btn" class="ghost app-shell-account-item app-shell-account-item--logout" type="button" role="menuitem">Logout</button>
         </div>
       </div>
     </div>
@@ -58,6 +80,8 @@
 
   const menuToggle = document.getElementById('app-shell-menu-toggle');
   const menuPanel = document.getElementById('app-shell-mobile-panel');
+  const accountToggle = document.getElementById('app-shell-account-toggle');
+  const accountMenu = document.getElementById('app-shell-account-menu');
 
   function closeMobileMenu() {
     if (!menuToggle || !menuPanel) return;
@@ -82,18 +106,54 @@
       if (window.innerWidth > 760) closeMobileMenu();
     });
   }
+
+  function closeAccountMenu() {
+    if (!accountToggle || !accountMenu) return;
+    accountToggle.setAttribute('aria-expanded', 'false');
+    accountMenu.classList.remove('is-open');
+  }
+
+  if (accountToggle && accountMenu) {
+    accountToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const willOpen = accountToggle.getAttribute('aria-expanded') !== 'true';
+      accountToggle.setAttribute('aria-expanded', String(willOpen));
+      accountMenu.classList.toggle('is-open', willOpen);
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!accountMenu.contains(event.target) && !accountToggle.contains(event.target)) {
+        closeAccountMenu();
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeAccountMenu();
+    });
+
+    accountMenu.addEventListener('click', (event) => {
+      if (event.target.closest('a,button')) closeAccountMenu();
+    });
+  }
 })();
 
 (function initOwnerActions() {
   const adminBtn = document.getElementById('site-announcements-admin-btn');
-  if (!adminBtn) return;
+  const devtoolsBtn = document.getElementById('devtools-btn');
+  const ownerGroup = document.getElementById('app-shell-owner-tools');
+  if (!adminBtn || !devtoolsBtn || !ownerGroup) return;
   fetch('/api/profile', { credentials: 'include' })
     .then((res) => (res.ok ? res.json() : null))
     .then((profile) => {
-      adminBtn.classList.toggle('is-hidden', !profile?.isOwner);
+      const showOwnerTools = !!profile?.isOwner;
+      adminBtn.classList.toggle('is-hidden', !showOwnerTools);
+      devtoolsBtn.classList.toggle('is-hidden', !showOwnerTools);
+      ownerGroup.classList.toggle('is-hidden', !showOwnerTools);
     })
     .catch(() => {
       adminBtn.classList.add('is-hidden');
+      devtoolsBtn.classList.add('is-hidden');
+      ownerGroup.classList.add('is-hidden');
     });
 })();
 
