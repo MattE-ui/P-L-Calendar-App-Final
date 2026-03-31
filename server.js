@@ -3392,6 +3392,9 @@ function clearSessionsForUser(db, username) {
   for (const token of tokens) {
     if (db.sessions[token] === username) {
       delete db.sessions[token];
+      if (db.sessionMetadata && typeof db.sessionMetadata === 'object') {
+        delete db.sessionMetadata[token];
+      }
     }
   }
 }
@@ -3415,6 +3418,7 @@ function auth(req, res, next) {
   const token = req.cookies?.auth_token;
   if (!token) return res.status(401).json({ error: 'Unauthenticated' });
   const db = loadDB();
+  db.sessionMetadata ||= {};
   const username = db.sessions[token];
   if (!username) return res.status(401).json({ error: 'Unauthenticated' });
   const user = db.users[username];
@@ -3434,6 +3438,13 @@ function auth(req, res, next) {
   req.username = username;
   req.user = user;
   req.isGuest = !!user.guest;
+  req.authToken = token;
+  const sessionMeta = db.sessionMetadata[token];
+  if (sessionMeta && typeof sessionMeta === 'object') {
+    sessionMeta.lastActiveAt = new Date().toISOString();
+    req.sessionMeta = sessionMeta;
+    saveDB(db);
+  }
   next();
 }
 
@@ -10180,9 +10191,16 @@ function currentDateKey() {
   return tzAdjusted.toISOString().slice(0, 10);
 }
 
-function createSession(db, username, res, maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
+function createSession(db, username, res, maxAgeMs = 7 * 24 * 60 * 60 * 1000, req = null) {
   const token = crypto.randomBytes(24).toString('hex');
   db.sessions[token] = username;
+  db.sessionMetadata ||= {};
+  db.sessionMetadata[token] = {
+    createdAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+    userAgent: req?.headers?.['user-agent'] || '',
+    ip: getClientIp(req || {})
+  };
   saveDB(db);
   res.cookie('auth_token', token, {
     httpOnly: true,
@@ -10340,7 +10358,7 @@ app.post('/api/auth/guest', asyncHandler(async (req, res) => {
     tradeJournal: {}
   };
   ensureUserShape(db.users[username], username);
-  createSession(db, username, res, GUEST_TTL_MS);
+  createSession(db, username, res, GUEST_TTL_MS, req);
   res.json({ ok: true, profileComplete: false, isGuest: true });
 }));
 
@@ -10357,7 +10375,10 @@ app.post('/api/login', async (req,res)=>{
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
   ensureUserShape(user, username);
-  createSession(db, username, res);
+  user.security ||= {};
+  user.security.lastLoginAt = new Date().toISOString();
+  createSession(db, username, res, 7 * 24 * 60 * 60 * 1000, req);
+  saveDB(db);
   res.json({ ok: true, profileComplete: !!user.profileComplete });
 });
 
@@ -10376,6 +10397,9 @@ app.post('/api/logout', (req,res)=>{
       }
     }
     delete db.sessions[token];
+    if (db.sessionMetadata && typeof db.sessionMetadata === 'object') {
+      delete db.sessionMetadata[token];
+    }
     saveDB(db);
   }
   res.clearCookie('auth_token');
@@ -12921,6 +12945,102 @@ app.post('/api/account/password', auth, async (req, res) => {
   user.passwordHash = await bcrypt.hash(newPassword, 10);
   user.security ||= {};
   user.security.passwordUpdatedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/account/security-dashboard', auth, (req, res) => {
+  const db = loadDB();
+  db.sessionMetadata ||= {};
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const sessionRows = Object.entries(db.sessions || {})
+    .filter(([, username]) => username === req.username)
+    .map(([token]) => {
+      const metadata = db.sessionMetadata[token] || {};
+      const createdAt = typeof metadata.createdAt === 'string' ? metadata.createdAt : null;
+      const lastActiveAt = typeof metadata.lastActiveAt === 'string' ? metadata.lastActiveAt : createdAt;
+      return {
+        token,
+        current: token === req.authToken,
+        createdAt,
+        lastActiveAt,
+        ip: typeof metadata.ip === 'string' ? metadata.ip : null,
+        userAgent: typeof metadata.userAgent === 'string' ? metadata.userAgent : null
+      };
+    })
+    .sort((a, b) => Date.parse(b.lastActiveAt || 0) - Date.parse(a.lastActiveAt || 0));
+
+  const activity = [];
+  if (user.security?.lastLoginAt) {
+    activity.push({ id: 'last-login', type: 'login', detail: 'Successful login', at: user.security.lastLoginAt });
+  }
+  if (user.security?.passwordUpdatedAt) {
+    activity.push({ id: 'password-updated', type: 'password', detail: 'Password changed', at: user.security.passwordUpdatedAt });
+  }
+  for (const session of sessionRows.slice(0, 5)) {
+    if (session.lastActiveAt) {
+      activity.push({
+        id: `session-${session.token.slice(0, 8)}`,
+        type: 'session',
+        detail: session.current ? 'Current session active' : 'Session activity',
+        at: session.lastActiveAt
+      });
+    }
+  }
+  activity.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
+
+  const passwordUpdatedAt = user.security?.passwordUpdatedAt || null;
+  const twoFactorEnabled = !!user.security?.twoFactorEnabled;
+  const securityStatus = twoFactorEnabled && passwordUpdatedAt ? 'good' : (passwordUpdatedAt ? 'moderate' : 'weak');
+  res.json({
+    securityStatus,
+    passwordUpdatedAt,
+    twoFactorEnabled,
+    activeSessions: sessionRows,
+    activeSessionCount: sessionRows.length,
+    lastLoginAt: user.security?.lastLoginAt || null,
+    activity: activity.slice(0, 8)
+  });
+});
+
+app.post('/api/account/security/two-factor', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const enabled = !!req.body?.enabled;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  user.security ||= {};
+  user.security.twoFactorEnabled = enabled;
+  user.security.twoFactorUpdatedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, twoFactorEnabled: enabled });
+});
+
+app.post('/api/account/security/sessions/logout', auth, (req, res) => {
+  const db = loadDB();
+  db.sessionMetadata ||= {};
+  const targetToken = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!targetToken) return res.status(400).json({ error: 'Session token is required.' });
+  if (db.sessions[targetToken] !== req.username) return res.status(404).json({ error: 'Session not found.' });
+  if (targetToken === req.authToken) return res.status(400).json({ error: 'Use regular logout for the current session.' });
+  delete db.sessions[targetToken];
+  delete db.sessionMetadata[targetToken];
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/account/security/sessions/logout-others', auth, (req, res) => {
+  const db = loadDB();
+  db.sessionMetadata ||= {};
+  for (const [token, username] of Object.entries(db.sessions || {})) {
+    if (username === req.username && token !== req.authToken) {
+      delete db.sessions[token];
+      delete db.sessionMetadata[token];
+    }
+  }
   saveDB(db);
   res.json({ ok: true });
 });
