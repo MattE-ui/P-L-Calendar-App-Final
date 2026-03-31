@@ -6138,32 +6138,42 @@ textarea {
 .broker-cards-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 9px;
 }
 
 .broker-card {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
   background: color-mix(in srgb, var(--surface-2) 92%, transparent);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
 .broker-card.is-connected {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--border) 42%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border) 58%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent),
+    0 10px 24px -20px color-mix(in srgb, var(--accent) 44%, transparent);
 }
 
 .broker-card.is-disconnected {
-  opacity: 0.88;
+  opacity: 0.92;
+}
+
+.broker-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border) 66%);
+  box-shadow: 0 10px 26px -24px color-mix(in srgb, var(--accent) 58%, transparent);
+  transform: translateY(-1px);
 }
 
 .broker-card__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -6197,7 +6207,7 @@ textarea {
   margin: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px 8px;
 }
 
 .broker-meta-grid dt {
@@ -6210,17 +6220,19 @@ textarea {
 .broker-meta-grid dd {
   margin: 2px 0 0;
   font-size: 13px;
+  line-height: 1.35;
 }
 
 .broker-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .broker-card__actions .small {
-  min-width: 104px;
+  min-width: 110px;
   text-align: center;
+  min-height: 32px;
 }
 
 .broker-connect-grid {
@@ -6230,33 +6242,73 @@ textarea {
 }
 
 .broker-connect-option {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 12px;
   background: color-mix(in srgb, var(--surface-2) 90%, transparent);
   text-align: left;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 7px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
 .broker-connect-option.is-connected {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border) 64%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.broker-connect-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border) 66%);
+  box-shadow: 0 10px 26px -24px color-mix(in srgb, var(--accent) 62%, transparent);
+  transform: translateY(-1px);
+}
+
+.broker-connect-option__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .broker-connect-option strong {
   font-size: 14px;
 }
 
-.broker-connect-option span {
+.broker-connect-option__status {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.broker-connect-option__action {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--accent) 72%, #d7ffe9 28%);
 }
 
 .status-kv-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
+}
+
+.status-kv-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.status-kv-group + .status-kv-group {
+  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  padding-top: 10px;
+}
+
+.status-kv-group__title {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .status-kv-row {
@@ -6264,8 +6316,7 @@ textarea {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  padding-bottom: 6px;
+  padding: 2px 0;
   font-size: 13px;
 }
 

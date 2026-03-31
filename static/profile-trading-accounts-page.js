@@ -30,16 +30,15 @@
 
   function syncStatusFor(brokerId) {
     if (brokerId === 'trading212') {
-      if (!state.trading212.enabled) return 'Not syncing';
-      if (state.trading212.syncInProgress) return 'Active';
+      if (!state.trading212.enabled) return 'Disconnected';
       if (state.trading212.lastStatus?.ok === false || state.trading212.lastSyncError) return 'Error';
-      if (state.trading212.lastSyncAt) return 'Active';
-      return 'Not syncing';
+      if (state.trading212.syncInProgress) return 'Active';
+      return 'Idle';
     }
-    if (!state.ibkr.enabled) return 'Not syncing';
-    if (state.ibkr.connectionStatus === 'online') return 'Active';
+    if (!state.ibkr.enabled) return 'Disconnected';
     if (state.ibkr.lastStatus?.ok === false) return 'Error';
-    return 'Not syncing';
+    if (state.ibkr.connectionStatus === 'online') return 'Active';
+    return 'Idle';
   }
 
   function accountTypeFor(brokerId, fallback) {
@@ -65,7 +64,6 @@
       card.innerHTML = `
         <header class="broker-card__head">
           <h3>${broker.name}</h3>
-          <span class="broker-pill ${connected ? 'is-on' : 'is-off'}">${connected ? 'Connected' : 'Not connected'}</span>
         </header>
         <dl class="broker-meta-grid">
           <div><dt>Connection</dt><dd>${connected ? 'Connected' : 'Not connected'}</dd></div>
@@ -74,11 +72,13 @@
           <div><dt>Last sync</dt><dd>${formatWhen(lastSync)}</dd></div>
         </dl>
         <div class="broker-card__actions">
+          ${connected
+            ? `<button type="button" class="primary small" data-action="sync-now" data-broker="${broker.id}">Sync now</button>`
+            : `<button type="button" class="primary small" data-action="connect" data-broker="${broker.id}">Connect broker</button>`}
           <a class="ghost small" href="/profile/settings">Manage</a>
           ${connected
-            ? `<button type="button" class="ghost small" data-action="sync-now" data-broker="${broker.id}">Sync now</button>
-               <button type="button" class="danger small" data-action="disconnect" data-broker="${broker.id}">Disconnect</button>`
-            : `<button type="button" class="primary small" data-action="connect" data-broker="${broker.id}">Connect</button>`}
+            ? `<button type="button" class="danger small" data-action="disconnect" data-broker="${broker.id}">Disconnect</button>`
+            : ''}
         </div>
       `;
       root.appendChild(card);
@@ -98,8 +98,11 @@
       button.dataset.action = connected ? 'manage' : 'connect';
       button.dataset.broker = broker.id;
       button.innerHTML = `
-        <strong>${broker.name}</strong>
-        <span>${connected ? 'Connected — manage integration' : 'Connect broker'}</span>
+        <div class="broker-connect-option__head">
+          <strong>${broker.name}</strong>
+          <span class="broker-connect-option__status">${connected ? 'Connected' : 'Not connected'}</span>
+        </div>
+        <span class="broker-connect-option__action">${connected ? 'Manage connection' : 'Connect broker'}</span>
       `;
       root.appendChild(button);
     });
@@ -110,40 +113,60 @@
     if (!panel) return;
     panel.innerHTML = '';
 
-    const rows = [
+    const groups = [
       {
-        label: 'Trading 212',
-        value: state.trading212.enabled
-          ? `${syncStatusFor('trading212')} · Last sync ${formatWhen(state.trading212.lastSyncAt)}`
-          : 'Not connected'
+        title: 'Broker sync states',
+        rows: [
+          {
+            label: 'Trading 212',
+            value: `${syncStatusFor('trading212')} · Last sync ${formatWhen(state.trading212.lastSyncAt)}`
+          },
+          {
+            label: 'IBKR',
+            value: `${syncStatusFor('ibkr')} · Last sync ${formatWhen(state.ibkr.lastSyncAt)}`
+          }
+        ]
       },
       {
-        label: 'IBKR',
-        value: state.ibkr.enabled
-          ? `${syncStatusFor('ibkr')} · Last sync ${formatWhen(state.ibkr.lastSyncAt)}`
-          : 'Not connected'
+        title: 'Auto-sync settings',
+        rows: [
+          {
+            label: 'Trading 212',
+            value: state.trading212.enabled ? 'Enabled' : 'Disabled'
+          },
+          {
+            label: 'IBKR',
+            value: state.ibkr.enabled ? 'Enabled' : 'Disabled'
+          }
+        ]
       },
       {
-        label: 'Auto-sync · Trading 212',
-        value: state.trading212.enabled ? 'Enabled' : 'Disabled'
-      },
-      {
-        label: 'Auto-sync · IBKR',
-        value: state.ibkr.enabled ? 'Enabled' : 'Disabled'
-      },
-      {
-        label: 'Next scheduled sync',
-        value: state.trading212.enabled && state.trading212.snapshotTime
-          ? `Trading 212 daily ${state.trading212.snapshotTime} (${state.trading212.timezone || 'Europe/London'})`
-          : 'No scheduled sync'
+        title: 'Schedule / next sync',
+        rows: [
+          {
+            label: 'Next scheduled sync',
+            value: state.trading212.enabled && state.trading212.snapshotTime
+              ? `Trading 212 daily ${state.trading212.snapshotTime} (${state.trading212.timezone || 'Europe/London'})`
+              : 'No scheduled sync'
+          }
+        ]
       }
     ];
 
-    rows.forEach((row) => {
-      const item = document.createElement('div');
-      item.className = 'status-kv-row';
-      item.innerHTML = `<span>${row.label}</span><strong>${row.value}</strong>`;
-      panel.appendChild(item);
+    groups.forEach((group) => {
+      const section = document.createElement('section');
+      section.className = 'status-kv-group';
+      const title = document.createElement('h3');
+      title.className = 'status-kv-group__title';
+      title.textContent = group.title;
+      section.appendChild(title);
+      group.rows.forEach((row) => {
+        const item = document.createElement('div');
+        item.className = 'status-kv-row';
+        item.innerHTML = `<span>${row.label}</span><strong>${row.value}</strong>`;
+        section.appendChild(item);
+      });
+      panel.appendChild(section);
     });
   }
 
