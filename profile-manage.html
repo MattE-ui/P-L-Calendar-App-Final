@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P&L Calendar - Profile setup</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  
+
+  <main class="container">
+    <div id="guest-restriction" class="guest-restriction hidden">
+      Guest mode: account settings and exports are disabled. Create an account to unlock all features.
+    </div>
+    <div class="profile-container">
+      <header class="profile-header">
+        <h1>Finish setting up your profile</h1>
+        <p class="profile-subtitle">Tell us where your portfolio stands today so we can track performance accurately.</p>
+      </header>
+      <div class="profile-grid">
+      <section class="card profile-card">
+      <header class="profile-card-header">
+        <h2>Profile Setup</h2>
+      </header>
+      <p class="profile-date" id="profile-date"></p>
+      <div class="profile-field">
+        <label for="profile-portfolio">Current portfolio value (£)</label>
+        <input id="profile-portfolio" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal" required>
+      </div>
+      <div class="profile-field" id="profile-net-total-field">
+        <label for="profile-net-deposits">Net deposits to date (£)</label>
+        <input id="profile-net-deposits" type="number" step="0.01" placeholder="0.00" inputmode="decimal" required>
+        <p class="helper" id="net-deposits-helper-initial">Include lifetime deposits minus withdrawals up to today so we can separate performance from cash movements.</p>
+        <p class="helper is-hidden" id="net-deposits-helper-existing">This running total updates automatically when you add or withdraw cash below.</p>
+      </div>
+      <div class="profile-field is-hidden" id="profile-net-delta-field">
+        <label for="profile-net-deposits-delta">Add cash adjustments (£)</label>
+        <input id="profile-net-deposits-delta" type="number" step="0.01" placeholder="0.00" inputmode="decimal">
+        <p class="helper">Enter additional deposits (positive) or withdrawals (negative) to update your total net deposits.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="profile-save" class="primary">Save and continue</button>
+        <button id="profile-logout" class="ghost">Log out</button>
+      </div>
+      <div id="profile-error" class="error"></div>
+    </section>
+    <section class="card profile-card security-card" id="account-security">
+      <header class="profile-automation-header">
+        <h2>Account &amp; security</h2>
+        <p class="helper">Update your login details. Password changes take effect immediately.</p>
+      </header>
+      <div class="profile-field">
+        <label for="account-username">Username</label>
+        <input id="account-username" type="text" readonly>
+      </div>
+      <div class="profile-field">
+        <label for="account-nickname">Nickname</label>
+        <input id="account-nickname" type="text" maxlength="20" placeholder="Optional nickname (max 20 characters)">
+        <p class="helper">Letters, numbers, and spaces only. This is separate from your login username.</p>
+      </div>
+      <div class="profile-field profile-avatar-field">
+        <label>Social avatar</label>
+        <div class="profile-avatar-controls">
+          <div id="profile-avatar-preview" class="social-avatar-slot"></div>
+          <div class="profile-avatar-actions">
+            <input id="account-avatar-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" class="hidden" aria-label="Upload avatar">
+            <button id="account-avatar-upload" class="ghost" type="button">Upload avatar</button>
+            <button id="account-avatar-remove" class="danger outline hidden" type="button">Remove avatar</button>
+            <p class="helper">JPG, PNG, or WEBP. Max 2MB.</p>
+          </div>
+        </div>
+        <div id="account-avatar-status" class="status-line is-hidden"></div>
+        <div id="account-avatar-error" class="error"></div>
+      </div>
+
+      <div class="profile-field">
+        <label for="account-password-current">Current password</label>
+        <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password">
+      </div>
+      <div class="profile-field">
+        <label for="account-password-new">New password</label>
+        <input id="account-password-new" type="password" placeholder="New password" autocomplete="new-password">
+        <p class="helper">Use at least 12 characters, including upper- and lower-case letters, a number, and a symbol.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="account-password-submit" class="ghost">Update password</button>
+      </div>
+      <div class="profile-actions">
+        <button id="account-nickname-submit" class="ghost">Update nickname</button>
+      </div>
+      <div id="account-nickname-status" class="status-line"></div>
+      <div id="account-nickname-error" class="error"></div>
+      <div id="account-security-status" class="status-line"></div>
+      <div id="account-security-error" class="error"></div>
+    </section>
+
+    <section class="card profile-card" id="trading-accounts-section">
+      <header class="profile-automation-header">
+        <h2>Trading accounts</h2>
+        <p class="helper">Track multiple broker accounts inside one profile. Keep this off to continue using a single combined account.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="trading-accounts-enabled">
+          <span>Enable multiple trading accounts</span>
+        </label>
+      </div>
+      <p class="helper">Each integration provider (Trading 212 / IBKR) can only be linked to one trading account at a time. When linked, manual current value and net deposit edits are disabled until you turn that integration off.</p>
+      <div id="trading-accounts-list" class="profile-field"></div>
+      <div class="profile-actions">
+        <button id="trading-account-add" class="ghost" type="button">Add trading account</button>
+        <button id="trading-accounts-save" class="ghost" type="button">Save trading accounts</button>
+      </div>
+      <div id="trading-accounts-status" class="status-line"></div>
+      <div id="trading-accounts-error" class="error"></div>
+    </section>
+
+    <section class="card profile-card" id="investor-section">
+      <header class="profile-automation-header">
+        <h2>Investors</h2>
+        <p class="helper">Manage view-only investor accounts and preview their portal.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="investor-accounts-enabled">
+          <span>Enable investor accounts (Master mode)</span>
+        </label>
+        <p class="helper">Turn this on to provision investor accounts and access the Investors section.</p>
+      </div>
+      <div class="profile-actions">
+        <button id="investor-accounts-save" class="ghost" type="button">Save investor account access</button>
+      </div>
+      <div id="investor-accounts-status" class="status-line"></div>
+      <div id="investor-accounts-error" class="error"></div>
+      <div id="investor-managed-content" class="is-hidden">
+      <div class="profile-field investor-create-grid">
+        <label for="investor-display-name">New investor display name</label>
+        <input id="investor-display-name" type="text" placeholder="Investor name">
+        <input id="investor-email" type="email" placeholder="Investor login email (required)">
+        <button id="investor-create-btn" class="primary" type="button">Create investor</button>
+        <div id="investor-create-error" class="error"></div>
+      </div>
+      <section class="investor-summary-row" id="investor-summary"></section>
+      <section class="investor-grid">
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Master NAV</h3></div>
+          <div class="investor-nav-stats">
+            <p>Latest NAV <strong id="investor-nav-latest">£0.00</strong></p>
+            <p>Last updated <strong id="investor-nav-last-date">—</strong></p>
+            <p>Total valuations <strong id="investor-nav-count">0</strong></p>
+          </div>
+          <button id="investor-open-valuation-modal" class="ghost" type="button">Record New NAV</button>
+          <div id="investor-valuation-error" class="error"></div>
+          <div class="investor-mini-list" id="investor-valuation-history"></div>
+        </div>
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Profit Split</h3></div>
+          <select id="investor-split-id"></select>
+          <div class="split-controls">
+            <input id="investor-split-slider" type="range" min="0" max="100" step="1" value="80">
+            <div class="inline-field">
+              <input id="investor-split-percent" type="number" min="0" max="100" step="1" value="80">
+              <span class="helper">%</span>
+            </div>
+          </div>
+          <p class="helper" id="investor-split-text">Investor receives 80% of profits · You receive 20%</p>
+          <button id="investor-split-btn" class="ghost" type="button">Save profit split</button>
+          <div id="investor-split-error" class="error"></div>
+        </div>
+        <div class="profile-field investor-control-card">
+          <div class="section-header"><h3>Add Cashflow</h3></div>
+          <input id="investor-cashflow-search" type="text" placeholder="Search investor">
+          <select id="investor-cashflow-id"></select>
+          <select id="investor-cashflow-type"><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option><option value="fee">Fee</option></select>
+          <input id="investor-cashflow-amount" type="number" step="0.01" min="0.01" placeholder="Amount (£)">
+          <input id="investor-cashflow-date" type="date">
+          <input id="investor-cashflow-reference" type="text" placeholder="Reference (optional)">
+          <button id="investor-cashflow-btn" class="ghost" type="button">Add cashflow</button>
+          <div id="investor-cashflow-error" class="error"></div>
+          <div class="investor-mini-list" id="investor-cashflow-ledger"></div>
+        </div>
+      </section>
+      <div class="investor-table-wrap" id="investor-list"></div>
+      <div id="investor-preview-error" class="error"></div>
+      <div id="investor-status" class="helper"></div>
+      <div id="investor-error" class="error"></div>
+      </div>
+      </section>
+      </div>
+
+    <div id="investor-valuation-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Record New NAV</h3>
+          <button id="investor-valuation-close" class="ghost" type="button">Close</button>
+        </div>
+        <div class="modal-field">
+          <label for="investor-valuation-date">Date</label>
+          <input id="investor-valuation-date" type="date">
+        </div>
+        <div class="modal-field">
+          <label for="investor-valuation-nav">NAV (£)</label>
+          <input id="investor-valuation-nav" type="number" step="0.01" min="0.01" placeholder="NAV">
+        </div>
+        <button id="investor-valuation-btn" class="primary" type="button">Save NAV</button>
+      </div>
+    </div>
+
+    <div id="investor-delete-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Delete cashflow</h3>
+          <button id="investor-delete-close" class="ghost" type="button">Close</button>
+        </div>
+        <p class="helper">This action cannot be undone.</p>
+        <div class="modal-actions">
+          <button id="investor-delete-confirm" class="danger" type="button">Delete cashflow</button>
+          <button id="investor-delete-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="investor-cashflow-edit-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Edit cashflow</h3>
+          <button id="investor-cashflow-edit-close" class="ghost" type="button">Close</button>
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-type">Type</label>
+          <select id="investor-cashflow-edit-type"><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option><option value="fee">Fee</option></select>
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-amount">Amount (£)</label>
+          <input id="investor-cashflow-edit-amount" type="number" step="0.01" min="0.01">
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-date">Date</label>
+          <input id="investor-cashflow-edit-date" type="date">
+        </div>
+        <div class="modal-field">
+          <label for="investor-cashflow-edit-reference">Reference</label>
+          <input id="investor-cashflow-edit-reference" type="text" placeholder="Reference (optional)">
+        </div>
+        <div id="investor-cashflow-edit-error" class="error"></div>
+        <div class="modal-actions">
+          <button id="investor-cashflow-edit-save" class="primary" type="button">Save changes</button>
+          <button id="investor-cashflow-edit-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="investor-invite-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>Investor invite link</h3>
+          <button id="investor-invite-close" class="ghost" type="button">Close</button>
+        </div>
+        <p class="helper">Share this single-use activation link with the investor. It expires in 72 hours.</p>
+        <div class="modal-field">
+          <label for="investor-invite-link">Invite URL</label>
+          <input id="investor-invite-link" type="text" readonly>
+        </div>
+        <button id="investor-invite-copy" class="primary" type="button">Copy link</button>
+      </div>
+    </div>
+
+    <section class="card profile-card automation-card" id="automation-card">
+      <header class="profile-automation-header">
+        <div class="profile-automation-title">
+          <h2>Trading 212 automation</h2>
+          <button id="t212-help-btn" class="ghost info-btn" type="button" aria-label="How to set up Trading 212 integration">i</button>
+        </div>
+        <p class="helper">Automatically pull your daily portfolio value and cash movements from Trading 212 so your calendar updates itself.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="t212-enabled">
+          <span>Enable Trading 212 sync</span>
+        </label>
+      </div>
+      <div id="t212-fields" class="integration-fields">
+        <div class="profile-field">
+          <label>Trading 212 API keys</label>
+          <div id="t212-accounts" class="t212-accounts"></div>
+          <button id="t212-add-account" class="ghost small" type="button">Add another account</button>
+          <p class="helper">Add one API key + secret per Trading 212 account (Invest, CFD, ISA). We’ll merge the data together.</p>
+        </div>
+        <div class="profile-field">
+          <label for="t212-mode">Account</label>
+          <select id="t212-mode">
+            <option value="live">Live account</option>
+            <option value="practice">Practice (Invest/ISA demo)</option>
+          </select>
+        </div>
+      </div>
+      <section class="integration-instructions">
+        <h3>How to set it up</h3>
+        <p>This integration pulls portfolio value, open positions, and deposit/withdrawal history from Trading 212.</p>
+        <ol>
+          <li>Open Trading 212 in a browser and generate an API key under <strong>Settings → API</strong>.</li>
+          <li>Enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong> when creating the key.</li>
+          <li>Paste each API key + secret above (one per account), select <strong>Live</strong> or <strong>Practice</strong>, then save.</li>
+          <li>Use <strong>Run sync now</strong> to confirm the connection.</li>
+        </ol>
+      </section>
+      <div class="profile-actions integration-actions">
+        <button id="t212-save" class="primary">Save Trading 212 settings</button>
+        <button id="t212-run-now" class="ghost">Run sync now</button>
+      </div>
+      <div id="t212-error" class="error"></div>
+      <p id="t212-status" class="status-line"></p>
+      <button id="t212-raw-btn" class="ghost info-btn is-hidden" type="button">View raw JSON</button>
+    </section>
+    <section class="card profile-card automation-card" id="ibkr-card">
+      <header class="profile-automation-header">
+        <div class="profile-automation-title">
+          <h2>Interactive Brokers (IBKR)</h2>
+        </div>
+        <p class="helper">Connect IBKR via the Client Portal Gateway to sync portfolio value, positions, and active stop orders.</p>
+      </header>
+      <div class="profile-field toggle-field">
+        <label class="toggle">
+          <input type="checkbox" id="ibkr-enabled">
+          <span>Enable IBKR sync</span>
+        </label>
+        <p class="helper">Run the local connector on your machine to sync IBKR data.</p>
+      </div>
+      <div id="ibkr-fields" class="integration-fields">
+        <div class="profile-field">
+          <label>Connected account</label>
+          <div id="ibkr-account-id" class="read-only-field">Not connected</div>
+        </div>
+        <div class="profile-field">
+          <label>Portfolio currency</label>
+          <div id="ibkr-root-currency" class="read-only-field">—</div>
+        </div>
+        <div class="profile-field">
+          <label>Latest portfolio value</label>
+          <div id="ibkr-portfolio-value" class="read-only-field">—</div>
+        </div>
+      </div>
+      <section class="integration-download">
+        <h3>Download Veracity IBKR Connector (Windows)</h3>
+        <p class="helper">Single-download installer for the tray app + connector. Runs locally on your machine.</p>
+        <div class="download-row">
+          <button id="ibkr-download-installer" class="primary" type="button">Download Veracity IBKR Connector (Windows)</button>
+          <div class="download-meta">
+            <p><span class="label">Version</span> <span id="ibkr-installer-version">—</span></p>
+            <p><span class="label">Published</span> <span id="ibkr-installer-published">—</span></p>
+            <p><span class="label">Size</span> <span id="ibkr-installer-size">—</span></p>
+            <a id="ibkr-installer-notes-link" class="helper" href="#" target="_blank" rel="noopener">Release notes</a>
+          </div>
+        </div>
+        <div class="download-hash">
+          <span class="label">SHA256</span>
+          <code id="ibkr-installer-sha">—</code>
+          <button id="ibkr-copy-sha" class="ghost" type="button">Copy</button>
+          <span class="helper" title="Verify the installer before running it to ensure integrity.">Why?</span>
+        </div>
+      </section>
+      <section class="integration-accordion">
+        <details open>
+          <summary>What this does</summary>
+          <p>The connector runs on your machine, connects to the IBKR Client Portal Gateway, and syncs portfolio value, positions, and active stop orders to Veracity.</p>
+        </details>
+        <details>
+          <summary>Setup steps</summary>
+          <ol>
+            <li>Download and install the Veracity IBKR Connector (Windows).</li>
+            <li>Download and install the IBKR Client Portal Gateway directly from IBKR.</li>
+            <li>Open the tray app and set the gateway folder path.</li>
+            <li>Launch the gateway and complete IBKR login + 2FA.</li>
+            <li>Generate a one-time connector token below and paste it into the tray app.</li>
+            <li>Keep the tray app running to maintain sync.</li>
+          </ol>
+          <p class="helper">IBKR Gateway download: <a href="https://www.interactivebrokers.com/en/trading/ib-api.php" target="_blank" rel="noopener">Interactive Brokers API page</a></p>
+        </details>
+        <details>
+          <summary>Security &amp; privacy</summary>
+          <ul>
+            <li>The token is one-time and exchanged for a connector key stored locally.</li>
+            <li>Connector keys are stored locally on your machine and never sent back to the UI.</li>
+            <li>Veracity never stores IBKR credentials.</li>
+          </ul>
+        </details>
+        <details>
+          <summary>Troubleshooting</summary>
+          <ul>
+            <li>401 / Invalid key: generate a new token and paste it into the tray app.</li>
+            <li>Gateway not authenticated: open https://localhost:5000 and login + 2FA.</li>
+            <li>Port 5000 in use: update the gateway config and tray settings.</li>
+          </ul>
+        </details>
+      </section>
+      <div class="profile-field">
+        <label for="ibkr-connector-token">Connector token</label>
+        <div class="inline-field">
+          <input id="ibkr-connector-token" type="text" readonly placeholder="Generate a token to connect your local agent">
+          <button id="ibkr-generate-token" class="ghost" type="button">Generate connector token</button>
+          <button id="ibkr-copy-token" class="ghost" type="button" disabled>Copy</button>
+        </div>
+        <p class="helper" id="ibkr-token-warning">This token is shown only once and is exchanged for a connector key stored on your machine.</p>
+      </div>
+      <div class="profile-actions integration-actions">
+        <button id="ibkr-sync" class="ghost">Refresh status</button>
+        <button id="ibkr-revoke" class="ghost danger" type="button">Revoke connector key</button>
+      </div>
+      <div id="ibkr-error" class="error"></div>
+      <p id="ibkr-connector-banner" class="status-line"></p>
+      <p id="ibkr-status" class="status-line"></p>
+    </section>
+    <section class="card profile-card" id="notification-settings-section">
+      <header class="profile-automation-header">
+        <h2>Notifications</h2>
+        <p class="helper">OS-level push notifications for desktop, Android, and iPhone/iPad Home Screen apps.</p>
+      </header>
+      <div id="notification-support-message" class="helper"></div>
+      <div id="notification-device-meta" class="read-only-field">Detecting device...</div>
+      <div class="profile-actions">
+        <button id="notification-enable-btn" class="primary" type="button">Enable notifications</button>
+        <button id="notification-reregister-btn" class="ghost" type="button">Re-register token</button>
+        <button id="notification-disable-btn" class="ghost danger" type="button">Disable on this device</button>
+      </div>
+      <div class="profile-field toggle-field">
+        <label class="toggle"><input id="notif-master-enabled" type="checkbox"><span>Enable notifications on this device</span></label>
+        <label class="toggle"><input id="notif-criticalRiskAlerts" type="checkbox"><span>Critical risk alerts</span></label>
+        <label class="toggle"><input id="notif-tradeAlerts" type="checkbox"><span>Trade alerts</span></label>
+        <label class="toggle"><input id="notif-tradeGroupAlerts" type="checkbox"><span>Trade group alerts</span></label>
+        <label class="toggle"><input id="notif-socialInvestorNotifications" type="checkbox"><span>Social / investor notifications</span></label>
+        <label class="toggle"><input id="notif-brokerSyncFailures" type="checkbox"><span>Broker sync / integration failures</span></label>
+        <label class="toggle"><input id="notif-dailyRecap" type="checkbox"><span>Daily recap notifications</span></label>
+        <label class="toggle"><input id="notif-soundEnabled" type="checkbox"><span>Sound enabled (browser dependent)</span></label>
+      </div>
+      <div class="profile-actions">
+        <button id="notification-save-prefs-btn" class="ghost" type="button">Save preferences</button>
+        <button id="notification-test-btn" class="ghost" type="button">Send test notification</button>
+      </div>
+      <div class="helper">Test notification checks delivery to currently saved server-side devices only; it is not a substitute for successful registration.</div>
+      <div id="notification-status" class="status-line"></div>
+      <div id="notification-error" class="error"></div>
+      <div id="notification-debug-panel" class="helper">
+        <strong>Registration debug:</strong>
+        <span id="notification-debug-step">idle</span>
+        <span id="notification-debug-error"></span>
+        <div id="notification-debug-delete">Delete result: none · Auto re-register detected: No · Last register trigger: none</div>
+      </div>
+      <div id="notification-devices-list" class="investor-mini-list"></div>
+      <div id="notification-ios-onboarding" class="helper is-hidden">
+        iPhone/iPad web push requires Veracity installed as a Home Screen app.<br>
+        1) Tap Share → 2) Add to Home Screen → 3) Open Veracity from Home Screen icon → 4) Enable notifications.
+      </div>
+    </section>
+      <section class="card profile-card danger-zone" id="profile-reset-card">
+      <header class="profile-automation-header">
+        <h2>Reset your data</h2>
+        <p class="helper">Remove your account, portfolio history, deposits, and integration settings from this server.</p>
+      </header>
+      <p class="helper">This action permanently deletes your stored data, including anything kept on the persistent disk. You'll need to sign up again to use the app afterwards.</p>
+      <div class="profile-actions">
+        <button id="profile-reset" class="danger">Delete everything</button>
+      </div>
+      <div id="profile-reset-error" class="error"></div>
+    </section>
+    </div>
+  </main>
+  <div id="quick-settings-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Quick settings</h3>
+      <div class="modal-field">
+        <label for="qs-risk-select">Default risk per trade</label>
+        <select id="qs-risk-select">
+          <option value="0.1">0.1%</option>
+          <option value="0.25">0.25%</option>
+          <option value="0.5">0.5%</option>
+          <option value="1">1%</option>
+          <option value="2">2%</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="qs-currency-select">Default currency</label>
+        <select id="qs-currency-select">
+          <option value="GBP">GBP (£)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="save-qs-btn" class="primary">Save</button>
+        <button id="close-qs-btn" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="t212-help-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 setup steps</h3>
+        <button id="t212-help-close" class="ghost close-btn" aria-label="Close Trading 212 help">✕</button>
+      </div>
+      <ol class="helper-list">
+        <li>Log in to Trading 212 on web and open <strong>Settings → API</strong>.</li>
+        <li>Create a new API key and enable access for <strong>Portfolio value</strong>, <strong>Balance &amp; cash</strong>, and <strong>Transactions</strong>.</li>
+        <li>Copy the API key (and secret, if shown). Paste them into the fields above (add multiple keys if you have more than one account).</li>
+        <li>Select <strong>Live</strong> or <strong>Practice</strong> to match your Trading 212 account.</li>
+        <li>Keep the base URL blank unless Trading 212 instructs otherwise. Use the default endpoint unless they provide a different path.</li>
+        <li>Pick a snapshot time (Europe/London). The app will sync daily at that time.</li>
+        <li>Toggle <strong>Enable Trading 212 sync</strong> on, then click <strong>Save Trading 212 settings</strong>.</li>
+        <li>Use <strong>Run sync now</strong> to test the connection and confirm the status message updates.</li>
+      </ol>
+    </div>
+  </div>
+  <div id="t212-raw-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Trading 212 raw response</h3>
+        <button id="t212-raw-close" class="ghost close-btn" aria-label="Close raw JSON">✕</button>
+      </div>
+      <pre id="t212-raw-content" class="raw-json"></pre>
+    </div>
+  </div>
+  <div id="avatar-editor-modal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card avatar-editor-card">
+      <div class="modal-header">
+        <h3>Frame avatar</h3>
+        <button id="avatar-editor-close" class="ghost" type="button">Close</button>
+      </div>
+      <p class="helper">Position your image for a circular avatar preview. The saved output is a square image optimized for web display.</p>
+      <div class="avatar-editor-stage-wrap">
+        <canvas id="avatar-editor-canvas" class="avatar-editor-canvas" width="320" height="320"></canvas>
+      </div>
+      <div class="avatar-editor-controls">
+        <label for="avatar-editor-zoom">Zoom</label>
+        <input id="avatar-editor-zoom" type="range" min="1" max="3" step="0.01" value="1">
+      </div>
+      <div id="avatar-editor-error" class="error"></div>
+      <div class="modal-actions avatar-editor-actions">
+        <button id="avatar-editor-cancel" class="ghost" type="button">Cancel</button>
+        <button id="avatar-editor-save" class="primary" type="button">Save avatar</button>
+      </div>
+    </div>
+  </div>
+  <script src="static/theme-utils.js"></script>
+  <script src="static/social-avatar.js"></script>
+  <script src="static/app-header.js"></script>
+  <script src="static/guest.js"></script>
+  <script>window.__INVESTOR_PORTAL__ = __INVESTOR_PORTAL__;</script>
+  <script src="static/profile.js"></script>
+</body>
+</html>
