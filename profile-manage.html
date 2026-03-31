@@ -15,6 +15,16 @@
       <p class="profile-hub-summary__eyebrow">Account center</p>
       <h1 id="section-title">Manage Profile</h1>
       <p class="helper">Update identity details, social avatar, and baseline portfolio profile fields.</p>
+      <div class="manage-profile-status-strip" aria-live="polite">
+        <span id="manage-profile-health-badge" class="manage-status-chip manage-status-chip--attention">Setup incomplete</span>
+        <p id="manage-profile-health-copy" class="helper">Complete key profile fields to unlock full account readiness.</p>
+      </div>
+      <nav class="manage-profile-quick-nav" aria-label="Account center sections">
+        <a class="manage-profile-quick-nav__item is-active" href="/profile/manage" aria-current="page">Manage Profile</a>
+        <a class="manage-profile-quick-nav__item" href="/profile/security">Security</a>
+        <a class="manage-profile-quick-nav__item" href="/profile/trading-accounts">Trading Accounts</a>
+        <a class="manage-profile-quick-nav__item" href="/profile/automation">Automation</a>
+      </nav>
       <div class="profile-actions"><a class="ghost" href="/profile.html">Back to Account Center</a></div>
     </section>
 
@@ -25,7 +35,13 @@
           <p class="helper">Primary account identity fields.</p>
         </div>
         <div class="profile-field"><label for="manage-username">Username</label><input id="manage-username" type="text" readonly></div>
-        <div class="profile-field"><label for="manage-email">Account email</label><input id="manage-email" type="text" readonly></div>
+        <div class="profile-field profile-field--readonly">
+          <label for="manage-email">Login email</label>
+          <div class="manage-readonly-input-wrap">
+            <input id="manage-email" type="text" readonly aria-readonly="true">
+            <span class="manage-readonly-hint" aria-hidden="true">🔒 Read-only</span>
+          </div>
+        </div>
         <div class="profile-field"><label for="manage-nickname">Nickname</label><input id="manage-nickname" type="text" maxlength="20"></div>
         <div class="profile-actions"><button id="manage-save-nickname" class="primary" type="button">Save nickname</button></div>
         <div id="manage-identity-status" class="status-line"></div>
@@ -77,8 +93,10 @@
           <p><span>Profile status</span><strong id="manage-summary-profile-status">Incomplete</strong></p>
           <p><span>Trading accounts</span><strong id="manage-summary-trading-count">0</strong></p>
           <p><span>Investor mode</span><strong id="manage-summary-investor-mode">Off</strong></p>
-          <p><span>Notifications</span><strong id="manage-summary-notifications">Unknown</strong></p>
+          <p><span>Automation</span><strong id="manage-summary-automation">Configurable</strong></p>
+          <p><span>Notifications</span><strong id="manage-summary-notifications">Not configured</strong></p>
           <p><span>Last updated</span><strong id="manage-summary-last-updated">—</strong></p>
+          <p><span>Portfolio sync</span><strong id="manage-summary-portfolio-sync">—</strong></p>
         </div>
       </section>
     </section>
