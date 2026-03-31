@@ -7212,15 +7212,49 @@ textarea {
 }
 
 .social-overview-group-feed {
-  max-height: 390px;
+  position: relative;
+  max-height: 332px;
   overflow-y: auto;
-  padding-right: 6px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-right: 0;
+}
+
+.social-overview-group-feed::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.social-overview-group-feed::after {
+  content: '';
+  position: sticky;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: block;
+  height: 22px;
+  margin-top: -22px;
+  background: linear-gradient(180deg, rgba(8, 10, 13, 0), rgba(8, 10, 13, 0.9));
+  pointer-events: none;
 }
 
 .social-list-row--activity {
   align-items: flex-start;
-  padding: 10px 11px;
+  padding: 10px;
+  border-left: 2px solid rgba(148, 163, 184, 0.3);
   transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
+}
+
+.social-list-row--activity.social-list-row--activity-buy {
+  border-left-color: rgba(52, 211, 153, 0.75);
+}
+
+.social-list-row--activity.social-list-row--activity-sell {
+  border-left-color: rgba(248, 113, 113, 0.75);
+}
+
+.social-list-row--activity.social-list-row--activity-announcement {
+  border-left-color: rgba(96, 165, 250, 0.75);
 }
 
 .social-list-row--activity:hover {
@@ -7233,7 +7267,7 @@ textarea {
   flex: 1;
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 
 .social-activity-top {
@@ -7249,46 +7283,69 @@ textarea {
 }
 
 .social-activity-badge {
-  border: 1px solid rgba(79, 209, 167, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.4);
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 2px 8px;
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #9bf6d4;
+  color: #cbd5e1;
+  background: rgba(51, 65, 85, 0.35);
 }
 
-.social-activity-badge.is-closed {
+.social-activity-badge.is-buy {
+  color: #9bf6d4;
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(5, 150, 105, 0.22);
+}
+
+.social-activity-badge.is-sell {
   color: #fecaca;
-  border-color: rgba(248, 113, 113, 0.45);
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(153, 27, 27, 0.2);
 }
 
 .social-activity-badge.is-announcement {
   color: #bfdbfe;
-  border-color: rgba(96, 165, 250, 0.42);
+  border-color: rgba(96, 165, 250, 0.5);
+  background: rgba(30, 64, 175, 0.22);
+}
+
+.social-activity-badge.is-update {
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(51, 65, 85, 0.35);
 }
 
 .social-activity-ticker {
   display: inline-flex;
   width: fit-content;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border) 48%);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  font-size: 11px;
+  border: 1px solid rgba(79, 209, 167, 0.35);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
 }
 
+.social-activity-message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .social-activity-price-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 8px;
   font-size: 12px;
   color: var(--text);
 }
 
 .social-activity-label {
+  margin-right: 4px;
   color: var(--text-muted);
 }
 
@@ -7299,6 +7356,12 @@ textarea {
   gap: 8px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.social-size-alert-btn--compact {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 8px;
 }
 
 @media (max-width: 1100px) {
