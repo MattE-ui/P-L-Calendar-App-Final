@@ -48,7 +48,8 @@ const state = {
   manualStopOverride: false,
   lastUserInteractionAt: 0,
   hasPendingBackgroundRender: false,
-  backgroundRefreshInFlight: false
+  backgroundRefreshInFlight: false,
+  weeklyRecapLast: null
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -238,6 +239,90 @@ async function api(path, opts = {}) {
     clearGuestMode();
   }
   return data;
+}
+
+function fmtMoney(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe)) return '—';
+  return `£${safe.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtPct(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe)) return '—';
+  const sign = safe > 0 ? '+' : '';
+  return `${sign}${safe.toFixed(2)}%`;
+}
+
+function recapStatusClass(netPnlGBP) {
+  const value = Number(netPnlGBP);
+  if (value > 0) return { label: 'Positive', cls: 'pos' };
+  if (value < 0) return { label: 'Negative', cls: 'neg' };
+  return { label: 'Flat', cls: 'flat' };
+}
+
+function renderWeeklyRecapBody(recap) {
+  const content = $('#weekly-recap-content');
+  if (!content) return;
+  if (!recap) {
+    content.innerHTML = `
+      <div class="weekly-recap-highlight">
+        <strong>No recap generated yet</strong>
+        <p class="tool-note">Generate the latest completed week recap to preview this feature during development.</p>
+      </div>`;
+    return;
+  }
+  const metrics = recap.metrics || {};
+  const status = recapStatusClass(metrics.netPnlGBP);
+  const title = $('#weekly-recap-title');
+  if (title) title.textContent = metrics.weekLabel || recap.weekLabel || 'Weekly recap';
+  const best = metrics.bestTrade;
+  const worst = metrics.worstTrade;
+  const renderHighlight = (label, item) => {
+    if (!item) return `<div class="weekly-recap-highlight"><strong>${label}</strong><div class="tool-note">No trade</div></div>`;
+    return `<div class="weekly-recap-highlight">
+      <strong>${label}</strong>
+      <div>${item.ticker || '—'} · ${item.direction || 'LONG'} · ${fmtMoney(item.realizedPnlGBP)}</div>
+      <div class="tool-note">${item.closeDate || '—'}</div>
+    </div>`;
+  };
+  content.innerHTML = `
+    <div class="weekly-recap-topline">
+      <div>
+        <div class="tool-note">${metrics.weekStart || ''} → ${metrics.weekEnd || ''}</div>
+        <div style="font-size:22px;font-weight:700;">${fmtMoney(metrics.netPnlGBP)} <span class="tool-note">(${fmtPct(metrics.netPnlPct)})</span></div>
+      </div>
+      <span class="weekly-chip ${status.cls}">${status.label}</span>
+    </div>
+    <div class="weekly-recap-stat-grid">
+      <div class="weekly-recap-tile"><span>Closed trades</span><strong>${metrics.closedTrades ?? 0}</strong></div>
+      <div class="weekly-recap-tile"><span>Win rate</span><strong>${fmtPct(metrics.winRatePct)}</strong></div>
+      <div class="weekly-recap-tile"><span>Average winner</span><strong>${fmtMoney(metrics.averageWinnerGBP)}</strong></div>
+      <div class="weekly-recap-tile"><span>Average loser</span><strong>${fmtMoney(metrics.averageLoserGBP)}</strong></div>
+      <div class="weekly-recap-tile"><span>Total gains</span><strong>${fmtMoney(metrics.totalRealisedGainsGBP)}</strong></div>
+      <div class="weekly-recap-tile"><span>Total losses</span><strong>${fmtMoney(metrics.totalRealisedLossesGBP)}</strong></div>
+    </div>
+    <div class="weekly-recap-highlights">
+      ${renderHighlight('Best trade', best)}
+      ${renderHighlight('Worst trade', worst)}
+    </div>
+    <div class="weekly-recap-highlight"><strong>Weekly insight</strong><div>${recap.notes || 'More recap insights coming soon.'}</div></div>
+  `;
+}
+
+async function openWeeklyRecapModal() {
+  const modal = $('#weekly-recap-modal');
+  if (!modal) return;
+  const content = $('#weekly-recap-content');
+  if (content) content.innerHTML = '<div class="tool-note">Loading weekly recap…</div>';
+  modal.classList.remove('hidden');
+  try {
+    const response = await api('/api/weekly-recap/latest');
+    state.weeklyRecapLast = response?.recap || null;
+    renderWeeklyRecapBody(state.weeklyRecapLast);
+  } catch (error) {
+    if (content) content.innerHTML = `<div class="error">${error?.message || 'Failed to load recap.'}</div>`;
+  }
 }
 
 const SITE_ANNOUNCEMENT_SESSION_KEY = 'plc-site-announcement-shown-v1';
@@ -3960,6 +4045,23 @@ function bindControls() {
   $('#active-trade-show-all')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
   });
+  $('#weekly-recap-view-last-btn')?.addEventListener('click', () => {
+    openWeeklyRecapModal();
+  });
+  $('#weekly-recap-close-btn')?.addEventListener('click', () => {
+    $('#weekly-recap-modal')?.classList.add('hidden');
+  });
+  $('#weekly-recap-generate-btn')?.addEventListener('click', async () => {
+    const content = $('#weekly-recap-content');
+    if (content) content.innerHTML = '<div class="tool-note">Generating latest recap…</div>';
+    try {
+      const response = await api('/api/weekly-recap/generate-latest', { method: 'POST' });
+      state.weeklyRecapLast = response?.recap || null;
+      renderWeeklyRecapBody(state.weeklyRecapLast);
+    } catch (error) {
+      if (content) content.innerHTML = `<div class="error">${error?.message || 'Unable to generate recap.'}</div>`;
+    }
+  });
   const sortBlocks = $$('#active-trades-card .trade-sort');
   if (sortBlocks.length > 1) {
     sortBlocks.slice(0, -1).forEach(block => block.remove());
@@ -4516,6 +4618,7 @@ function bindControls() {
       $('#mobile-day-modal')?.classList.add('hidden');
       $('#edit-trade-modal')?.classList.add('hidden');
       $('#close-trade-modal')?.classList.add('hidden');
+      $('#weekly-recap-modal')?.classList.add('hidden');
       closeShareCardModal();
     }
   });
