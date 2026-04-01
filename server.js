@@ -106,6 +106,10 @@ const TWO_FACTOR_ENCRYPTION_KEY = process.env.TWO_FACTOR_ENCRYPTION_KEY || proce
 const TWO_FACTOR_ISSUER = process.env.TWO_FACTOR_ISSUER || 'Veracity Trading Suite';
 const TWO_FACTOR_VERIFY_RATE_LIMIT_MAX = Number(process.env.TWO_FACTOR_VERIFY_RATE_LIMIT_MAX) || 5;
 const TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS = Number(process.env.TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS) || (5 * 60 * 1000);
+const TWO_FACTOR_TOTP_ALGORITHM = 'SHA1';
+const TWO_FACTOR_TOTP_DIGITS = 6;
+const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
+const TWO_FACTOR_TOTP_WINDOW_STEPS = 1;
 const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
 const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
 const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
@@ -6083,7 +6087,7 @@ function generateTotpSecret() {
 function buildOtpAuthUrl(secret, username) {
   const label = encodeURIComponent(`${TWO_FACTOR_ISSUER}:${username}`);
   const issuer = encodeURIComponent(TWO_FACTOR_ISSUER);
-  return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+  return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=${TWO_FACTOR_TOTP_ALGORITHM}&digits=${TWO_FACTOR_TOTP_DIGITS}&period=${TWO_FACTOR_TOTP_PERIOD_SECONDS}`;
 }
 
 async function generateTwoFactorQrDataUrl(otpauthUrl) {
@@ -6110,19 +6114,48 @@ function generateTotpToken(secret, counter) {
     | ((hmac[offset + 1] & 0xff) << 16)
     | ((hmac[offset + 2] & 0xff) << 8)
     | (hmac[offset + 3] & 0xff);
-  return String(binary % 1000000).padStart(6, '0');
+  return String(binary % (10 ** TWO_FACTOR_TOTP_DIGITS)).padStart(TWO_FACTOR_TOTP_DIGITS, '0');
 }
 
 function verifyTotpCode(secret, token) {
   const normalized = String(token || '').trim();
-  if (!/^\\d{6}$/.test(normalized)) return false;
-  const nowCounter = Math.floor(Date.now() / 1000 / 30);
-  for (let offset = -1; offset <= 1; offset += 1) {
+  if (!/^\d{6}$/.test(normalized)) return false;
+  const nowCounter = Math.floor(Date.now() / 1000 / TWO_FACTOR_TOTP_PERIOD_SECONDS);
+  for (let offset = -TWO_FACTOR_TOTP_WINDOW_STEPS; offset <= TWO_FACTOR_TOTP_WINDOW_STEPS; offset += 1) {
     if (generateTotpToken(secret, nowCounter + offset) === normalized) {
       return true;
     }
   }
   return false;
+}
+
+function getSecretDebugFingerprint(secret) {
+  const normalized = String(secret || '').trim().toUpperCase();
+  if (!normalized) return { present: false, length: 0, prefix: '', suffix: '', sha256Prefix: '' };
+  return {
+    present: true,
+    length: normalized.length,
+    prefix: normalized.slice(0, 4),
+    suffix: normalized.slice(-4),
+    sha256Prefix: crypto.createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 12)
+  };
+}
+
+function getTotpRuntimeDebug() {
+  const nowMs = Date.now();
+  const nowSeconds = Math.floor(nowMs / 1000);
+  return {
+    serverNowIso: new Date(nowMs).toISOString(),
+    serverNowEpochSeconds: nowSeconds,
+    serverTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown',
+    totpCounter: Math.floor(nowSeconds / TWO_FACTOR_TOTP_PERIOD_SECONDS),
+    totpParams: {
+      algorithm: TWO_FACTOR_TOTP_ALGORITHM,
+      digits: TWO_FACTOR_TOTP_DIGITS,
+      periodSeconds: TWO_FACTOR_TOTP_PERIOD_SECONDS,
+      windowSteps: TWO_FACTOR_TOTP_WINDOW_STEPS
+    }
+  };
 }
 
 function normalizeTrading212Symbol(raw) {
@@ -10999,6 +11032,13 @@ app.post('/api/login/2fa', async (req, res) => {
   const challengeId = typeof req.body?.challengeId === 'string' ? req.body.challengeId : '';
   const code = typeof req.body?.code === 'string' ? req.body.code.trim().replace(/\s+/g, '') : '';
   const method = req.body?.method === 'backup_code' ? 'backup_code' : 'totp';
+  console.info('[2FA] Login verify request received.', {
+    challengeIdPresent: !!challengeId,
+    method,
+    codeLength: code.length,
+    codeLooksNumeric: /^\d+$/.test(code),
+    ...getTotpRuntimeDebug()
+  });
   if (!challengeId || !code) return res.status(400).json({ error: 'Challenge and code are required.' });
   const db = loadDB();
   ensureTwoFactorTables(db);
@@ -11026,6 +11066,10 @@ app.post('/api/login/2fa', async (req, res) => {
     }
   } else {
     const secret = decryptTwoFactorSecret(user.security.twoFactorSecretEnc);
+    console.info('[2FA] Login secret decrypted for verification.', {
+      username,
+      secretFingerprint: getSecretDebugFingerprint(secret)
+    });
     verified = verifyTotpCode(secret, code);
   }
   console.info('[2FA] Login verification attempt.', { username, method, success: verified });
@@ -13879,7 +13923,7 @@ app.get('/api/account/security-dashboard', auth, (req, res) => {
 });
 
 app.post('/api/security/2fa/setup', auth, async (req, res) => {
-  console.info('[2FA] Setup request received.', { username: req.username });
+  console.info('[2FA] Setup request received.', { username: req.username, ...getTotpRuntimeDebug() });
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   const user = db.users[req.username];
@@ -13888,8 +13932,14 @@ app.post('/api/security/2fa/setup', auth, async (req, res) => {
   ensureTwoFactorTables(db);
   try {
     const secret = generateTotpSecret();
-    console.info('[2FA] Secret generated.', { username: req.username });
+    console.info('[2FA] Secret generated.', { username: req.username, secretFingerprint: getSecretDebugFingerprint(secret) });
     const otpauthUrl = buildOtpAuthUrl(secret, req.username);
+    console.info('[2FA] otpauth URL generated.', {
+      username: req.username,
+      hasOtpAuthUrl: !!otpauthUrl,
+      otpauthLength: otpauthUrl.length,
+      totpParams: getTotpRuntimeDebug().totpParams
+    });
     const qrCode = await generateTwoFactorQrDataUrl(otpauthUrl);
     console.info('[2FA] QR generated.', { username: req.username });
     const setupId = crypto.randomUUID();
@@ -13920,6 +13970,13 @@ app.post('/api/security/2fa/verify', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const setupId = typeof req.body?.setupId === 'string' ? req.body.setupId : '';
   const code = typeof req.body?.code === 'string' ? req.body.code.trim().replace(/\s+/g, '') : '';
+  console.info('[2FA] Setup verify request received.', {
+    username: req.username,
+    setupIdPresent: !!setupId,
+    codeLength: code.length,
+    codeLooksNumeric: /^\d+$/.test(code),
+    ...getTotpRuntimeDebug()
+  });
   if (!setupId || !code) return res.status(400).json({ error: 'Setup and code are required.' });
   const db = loadDB();
   const user = db.users[req.username];
@@ -13930,6 +13987,13 @@ app.post('/api/security/2fa/verify', auth, (req, res) => {
   if (!setup || setup.username !== req.username || Date.parse(setup.expiresAt || 0) <= Date.now()) {
     return res.status(400).json({ error: '2FA setup expired. Start setup again.' });
   }
+  console.info('[2FA] Setup record loaded for verification.', {
+    username: req.username,
+    setupId,
+    setupCreatedAt: setup.createdAt,
+    setupExpiresAt: setup.expiresAt,
+    setupUsernameMatches: setup.username === req.username
+  });
   const retryAfterMs = enforceRateLimit(twoFactorSetupVerifyRateLimit, `${req.username}:${req.ip || 'unknown'}`, TWO_FACTOR_VERIFY_RATE_LIMIT_MAX, TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS);
   if (retryAfterMs > 0) {
     const retryAfter = Math.ceil(retryAfterMs / 1000);
@@ -13937,9 +14001,14 @@ app.post('/api/security/2fa/verify', auth, (req, res) => {
     return res.status(429).json({ error: `Too many verification attempts. Try again in ${retryAfter} seconds.` });
   }
   const secret = decryptTwoFactorSecret(setup.secretEnc);
+  console.info('[2FA] Setup secret decrypted for verification.', {
+    username: req.username,
+    setupId,
+    secretFingerprint: getSecretDebugFingerprint(secret)
+  });
   const verified = verifyTotpCode(secret, code);
-  console.info('[2FA] Setup verification attempt.', { username: req.username, success: verified });
-  if (!verified) return res.status(400).json({ error: 'Invalid authentication code.' });
+  console.info('[2FA] Setup verification attempt.', { username: req.username, setupId, success: verified, ...getTotpRuntimeDebug() });
+  if (!verified) return res.status(400).json({ error: 'Invalid authentication code. If you refreshed or reopened setup, restart 2FA setup and scan the latest QR code.' });
   const backupCodes = generateBackupCodes(10);
   user.security.twoFactorSecretEnc = setup.secretEnc;
   user.security.twoFactorEnabled = true;
