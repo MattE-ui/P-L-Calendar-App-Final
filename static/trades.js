@@ -23,7 +23,13 @@ const state = {
   currency: 'GBP',
   portfolioGBP: 0,
   isAdmin: false,
-  rates: { GBP: 1 }
+  rates: { GBP: 1 },
+  ibkrHistory: {
+    batches: [],
+    showAll: false,
+    showRemoved: false,
+    collapsedLimit: 4
+  }
 };
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
@@ -857,54 +863,96 @@ async function removeIbkrImportBatch(batch) {
 
 function renderIbkrImportHistory(batches = []) {
   const container = document.querySelector('#ibkr-import-history');
+  const summary = document.querySelector('#ibkr-history-summary');
+  const toggleHistoryButton = document.querySelector('#ibkr-toggle-history-btn');
+  const toggleRemovedButton = document.querySelector('#ibkr-toggle-removed-btn');
   if (!container) return;
   if (!Array.isArray(batches) || !batches.length) {
     container.textContent = 'No IBKR imports yet.';
+    container.classList.remove('ibkr-history-scroll');
+    summary?.classList.add('is-hidden');
+    if (toggleHistoryButton) toggleHistoryButton.classList.add('is-hidden');
+    if (toggleRemovedButton) toggleRemovedButton.classList.add('is-hidden');
     return;
   }
+  const removedCount = batches.filter(batch => (batch?.status || 'completed') === 'rolled_back').length;
+  const activeCount = batches.length - removedCount;
+  const visibleBatches = batches.filter((batch) => {
+    const status = batch?.status || 'completed';
+    return state.ibkrHistory.showRemoved || status !== 'rolled_back';
+  });
+  const hiddenByStatusCount = Math.max(0, batches.length - visibleBatches.length);
+  const limitedBatches = state.ibkrHistory.showAll
+    ? visibleBatches
+    : visibleBatches.slice(0, state.ibkrHistory.collapsedLimit);
+  const hiddenByLimitCount = Math.max(0, visibleBatches.length - limitedBatches.length);
   container.innerHTML = '';
   const list = document.createElement('div');
-  list.className = 'leg-list';
-  batches.forEach((batch) => {
+  list.className = 'ibkr-history-list';
+  limitedBatches.forEach((batch) => {
     const row = document.createElement('div');
-    row.className = 'execution-leg-row';
+    row.className = 'ibkr-history-row';
     const status = batch.status || 'completed';
     const removed = status === 'rolled_back';
+    if (removed) row.classList.add('is-removed');
     row.innerHTML = `
-      <div class="tool-field"><label>File</label><div>${batch.originalFilename || 'upload.csv'}</div></div>
-      <div class="tool-field"><label>Imported at</label><div>${formatIsoDateTime(batch.importedAt)}</div></div>
-      <div class="tool-field"><label>Imported</label><div>${Number(batch.importedCount) || 0}</div></div>
-      <div class="tool-field"><label>Openings</label><div>${Number(batch?.metadata?.importedOpenings) || 0}</div></div>
-      <div class="tool-field"><label>Exits</label><div>${Number(batch?.metadata?.importedExits) || 0}</div></div>
-      <div class="tool-field"><label>Duplicates</label><div>${Number(batch.duplicateCount) || 0}</div></div>
-      <div class="tool-field"><label>Skipped CASH</label><div>${Number(batch.skippedCashCount) || 0}</div></div>
-      <div class="tool-field"><label>Invalid</label><div>${Number(batch.invalidCount) || 0}</div></div>
-      <div class="tool-field"><label>Unmatched closes</label><div>${Number(batch?.metadata?.unmatchedClosingRows) || 0}</div></div>
-      <div class="tool-field"><label>Status</label><div>${removed ? 'Removed' : 'Completed'}</div></div>
+      <div class="ibkr-history-main">
+        <div class="ibkr-history-file">${batch.originalFilename || 'upload.csv'}</div>
+        <div class="ibkr-history-meta">${formatIsoDateTime(batch.importedAt)}</div>
+      </div>
+      <div class="ibkr-history-status ${removed ? 'is-removed' : 'is-complete'}">${removed ? 'Removed' : 'Completed'}</div>
+      <div class="ibkr-history-metrics">
+        <span class="ibkr-metric-chip">Imported <strong>${Number(batch.importedCount) || 0}</strong></span>
+        <span class="ibkr-metric-chip">Openings <strong>${Number(batch?.metadata?.importedOpenings) || 0}</strong></span>
+        <span class="ibkr-metric-chip">Exits <strong>${Number(batch?.metadata?.importedExits) || 0}</strong></span>
+        <span class="ibkr-metric-chip">Duplicates <strong>${Number(batch.duplicateCount) || 0}</strong></span>
+        <span class="ibkr-metric-chip">Unmatched closes <strong>${Number(batch?.metadata?.unmatchedClosingRows) || 0}</strong></span>
+      </div>
+      <div class="ibkr-history-actions">
+        <button type="button" class="${removed ? 'ghost small' : 'danger small'}" ${removed ? 'disabled' : ''}>${removed ? 'Already removed' : 'Remove imported trades'}</button>
+      </div>
     `;
-    const actionWrap = document.createElement('div');
-    actionWrap.className = 'tool-field';
-    const label = document.createElement('label');
-    label.textContent = 'Action';
-    actionWrap.appendChild(label);
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ghost small';
-    button.textContent = removed ? 'Already removed' : 'Remove imported trades';
-    button.disabled = removed;
+    const button = row.querySelector('button');
     button.addEventListener('click', () => removeIbkrImportBatch(batch));
-    actionWrap.appendChild(button);
-    row.appendChild(actionWrap);
     list.appendChild(row);
   });
-  container.appendChild(list);
+  if (!limitedBatches.length) {
+    container.textContent = state.ibkrHistory.showRemoved
+      ? 'No IBKR imports yet.'
+      : 'No active imports to show. Toggle “Show removed” to review archived entries.';
+    container.classList.remove('ibkr-history-scroll');
+  } else {
+    container.appendChild(list);
+    container.classList.toggle('ibkr-history-scroll', state.ibkrHistory.showAll && limitedBatches.length > 5);
+  }
+  if (summary) {
+    summary.classList.remove('is-hidden');
+    const hiddenParts = [];
+    if (hiddenByStatusCount > 0 && !state.ibkrHistory.showRemoved) hiddenParts.push(`${hiddenByStatusCount} removed hidden`);
+    if (hiddenByLimitCount > 0 && !state.ibkrHistory.showAll) hiddenParts.push(`${hiddenByLimitCount} older hidden`);
+    summary.textContent = `${activeCount} active · ${removedCount} removed${hiddenParts.length ? ` · ${hiddenParts.join(' · ')}` : ''}`;
+  }
+  if (toggleHistoryButton) {
+    const canExpand = visibleBatches.length > state.ibkrHistory.collapsedLimit;
+    toggleHistoryButton.classList.toggle('is-hidden', !canExpand && !state.ibkrHistory.showAll);
+    toggleHistoryButton.textContent = state.ibkrHistory.showAll ? 'Collapse history' : `View all history (${visibleBatches.length})`;
+  }
+  if (toggleRemovedButton) {
+    toggleRemovedButton.classList.toggle('is-hidden', removedCount < 1);
+    toggleRemovedButton.classList.toggle('active', state.ibkrHistory.showRemoved);
+    toggleRemovedButton.textContent = state.ibkrHistory.showRemoved
+      ? `Hide removed (${removedCount})`
+      : `Show removed (${removedCount})`;
+  }
 }
 
 async function loadIbkrImportHistory() {
   try {
     const result = await api('/api/trades/import/ibkr/history');
-    renderIbkrImportHistory(Array.isArray(result?.batches) ? result.batches : []);
+    state.ibkrHistory.batches = Array.isArray(result?.batches) ? result.batches : [];
+    renderIbkrImportHistory(state.ibkrHistory.batches);
   } catch (_error) {
+    state.ibkrHistory.batches = [];
     renderIbkrImportHistory([]);
   }
 }
@@ -961,6 +1009,14 @@ function bindForm() {
   document.querySelector('#import-ibkr-file')?.addEventListener('change', (event) => {
     const file = event?.target?.files?.[0];
     importIbkrCsv(file);
+  });
+  document.querySelector('#ibkr-toggle-history-btn')?.addEventListener('click', () => {
+    state.ibkrHistory.showAll = !state.ibkrHistory.showAll;
+    renderIbkrImportHistory(state.ibkrHistory.batches);
+  });
+  document.querySelector('#ibkr-toggle-removed-btn')?.addEventListener('click', () => {
+    state.ibkrHistory.showRemoved = !state.ibkrHistory.showRemoved;
+    renderIbkrImportHistory(state.ibkrHistory.batches);
   });
   document.querySelector('#add-trade-btn')?.addEventListener('click', () => {
     resetForm();
