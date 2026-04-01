@@ -4055,8 +4055,99 @@ textarea {
   align-items: end;
 }
 .execution-leg-row .tool-field { margin: 0; }
+.ibkr-history-summary {
+  margin: 2px 0 10px;
+}
+.ibkr-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ibkr-history-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.15fr) auto minmax(280px, 1.4fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,.02);
+  padding: 8px 10px;
+}
+.ibkr-history-row.is-removed {
+  opacity: .58;
+  border-style: dashed;
+}
+.ibkr-history-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ibkr-history-file {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ibkr-history-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ibkr-history-status {
+  font-size: 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+.ibkr-history-status.is-complete {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border) 52%);
+  color: var(--text);
+}
+.ibkr-history-status.is-removed {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border) 60%);
+  color: color-mix(in srgb, var(--danger) 38%, var(--text) 62%);
+}
+.ibkr-history-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ibkr-metric-chip {
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ibkr-metric-chip strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.ibkr-history-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.ibkr-history-actions .ghost.small.active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+#ibkr-import-history.ibkr-history-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
 @media (max-width: 900px) {
   .execution-leg-row { grid-template-columns: 1fr 1fr; }
+  .ibkr-history-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .ibkr-history-actions {
+    justify-content: flex-start;
+  }
 }
 
 
