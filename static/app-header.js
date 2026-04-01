@@ -8,6 +8,7 @@
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
     if (path.endsWith('/social.html') || path === '/social' || path.startsWith('/social/')) return 'social';
+    if (path.endsWith('/review.html') || path === '/review' || path.startsWith('/review/')) return 'review';
     if (path.endsWith('/profile.html') || path.startsWith('/profile/')) return 'profile';
     if (isDashboardRoute) return 'dashboard';
     return '';
@@ -19,6 +20,7 @@
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
     { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
     { key: 'social', label: 'Social', href: '/social' },
+    { key: 'review', label: 'Review', href: '/review' },
     { key: 'profile', label: 'Profile', href: '/profile.html' }
   ];
 

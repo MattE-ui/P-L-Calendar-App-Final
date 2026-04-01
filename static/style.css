@@ -8116,3 +8116,61 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.review-page-shell {
+  background: #070b12;
+}
+
+.review-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+.review-page__head {
+  padding: 12px 14px;
+}
+
+.review-page__head h1 {
+  margin: 2px 0 4px;
+  font-size: 22px;
+}
+
+.review-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.review-tabs__btn {
+  border: 1px solid #1f2a3d;
+  background: #0d1420;
+  color: #9fb2d1;
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.review-tabs__btn.is-active {
+  background: #172338;
+  color: #f8fafc;
+  border-color: #2f4568;
+  box-shadow: inset 0 0 0 1px rgba(97, 130, 187, 0.35);
+}
+
+.review-tab-content {
+  padding: 12px;
+  min-height: 320px;
+}
+
+.review-placeholder {
+  padding: 8px 4px;
+}
+
+@media (max-width: 760px) {
+  .review-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
