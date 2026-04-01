@@ -80,7 +80,10 @@ function RecapPanel() {
   const avgPerTrade = Number(metrics.closedTrades) > 0
     ? (Number(metrics.weeklyRealisedPnlGBP ?? metrics.netPnlGBP) || 0) / Number(metrics.closedTrades)
     : null;
-  if (Number.isFinite(avgPerTrade)) supportMetrics.push({ label: 'Realised / trade', value: fmtMoney(avgPerTrade) });
+  const totalGains = Number(metrics.totalRealisedGainsGBP) || 0;
+  const totalLossesAbs = Math.abs(Number(metrics.totalRealisedLossesGBP) || 0);
+  const profitFactor = totalLossesAbs > 0 ? (totalGains / totalLossesAbs) : null;
+  if (Number.isFinite(profitFactor)) supportMetrics.push({ label: 'Profit factor', value: profitFactor.toFixed(2) });
   const renderHighlight = (label, item, toneClass) => {
     if (!item) {
       return `<article class="weekly-trade-card ${toneClass}"><div class="weekly-trade-card__head"><p class="tool-overline">${label}</p></div><div class="weekly-trade-card__empty">No closed trade recorded</div></article>`;
@@ -94,35 +97,38 @@ function RecapPanel() {
   };
   const supportMetricHtml = supportMetrics.slice(0, 3).map(metric => `<div class="weekly-support-item"><span>${metric.label}</span><strong>${metric.value}</strong></div>`).join('');
   return `
-    <section class="weekly-recap-topline">
+    <section class="weekly-recap-layout weekly-recap--review">
+      <section class="weekly-recap-topline">
       <div class="weekly-recap-primary">
         <p class="tool-overline">WEEKLY RECAP</p>
         <h4>${metrics.weekLabel || `${metrics.weekStart || ''} → ${metrics.weekEnd || ''}`}</h4>
         <div class="weekly-primary-label">Weekly realised PnL</div>
         <div class="weekly-primary-value">${fmtMoney(metrics.weeklyRealisedPnlGBP ?? metrics.netPnlGBP)}</div>
+        <div class="weekly-primary-subvalue">${Number.isFinite(avgPerTrade) ? `Realised / trade ${fmtMoney(avgPerTrade)}` : 'Realised / trade —'}</div>
       </div>
       <div class="weekly-recap-side">
         <span class="weekly-chip ${status.cls}">${status.label}</span>
         <div class="weekly-support-grid">${supportMetricHtml}</div>
       </div>
-    </section>
-    <section class="weekly-recap-stat-groups">
+      </section>
+      <section class="weekly-recap-stat-groups">
       <div class="weekly-stat-group"><p class="weekly-stat-group__title">Execution</p><div class="weekly-recap-stat-grid">
         <div class="weekly-recap-tile"><span>Closed trades</span><strong>${metrics.closedTrades ?? 0}</strong></div>
         <div class="weekly-recap-tile"><span>Win rate</span><strong>${fmtPct(metrics.winRatePct)}</strong></div>
         <div class="weekly-recap-tile"><span>Average winner</span><strong>${fmtMoney(metrics.averageWinnerGBP)}</strong></div>
       </div></div>
-      <div class="weekly-stat-group"><p class="weekly-stat-group__title">P&L breakdown</p><div class="weekly-recap-stat-grid">
+      <div class="weekly-stat-group"><p class="weekly-stat-group__title">Outcome</p><div class="weekly-recap-stat-grid">
         <div class="weekly-recap-tile"><span>Average loser</span><strong>${fmtMoney(metrics.averageLoserGBP)}</strong></div>
         <div class="weekly-recap-tile"><span>Total gains</span><strong>${fmtMoney(metrics.totalRealisedGainsGBP)}</strong></div>
         <div class="weekly-recap-tile"><span>Total losses</span><strong>${fmtMoney(metrics.totalRealisedLossesGBP)}</strong></div>
       </div></div>
-    </section>
-    <section class="weekly-recap-highlights">
+      </section>
+      <section class="weekly-recap-highlights">
       ${renderHighlight('Best trade', best, 'is-positive')}
       ${renderHighlight('Worst trade', worst, 'is-negative')}
+      </section>
+      <div class="weekly-recap-highlight"><strong>Weekly takeaway</strong><div>${buildWeeklyTakeaway(metrics)}</div></div>
     </section>
-    <div class="weekly-recap-highlight"><strong>Weekly takeaway</strong><div>${buildWeeklyTakeaway(metrics)}</div></div>
   `;
 }
 
