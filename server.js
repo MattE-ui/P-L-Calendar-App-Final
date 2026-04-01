@@ -3992,6 +3992,30 @@ function syncIntegratedTradingAccountValuesFromHistory(user, history = ensurePor
   return mutated;
 }
 
+
+function buildProfileCompletionSummary(user, portfolioValue, netDepositsTotal) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const linkedTradingAccounts = accountList.filter(account => account?.integrationEnabled && (account?.integrationProvider === 'trading212' || account?.integrationProvider === 'ibkr'));
+  const linkedTradingAccountsCount = linkedTradingAccounts.length;
+  const hasTradingAccount = linkedTradingAccountsCount > 0;
+  const checklist = [
+    { key: 'username', ok: Boolean(user?.username) },
+    { key: 'nickname', ok: Boolean(String(user?.nickname || user?.displayName || '').trim()) },
+    { key: 'avatar', ok: Boolean(socialAvatarForUser(user).avatar_url) },
+    { key: 'portfolio baseline', ok: Number.isFinite(Number(portfolioValue)) && Number.isFinite(Number(netDepositsTotal)) },
+    { key: 'trading account', ok: hasTradingAccount }
+  ];
+  const completed = checklist.filter(item => item.ok).length;
+  const profileCompletionPercent = Math.round((completed / checklist.length) * 100);
+  const missingProfileFields = checklist.filter(item => !item.ok).map(item => item.key);
+  return {
+    linkedTradingAccountsCount,
+    hasTradingAccount,
+    profileCompletionPercent,
+    missingProfileFields
+  };
+}
+
 function ensureTradeJournal(user) {
   if (!user) return {};
   if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
@@ -11088,8 +11112,9 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     ? portfolioSnapshot.value
     : (portfolioBaseline || 0);
   const role = getUserRole(user, req.username);
+  const profileSummary = buildProfileCompletionSummary(user, portfolioValue, total);
   res.json({
-    profileComplete: !!user.profileComplete,
+    profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
     portfolioSource: portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
@@ -11118,7 +11143,8 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
       integrationEnabled: !!account.integrationEnabled
     })),
     investorAccountsEnabled: !!user.investorAccountsEnabled,
-    investorPortalAvailable: true
+    investorPortalAvailable: true,
+    profileSummary
   });
 }));
 

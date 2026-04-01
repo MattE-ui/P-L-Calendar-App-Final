@@ -6043,10 +6043,35 @@ textarea {
   margin-top: 0;
 }
 
-.manage-profile-header__back .ghost {
-  min-height: 28px;
-  padding: 0 10px;
+
+.account-center-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border) 66%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 72%, transparent), color-mix(in srgb, var(--surface-1) 82%, transparent));
+  color: var(--text-muted);
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.account-center-back-link:hover,
+.account-center-back-link:focus-visible {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border) 48%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, var(--surface-2) 84%), color-mix(in srgb, var(--surface-2) 94%, transparent));
+}
+
+.account-center-back-link span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  opacity: 0.92;
 }
 
 .manage-profile-grid {
@@ -6148,27 +6173,27 @@ textarea {
 .manage-avatar-controls {
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-height: 86px;
 }
 
 .manage-avatar-preview.social-avatar-slot {
-  width: 72px;
-  height: 72px;
-  min-width: 72px;
-  font-size: 22px;
+  width: 94px;
+  height: 94px;
+  min-width: 94px;
+  font-size: 30px;
 }
 
 .manage-avatar-actions {
   grid-template-columns: 1fr;
-  gap: 6px;
-  min-width: 154px;
+  gap: 8px;
+  min-width: 132px;
 }
 
 .manage-avatar-actions button {
   margin: 0;
   width: 100%;
-  min-height: 33px;
+  min-height: 34px;
   justify-content: center;
 }
 
