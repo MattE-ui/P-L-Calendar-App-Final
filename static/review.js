@@ -52,8 +52,19 @@ const state = {
   activeTab: 'recap',
   recap: null,
   recapError: '',
-  loadingRecap: false
+  loadingRecap: false,
+  loadingTrades: false,
+  tradeError: '',
+  trades: [],
+  selectedTradeId: ''
 };
+
+const REVIEW_TAGS = ['Breakout', 'Pullback', 'News', 'Earnings', 'Scalping', 'Swing', 'FOMO', 'Revenge'];
+const REVIEW_OUTCOMES = [
+  { key: 'good', label: 'Good trade' },
+  { key: 'bad', label: 'Bad trade' },
+  { key: 'neutral', label: 'Neutral' }
+];
 
 function PlaceholderPanel(message) {
   return `
@@ -142,10 +153,122 @@ function ReviewPage() {
   const content = $('#review-tab-content');
   if (!content) return;
   if (state.activeTab === 'recap') content.innerHTML = RecapPanel();
-  if (state.activeTab === 'trade-review') content.innerHTML = PlaceholderPanel('Trade review coming soon');
+  if (state.activeTab === 'trade-review') content.innerHTML = TradeReviewPanel();
   if (state.activeTab === 'scorecard') content.innerHTML = PlaceholderPanel('Weekly scorecard coming soon');
   if (state.activeTab === 'planning') content.innerHTML = PlaceholderPanel('Planning tools coming soon');
   ReviewTabs();
+}
+
+function formatDirection(direction) {
+  return direction === 'short' ? 'Short' : 'Long';
+}
+
+function fmtSignedMoney(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe)) return '—';
+  const sign = safe > 0 ? '+' : safe < 0 ? '-' : '';
+  return `${sign}${fmtMoney(Math.abs(safe))}`;
+}
+
+function getTradeById(id) {
+  return state.trades.find(trade => trade.id === id) || null;
+}
+
+function getSelectedTrade() {
+  return getTradeById(state.selectedTradeId);
+}
+
+function isTradeReviewed(trade) {
+  return ['good', 'bad', 'neutral'].includes(trade?.outcome);
+}
+
+function isTradeTagged(trade) {
+  return Array.isArray(trade?.tags) && trade.tags.length > 0;
+}
+
+function formatHoldTime(trade) {
+  const start = new Date(`${trade?.openDate || ''}T00:00:00Z`);
+  const end = new Date(`${trade?.closeDate || trade?.openDate || ''}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return '—';
+  const days = Math.max(0, Math.round((end - start) / (24 * 60 * 60 * 1000)));
+  return days === 0 ? 'Same day' : `${days}d`;
+}
+
+function TradeReviewPanel() {
+  if (state.loadingTrades) return '<div class="tool-note">Loading trades…</div>';
+  if (state.tradeError) return `<div class="error">${state.tradeError}</div>`;
+  if (!state.trades.length) return '<section class="review-placeholder"><h3>No trades to review yet</h3><p class="tool-note">Close trades to start your review workflow.</p></section>';
+  const selected = getSelectedTrade();
+  const listHtml = state.trades.map((trade) => `
+    <button class="trade-review-row ${trade.id === state.selectedTradeId ? 'is-active' : ''}" data-trade-id="${trade.id}" type="button">
+      <div class="trade-review-row__top">
+        <strong>${trade.displayTicker || trade.displaySymbol || trade.symbol || '—'}</strong>
+        <span class="trade-review-row__dir ${trade.direction === 'short' ? 'short' : 'long'}">${formatDirection(trade.direction)}</span>
+      </div>
+      <div class="trade-review-row__meta">
+        <span class="${Number(trade.realizedPnlGBP) > 0 ? 'pos' : Number(trade.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(trade.realizedPnlGBP)}</span>
+        <span>${trade.closeDate || '—'}</span>
+        <span>R:${isTradeReviewed(trade) ? 'Y' : 'N'}</span>
+        <span>T:${isTradeTagged(trade) ? 'Y' : 'N'}</span>
+      </div>
+    </button>
+  `).join('');
+  if (!selected) {
+    return `<section class="trade-review-layout"><aside class="trade-review-list">${listHtml}</aside><section class="trade-review-detail"><div class="tool-note">Select a trade.</div></section></section>`;
+  }
+  const selectedTags = Array.isArray(selected.tags) ? selected.tags : [];
+  const notes = typeof selected.notes === 'string' ? selected.notes : '';
+  const outcomesHtml = REVIEW_OUTCOMES.map(item => `<button class="trade-review-outcome ${selected.outcome === item.key ? 'is-active' : ''}" data-outcome="${item.key}" type="button">${item.label}</button>`).join('');
+  const tagsHtml = REVIEW_TAGS.map(tag => `<button class="trade-review-tag ${selectedTags.includes(tag) ? 'is-active' : ''}" data-tag="${tag}" type="button">${tag}</button>`).join('');
+  return `
+    <section class="trade-review-layout">
+      <aside id="trade-review-list" class="trade-review-list">${listHtml}</aside>
+      <section class="trade-review-detail">
+        <section class="trade-review-card">
+          <p class="tool-overline">Trade summary</p>
+          <div class="trade-review-summary-top">
+            <h3>${selected.displayTicker || selected.displaySymbol || selected.symbol || '—'}</h3>
+            <span class="trade-review-row__dir ${selected.direction === 'short' ? 'short' : 'long'}">${formatDirection(selected.direction)}</span>
+          </div>
+          <div class="trade-review-pnl ${Number(selected.realizedPnlGBP) > 0 ? 'pos' : Number(selected.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(selected.realizedPnlGBP)}</div>
+          <div class="trade-review-summary-grid">
+            <div><span>Entry</span><strong>${Number.isFinite(Number(selected.avgEntryPrice)) ? selected.avgEntryPrice : selected.entry || '—'}</strong></div>
+            <div><span>Exit</span><strong>${Number.isFinite(Number(selected.avgExitPrice)) ? selected.avgExitPrice : selected.closePrice || '—'}</strong></div>
+            <div><span>Closed</span><strong>${selected.closeDate || '—'}</strong></div>
+            <div><span>Hold time</span><strong>${formatHoldTime(selected)}</strong></div>
+          </div>
+        </section>
+        <section class="trade-review-card">
+          <p class="tool-overline">Outcome</p>
+          <div class="trade-review-outcomes">${outcomesHtml}</div>
+        </section>
+        <section class="trade-review-card">
+          <p class="tool-overline">Tags</p>
+          <div class="trade-review-tags">${tagsHtml}</div>
+        </section>
+        <section class="trade-review-card">
+          <p class="tool-overline">Notes</p>
+          <textarea id="trade-review-notes" class="trade-review-notes" rows="3" placeholder="Optional notes">${notes}</textarea>
+        </section>
+      </section>
+    </section>
+  `;
+}
+
+let saveNotesTimer = null;
+
+async function patchTradeReview(tradeId, patch) {
+  const trade = getTradeById(tradeId);
+  if (!trade) return;
+  Object.assign(trade, patch);
+  ReviewPage();
+  try {
+    await api(`/api/trades/${encodeURIComponent(tradeId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+  } catch (_error) {}
 }
 
 function shouldDeepLinkOpenWeeklyRecap() {
@@ -231,10 +354,66 @@ function bindTabs() {
   });
 }
 
+async function loadTrades() {
+  state.loadingTrades = true;
+  state.tradeError = '';
+  if (state.activeTab === 'trade-review') ReviewPage();
+  try {
+    const response = await api('/api/trades?status=closed');
+    state.trades = (response?.trades || [])
+      .filter(trade => trade.status === 'closed')
+      .sort((a, b) => (b.closeDate || '').localeCompare(a.closeDate || ''));
+    state.selectedTradeId = state.trades[0]?.id || '';
+  } catch (error) {
+    state.tradeError = error?.message || 'Failed to load trades.';
+  } finally {
+    state.loadingTrades = false;
+    if (state.activeTab === 'trade-review') ReviewPage();
+  }
+}
+
+function bindTradeReviewActions() {
+  $('#review-tab-content')?.addEventListener('click', (event) => {
+    const row = event.target.closest('.trade-review-row');
+    if (row?.dataset?.tradeId) {
+      state.selectedTradeId = row.dataset.tradeId;
+      ReviewPage();
+      return;
+    }
+    const outcomeBtn = event.target.closest('.trade-review-outcome');
+    if (outcomeBtn?.dataset?.outcome && state.selectedTradeId) {
+      patchTradeReview(state.selectedTradeId, { outcome: outcomeBtn.dataset.outcome });
+      return;
+    }
+    const tagBtn = event.target.closest('.trade-review-tag');
+    if (tagBtn?.dataset?.tag && state.selectedTradeId) {
+      const trade = getSelectedTrade();
+      if (!trade) return;
+      const current = Array.isArray(trade.tags) ? trade.tags : [];
+      const hasTag = current.includes(tagBtn.dataset.tag);
+      const tags = hasTag ? current.filter(tag => tag !== tagBtn.dataset.tag) : [...current, tagBtn.dataset.tag];
+      patchTradeReview(state.selectedTradeId, { tags });
+    }
+  });
+  $('#review-tab-content')?.addEventListener('input', (event) => {
+    const notesEl = event.target.closest('#trade-review-notes');
+    if (!notesEl || !state.selectedTradeId) return;
+    const notes = String(notesEl.value || '');
+    const trade = getSelectedTrade();
+    if (trade) trade.notes = notes;
+    if (saveNotesTimer) clearTimeout(saveNotesTimer);
+    saveNotesTimer = setTimeout(() => {
+      patchTradeReview(state.selectedTradeId, { notes });
+    }, 200);
+  });
+}
+
 async function init() {
   bindTabs();
   bindModalActions();
+  bindTradeReviewActions();
   await loadRecap();
+  await loadTrades();
 
   const deepLinkOpen = shouldDeepLinkOpenWeeklyRecap();
   const weekendAutoOpen = shouldAutoOpenWeeklyRecap(state.recap);

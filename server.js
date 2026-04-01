@@ -5224,8 +5224,12 @@ function normalizeTradeJournal(user) {
       const optionContractsRaw = Number(trade.optionContracts);
       const optionMultiplierRaw = Number(trade.optionMultiplier);
       const optionExpirationRaw = typeof trade.optionExpiration === 'string' ? trade.optionExpiration.trim() : '';
-      const setupTags = sanitizeTagList(trade.setupTags ?? trade.tags ?? []);
+      const hasReviewFields = trade.outcome !== undefined || trade.notes !== undefined;
+      const setupTags = sanitizeTagList(trade.setupTags ?? (hasReviewFields ? [] : (trade.tags ?? [])));
       const emotionTags = sanitizeTagList(trade.emotionTags ?? []);
+      const reviewTags = sanitizeTagList(hasReviewFields ? (trade.tags ?? []) : []);
+      const reviewNotes = typeof trade.notes === 'string' ? trade.notes.trim() : '';
+      const reviewOutcome = typeof trade.outcome === 'string' ? trade.outcome.trim().toLowerCase() : '';
       const screenshotUrl = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
       const riskAmountGBP = Number(trade.riskAmountGBP);
       const positionGBP = Number(trade.positionGBP);
@@ -5309,6 +5313,7 @@ function normalizeTradeJournal(user) {
           : (trade.source === 'ibkr' ? 'ibkr' : 'manual'),
         setupTags,
         emotionTags,
+        tags: reviewTags,
         screenshotUrl: screenshotUrl || undefined,
         riskAmountGBP: Number.isFinite(riskAmountGBP) ? riskAmountGBP : undefined,
         positionGBP: Number.isFinite(positionGBP) ? positionGBP : undefined,
@@ -5440,6 +5445,8 @@ function normalizeTradeJournal(user) {
         }
       }
       if (noteRaw) normalizedTrade.note = noteRaw;
+      if (reviewNotes) normalizedTrade.notes = reviewNotes;
+      if (reviewOutcome === 'good' || reviewOutcome === 'bad' || reviewOutcome === 'neutral') normalizedTrade.outcome = reviewOutcome;
       normalized.push(normalizedTrade);
       if (normalized.length >= 50) break; // guard against runaway growth
     }
@@ -15701,6 +15708,9 @@ function normalizeTradeMeta(trade = {}) {
   const strategy = typeof trade.strategyTag === 'string' ? trade.strategyTag.trim() : '';
   const screenshotRaw = typeof trade.screenshotUrl === 'string' ? trade.screenshotUrl.trim() : '';
   const noteRaw = typeof trade.note === 'string' ? trade.note.trim() : '';
+  const reviewNotesRaw = typeof trade.notes === 'string' ? trade.notes.trim() : '';
+  const reviewOutcomeRaw = typeof trade.outcome === 'string' ? trade.outcome.trim().toLowerCase() : '';
+  const hasReviewFields = trade.outcome !== undefined || trade.notes !== undefined;
   const directionRaw = typeof trade.direction === 'string' ? trade.direction.trim().toLowerCase() : 'long';
   const optionTypeRaw = typeof trade.optionType === 'string' ? trade.optionType.trim().toLowerCase() : '';
   const optionStrikeRaw = Number(trade.optionStrike);
@@ -15724,8 +15734,11 @@ function normalizeTradeMeta(trade = {}) {
     rounding,
     source,
     strategyTag: strategy,
-    setupTags: sanitizeTagList(trade.setupTags ?? trade.tags ?? [], 15),
+    setupTags: sanitizeTagList(trade.setupTags ?? (hasReviewFields ? [] : (trade.tags ?? [])), 15),
     emotionTags: sanitizeTagList(trade.emotionTags ?? [], 15),
+    tags: sanitizeTagList(hasReviewFields ? (trade.tags ?? []) : [], 15),
+    outcome: ['good', 'bad', 'neutral'].includes(reviewOutcomeRaw) ? reviewOutcomeRaw : undefined,
+    notes: reviewNotesRaw || undefined,
     screenshotUrl: screenshotRaw || undefined,
     note: noteRaw || undefined,
     optionType: OPTION_TYPES.includes(optionTypeRaw) ? optionTypeRaw : undefined,
@@ -18037,6 +18050,19 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   trade.emotionTags = meta.emotionTags;
   trade.screenshotUrl = meta.screenshotUrl;
   trade.note = meta.note;
+  if (updates.tags !== undefined) {
+    trade.tags = sanitizeTagList(updates.tags ?? [], 15);
+  }
+  if (updates.notes !== undefined) {
+    const notesRaw = typeof updates.notes === 'string' ? updates.notes.trim() : '';
+    if (notesRaw) trade.notes = notesRaw;
+    else delete trade.notes;
+  }
+  if (updates.outcome !== undefined) {
+    const outcomeRaw = typeof updates.outcome === 'string' ? updates.outcome.trim().toLowerCase() : '';
+    if (outcomeRaw === 'good' || outcomeRaw === 'bad' || outcomeRaw === 'neutral') trade.outcome = outcomeRaw;
+    else delete trade.outcome;
+  }
   const shouldClose = !hasExecutionUpdate && ((updates.status && updates.status === 'closed') || Number.isFinite(Number(updates.closePrice)));
   if (shouldClose) {
     if (trade.status === 'closed') {
