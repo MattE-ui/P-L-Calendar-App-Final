@@ -1746,6 +1746,130 @@ function dateKeyFromDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function getWeekRangeFromDateKey(dateKey) {
+  if (typeof dateKey !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return null;
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = date.getUTCDay();
+  const offsetToMonday = (day + 6) % 7;
+  const start = new Date(date);
+  start.setUTCDate(date.getUTCDate() - offsetToMonday);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  return {
+    weekKey: dateKeyFromDate(start),
+    weekStart: dateKeyFromDate(start),
+    weekEnd: dateKeyFromDate(end)
+  };
+}
+
+function getLastCompletedWeekRange() {
+  const now = new Date();
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = todayUtc.getUTCDay();
+  const offsetToMonday = (day + 6) % 7;
+  const currentWeekStart = new Date(todayUtc);
+  currentWeekStart.setUTCDate(todayUtc.getUTCDate() - offsetToMonday);
+  const lastWeekStart = new Date(currentWeekStart);
+  lastWeekStart.setUTCDate(currentWeekStart.getUTCDate() - 7);
+  const lastWeekEnd = new Date(lastWeekStart);
+  lastWeekEnd.setUTCDate(lastWeekStart.getUTCDate() + 6);
+  return {
+    weekKey: dateKeyFromDate(lastWeekStart),
+    weekStart: dateKeyFromDate(lastWeekStart),
+    weekEnd: dateKeyFromDate(lastWeekEnd)
+  };
+}
+
+function formatWeekLabel(weekStart, weekEnd) {
+  const start = new Date(`${weekStart}T00:00:00.000Z`);
+  const end = new Date(`${weekEnd}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '';
+  const monthFmt = new Intl.DateTimeFormat('en-GB', { month: 'short', timeZone: 'UTC' });
+  const dayFmt = new Intl.DateTimeFormat('en-GB', { day: '2-digit', timeZone: 'UTC' });
+  const yearFmt = new Intl.DateTimeFormat('en-GB', { year: 'numeric', timeZone: 'UTC' });
+  return `${monthFmt.format(start)} ${dayFmt.format(start)} – ${monthFmt.format(end)} ${dayFmt.format(end)}, ${yearFmt.format(end)}`;
+}
+
+function buildWeeklyInsightLine(metrics) {
+  if (!metrics.closedTrades) return 'No closed trades were recorded for this week.';
+  if (metrics.netPnlGBP > 0) return 'Profitable week overall.';
+  if (metrics.netPnlGBP < 0) return 'Tough week overall.';
+  return 'A relatively flat trading week.';
+}
+
+function calculateWeeklyRecap(user, weekRange, rates = { GBP: 1 }) {
+  const allTrades = flattenTrades(user, rates);
+  const closedTrades = allTrades.filter((trade) => (
+    trade?.status === 'closed'
+    && Number.isFinite(Number(trade?.realizedPnlGBP))
+    && typeof trade?.closeDate === 'string'
+    && trade.closeDate >= weekRange.weekStart
+    && trade.closeDate <= weekRange.weekEnd
+  ));
+  const closedCount = closedTrades.length;
+  const winners = closedTrades.filter(trade => Number(trade.realizedPnlGBP) > 0);
+  const losers = closedTrades.filter(trade => Number(trade.realizedPnlGBP) < 0);
+  const netPnlGBP = closedTrades.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
+  const totalGainsGBP = winners.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
+  const totalLossesGBP = losers.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
+  const grossExposure = Math.abs(totalGainsGBP) + Math.abs(totalLossesGBP);
+  const netPnlPct = grossExposure > 0 ? (netPnlGBP / grossExposure) * 100 : null;
+  const findHighlight = (list, mode = 'best') => {
+    if (!list.length) return null;
+    const sorted = list.slice().sort((a, b) => mode === 'best'
+      ? Number(b.realizedPnlGBP) - Number(a.realizedPnlGBP)
+      : Number(a.realizedPnlGBP) - Number(b.realizedPnlGBP));
+    const trade = sorted[0];
+    return {
+      tradeId: trade.id || null,
+      ticker: trade.displayTicker || trade.displaySymbol || trade.symbol || '—',
+      direction: trade.direction === 'short' ? 'SHORT' : 'LONG',
+      realizedPnlGBP: Number(trade.realizedPnlGBP) || 0,
+      closeDate: trade.closeDate || null
+    };
+  };
+  const metrics = {
+    weekKey: weekRange.weekKey,
+    weekStart: weekRange.weekStart,
+    weekEnd: weekRange.weekEnd,
+    weekLabel: formatWeekLabel(weekRange.weekStart, weekRange.weekEnd),
+    closedTrades: closedCount,
+    winRatePct: closedCount ? (winners.length / closedCount) * 100 : null,
+    netPnlGBP,
+    netPnlPct,
+    percentageMethod: 'net_pnl_divided_by_weekly_gross_realized_abs',
+    averageWinnerGBP: winners.length ? totalGainsGBP / winners.length : null,
+    averageLoserGBP: losers.length ? totalLossesGBP / losers.length : null,
+    totalRealisedGainsGBP: totalGainsGBP,
+    totalRealisedLossesGBP: totalLossesGBP,
+    bestTrade: findHighlight(closedTrades, 'best'),
+    worstTrade: findHighlight(closedTrades, 'worst')
+  };
+  return {
+    generatedAt: new Date().toISOString(),
+    metrics,
+    notes: buildWeeklyInsightLine(metrics),
+    tradeCountSource: closedTrades.length
+  };
+}
+
+function getLatestWeeklyRecap(user) {
+  const recaps = Array.isArray(user?.weeklyRecaps) ? user.weeklyRecaps : [];
+  if (!recaps.length) return null;
+  return recaps.slice().sort((a, b) => String(b.weekKey || '').localeCompare(String(a.weekKey || '')))[0] || null;
+}
+
+function upsertWeeklyRecap(user, recap) {
+  if (!Array.isArray(user.weeklyRecaps)) user.weeklyRecaps = [];
+  const index = user.weeklyRecaps.findIndex(item => item && item.weekKey === recap.weekKey);
+  if (index >= 0) {
+    user.weeklyRecaps[index] = recap;
+  } else {
+    user.weeklyRecaps.push(recap);
+  }
+}
+
 
 function computeHistoryPeriodReturnDetails(user, periodKey) {
   const history = ensurePortfolioHistory(user);
@@ -4675,6 +4799,36 @@ function ensureUserShape(user, identifier) {
   if (!user.tradeJournal || typeof user.tradeJournal !== 'object') {
     user.tradeJournal = {};
     mutated = true;
+  }
+  if (!Array.isArray(user.weeklyRecaps)) {
+    user.weeklyRecaps = [];
+    mutated = true;
+  } else {
+    const normalizedRecaps = user.weeklyRecaps
+      .filter(recap => recap && typeof recap === 'object')
+      .map((recap) => {
+        const weekKey = typeof recap.weekKey === 'string' ? recap.weekKey : '';
+        const weekStart = typeof recap.weekStart === 'string' ? recap.weekStart : '';
+        const weekEnd = typeof recap.weekEnd === 'string' ? recap.weekEnd : '';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(weekKey) || !/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) {
+          return null;
+        }
+        return {
+          id: typeof recap.id === 'string' && recap.id.trim() ? recap.id : crypto.randomUUID(),
+          weekKey,
+          weekStart,
+          weekEnd,
+          weekLabel: typeof recap.weekLabel === 'string' ? recap.weekLabel : formatWeekLabel(weekStart, weekEnd),
+          generatedAt: typeof recap.generatedAt === 'string' ? recap.generatedAt : new Date().toISOString(),
+          notes: typeof recap.notes === 'string' ? recap.notes : '',
+          metrics: recap.metrics && typeof recap.metrics === 'object' ? recap.metrics : {}
+        };
+      })
+      .filter(Boolean);
+    if (normalizedRecaps.length !== user.weeklyRecaps.length) {
+      mutated = true;
+    }
+    user.weeklyRecaps = normalizedRecaps;
   }
   if (!Array.isArray(user.importBatches)) {
     user.importBatches = [];
@@ -16593,6 +16747,70 @@ app.get('/api/trades', auth, async (req, res) => {
   res.json({ trades: filtered });
 });
 
+app.get('/api/weekly-recap/latest', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const latest = getLatestWeeklyRecap(user);
+  if (!latest) {
+    return res.json({ recap: null, empty: true });
+  }
+  res.json({ recap: latest, empty: false });
+});
+
+app.get('/api/weekly-recap/week/:weekKey', auth, (req, res) => {
+  const weekKey = String(req.params.weekKey || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekKey)) {
+    return res.status(400).json({ error: 'Invalid week key format. Use YYYY-MM-DD.' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const recap = (user.weeklyRecaps || []).find(item => item && item.weekKey === weekKey) || null;
+  if (!recap) {
+    return res.status(404).json({ error: 'Weekly recap not found for this week.' });
+  }
+  res.json({ recap });
+});
+
+app.get('/api/weekly-recap/:id', auth, (req, res) => {
+  const recapId = String(req.params.id || '').trim();
+  if (!recapId) return res.status(400).json({ error: 'Recap id is required.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const recap = (user.weeklyRecaps || []).find(item => item && item.id === recapId) || null;
+  if (!recap) return res.status(404).json({ error: 'Weekly recap not found.' });
+  res.json({ recap });
+});
+
+app.post('/api/weekly-recap/generate-latest', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const weekRange = getLastCompletedWeekRange();
+  const rates = await fetchRates();
+  const generated = calculateWeeklyRecap(user, weekRange, rates);
+  const recap = {
+    id: crypto.randomUUID(),
+    userId: req.username,
+    weekKey: weekRange.weekKey,
+    weekStart: weekRange.weekStart,
+    weekEnd: weekRange.weekEnd,
+    weekLabel: generated.metrics.weekLabel,
+    generatedAt: generated.generatedAt,
+    notes: generated.notes,
+    metrics: generated.metrics
+  };
+  upsertWeeklyRecap(user, recap);
+  saveDB(db);
+  res.json({ ok: true, recap });
+});
+
 app.get('/api/trades/export', auth, async (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
@@ -18227,6 +18445,8 @@ module.exports = {
   createIbkrConnectorKey,
   findIbkrConnectorKeyOwner,
   exchangeIbkrConnectorToken,
+  calculateWeeklyRecap,
+  getLastCompletedWeekRange,
   ensureInstrumentRegistry,
   upsertRegistryEntry,
   applyRegistryResolution,

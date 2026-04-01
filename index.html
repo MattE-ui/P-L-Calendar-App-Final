@@ -43,6 +43,16 @@
           <div class="metric-sub" id="hero-net-performance-sub"></div>
         </article>
       </section>
+      <section class="weekly-recap-entry panelRaised" aria-label="Weekly recap">
+        <div class="weekly-recap-entry__copy">
+          <p class="tool-overline">Weekly recap</p>
+          <h3>Weekend performance recap</h3>
+          <p class="tool-sub">Review your last completed week with compact realised performance stats.</p>
+        </div>
+        <div class="weekly-recap-entry__actions">
+          <button id="weekly-recap-view-last-btn" class="primary outline" type="button">View Last Recap</button>
+        </div>
+      </section>
     </section>
     <div id="safe-screenshot-alert" class="safe-screenshot-banner hidden" role="status">
       <div class="safe-screenshot-card">
@@ -247,6 +257,22 @@
       </div>
     </div>
   </main>
+
+  <div id="weekly-recap-modal" class="modal hidden">
+    <div class="modal-card weekly-recap-modal-card">
+      <div class="weekly-recap-modal-head">
+        <div>
+          <p class="tool-overline">Weekly recap</p>
+          <h3 id="weekly-recap-title">Last completed week</h3>
+        </div>
+        <button id="weekly-recap-close-btn" class="ghost close-btn" type="button" aria-label="Close weekly recap">✕</button>
+      </div>
+      <div id="weekly-recap-content" class="weekly-recap-content"></div>
+      <div class="weekly-recap-modal-footer">
+        <button id="weekly-recap-generate-btn" class="ghost" type="button">Generate Latest Recap</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Quick settings modal -->
   <div id="quick-settings-modal" class="modal hidden">
