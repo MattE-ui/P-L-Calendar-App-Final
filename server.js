@@ -1793,9 +1793,82 @@ function formatWeekLabel(weekStart, weekEnd) {
 
 function buildWeeklyInsightLine(metrics) {
   if (!metrics.closedTrades) return 'No closed trades were recorded for this week.';
-  if (metrics.netPnlGBP > 0) return 'Profitable week overall.';
-  if (metrics.netPnlGBP < 0) return 'Tough week overall.';
+  if (metrics.weeklyRealisedPnlGBP < 0 && Number(metrics.largestLossShareOfLossesPct) >= 55) {
+    return 'One outsized loss accounted for most of the week’s downside.';
+  }
+  if (metrics.weeklyRealisedPnlGBP > 0 && Number(metrics.averageWinnerGBP) > Math.abs(Number(metrics.averageLoserGBP) || 0)) {
+    return 'Profitable week driven by strong average winners.';
+  }
+  if (metrics.weeklyRealisedPnlGBP < 0 && Number(metrics.winRatePct) >= 40) {
+    return 'Losses outweighed gains despite a moderate win rate.';
+  }
+  if (metrics.weeklyRealisedPnlGBP > 0) return 'Profitable week overall with disciplined execution.';
+  if (metrics.weeklyRealisedPnlGBP < 0) return 'Drawdown week; risk control and selectivity matter next week.';
   return 'A relatively flat trading week.';
+}
+
+function calculateWeeklyPortfolioReturnDetails(user, weekRange) {
+  const history = ensurePortfolioHistory(user);
+  const entries = listChronologicalEntries(history);
+  if (!entries.length) return { returnPct: null, reason: 'missing_history_entries', details: null };
+
+  const startCandidates = entries.filter(entry => typeof entry?.date === 'string' && entry.date < weekRange.weekStart);
+  const endCandidates = entries.filter(entry => typeof entry?.date === 'string' && entry.date <= weekRange.weekEnd);
+  if (!startCandidates.length || !endCandidates.length) {
+    return { returnPct: null, reason: 'insufficient_history_window', details: null };
+  }
+
+  const startEntry = startCandidates[startCandidates.length - 1];
+  const endEntry = endCandidates[endCandidates.length - 1];
+  const startEquity = Number(startEntry?.end);
+  const endEquity = Number(endEntry?.end);
+  if (!Number.isFinite(startEquity) || startEquity <= 0 || !Number.isFinite(endEquity)) {
+    return { returnPct: null, reason: 'invalid_history_equity', details: null };
+  }
+
+  const dayDiff = (laterKey, earlierKey) => {
+    const later = new Date(`${laterKey}T00:00:00.000Z`).getTime();
+    const earlier = new Date(`${earlierKey}T00:00:00.000Z`).getTime();
+    if (!Number.isFinite(later) || !Number.isFinite(earlier)) return null;
+    return Math.round((later - earlier) / 86400000);
+  };
+
+  const startGapDays = dayDiff(weekRange.weekStart, startEntry.date);
+  const endGapDays = dayDiff(weekRange.weekEnd, endEntry.date);
+  const isReliableWindow = Number.isFinite(startGapDays) && Number.isFinite(endGapDays) && startGapDays <= 3 && endGapDays <= 1;
+  if (!isReliableWindow) {
+    return {
+      returnPct: null,
+      reason: 'stale_history_window',
+      details: {
+        start_entry_date: startEntry.date || null,
+        end_entry_date: endEntry.date || null,
+        start_gap_days: startGapDays,
+        end_gap_days: endGapDays
+      }
+    };
+  }
+
+  const inWindow = entries.filter(entry => entry.date >= weekRange.weekStart && entry.date <= endEntry.date);
+  const deposits = inWindow.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashIn) || 0), 0);
+  const withdrawals = inWindow.reduce((sum, entry) => sum + Math.max(0, Number(entry.cashOut) || 0), 0);
+  const netFlows = deposits - withdrawals;
+  const pnl = endEquity - startEquity - netFlows;
+
+  return {
+    returnPct: (pnl / Math.abs(startEquity)) * 100,
+    reason: null,
+    details: {
+      denominator_base: startEquity,
+      denominator_label: 'week_start_portfolio_value',
+      start_entry_date: startEntry.date,
+      end_entry_date: endEntry.date,
+      deposits_in_week: deposits,
+      withdrawals_in_week: withdrawals,
+      net_cash_flow_adjustment: netFlows,
+      formula_used: '(week_end_equity - week_start_equity - net_cash_flows) / abs(week_start_equity) * 100'
+    }
+  };
 }
 
 function calculateWeeklyRecap(user, weekRange, rates = { GBP: 1 }) {
@@ -1813,8 +1886,15 @@ function calculateWeeklyRecap(user, weekRange, rates = { GBP: 1 }) {
   const netPnlGBP = closedTrades.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
   const totalGainsGBP = winners.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
   const totalLossesGBP = losers.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
-  const grossExposure = Math.abs(totalGainsGBP) + Math.abs(totalLossesGBP);
-  const netPnlPct = grossExposure > 0 ? (netPnlGBP / grossExposure) * 100 : null;
+  const largestLoserAbs = losers.length ? Math.abs(Math.min(...losers.map(trade => Number(trade.realizedPnlGBP) || 0))) : 0;
+  const totalLossAbs = Math.abs(totalLossesGBP);
+  const largestLossShareOfLossesPct = totalLossAbs > 0 ? (largestLoserAbs / totalLossAbs) * 100 : null;
+  // Closed-trade return % is realized PnL divided by closed-trade capital basis.
+  // Denominator = sum of valid trade-level capital basis values (entryValue/positionGBP/entry*size fallbacks).
+  const closedTradeReturn = computeTradeDeployedReturnDetails(closedTrades);
+  // Portfolio return % is a separate concept:
+  // denominator = starting portfolio value immediately before the recap week, cash-flow adjusted.
+  const portfolioReturn = calculateWeeklyPortfolioReturnDetails(user, weekRange);
   const findHighlight = (list, mode = 'best') => {
     if (!list.length) return null;
     const sorted = list.slice().sort((a, b) => mode === 'best'
@@ -1837,8 +1917,14 @@ function calculateWeeklyRecap(user, weekRange, rates = { GBP: 1 }) {
     closedTrades: closedCount,
     winRatePct: closedCount ? (winners.length / closedCount) * 100 : null,
     netPnlGBP,
-    netPnlPct,
-    percentageMethod: 'net_pnl_divided_by_weekly_gross_realized_abs',
+    weeklyRealisedPnlGBP: netPnlGBP,
+    portfolioReturnPct: portfolioReturn.returnPct,
+    portfolioReturnDetails: portfolioReturn.details,
+    portfolioReturnReason: portfolioReturn.reason,
+    closedTradeReturnPct: closedTradeReturn.returnPct,
+    closedTradeReturnDetails: closedTradeReturn.details,
+    closedTradeReturnReason: closedTradeReturn.reason,
+    largestLossShareOfLossesPct,
     averageWinnerGBP: winners.length ? totalGainsGBP / winners.length : null,
     averageLoserGBP: losers.length ? totalLossesGBP / losers.length : null,
     totalRealisedGainsGBP: totalGainsGBP,
