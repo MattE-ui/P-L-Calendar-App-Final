@@ -1946,6 +1946,16 @@ function getLatestWeeklyRecap(user) {
   return recaps.slice().sort((a, b) => String(b.weekKey || '').localeCompare(String(a.weekKey || '')))[0] || null;
 }
 
+function normalizeWeeklyRecapLifecycleTimestamps(recap = {}) {
+  const sanitize = (value) => (typeof value === 'string' && value.trim() ? value : null);
+  return {
+    readyAt: sanitize(recap.readyAt) || sanitize(recap.generatedAt),
+    pushSentAt: sanitize(recap.pushSentAt),
+    viewedAt: sanitize(recap.viewedAt),
+    dismissedAt: sanitize(recap.dismissedAt)
+  };
+}
+
 function upsertWeeklyRecap(user, recap) {
   if (!Array.isArray(user.weeklyRecaps)) user.weeklyRecaps = [];
   const index = user.weeklyRecaps.findIndex(item => item && item.weekKey === recap.weekKey);
@@ -3096,6 +3106,13 @@ function buildNotificationEvent(type, context = {}) {
     }),
     daily_recap_ready: () => ({
       ...base, category: 'dailyRecap', title: 'Daily recap ready', body: context.body || 'Your daily recap is ready.', link: context.link || '/analytics.html?panel=daily-recap'
+    }),
+    weekly_recap_ready: () => ({
+      ...base,
+      category: 'dailyRecap',
+      title: context.title || 'Your weekly recap is ready',
+      body: context.body || 'Review last week’s performance, wins, losses, and key takeaways.',
+      link: context.link || '/?openWeeklyRecap=latest&source=push'
     })
   };
   if (!builders[type]) return null;
@@ -4907,7 +4924,8 @@ function ensureUserShape(user, identifier) {
           weekLabel: typeof recap.weekLabel === 'string' ? recap.weekLabel : formatWeekLabel(weekStart, weekEnd),
           generatedAt: typeof recap.generatedAt === 'string' ? recap.generatedAt : new Date().toISOString(),
           notes: typeof recap.notes === 'string' ? recap.notes : '',
-          metrics: recap.metrics && typeof recap.metrics === 'object' ? recap.metrics : {}
+          metrics: recap.metrics && typeof recap.metrics === 'object' ? recap.metrics : {},
+          ...normalizeWeeklyRecapLifecycleTimestamps(recap)
         };
       })
       .filter(Boolean);
@@ -16881,19 +16899,81 @@ app.post('/api/weekly-recap/generate-latest', auth, async (req, res) => {
   const weekRange = getLastCompletedWeekRange();
   const rates = await fetchRates();
   const generated = calculateWeeklyRecap(user, weekRange, rates);
+  const existingRecap = (user.weeklyRecaps || []).find(item => item && item.weekKey === weekRange.weekKey) || null;
+  const lifecycleState = normalizeWeeklyRecapLifecycleTimestamps(existingRecap || {});
+  const generatedAt = generated.generatedAt || new Date().toISOString();
   const recap = {
-    id: crypto.randomUUID(),
+    id: existingRecap?.id || crypto.randomUUID(),
     userId: req.username,
     weekKey: weekRange.weekKey,
     weekStart: weekRange.weekStart,
     weekEnd: weekRange.weekEnd,
     weekLabel: generated.metrics.weekLabel,
-    generatedAt: generated.generatedAt,
+    generatedAt: existingRecap?.generatedAt || generatedAt,
     notes: generated.notes,
-    metrics: generated.metrics
+    metrics: generated.metrics,
+    readyAt: lifecycleState.readyAt || generatedAt,
+    pushSentAt: lifecycleState.pushSentAt,
+    viewedAt: lifecycleState.viewedAt,
+    dismissedAt: lifecycleState.dismissedAt
   };
   upsertWeeklyRecap(user, recap);
+  let pushTriggered = false;
+  if (!recap.pushSentAt) {
+    try {
+      await sendNotificationEvent(db, {
+        userId: req.username,
+        eventType: 'weekly_recap_ready',
+        context: {
+          title: 'Your weekly recap is ready',
+          body: 'Review last week’s performance, wins, losses, and key takeaways.',
+          link: '/?openWeeklyRecap=latest&source=push',
+          eventId: `weekly_recap_ready:${recap.id}`
+        }
+      });
+      recap.pushSentAt = new Date().toISOString();
+      upsertWeeklyRecap(user, recap);
+      pushTriggered = true;
+    } catch (error) {
+      console.warn('[weekly-recap] Push send failed (non-blocking):', error?.message || error);
+    }
+  }
   saveDB(db);
+  res.json({ ok: true, recap, pushTriggered });
+});
+
+app.post('/api/weekly-recap/:id/viewed', auth, (req, res) => {
+  const recapId = String(req.params.id || '').trim();
+  if (!recapId) return res.status(400).json({ error: 'Recap id is required.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const recap = (user.weeklyRecaps || []).find(item => item && item.id === recapId);
+  if (!recap) return res.status(404).json({ error: 'Weekly recap not found.' });
+  recap.viewedAt = recap.viewedAt || new Date().toISOString();
+  recap.dismissedAt = null;
+  upsertWeeklyRecap(user, recap);
+  saveDB(db);
+  res.json({ ok: true, recap });
+});
+
+app.post('/api/weekly-recap/:id/dismissed', auth, (req, res) => {
+  const recapId = String(req.params.id || '').trim();
+  if (!recapId) return res.status(400).json({ error: 'Recap id is required.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const recap = (user.weeklyRecaps || []).find(item => item && item.id === recapId);
+  if (!recap) return res.status(404).json({ error: 'Weekly recap not found.' });
+  if (!recap.viewedAt && !recap.dismissedAt) {
+    recap.dismissedAt = new Date().toISOString();
+    upsertWeeklyRecap(user, recap);
+    saveDB(db);
+  } else {
+    saveDB(db);
+  }
   res.json({ ok: true, recap });
 });
 

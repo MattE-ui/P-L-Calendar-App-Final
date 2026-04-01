@@ -49,7 +49,8 @@ const state = {
   lastUserInteractionAt: 0,
   hasPendingBackgroundRender: false,
   backgroundRefreshInFlight: false,
-  weeklyRecapLast: null
+  weeklyRecapLast: null,
+  weeklyRecapOpenContext: null
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -379,8 +380,71 @@ function renderWeeklyRecapBody(recap) {
 }
 
 async function openWeeklyRecapModal() {
+  return openWeeklyRecapModalWithContext({ source: 'manual', markViewed: true });
+}
+
+async function markWeeklyRecapViewed(recapId) {
+  if (!recapId) return;
+  try {
+    await api(`/api/weekly-recap/${encodeURIComponent(recapId)}/viewed`, { method: 'POST' });
+    if (state.weeklyRecapLast?.id === recapId) {
+      state.weeklyRecapLast.viewedAt = state.weeklyRecapLast.viewedAt || new Date().toISOString();
+      state.weeklyRecapLast.dismissedAt = null;
+    }
+  } catch (error) {
+    console.warn('Unable to mark weekly recap as viewed:', error?.message || error);
+  }
+}
+
+async function markWeeklyRecapDismissed(recapId) {
+  if (!recapId) return;
+  try {
+    await api(`/api/weekly-recap/${encodeURIComponent(recapId)}/dismissed`, { method: 'POST' });
+    if (state.weeklyRecapLast?.id === recapId && !state.weeklyRecapLast?.viewedAt) {
+      state.weeklyRecapLast.dismissedAt = state.weeklyRecapLast.dismissedAt || new Date().toISOString();
+    }
+  } catch (error) {
+    console.warn('Unable to mark weekly recap as dismissed:', error?.message || error);
+  }
+}
+
+function isWeekendLocal() {
+  const day = new Date().getDay();
+  return day === 0 || day === 6;
+}
+
+function shouldAutoOpenWeeklyRecap(recap) {
+  if (!recap) return false;
+  if (!recap.readyAt && !recap.generatedAt) return false;
+  if (recap.viewedAt || recap.dismissedAt) return false;
+  return isWeekendLocal();
+}
+
+function shouldDeepLinkOpenWeeklyRecap() {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return params.get('openWeeklyRecap') === 'latest';
+  } catch (_error) {
+    return false;
+  }
+}
+
+function clearWeeklyRecapDeepLinkParams() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('openWeeklyRecap') && !url.searchParams.has('source')) return;
+    url.searchParams.delete('openWeeklyRecap');
+    url.searchParams.delete('source');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch (_error) {
+    // no-op
+  }
+}
+
+async function openWeeklyRecapModalWithContext({ source = 'manual', markViewed = false } = {}) {
   const modal = $('#weekly-recap-modal');
   if (!modal) return;
+  state.weeklyRecapOpenContext = { source, markViewed };
   const content = $('#weekly-recap-content');
   if (content) content.innerHTML = '<div class="tool-note">Loading weekly recap…</div>';
   modal.classList.remove('hidden');
@@ -388,8 +452,29 @@ async function openWeeklyRecapModal() {
     const response = await api('/api/weekly-recap/latest');
     state.weeklyRecapLast = response?.recap || null;
     renderWeeklyRecapBody(state.weeklyRecapLast);
+    if (markViewed && state.weeklyRecapLast?.id) {
+      await markWeeklyRecapViewed(state.weeklyRecapLast.id);
+    }
   } catch (error) {
     if (content) content.innerHTML = `<div class="error">${error?.message || 'Failed to load recap.'}</div>`;
+  }
+}
+
+async function maybeAutoOpenWeeklyRecapOnBoot() {
+  try {
+    const response = await api('/api/weekly-recap/latest');
+    const recap = response?.recap || null;
+    state.weeklyRecapLast = recap;
+    const deepLinkOpen = shouldDeepLinkOpenWeeklyRecap();
+    const weekendAutoOpen = shouldAutoOpenWeeklyRecap(recap);
+    if (!deepLinkOpen && !weekendAutoOpen) return;
+    await openWeeklyRecapModalWithContext({
+      source: deepLinkOpen ? 'push' : 'weekend-auto',
+      markViewed: deepLinkOpen
+    });
+    if (deepLinkOpen) clearWeeklyRecapDeepLinkParams();
+  } catch (error) {
+    console.warn('Weekly recap boot check failed:', error?.message || error);
   }
 }
 
@@ -4116,7 +4201,13 @@ function bindControls() {
   $('#weekly-recap-view-last-btn')?.addEventListener('click', () => {
     openWeeklyRecapModal();
   });
-  $('#weekly-recap-close-btn')?.addEventListener('click', () => {
+  $('#weekly-recap-close-btn')?.addEventListener('click', async () => {
+    const recapId = state.weeklyRecapLast?.id || null;
+    const wasViewed = !!state.weeklyRecapLast?.viewedAt;
+    if (recapId && !wasViewed) {
+      await markWeeklyRecapDismissed(recapId);
+    }
+    state.weeklyRecapOpenContext = null;
     $('#weekly-recap-modal')?.classList.add('hidden');
   });
   $('#weekly-recap-generate-btn')?.addEventListener('click', async () => {
@@ -4908,6 +4999,7 @@ async function init() {
   render();
   consumePendingRiskCalculatorPrefill();
   loadSiteAnnouncementsOnBoot();
+  maybeAutoOpenWeeklyRecapOnBoot();
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
     // We require core dashboard datasets (portfolio metrics, calendar data, active trades)
