@@ -7896,17 +7896,17 @@ textarea {
 }
 
 .weekly-recap-content {
-  margin-top: 12px;
+  margin-top: 10px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .weekly-recap-topline {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
+  gap: 14px;
+  padding: 14px;
   border-radius: 12px;
   background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.72));
   border: 1px solid rgba(71, 85, 105, 0.35);
@@ -7925,24 +7925,30 @@ textarea {
 }
 
 .weekly-primary-value {
-  font-size: 32px;
+  font-size: 34px;
   font-weight: 700;
   line-height: 1.1;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .weekly-support-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 6px;
+}
+
+.weekly-recap-side {
+  min-width: 205px;
+  display: grid;
+  gap: 8px;
 }
 
 .weekly-support-item {
-  background: rgba(2, 6, 23, 0.45);
+  background: rgba(2, 6, 23, 0.55);
   border: 1px solid rgba(71, 85, 105, 0.28);
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 7px 9px;
 }
 
 .weekly-support-item span {
@@ -7960,30 +7966,52 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  padding: 4px 8px;
+  padding: 5px 10px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.35);
+  justify-self: start;
 }
 
 .weekly-chip.pos { color: #86efac; border-color: rgba(74, 222, 128, 0.55); }
 .weekly-chip.neg { color: #fca5a5; border-color: rgba(248, 113, 113, 0.55); }
 .weekly-chip.flat { color: #cbd5e1; }
 
-.weekly-recap-stat-grid {
+.weekly-recap-stat-groups {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.weekly-recap-tile {
-  background: rgba(15, 23, 42, 0.72);
-  border: 1px solid rgba(71, 85, 105, 0.35);
+.weekly-stat-group {
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(71, 85, 105, 0.3);
   border-radius: 10px;
-  padding: 8px 10px;
+  padding: 8px;
 }
 
-.weekly-recap-tile span { font-size: 11px; color: #94a3b8; display: block; }
-.weekly-recap-tile strong { font-size: 17px; color: #e2e8f0; }
+.weekly-stat-group__title {
+  margin: 0 0 7px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.weekly-recap-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.weekly-recap-tile {
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(71, 85, 105, 0.28);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.weekly-recap-tile span { font-size: 10px; color: #94a3b8; display: block; letter-spacing: 0.04em; }
+.weekly-recap-tile strong { font-size: 18px; color: #f8fafc; line-height: 1.15; display: block; margin-top: 2px; }
 
 .weekly-recap-highlights {
   display: grid;
@@ -7996,31 +8024,95 @@ textarea {
   background: rgba(2, 6, 23, 0.78);
   border: 1px solid rgba(71, 85, 105, 0.34);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 10px 11px;
   font-size: 12px;
 }
 
-.weekly-trade-card strong {
-  font-size: 18px;
+.weekly-recap-highlight strong {
   display: block;
-  margin-top: 3px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+  margin-bottom: 6px;
 }
 
-.weekly-trade-card__meta {
+.weekly-recap-highlight div {
+  font-size: 14px;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
+.weekly-trade-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weekly-trade-card__dir {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.weekly-trade-card__ticker {
+  font-size: 20px;
+  font-weight: 700;
   margin-top: 4px;
-  color: #cbd5e1;
+  color: #f8fafc;
+}
+
+.weekly-trade-card__pnl {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.weekly-trade-card__date,
+.weekly-trade-card__empty {
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.weekly-trade-card.is-positive {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.weekly-trade-card.is-positive .weekly-trade-card__pnl {
+  color: #86efac;
+}
+
+.weekly-trade-card.is-negative {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.weekly-trade-card.is-negative .weekly-trade-card__pnl {
+  color: #fca5a5;
 }
 
 .weekly-recap-modal-footer {
-  margin-top: 12px;
+  margin-top: 10px;
   display: flex;
   justify-content: flex-end;
 }
 
 @media (max-width: 760px) {
   .weekly-support-grid,
+  .weekly-recap-stat-groups,
   .weekly-recap-stat-grid,
   .weekly-recap-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .weekly-recap-topline {
+    flex-direction: column;
+  }
+  .weekly-recap-side {
+    min-width: 0;
+    width: 100%;
+  }
+  .weekly-support-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
