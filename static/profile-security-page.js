@@ -159,11 +159,19 @@
     el.classList.toggle('error', !!isError);
   }
 
-  async function apiWithTimeout(path, options = {}, timeoutMs = 15000) {
-    const timeout = new Promise((_, reject) => {
-      window.setTimeout(() => reject(new Error('2FA setup timed out. Please try again.')), timeoutMs);
-    });
-    return Promise.race([api(path, options), timeout]);
+  async function apiWithTimeout(path, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await api(path, { ...options, signal: controller.signal });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('2FA setup timed out. Please try again.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
   }
 
   function renderTwoFactorSetup(setup) {
@@ -175,8 +183,11 @@
     }
 
     const qrEl = document.getElementById('two-factor-qr');
+    console.info('[2FA] Setup payload received.', setup);
     const secret = typeof setup.secret === 'string' ? setup.secret.trim() : '';
-    const qrCodeUrl = typeof setup.qrCodeUrl === 'string' ? setup.qrCodeUrl.trim() : '';
+    const qrCodeUrl = typeof setup.qr_code === 'string'
+      ? setup.qr_code.trim()
+      : (typeof setup.qrCodeUrl === 'string' ? setup.qrCodeUrl.trim() : '');
 
     state.twoFactor.setupId = setup.setupId;
     if (qrEl) {
