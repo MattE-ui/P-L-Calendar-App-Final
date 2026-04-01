@@ -303,8 +303,8 @@ function renderWeeklyRecapBody(recap) {
     <div class="weekly-support-item">
       <span>${metric.label}</span>
       <strong>${metric.value}</strong>
-    </div>`;
-  ).join('');
+    </div>
+  `).join('');
   content.innerHTML = `
     <section class="weekly-recap-topline">
       <div class="weekly-recap-primary">
