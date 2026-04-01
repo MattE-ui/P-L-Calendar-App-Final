@@ -16,16 +16,26 @@
     </h1>
     <section class="card">
       <h2>Log in</h2>
-      <label>Username</label>
-      <input id="login-username" type="text" autocomplete="username" placeholder="your username">
-      <label>Password</label>
-      <input id="login-password" type="password" autocomplete="current-password">
-      <button id="login-btn" type="button" class="primary">Login</button>
-      <div id="login-2fa-panel" class="login-2fa-panel hidden">
-        <label for="login-2fa-code">Authenticator code or backup code</label>
-        <input id="login-2fa-code" type="text" autocomplete="one-time-code" placeholder="6-digit code or backup code">
+      <div id="login-credentials-panel" class="login-auth-panel">
+        <label>Username</label>
+        <input id="login-username" type="text" autocomplete="username" placeholder="your username">
+        <label>Password</label>
+        <input id="login-password" type="password" autocomplete="current-password">
+        <button id="login-btn" type="button" class="primary">Login</button>
+      </div>
+      <div id="login-2fa-panel" class="login-auth-panel login-2fa-panel hidden">
+        <p class="card-subtitle">Enter your authenticator code to complete sign in.</p>
+        <label for="login-2fa-code">6-digit authenticator code</label>
+        <input id="login-2fa-code" type="text" autocomplete="one-time-code" inputmode="numeric" maxlength="6" placeholder="123456">
+        <div class="login-2fa-methods">
+          <button id="login-2fa-toggle-btn" type="button" class="ghost">Use backup code instead</button>
+        </div>
+        <div id="login-2fa-backup-group" class="hidden">
+          <label for="login-2fa-backup-code">Backup code</label>
+          <input id="login-2fa-backup-code" type="text" autocomplete="off" placeholder="Enter backup code">
+        </div>
         <div class="profile-actions">
-          <button id="login-2fa-verify-btn" type="button" class="primary">Verify 2FA</button>
+          <button id="login-2fa-verify-btn" type="button" class="primary">Verify</button>
           <button id="login-2fa-back-btn" type="button" class="ghost">Back</button>
         </div>
       </div>
