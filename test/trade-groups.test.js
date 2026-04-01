@@ -528,6 +528,37 @@ test('notification device delete endpoint is idempotent soft-delete and blocks f
   assert.equal(testPush.res.status, 400);
 });
 
+test('legacy notification device rows are backfilled and still eligible to receive sends', async () => {
+  const now = new Date().toISOString();
+  const db = loadDB();
+  db.notificationDevices = [{
+    id: 'legacy-row-1',
+    userId: member,
+    deviceId: 'legacy-phone',
+    platform: 'ios-pwa',
+    browser: 'safari',
+    userAgent: 'Mobile Safari',
+    token: 'legacy-token-abcdefghijklmnopqrstuvwxyz',
+    isActive: true,
+    createdAt: now
+  }];
+  saveDB(db);
+
+  const devices = await authedFetch(tokens.member, '/api/notifications/devices');
+  assert.equal(devices.res.status, 200);
+  assert.equal(devices.data.devices.length, 1);
+  assert.equal(devices.data.devices[0].permissionState, 'granted');
+  assert.equal(devices.data.devices[0].categories.tradeGroupAlerts, true);
+
+  const testPush = await authedFetch(tokens.member, '/api/notifications/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+  assert.notEqual(testPush.res.status, 400);
+  assert.notEqual(testPush.data.error, 'No active push-registered devices found. Enable notifications on this device first.');
+});
+
 
 test('group current positions prefer mapped ticker and fallback to raw symbol', () => {
   const db = loadDB();

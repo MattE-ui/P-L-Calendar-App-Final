@@ -2368,6 +2368,58 @@ function ensureNotificationTables(db) {
   if (!Array.isArray(db.notificationEvents)) db.notificationEvents = [];
   if (!Array.isArray(db.notificationPushDedupe)) db.notificationPushDedupe = [];
   if (!Array.isArray(db.notificationPreferences)) db.notificationPreferences = [];
+  backfillNotificationDeviceCompatibility(db);
+}
+
+function getEffectiveNotificationPermissionState(device) {
+  const permission = String(device?.permissionState || '').trim().toLowerCase();
+  if (permission === 'granted' || permission === 'denied' || permission === 'default') return permission;
+  if (device?.isActive !== false && String(device?.token || '').trim()) return 'granted';
+  return 'default';
+}
+
+function backfillNotificationDeviceCompatibility(db) {
+  if (!Array.isArray(db?.notificationDevices)) return;
+  const nowIso = new Date().toISOString();
+  db.notificationDevices.forEach((device) => {
+    if (!device || typeof device !== 'object') return;
+    let changed = false;
+    if (!device.categories || typeof device.categories !== 'object') {
+      device.categories = defaultNotificationCategories();
+      changed = true;
+    } else {
+      const normalizedCategories = normalizeNotificationCategories(device.categories);
+      if (JSON.stringify(normalizedCategories) !== JSON.stringify(device.categories)) {
+        device.categories = normalizedCategories;
+        changed = true;
+      }
+    }
+    if (!device.delivery || typeof device.delivery !== 'object') {
+      device.delivery = defaultNotificationDelivery();
+      changed = true;
+    } else {
+      const normalizedDelivery = normalizeNotificationDelivery(device.delivery);
+      if (JSON.stringify(normalizedDelivery) !== JSON.stringify(device.delivery)) {
+        device.delivery = normalizedDelivery;
+        changed = true;
+      }
+    }
+    const effectivePermission = getEffectiveNotificationPermissionState(device);
+    if (device.permissionState !== effectivePermission) {
+      device.permissionState = effectivePermission;
+      changed = true;
+    }
+    if (changed) {
+      device.updatedAt ||= nowIso;
+      console.info('[Notifications][Compatibility] Backfilled legacy device row.', {
+        userId: device.userId || null,
+        deviceRowId: device.id || null,
+        permissionState: device.permissionState,
+        categoryCount: Object.keys(device.categories || {}).length,
+        deliveryCount: Object.keys(device.delivery || {}).length
+      });
+    }
+  });
 }
 
 function ensureSiteAnnouncementTables(db) {
@@ -2867,6 +2919,24 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   const category = payload.category;
   const categoryEnabled = !!userPreferences?.categories?.[category];
   const userDelivery = String(userPreferences?.delivery?.[category] || 'push');
+  console.info('[Notifications][Pipeline] Preference fetch result.', {
+    correlationId,
+    eventType,
+    eventId: payload.eventId,
+    recipientUserId: userId,
+    category,
+    categoryEnabled,
+    userDelivery,
+    categoryCount: Object.keys(userPreferences?.categories || {}).length,
+    deliveryCount: Object.keys(userPreferences?.delivery || {}).length
+  });
+  console.info('[Notifications][Pipeline] Category mapping result.', {
+    correlationId,
+    eventType,
+    eventId: payload.eventId,
+    recipientUserId: userId,
+    mappedCategory: category
+  });
   console.info('[Notifications][Pipeline] Push event creation requested.', {
     correlationId,
     eventType,
@@ -2918,13 +2988,41 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     db.notificationEvents.push(skippedLog);
     return skippedLog;
   }
-  const eligibleDevices = db.notificationDevices.filter((item) => item.userId === userId
-    && item.isActive
-    && item.permissionState === 'granted'
-    && (!onlyDeviceId || item.id === onlyDeviceId)
-    && (!criticalOnly || category === 'criticalRiskAlerts')
-    && !!item.categories?.[category]
-    && ['push', 'both'].includes(String(item.delivery?.[category] || 'push')));
+  const eligibleDevices = [];
+  db.notificationDevices.forEach((item) => {
+    if (item.userId !== userId) return;
+    const suppressionReasons = [];
+    if (!item.isActive) suppressionReasons.push('inactive_device');
+    const permissionState = getEffectiveNotificationPermissionState(item);
+    if (permissionState !== 'granted') suppressionReasons.push(`permission_${permissionState}`);
+    if (onlyDeviceId && item.id !== onlyDeviceId) suppressionReasons.push('not_target_device');
+    if (criticalOnly && category !== 'criticalRiskAlerts') suppressionReasons.push('critical_only_filter');
+    if (!item.categories?.[category]) suppressionReasons.push('category_disabled_on_device');
+    const deliveryState = String(item.delivery?.[category] || 'push');
+    if (!['push', 'both'].includes(deliveryState)) suppressionReasons.push(`delivery_${deliveryState}`);
+    if (!String(item.token || '').trim()) suppressionReasons.push('missing_push_token');
+    if (suppressionReasons.length) {
+      console.info('[Notifications][Pipeline] Suppression reason(s) for device.', {
+        correlationId,
+        eventType,
+        eventId: payload.eventId,
+        recipientUserId: userId,
+        deviceRowId: item.id || null,
+        deviceId: item.deviceId || null,
+        suppressionReasons
+      });
+      return;
+    }
+    eligibleDevices.push(item);
+  });
+  console.info('[Notifications][Pipeline] Delivery routing decision.', {
+    correlationId,
+    eventType,
+    eventId: payload.eventId,
+    recipientUserId: userId,
+    registeredDeviceCount: db.notificationDevices.filter((item) => item.userId === userId).length,
+    eligibleDeviceCount: eligibleDevices.length
+  });
   if (eventType === 'trade_group_announcement') {
     logAnnouncementPipelineStage('5.candidate_devices_resolved', {
       correlationId,
@@ -11961,7 +12059,9 @@ app.post('/api/notifications/test', auth, asyncHandler(async (req, res) => {
   const db = loadDB();
   ensureNotificationTables(db);
   const targetDeviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : '';
-  const registeredDevices = db.notificationDevices.filter((item) => item.userId === req.username && item.isActive && item.permissionState === 'granted');
+  const registeredDevices = db.notificationDevices.filter((item) => item.userId === req.username
+    && item.isActive
+    && getEffectiveNotificationPermissionState(item) === 'granted');
   if (!registeredDevices.length) {
     return res.status(400).json({ error: 'No active push-registered devices found. Enable notifications on this device first.' });
   }
