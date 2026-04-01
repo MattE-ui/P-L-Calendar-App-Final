@@ -102,6 +102,10 @@ const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES ||
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
+const TWO_FACTOR_ENCRYPTION_KEY = process.env.TWO_FACTOR_ENCRYPTION_KEY || process.env.SESSION_SECRET || '';
+const TWO_FACTOR_ISSUER = process.env.TWO_FACTOR_ISSUER || 'Veracity Trading Suite';
+const TWO_FACTOR_VERIFY_RATE_LIMIT_MAX = Number(process.env.TWO_FACTOR_VERIFY_RATE_LIMIT_MAX) || 5;
+const TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS = Number(process.env.TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS) || (5 * 60 * 1000);
 const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
 const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
 const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
@@ -139,6 +143,8 @@ const ibkrRateLimit = new Map();
 const socialCodeLookupRateLimit = new Map();
 const socialCodeRegenRateLimit = new Map();
 const notificationTestRateLimit = new Map();
+const twoFactorSetupVerifyRateLimit = new Map();
+const twoFactorLoginVerifyRateLimit = new Map();
 
 const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
 const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
@@ -3391,6 +3397,7 @@ function loadDB() {
       db.investorInvites = [];
     }
     db.investorSessions ||= {};
+    ensureTwoFactorTables(db);
     ensureNotificationTables(db);
     ensureSiteAnnouncementTables(db);
     ensureSocialTables(db);
@@ -3442,6 +3449,8 @@ function loadDB() {
       masterValuations: [],
       investorInvites: [],
       investorSessions: {},
+      twoFactorSetups: {},
+      twoFactorLoginChallenges: {},
       notificationDevices: [],
       notificationEvents: [],
       siteAnnouncements: [],
@@ -4453,6 +4462,22 @@ function ensureUserShape(user, identifier) {
   }
   if (!user.security || typeof user.security !== 'object') {
     user.security = {};
+    mutated = true;
+  }
+  if (typeof user.security.twoFactorEnabled !== 'boolean') {
+    user.security.twoFactorEnabled = false;
+    mutated = true;
+  }
+  if (user.security.twoFactorSecretEnc !== undefined && typeof user.security.twoFactorSecretEnc !== 'string') {
+    delete user.security.twoFactorSecretEnc;
+    mutated = true;
+  }
+  if (!Array.isArray(user.security.twoFactorBackupCodeHashes)) {
+    user.security.twoFactorBackupCodeHashes = [];
+    mutated = true;
+  }
+  if (user.security.twoFactorEnabled && (!user.security.twoFactorSecretEnc || !user.security.twoFactorBackupCodeHashes.length)) {
+    user.security.twoFactorEnabled = false;
     mutated = true;
   }
   if (user.guest === undefined) {
@@ -5846,6 +5871,146 @@ function decryptIbkrTokens(serialized) {
   decipher.setAuthTag(tag);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return JSON.parse(decrypted.toString('utf8'));
+}
+
+function getTwoFactorEncryptionKey() {
+  if (!TWO_FACTOR_ENCRYPTION_KEY) return null;
+  return crypto.createHash('sha256').update(TWO_FACTOR_ENCRYPTION_KEY, 'utf8').digest();
+}
+
+function encryptTwoFactorSecret(secret) {
+  const key = getTwoFactorEncryptionKey();
+  if (!key) throw new Error('Two-factor encryption key is not configured.');
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+}
+
+function decryptTwoFactorSecret(payload) {
+  if (!payload) return '';
+  const key = getTwoFactorEncryptionKey();
+  if (!key) throw new Error('Two-factor encryption key is not configured.');
+  const raw = Buffer.from(payload, 'base64');
+  if (raw.length < 28) throw new Error('Malformed two-factor secret payload.');
+  const iv = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const ciphertext = raw.subarray(28);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+function hashBackupCode(code) {
+  return crypto.createHash('sha256').update(String(code || ''), 'utf8').digest('hex');
+}
+
+function generateBackupCodes(count = 10) {
+  return Array.from({ length: count }, () => crypto.randomBytes(5).toString('hex').toUpperCase());
+}
+
+function ensureTwoFactorTables(db) {
+  if (!db.twoFactorSetups || typeof db.twoFactorSetups !== 'object') db.twoFactorSetups = {};
+  if (!db.twoFactorLoginChallenges || typeof db.twoFactorLoginChallenges !== 'object') db.twoFactorLoginChallenges = {};
+}
+
+function clearExpiredTwoFactorChallenges(db) {
+  ensureTwoFactorTables(db);
+  const now = Date.now();
+  for (const [id, challenge] of Object.entries(db.twoFactorLoginChallenges)) {
+    if (!challenge || !challenge.expiresAt || Date.parse(challenge.expiresAt) <= now) {
+      delete db.twoFactorLoginChallenges[id];
+    }
+  }
+}
+
+function enforceRateLimit(map, key, maxAttempts, windowMs) {
+  const now = Date.now();
+  const bucket = map.get(key) || { count: 0, resetAt: now + windowMs };
+  if (bucket.resetAt <= now) {
+    bucket.count = 0;
+    bucket.resetAt = now + windowMs;
+  }
+  bucket.count += 1;
+  map.set(key, bucket);
+  if (bucket.count > maxAttempts) {
+    return Math.max(1000, bucket.resetAt - now);
+  }
+  return 0;
+}
+
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Encode(buffer) {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+  for (const byte of buffer) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return output;
+}
+
+function base32Decode(input) {
+  const clean = String(input || '').toUpperCase().replace(/=+$/g, '').replace(/[^A-Z2-7]/g, '');
+  let bits = 0;
+  let value = 0;
+  const output = [];
+  for (const char of clean) {
+    const idx = BASE32_ALPHABET.indexOf(char);
+    if (idx === -1) continue;
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(output);
+}
+
+function generateTotpSecret() {
+  const bytes = crypto.randomBytes(20);
+  return base32Encode(bytes);
+}
+
+function buildOtpAuthUrl(secret, username) {
+  const label = encodeURIComponent(`${TWO_FACTOR_ISSUER}:${username}`);
+  const issuer = encodeURIComponent(TWO_FACTOR_ISSUER);
+  return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+}
+
+function generateTotpToken(secret, counter) {
+  const key = base32Decode(secret);
+  const counterBuffer = Buffer.alloc(8);
+  counterBuffer.writeBigUInt64BE(BigInt(counter));
+  const hmac = crypto.createHmac('sha1', key).update(counterBuffer).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const binary = ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff);
+  return String(binary % 1000000).padStart(6, '0');
+}
+
+function verifyTotpCode(secret, token) {
+  const normalized = String(token || '').trim();
+  if (!/^\\d{6}$/.test(normalized)) return false;
+  const nowCounter = Math.floor(Date.now() / 1000 / 30);
+  for (let offset = -1; offset <= 1; offset += 1) {
+    if (generateTotpToken(secret, nowCounter + offset) === normalized) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function normalizeTrading212Symbol(raw) {
@@ -10695,6 +10860,68 @@ app.post('/api/login', async (req,res)=>{
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
   ensureUserShape(user, username);
   user.security ||= {};
+  ensureTwoFactorTables(db);
+  clearExpiredTwoFactorChallenges(db);
+  if (user.security.twoFactorEnabled) {
+    const challengeId = crypto.randomUUID();
+    db.twoFactorLoginChallenges[challengeId] = {
+      username,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
+    };
+    saveDB(db);
+    return res.status(202).json({
+      requiresTwoFactor: true,
+      challengeId,
+      methods: ['totp', 'backup_code']
+    });
+  }
+  user.security.lastLoginAt = new Date().toISOString();
+  console.info('[2FA] Password login complete (2FA disabled).', { username });
+  createSession(db, username, res, 7 * 24 * 60 * 60 * 1000, req);
+  saveDB(db);
+  res.json({ ok: true, profileComplete: !!user.profileComplete });
+});
+
+app.post('/api/login/2fa', async (req, res) => {
+  const challengeId = typeof req.body?.challengeId === 'string' ? req.body.challengeId : '';
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim().replace(/\s+/g, '') : '';
+  const method = req.body?.method === 'backup_code' ? 'backup_code' : 'totp';
+  if (!challengeId || !code) return res.status(400).json({ error: 'Challenge and code are required.' });
+  const db = loadDB();
+  ensureTwoFactorTables(db);
+  clearExpiredTwoFactorChallenges(db);
+  const challenge = db.twoFactorLoginChallenges[challengeId];
+  if (!challenge) return res.status(400).json({ error: '2FA challenge expired. Please log in again.' });
+  const username = challenge.username;
+  const user = db.users?.[username];
+  if (!user) return res.status(400).json({ error: '2FA challenge is invalid.' });
+  ensureUserShape(user, username);
+  const rateLimitKey = `${username}:${req.ip || 'unknown'}`;
+  const retryAfterMs = enforceRateLimit(twoFactorLoginVerifyRateLimit, rateLimitKey, TWO_FACTOR_VERIFY_RATE_LIMIT_MAX, TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS);
+  if (retryAfterMs > 0) {
+    const retryAfter = Math.ceil(retryAfterMs / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: `Too many verification attempts. Try again in ${retryAfter} seconds.` });
+  }
+  let verified = false;
+  if (method === 'backup_code') {
+    const hashed = hashBackupCode(code.toUpperCase());
+    const idx = user.security.twoFactorBackupCodeHashes.indexOf(hashed);
+    if (idx >= 0) {
+      verified = true;
+      user.security.twoFactorBackupCodeHashes.splice(idx, 1);
+    }
+  } else {
+    const secret = decryptTwoFactorSecret(user.security.twoFactorSecretEnc);
+    verified = verifyTotpCode(secret, code);
+  }
+  console.info('[2FA] Login verification attempt.', { username, method, success: verified });
+  if (!verified) {
+    saveDB(db);
+    return res.status(400).json({ error: method === 'backup_code' ? 'Invalid backup code.' : 'Invalid authentication code.' });
+  }
+  delete db.twoFactorLoginChallenges[challengeId];
   user.security.lastLoginAt = new Date().toISOString();
   createSession(db, username, res, 7 * 24 * 60 * 60 * 1000, req);
   saveDB(db);
@@ -13505,6 +13732,12 @@ app.get('/api/account/security-dashboard', auth, (req, res) => {
   if (user.security?.passwordUpdatedAt) {
     activity.push({ id: 'password-updated', type: 'password', detail: 'Password changed', at: user.security.passwordUpdatedAt });
   }
+  if (user.security?.twoFactorEnabledAt) {
+    activity.push({ id: '2fa-enabled', type: '2fa', detail: 'Two-factor authentication enabled', at: user.security.twoFactorEnabledAt });
+  }
+  if (user.security?.twoFactorDisabledAt) {
+    activity.push({ id: '2fa-disabled', type: '2fa', detail: 'Two-factor authentication disabled', at: user.security.twoFactorDisabledAt });
+  }
   for (const session of sessionRows.slice(0, 5)) {
     if (session.lastActiveAt) {
       activity.push({
@@ -13531,18 +13764,110 @@ app.get('/api/account/security-dashboard', auth, (req, res) => {
   });
 });
 
-app.post('/api/account/security/two-factor', auth, (req, res) => {
+app.post('/api/security/2fa/setup', auth, async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const enabled = !!req.body?.enabled;
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
-  user.security ||= {};
-  user.security.twoFactorEnabled = enabled;
-  user.security.twoFactorUpdatedAt = new Date().toISOString();
+  ensureTwoFactorTables(db);
+  const secret = generateTotpSecret();
+  const otpauthUrl = buildOtpAuthUrl(secret, req.username);
+  const setupId = crypto.randomUUID();
+  db.twoFactorSetups[setupId] = {
+    username: req.username,
+    secretEnc: encryptTwoFactorSecret(secret),
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
+  };
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(otpauthUrl)}`;
+  console.info('[2FA] Setup generated.', { username: req.username, setupId });
   saveDB(db);
-  res.json({ ok: true, twoFactorEnabled: enabled });
+  res.json({
+    setupId,
+    otpauthUrl,
+    secret,
+    qrCodeUrl
+  });
+});
+
+app.post('/api/security/2fa/verify', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const setupId = typeof req.body?.setupId === 'string' ? req.body.setupId : '';
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim().replace(/\s+/g, '') : '';
+  if (!setupId || !code) return res.status(400).json({ error: 'Setup and code are required.' });
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  ensureTwoFactorTables(db);
+  const setup = db.twoFactorSetups[setupId];
+  if (!setup || setup.username !== req.username || Date.parse(setup.expiresAt || 0) <= Date.now()) {
+    return res.status(400).json({ error: '2FA setup expired. Start setup again.' });
+  }
+  const retryAfterMs = enforceRateLimit(twoFactorSetupVerifyRateLimit, `${req.username}:${req.ip || 'unknown'}`, TWO_FACTOR_VERIFY_RATE_LIMIT_MAX, TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS);
+  if (retryAfterMs > 0) {
+    const retryAfter = Math.ceil(retryAfterMs / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: `Too many verification attempts. Try again in ${retryAfter} seconds.` });
+  }
+  const secret = decryptTwoFactorSecret(setup.secretEnc);
+  const verified = verifyTotpCode(secret, code);
+  console.info('[2FA] Setup verification attempt.', { username: req.username, success: verified });
+  if (!verified) return res.status(400).json({ error: 'Invalid authentication code.' });
+  const backupCodes = generateBackupCodes(10);
+  user.security.twoFactorSecretEnc = setup.secretEnc;
+  user.security.twoFactorEnabled = true;
+  user.security.twoFactorEnabledAt = new Date().toISOString();
+  user.security.twoFactorBackupCodeHashes = backupCodes.map(hashBackupCode);
+  delete db.twoFactorSetups[setupId];
+  saveDB(db);
+  console.info('[2FA] Enabled.', { username: req.username });
+  res.json({ ok: true, backupCodes });
+});
+
+app.post('/api/security/2fa/disable', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  user.security.twoFactorEnabled = false;
+  user.security.twoFactorSecretEnc = '';
+  user.security.twoFactorBackupCodeHashes = [];
+  user.security.twoFactorDisabledAt = new Date().toISOString();
+  console.info('[2FA] Disabled.', { username: req.username });
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/security/2fa/backup-codes', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  res.json({
+    enabled: !!user.security.twoFactorEnabled,
+    remainingBackupCodes: Array.isArray(user.security.twoFactorBackupCodeHashes) ? user.security.twoFactorBackupCodeHashes.length : 0
+  });
+});
+
+app.post('/api/security/2fa/regenerate-backup-codes', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  if (!user.security.twoFactorEnabled || !user.security.twoFactorSecretEnc) {
+    return res.status(400).json({ error: 'Enable 2FA before regenerating backup codes.' });
+  }
+  const backupCodes = generateBackupCodes(10);
+  user.security.twoFactorBackupCodeHashes = backupCodes.map(hashBackupCode);
+  user.security.twoFactorBackupCodesRegeneratedAt = new Date().toISOString();
+  console.info('[2FA] Backup codes regenerated.', { username: req.username });
+  saveDB(db);
+  res.json({ ok: true, backupCodes });
 });
 
 app.post('/api/account/security/sessions/logout', auth, (req, res) => {
