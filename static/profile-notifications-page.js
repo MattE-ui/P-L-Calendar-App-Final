@@ -4,6 +4,8 @@
   const ALERT_GROUPS = [
     { key: 'criticalRiskAlerts', title: 'Critical alerts', description: 'Risk breaches and high-priority failures.' },
     { key: 'tradeAlerts', title: 'Trade alerts', description: 'Trade entries, exits, and execution changes.' },
+    { key: 'tradeGroupAlerts', title: 'Trade group alerts', description: 'Invites, member updates, and group announcements.' },
+    { key: 'socialInvestorNotifications', title: 'Investor notifications', description: 'Investor updates and social portfolio activity.' },
     { key: 'brokerSyncFailures', title: 'System alerts', description: 'Sync failures and automation incidents.' },
     { key: 'dailyRecap', title: 'Summary', description: 'Daily recap and routine summaries.' }
   ];
@@ -15,14 +17,18 @@
     deviceId: getOrCreateNotificationDeviceId(),
     preferences: {
       categories: {
-        criticalRiskAlerts: false,
-        tradeAlerts: false,
-        brokerSyncFailures: false,
+        criticalRiskAlerts: true,
+        tradeAlerts: true,
+        tradeGroupAlerts: true,
+        socialInvestorNotifications: true,
+        brokerSyncFailures: true,
         dailyRecap: false
       },
       delivery: {
         criticalRiskAlerts: 'push',
         tradeAlerts: 'push',
+        tradeGroupAlerts: 'push',
+        socialInvestorNotifications: 'push',
         brokerSyncFailures: 'push',
         dailyRecap: 'push'
       }
