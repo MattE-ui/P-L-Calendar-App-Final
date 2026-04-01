@@ -379,6 +379,32 @@ function renderWeeklyRecapBody(recap) {
   `;
 }
 
+function updateWeeklyRecapPreviewCard(recap) {
+  const rangeEl = $('#weekly-recap-preview-range');
+  const pnlEl = $('#weekly-recap-preview-pnl');
+  if (!rangeEl || !pnlEl) return;
+  if (!recap || !recap.metrics) {
+    rangeEl.textContent = 'Week range: —';
+    pnlEl.textContent = 'Realised PnL: —';
+    return;
+  }
+  const metrics = recap.metrics || {};
+  const weekLabel = metrics.weekLabel || `${metrics.weekStart || '—'} → ${metrics.weekEnd || '—'}`;
+  rangeEl.textContent = `Week range: ${weekLabel}`;
+  pnlEl.textContent = `Realised PnL: ${fmtMoney(metrics.weeklyRealisedPnlGBP ?? metrics.netPnlGBP)}`;
+}
+
+async function loadWeeklyRecapPreviewCard() {
+  try {
+    const response = await api('/api/weekly-recap/latest');
+    state.weeklyRecapLast = response?.recap || null;
+    updateWeeklyRecapPreviewCard(state.weeklyRecapLast);
+  } catch (error) {
+    console.warn('Weekly recap preview load failed:', error?.message || error);
+    updateWeeklyRecapPreviewCard(null);
+  }
+}
+
 async function openWeeklyRecapModal() {
   return openWeeklyRecapModalWithContext({ source: 'manual', markViewed: true });
 }
@@ -4199,7 +4225,7 @@ function bindControls() {
     window.location.href = '/trades.html';
   });
   $('#weekly-recap-view-last-btn')?.addEventListener('click', () => {
-    openWeeklyRecapModal();
+    window.location.href = '/review';
   });
   $('#weekly-recap-close-btn')?.addEventListener('click', async () => {
     const recapId = state.weeklyRecapLast?.id || null;
@@ -4999,7 +5025,7 @@ async function init() {
   render();
   consumePendingRiskCalculatorPrefill();
   loadSiteAnnouncementsOnBoot();
-  maybeAutoOpenWeeklyRecapOnBoot();
+  loadWeeklyRecapPreviewCard();
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
     // We require core dashboard datasets (portfolio metrics, calendar data, active trades)

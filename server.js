@@ -3112,7 +3112,7 @@ function buildNotificationEvent(type, context = {}) {
       category: 'dailyRecap',
       title: context.title || 'Your weekly recap is ready',
       body: context.body || 'Review last week’s performance, wins, losses, and key takeaways.',
-      link: context.link || '/?openWeeklyRecap=latest&source=push'
+      link: context.link || '/review?openWeeklyRecap=latest&source=push'
     })
   };
   if (!builders[type]) return null;
@@ -11053,6 +11053,8 @@ app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.ht
 app.get('/trades', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
 app.get('/transactions', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
+app.get('/review.html', (req,res)=>{ res.sendFile(path.join(__dirname,'review.html')); });
+app.get('/review', (req,res)=>{ res.sendFile(path.join(__dirname,'review.html')); });
 app.get('/social', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html')); });
 app.get('/social/groups', (req,res)=>{ res.sendFile(path.join(__dirname,'social-groups.html')); });
 app.get('/social/network', (req,res)=>{ res.sendFile(path.join(__dirname,'social-network.html')); });
@@ -16927,7 +16929,7 @@ app.post('/api/weekly-recap/generate-latest', auth, async (req, res) => {
         context: {
           title: 'Your weekly recap is ready',
           body: 'Review last week’s performance, wins, losses, and key takeaways.',
-          link: '/?openWeeklyRecap=latest&source=push',
+          link: '/review?openWeeklyRecap=latest&source=push',
           eventId: `weekly_recap_ready:${recap.id}`
         }
       });
