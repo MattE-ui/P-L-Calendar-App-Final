@@ -11017,7 +11017,12 @@ app.post('/api/login', async (req,res)=>{
     saveDB(db);
     return res.status(202).json({
       requiresTwoFactor: true,
+      requires_2fa: true,
       challengeId,
+      challenge_id: challengeId,
+      challengeToken: challengeId,
+      challenge_token: challengeId,
+      message: 'Two-factor authentication required. Enter your authenticator code or backup code.',
       methods: ['totp', 'backup_code']
     });
   }

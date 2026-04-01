@@ -67,6 +67,18 @@ function createLoginHandlers() {
     return res;
   }
 
+  function parseTwoFactorChallenge(data = {}) {
+    const requiresTwoFactor = data.requiresTwoFactor === true || data.requires_2fa === true;
+    const challengeId = typeof data.challengeId === 'string'
+      ? data.challengeId
+      : (typeof data.challenge_id === 'string' ? data.challenge_id : (typeof data.challengeToken === 'string' ? data.challengeToken : (typeof data.challenge_token === 'string' ? data.challenge_token : '')));
+    return {
+      requiresTwoFactor,
+      challengeId: challengeId.trim(),
+      message: data.message
+    };
+  }
+
   async function handleLogin() {
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
@@ -79,13 +91,21 @@ function createLoginHandlers() {
     try {
       const res = await call('/api/login', { username, password });
       const data = await res.json().catch(() => ({ error: 'Login failed' }));
-      if (res.ok) {
+      const challenge = parseTwoFactorChallenge(data);
+      if ((res.status === 202 || res.ok) && challenge.requiresTwoFactor) {
+        if (!challenge.challengeId) {
+          setError('2FA challenge is missing. Please try signing in again.');
+          return;
+        }
+        pendingChallengeId = challenge.challengeId;
+        setTwoFactorMode(true);
+        if (typeof challenge.message === 'string' && challenge.message.trim()) {
+          setError(challenge.message.trim());
+        }
+      } else if (res.ok) {
         sessionStorage.removeItem('guestMode');
         localStorage.removeItem('guestMode');
         window.location.href = data.profileComplete ? '/' : '/profile.html';
-      } else if (res.status === 202 && data.requiresTwoFactor) {
-        pendingChallengeId = data.challengeId;
-        setTwoFactorMode(true);
       } else {
         setError(data.error || 'Login failed');
       }
