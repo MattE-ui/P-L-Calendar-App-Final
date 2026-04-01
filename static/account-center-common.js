@@ -46,9 +46,18 @@
     if (element) element.textContent = value;
   }
 
+  function setStatus(id, message, isError = false) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = message || '';
+    element.classList.toggle('is-hidden', !message);
+    element.classList.toggle('is-error', !!isError);
+  }
+
   window.AccountCenter = {
     api,
     setText,
+    setStatus,
     wireGlobalActions,
     isGuestSession
   };

@@ -2281,6 +2281,8 @@ const NOTIFICATION_CATEGORIES = Object.freeze([
   'soundEnabled'
 ]);
 
+const NOTIFICATION_DELIVERY_METHODS = Object.freeze(['push', 'email', 'both', 'disabled']);
+
 function defaultNotificationCategories() {
   return {
     criticalRiskAlerts: true,
@@ -2303,10 +2305,63 @@ function normalizeNotificationCategories(raw) {
   return normalized;
 }
 
+function defaultNotificationDelivery() {
+  return {
+    criticalRiskAlerts: 'push',
+    tradeAlerts: 'push',
+    tradeGroupAlerts: 'push',
+    socialInvestorNotifications: 'push',
+    brokerSyncFailures: 'push',
+    dailyRecap: 'push',
+    soundEnabled: 'push'
+  };
+}
+
+function normalizeNotificationDelivery(raw) {
+  const defaults = defaultNotificationDelivery();
+  if (!raw || typeof raw !== 'object') return defaults;
+  const normalized = { ...defaults };
+  for (const key of NOTIFICATION_CATEGORIES) {
+    const candidate = String(raw[key] || '').trim().toLowerCase();
+    if (NOTIFICATION_DELIVERY_METHODS.includes(candidate)) {
+      normalized[key] = candidate;
+    }
+  }
+  return normalized;
+}
+
+function buildNotificationPreferencesRecord(userId, existing = null) {
+  const nowIso = new Date().toISOString();
+  const categories = normalizeNotificationCategories(existing?.categories);
+  const delivery = normalizeNotificationDelivery(existing?.delivery);
+  return {
+    id: existing?.id || crypto.randomUUID(),
+    userId,
+    categories,
+    delivery,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso
+  };
+}
+
+function getNotificationPreferences(db, userId) {
+  ensureNotificationTables(db);
+  let existing = db.notificationPreferences.find((item) => item.userId === userId);
+  if (!existing) {
+    existing = buildNotificationPreferencesRecord(userId);
+    db.notificationPreferences.push(existing);
+  } else {
+    const next = buildNotificationPreferencesRecord(userId, existing);
+    Object.assign(existing, next);
+  }
+  return existing;
+}
+
 function ensureNotificationTables(db) {
   if (!Array.isArray(db.notificationDevices)) db.notificationDevices = [];
   if (!Array.isArray(db.notificationEvents)) db.notificationEvents = [];
   if (!Array.isArray(db.notificationPushDedupe)) db.notificationPushDedupe = [];
+  if (!Array.isArray(db.notificationPreferences)) db.notificationPreferences = [];
 }
 
 function ensureSiteAnnouncementTables(db) {
@@ -2521,7 +2576,9 @@ function upsertNotificationDevice(db, payload) {
   const existingTokenFingerprint = existing ? fingerprintToken(existing.token) : '';
   const incomingTokenFingerprint = fingerprintToken(payload.token);
   const wasInactive = existing ? existing.isActive === false : false;
-  const mergedCategories = normalizeNotificationCategories(payload.categories || existing?.categories);
+  const userPreferences = getNotificationPreferences(db, payload.userId);
+  const mergedCategories = normalizeNotificationCategories(payload.categories || existing?.categories || userPreferences.categories);
+  const mergedDelivery = normalizeNotificationDelivery(payload.delivery || existing?.delivery || userPreferences.delivery);
   const next = {
     id: existing?.id || crypto.randomUUID(),
     userId: payload.userId,
@@ -2535,6 +2592,7 @@ function upsertNotificationDevice(db, payload) {
     isActive: payload.isActive !== false,
     installedAsPwa: !!payload.installedAsPwa,
     categories: mergedCategories,
+    delivery: mergedDelivery,
     createdAt: existing?.createdAt || nowIso,
     updatedAt: nowIso,
     lastSeenAt: nowIso,
@@ -2789,6 +2847,7 @@ function buildNotificationEvent(type, context = {}) {
 async function sendNotificationEvent(db, { userId, eventType, context = {}, onlyDeviceId = null, criticalOnly = false }) {
   ensureNotificationTables(db);
   cleanupDuplicateNotificationDevices(db, { userId });
+  const userPreferences = getNotificationPreferences(db, userId);
   const correlationId = String(context?.correlationId || `${eventType}:${crypto.randomUUID()}`);
   const payload = buildNotificationEvent(eventType, { ...context, userId, correlationId });
   if (!payload) {
@@ -2800,6 +2859,8 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   payload.announcementId = context?.announcementId || '';
   payload.invocationSource = String(context?.invocationSource || context?.source || 'server.js#sendNotificationEvent');
   const category = payload.category;
+  const categoryEnabled = !!userPreferences?.categories?.[category];
+  const userDelivery = String(userPreferences?.delivery?.[category] || 'push');
   console.info('[Notifications][Pipeline] Push event creation requested.', {
     correlationId,
     eventType,
@@ -2809,12 +2870,55 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
     recipientUserId: userId,
     invocationSource: payload.invocationSource
   });
+  if (!categoryEnabled || userDelivery === 'disabled' || userDelivery === 'email') {
+    console.info('[Notifications][Pipeline] Event skipped by user preferences before device routing.', {
+      correlationId,
+      eventType,
+      eventId: payload.eventId,
+      recipientUserId: userId,
+      category,
+      categoryEnabled,
+      userDelivery
+    });
+    const nowIso = new Date().toISOString();
+    const skippedLog = {
+      id: crypto.randomUUID(),
+      userId,
+      eventType,
+      category,
+      title: payload.title,
+      body: payload.body,
+      link: payload.link,
+      targetDeviceId: onlyDeviceId || null,
+      source: String(context?.source || ''),
+      context: {
+        correlationId,
+        groupId: context?.groupId || null,
+        announcementId: context?.announcementId || null,
+        eventId: payload.eventId,
+        invocationSource: payload.invocationSource
+      },
+      attemptedAt: nowIso,
+      deliveries: [{
+        deviceId: null,
+        ok: true,
+        skipped: true,
+        reason: 'user_preference_blocked',
+        categoryEnabled,
+        userDelivery,
+        at: nowIso
+      }]
+    };
+    db.notificationEvents.push(skippedLog);
+    return skippedLog;
+  }
   const eligibleDevices = db.notificationDevices.filter((item) => item.userId === userId
     && item.isActive
     && item.permissionState === 'granted'
     && (!onlyDeviceId || item.id === onlyDeviceId)
     && (!criticalOnly || category === 'criticalRiskAlerts')
-    && !!item.categories?.[category]);
+    && !!item.categories?.[category]
+    && ['push', 'both'].includes(String(item.delivery?.[category] || 'push')));
   if (eventType === 'trade_group_announcement') {
     logAnnouncementPipelineStage('5.candidate_devices_resolved', {
       correlationId,
@@ -11301,6 +11405,56 @@ app.get('/api/notifications/config', auth, (req, res) => {
   });
 });
 
+app.get('/api/notifications/preferences', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const preferences = getNotificationPreferences(db, req.username);
+  const activeDevices = db.notificationDevices.filter((item) => item.userId === req.username && item.isActive !== false);
+  const lastAlertSent = activeDevices
+    .map((item) => item.lastSentAt)
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b || 0) - Date.parse(a || 0))[0] || null;
+  saveDB(db);
+  console.info('[Notifications][Preferences] Settings fetch requested.', {
+    userId: req.username,
+    categoryCount: Object.keys(preferences.categories || {}).length,
+    deliveryCount: Object.keys(preferences.delivery || {}).length
+  });
+  res.json({
+    preferences,
+    registeredDeviceCount: activeDevices.length,
+    lastAlertSent
+  });
+});
+
+app.put('/api/notifications/preferences', auth, (req, res) => {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const current = getNotificationPreferences(db, req.username);
+  const nextCategories = req.body?.categories ? normalizeNotificationCategories(req.body.categories) : current.categories;
+  const nextDelivery = req.body?.delivery ? normalizeNotificationDelivery(req.body.delivery) : current.delivery;
+  const next = buildNotificationPreferencesRecord(req.username, {
+    ...current,
+    categories: nextCategories,
+    delivery: nextDelivery
+  });
+  Object.assign(current, next);
+  db.notificationDevices
+    .filter((item) => item.userId === req.username)
+    .forEach((device) => {
+      device.categories = normalizeNotificationCategories({ ...device.categories, ...current.categories });
+      device.delivery = normalizeNotificationDelivery({ ...device.delivery, ...current.delivery });
+      device.updatedAt = new Date().toISOString();
+    });
+  saveDB(db);
+  console.info('[Notifications][Preferences] Settings save succeeded.', {
+    userId: req.username,
+    categories: current.categories,
+    delivery: current.delivery
+  });
+  res.json({ ok: true, preferences: current });
+});
+
 app.get('/api/notifications/devices', auth, (req, res) => {
   const db = loadDB();
   ensureNotificationTables(db);
@@ -11347,6 +11501,7 @@ app.post('/api/notifications/devices/register', auth, (req, res) => {
     ensureNotificationTables(db);
     const payload = parsed.data;
     const categories = normalizeNotificationCategories(payload.categories || payload.preferences || req.body?.categories || req.body?.preferences);
+    const delivery = normalizeNotificationDelivery(payload.delivery || req.body?.delivery);
     const record = upsertNotificationDevice(db, {
       userId: req.username,
       deviceId: payload.deviceId,
@@ -11356,6 +11511,7 @@ app.post('/api/notifications/devices/register', auth, (req, res) => {
       userAgent: payload.userAgent || req.headers['user-agent'] || '',
       permissionState: payload.permissionState,
       installedAsPwa: !!payload.installedAsPwa,
+      delivery,
       categories,
       isActive: payload.isActive !== false
     });
@@ -11390,12 +11546,19 @@ app.put('/api/notifications/devices/:id/preferences', auth, (req, res) => {
   const device = db.notificationDevices.find((item) => item.id === req.params.id && item.userId === req.username);
   if (!device) return res.status(404).json({ error: 'Notification device not found.' });
   device.categories = normalizeNotificationCategories(req.body?.categories || device.categories);
+  device.delivery = normalizeNotificationDelivery(req.body?.delivery || device.delivery);
   if (typeof parsed.data.isActive === 'boolean') {
     device.isActive = parsed.data.isActive;
     if (!device.isActive) device.revokedAt = new Date().toISOString();
   }
   if (parsed.data.permissionState) device.permissionState = parsed.data.permissionState;
   device.updatedAt = new Date().toISOString();
+  const userPreferences = getNotificationPreferences(db, req.username);
+  if (req.body?.categories || req.body?.delivery) {
+    userPreferences.categories = normalizeNotificationCategories({ ...userPreferences.categories, ...device.categories });
+    userPreferences.delivery = normalizeNotificationDelivery({ ...userPreferences.delivery, ...device.delivery });
+    userPreferences.updatedAt = new Date().toISOString();
+  }
   saveDB(db);
   console.info('[Notifications][DeviceLifecycle] Device preference update persisted.', {
     action: device.isActive === false ? 'current_device_removed' : 'current_device_reenabled',
@@ -11672,12 +11835,17 @@ const notificationDeviceRegisterSchema = z.object({
   userAgent: z.string().max(1024).optional(),
   permissionState: z.enum(['default', 'granted', 'denied']),
   installedAsPwa: z.boolean().optional(),
-  isActive: z.boolean().optional()
+  isActive: z.boolean().optional(),
+  categories: z.record(z.boolean()).optional(),
+  delivery: z.record(z.string()).optional(),
+  preferences: z.record(z.boolean()).optional()
 });
 
 const notificationPreferencesSchema = z.object({
   isActive: z.boolean().optional(),
-  permissionState: z.enum(['default', 'granted', 'denied']).optional()
+  permissionState: z.enum(['default', 'granted', 'denied']).optional(),
+  categories: z.record(z.boolean()).optional(),
+  delivery: z.record(z.string()).optional()
 });
 
 app.get('/api/social/me', auth, (req, res) => {
