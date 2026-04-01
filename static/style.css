@@ -2356,7 +2356,7 @@ select {
 .grid.view-week .list-row { cursor: default; }
 
 .modal.hidden { display:none; }
-.modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding: clamp(10px, 2.4vw, 24px); }
+.modal { position:fixed; inset:0; z-index: 4000; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding: clamp(10px, 2.4vw, 24px); }
 .modal-card { background: var(--surface-1); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(840px, 100%); box-shadow: var(--shadow), var(--glow-emerald); max-height: 90vh; overflow-y: auto; }
 .two-factor-modal-card { width: min(560px, 100%); }
 .two-factor-step { display: flex; flex-direction: column; gap: 10px; }

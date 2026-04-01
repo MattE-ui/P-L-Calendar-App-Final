@@ -5,8 +5,10 @@
     dashboard: null,
     settings: loadLocalSettings(),
     twoFactor: {
+      setupLoading: false,
       setupId: '',
-      backupCodes: []
+      backupCodes: [],
+      lastError: ''
     }
   };
 
@@ -157,29 +159,86 @@
     el.classList.toggle('error', !!isError);
   }
 
-  async function beginTwoFactorSetup() {
-    setTwoFactorStatus('Preparing setup...');
+  async function apiWithTimeout(path, options = {}, timeoutMs = 15000) {
+    const timeout = new Promise((_, reject) => {
+      window.setTimeout(() => reject(new Error('2FA setup timed out. Please try again.')), timeoutMs);
+    });
+    return Promise.race([api(path, options), timeout]);
+  }
+
+  function renderTwoFactorSetup(setup) {
+    if (!setup || typeof setup !== 'object') {
+      throw new Error('2FA setup payload is missing. Please try again.');
+    }
+    if (!setup.setupId) {
+      throw new Error('2FA setup ID is missing. Please restart setup.');
+    }
+
+    const qrEl = document.getElementById('two-factor-qr');
+    const secret = typeof setup.secret === 'string' ? setup.secret.trim() : '';
+    const qrCodeUrl = typeof setup.qrCodeUrl === 'string' ? setup.qrCodeUrl.trim() : '';
+
+    state.twoFactor.setupId = setup.setupId;
+    if (qrEl) {
+      qrEl.src = qrCodeUrl || '';
+      qrEl.alt = qrCodeUrl ? '2FA QR code' : 'QR code unavailable for this setup';
+      qrEl.classList.toggle('hidden', !qrCodeUrl);
+    }
+    setText('two-factor-secret', secret || 'Unavailable. Restart setup to generate a new manual key.');
+
+    if (!qrCodeUrl && !secret) {
+      throw new Error('2FA setup data was incomplete. Please try again.');
+    }
+  }
+
+  function setTwoFactorToggleLoading(loading) {
     const button = document.getElementById('two-factor-toggle');
-    if (button) button.disabled = true;
+    if (!button) return;
+    if (loading) {
+      button.dataset.originalLabel = button.textContent;
+      button.textContent = 'Starting 2FA...';
+      button.disabled = true;
+      return;
+    }
+    button.textContent = button.dataset.originalLabel || button.textContent;
+    button.disabled = false;
+  }
+
+  async function beginTwoFactorSetup() {
+    if (state.twoFactor.setupLoading) return;
+    state.twoFactor.setupLoading = true;
+    state.twoFactor.lastError = '';
+    showTwoFactorStep('two-factor-step-setup');
+    toggleModal(true);
+    setTwoFactorStatus('Preparing setup...');
+    setTwoFactorToggleLoading(true);
     try {
-      const setup = await api('/api/security/2fa/setup', { method: 'POST' });
-      state.twoFactor.setupId = setup.setupId;
-      document.getElementById('two-factor-qr').src = setup.qrCodeUrl;
-      setText('two-factor-secret', setup.secret);
-      showTwoFactorStep('two-factor-step-setup');
-      toggleModal(true);
+      const setup = await apiWithTimeout('/api/security/2fa/setup', { method: 'POST' });
+      renderTwoFactorSetup(setup);
+      setTwoFactorStatus('Setup ready. Scan the QR code or use the manual key.', false);
     } catch (error) {
-      setText('security-auth-status', error.message || 'Unable to begin 2FA setup.');
+      state.twoFactor.lastError = error.message || 'Unable to begin 2FA setup.';
+      setTwoFactorStatus(state.twoFactor.lastError, true);
+      setText('security-auth-status', state.twoFactor.lastError);
     } finally {
-      if (button) button.disabled = false;
+      state.twoFactor.setupLoading = false;
+      setTwoFactorToggleLoading(false);
     }
   }
 
   function resetTwoFactorModal() {
     state.twoFactor.setupId = '';
     state.twoFactor.backupCodes = [];
+    state.twoFactor.lastError = '';
     document.getElementById('two-factor-code-input').value = '';
     document.getElementById('two-factor-backup-codes').value = '';
+    const qrEl = document.getElementById('two-factor-qr');
+    if (qrEl) {
+      qrEl.src = '';
+      qrEl.alt = '2FA QR code';
+      qrEl.classList.remove('hidden');
+    }
+    setText('two-factor-secret', '');
     const confirm = document.getElementById('two-factor-backup-confirm');
     if (confirm) confirm.checked = false;
     const finish = document.getElementById('two-factor-finish');
