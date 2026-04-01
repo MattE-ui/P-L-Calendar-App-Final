@@ -52,47 +52,68 @@
 
 <div id="two-factor-modal" class="modal hidden" aria-hidden="true">
   <div class="modal-card two-factor-modal-card">
-    <div class="modal-header">
-      <h3 id="two-factor-modal-title">Enable two-factor authentication</h3>
-      <button id="two-factor-modal-close" class="ghost small" type="button">Close</button>
+    <div class="modal-header two-factor-modal-header">
+      <div>
+        <p class="two-factor-modal-eyebrow">Security onboarding</p>
+        <h3 id="two-factor-modal-title">Enable two-factor authentication</h3>
+        <p class="helper">Strengthen account protection with app-based verification and one-time backup recovery codes.</p>
+      </div>
+      <button id="two-factor-modal-close" class="ghost small close-btn" type="button" aria-label="Close two-factor setup">✕</button>
     </div>
-    <p id="two-factor-modal-status" class="helper"></p>
+
+    <ol class="two-factor-progress" aria-label="2FA setup progress">
+      <li id="two-factor-progress-setup" class="is-current"><span class="two-factor-progress-dot">1</span><span>Scan</span></li>
+      <li id="two-factor-progress-verify"><span class="two-factor-progress-dot">2</span><span>Verify</span></li>
+      <li id="two-factor-progress-backup"><span class="two-factor-progress-dot">3</span><span>Backup codes</span></li>
+    </ol>
+
+    <p id="two-factor-modal-status" class="two-factor-status-banner helper" role="status" aria-live="polite"></p>
 
     <section id="two-factor-step-setup" class="two-factor-step">
-      <h4>Step 1: Scan QR code</h4>
-      <p class="helper">Open Google Authenticator or Authy and scan this code.</p>
-      <img id="two-factor-qr" class="two-factor-qr" alt="2FA QR code">
-      <p class="helper">Manual setup key:</p>
+      <h4>Scan QR code</h4>
+      <p class="helper">Open your authenticator app (Google Authenticator, Authy, or equivalent) and scan this code.</p>
+      <div class="two-factor-qr-panel">
+        <img id="two-factor-qr" class="two-factor-qr" alt="2FA QR code">
+      </div>
+      <p class="helper">If scanning is unavailable, enter this setup key manually.</p>
       <code id="two-factor-secret" class="two-factor-secret"></code>
-      <div class="modal-actions">
-        <button id="two-factor-to-verify" class="primary" type="button">Continue</button>
+      <div class="two-factor-footer">
+        <button id="two-factor-cancel-setup" class="ghost" type="button">Cancel</button>
+        <button id="two-factor-to-verify" class="primary" type="button">Continue to verification</button>
       </div>
     </section>
 
     <section id="two-factor-step-verify" class="two-factor-step hidden">
-      <h4>Step 2: Verify code</h4>
+      <h4>Verify code</h4>
+      <p class="helper">Enter the 6-digit code currently shown in your authenticator app.</p>
       <div class="profile-field">
         <label for="two-factor-code-input">6-digit code</label>
         <input id="two-factor-code-input" type="text" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
       </div>
-      <div class="modal-actions">
+      <div class="two-factor-footer">
+        <button id="two-factor-back-to-setup" class="ghost" type="button">Back</button>
         <button id="two-factor-verify-btn" class="primary" type="button">Verify & Enable</button>
       </div>
     </section>
 
     <section id="two-factor-step-backup" class="two-factor-step hidden">
-      <h4>Step 3: Save backup codes</h4>
-      <p class="helper">Each code can be used once if your authenticator is unavailable.</p>
-      <textarea id="two-factor-backup-codes" readonly rows="8"></textarea>
-      <div class="modal-actions">
-        <button id="two-factor-copy-codes" class="ghost" type="button">Copy</button>
+      <h4>Save backup codes</h4>
+      <p class="helper">These recovery codes are shown once. Each code can only be used a single time if your authenticator is unavailable.</p>
+      <textarea id="two-factor-backup-codes" class="hidden" readonly rows="8"></textarea>
+      <div id="two-factor-backup-grid" class="two-factor-backup-grid" role="list" aria-label="Backup recovery codes"></div>
+      <div class="two-factor-toolbar">
+        <button id="two-factor-copy-codes" class="ghost" type="button">Copy all</button>
         <button id="two-factor-download-codes" class="ghost" type="button">Download</button>
       </div>
-      <label class="two-factor-confirm">
+      <label class="two-factor-confirm-block">
         <input id="two-factor-backup-confirm" type="checkbox">
-        I have securely saved my backup codes.
+        <span>
+          <strong>I have securely saved my backup codes.</strong>
+          <small>Required to complete setup and protect account recovery access.</small>
+        </span>
       </label>
-      <div class="modal-actions">
+      <div class="two-factor-footer">
+        <button id="two-factor-back-to-verify" class="ghost" type="button">Back</button>
         <button id="two-factor-finish" class="primary" type="button" disabled>Finish</button>
       </div>
     </section>

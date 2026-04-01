@@ -36,6 +36,15 @@
     return date.toLocaleString();
   }
 
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
   function passwordStrengthStatus(passwordUpdatedAt) {
     if (!passwordUpdatedAt) return { label: 'Weak', tone: 'risk' };
     const ageDays = (Date.now() - Date.parse(passwordUpdatedAt)) / (1000 * 60 * 60 * 24);
@@ -150,6 +159,7 @@
     document.querySelectorAll('.two-factor-step').forEach((el) => el.classList.add('hidden'));
     document.getElementById(stepId)?.classList.remove('hidden');
     setText('two-factor-modal-status', '');
+    updateTwoFactorProgress(stepId);
   }
 
   function setTwoFactorStatus(message, isError = false) {
@@ -157,6 +167,33 @@
     if (!el) return;
     el.textContent = message || '';
     el.classList.toggle('error', !!isError);
+  }
+
+  function updateTwoFactorProgress(stepId) {
+    const steps = [
+      { id: 'two-factor-step-setup', progressId: 'two-factor-progress-setup' },
+      { id: 'two-factor-step-verify', progressId: 'two-factor-progress-verify' },
+      { id: 'two-factor-step-backup', progressId: 'two-factor-progress-backup' }
+    ];
+    const currentIndex = steps.findIndex((step) => step.id === stepId);
+    steps.forEach((step, index) => {
+      const item = document.getElementById(step.progressId);
+      if (!item) return;
+      item.classList.toggle('is-current', index === currentIndex);
+      item.classList.toggle('is-complete', index < currentIndex);
+    });
+  }
+
+  function renderBackupCodesGrid(codes = []) {
+    const grid = document.getElementById('two-factor-backup-grid');
+    if (!grid) return;
+    if (!codes.length) {
+      grid.innerHTML = '<p class="helper">No backup codes available. Restart setup to generate codes.</p>';
+      return;
+    }
+    grid.innerHTML = codes.map((code) => (
+      `<div class="two-factor-backup-tile" role="listitem">${escapeHtml(String(code || ''))}</div>`
+    )).join('');
   }
 
   async function apiWithTimeout(path, options = {}, timeoutMs = 30000) {
@@ -243,6 +280,7 @@
     state.twoFactor.lastError = '';
     document.getElementById('two-factor-code-input').value = '';
     document.getElementById('two-factor-backup-codes').value = '';
+    renderBackupCodesGrid([]);
     const qrEl = document.getElementById('two-factor-qr');
     if (qrEl) {
       qrEl.src = '';
@@ -305,6 +343,10 @@
     toggleModal(false);
     resetTwoFactorModal();
   });
+  document.getElementById('two-factor-cancel-setup')?.addEventListener('click', () => {
+    toggleModal(false);
+    resetTwoFactorModal();
+  });
 
   document.getElementById('two-factor-modal')?.addEventListener('click', (event) => {
     if (event.target?.id === 'two-factor-modal') {
@@ -316,6 +358,17 @@
   document.getElementById('two-factor-to-verify')?.addEventListener('click', () => {
     showTwoFactorStep('two-factor-step-verify');
     document.getElementById('two-factor-code-input')?.focus();
+  });
+  document.getElementById('two-factor-back-to-setup')?.addEventListener('click', () => {
+    showTwoFactorStep('two-factor-step-setup');
+  });
+  document.getElementById('two-factor-back-to-verify')?.addEventListener('click', () => {
+    showTwoFactorStep('two-factor-step-verify');
+  });
+  document.getElementById('two-factor-code-input')?.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    target.value = target.value.replace(/\D/g, '').slice(0, 6);
   });
 
   document.getElementById('two-factor-verify-btn')?.addEventListener('click', async () => {
@@ -333,6 +386,7 @@
       });
       state.twoFactor.backupCodes = response.backupCodes || [];
       document.getElementById('two-factor-backup-codes').value = state.twoFactor.backupCodes.join('\n');
+      renderBackupCodesGrid(state.twoFactor.backupCodes);
       showTwoFactorStep('two-factor-step-backup');
       setTwoFactorStatus('2FA enabled. Save these backup codes before finishing.');
       await refreshDashboard();
