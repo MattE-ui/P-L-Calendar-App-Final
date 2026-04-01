@@ -97,6 +97,26 @@
     return 'Not configured';
   }
 
+  function buildProfileSummary(profile) {
+    const serverSummary = profile?.profileSummary && typeof profile.profileSummary === 'object'
+      ? profile.profileSummary
+      : {};
+    const profileTradingAccounts = Array.isArray(profile?.tradingAccounts) ? profile.tradingAccounts : [];
+    const linkedTradingAccountsCount = Number.isFinite(Number(serverSummary.linkedTradingAccountsCount))
+      ? Number(serverSummary.linkedTradingAccountsCount)
+      : profileTradingAccounts.filter((account) => account?.integrationEnabled && (account?.integrationProvider === 'trading212' || account?.integrationProvider === 'ibkr')).length;
+    const hasTradingAccount = typeof serverSummary.hasTradingAccount === 'boolean'
+      ? serverSummary.hasTradingAccount
+      : linkedTradingAccountsCount > 0;
+    const profileCompletionPercent = Number.isFinite(Number(serverSummary.profileCompletionPercent))
+      ? Number(serverSummary.profileCompletionPercent)
+      : getProfileHealth(profile, linkedTradingAccountsCount).percent;
+    const missingProfileFields = Array.isArray(serverSummary.missingProfileFields)
+      ? serverSummary.missingProfileFields
+      : getProfileHealth(profile, linkedTradingAccountsCount).missing;
+    return { linkedTradingAccountsCount, hasTradingAccount, profileCompletionPercent, missingProfileFields };
+  }
+
   function getProfileHealth(profile, tradingCount = 0) {
     const checklist = [
       { key: 'username', ok: Boolean(profile?.username), label: 'username' },
@@ -121,16 +141,17 @@
     return { percent, missing, tone, label };
   }
 
-  function updateProfileHealth(profile, tradingCount = 0) {
-    const health = getProfileHealth(profile, tradingCount);
+  function updateProfileHealth(profile, summary) {
+    const health = getProfileHealth(profile, summary.linkedTradingAccountsCount);
     const badge = document.getElementById('manage-profile-health-badge');
     if (badge) {
       badge.textContent = health.label;
       badge.classList.toggle('manage-status-chip--healthy', health.tone === 'healthy');
       badge.classList.toggle('manage-status-chip--attention', health.tone !== 'healthy');
     }
-    const missingText = health.missing.length
-      ? `Missing: ${health.missing.slice(0, 3).join(', ')}${health.missing.length > 3 ? '…' : ''}.`
+    const missing = Array.isArray(summary?.missingProfileFields) ? summary.missingProfileFields : health.missing;
+    const missingText = missing.length
+      ? `Missing: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}.`
       : 'Everything needed for account readiness is configured.';
     setText('manage-profile-health-copy', missingText);
   }
@@ -146,10 +167,11 @@
     return states.join(' · ');
   }
 
-  function updateAccountSummary(profile, tradingCount = 0, automation = {}) {
-    const health = getProfileHealth(profile, tradingCount);
-    setText('manage-summary-profile-status', health.percent === 100 ? 'Complete' : `${health.percent}% complete`);
-    setText('manage-summary-trading-count', String(tradingCount));
+  function updateAccountSummary(profile, summary, automation = {}) {
+    const health = getProfileHealth(profile, summary.linkedTradingAccountsCount);
+    const completion = Number.isFinite(Number(summary?.profileCompletionPercent)) ? Number(summary.profileCompletionPercent) : health.percent;
+    setText('manage-summary-profile-status', completion === 100 ? 'Complete' : `${completion}% complete`);
+    setText('manage-summary-trading-count', String(summary.linkedTradingAccountsCount));
     setText('manage-summary-investor-mode', profile?.investorAccountsEnabled ? 'Enabled' : 'Off');
     setText('manage-summary-automation', resolveAutomationStatus(automation.t212, automation.ibkr));
     setText('manage-summary-notifications', resolveNotificationStatus());
@@ -172,18 +194,16 @@
       performanceCard.classList.toggle('is-positive', performanceValue >= 0);
       performanceCard.classList.toggle('is-negative', performanceValue < 0);
     }
-    updateProfileHealth(profile, tradingCount);
+    updateProfileHealth(profile, summary);
   }
 
   async function load() {
-    const [profile, tradingAccountsPayload, t212, ibkr] = await Promise.all([
+    const [profile, t212, ibkr] = await Promise.all([
       api('/api/profile'),
-      api('/api/trading-accounts').catch(() => ({ accounts: [] })),
       api('/api/integrations/trading212').catch(() => ({})),
       api('/api/integrations/ibkr').catch(() => ({}))
     ]);
     latestProfile = profile;
-    const tradingAccounts = Array.isArray(tradingAccountsPayload?.accounts) ? tradingAccountsPayload.accounts : [];
 
     document.getElementById('manage-username').value = profile.username || '';
     document.getElementById('manage-email').value = profile.username || '';
@@ -191,7 +211,8 @@
     document.getElementById('manage-portfolio').value = Number(profile.portfolio || 0).toFixed(2);
     document.getElementById('manage-net').value = Number(profile.netDepositsTotal || profile.initialNetDeposits || 0).toFixed(2);
     setAvatar(profile);
-    updateAccountSummary(profile, tradingAccounts.length, { t212, ibkr });
+    const profileSummary = buildProfileSummary(profile);
+    updateAccountSummary(profile, profileSummary, { t212, ibkr });
   }
 
   document.getElementById('manage-save-nickname')?.addEventListener('click', async () => {
