@@ -7898,7 +7898,7 @@ textarea {
 .weekly-recap-content {
   margin-top: 12px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .weekly-recap-topline {
@@ -7906,6 +7906,53 @@ textarea {
   justify-content: space-between;
   align-items: flex-start;
   gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.72));
+  border: 1px solid rgba(71, 85, 105, 0.35);
+}
+
+.weekly-recap-primary h4 {
+  margin: 2px 0 8px;
+  font-size: 20px;
+}
+
+.weekly-primary-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.weekly-primary-value {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.weekly-support-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.weekly-support-item {
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid rgba(71, 85, 105, 0.28);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.weekly-support-item span {
+  font-size: 10px;
+  color: #94a3b8;
+  display: block;
+}
+
+.weekly-support-item strong {
+  font-size: 13px;
 }
 
 .weekly-chip {
@@ -7936,7 +7983,7 @@ textarea {
 }
 
 .weekly-recap-tile span { font-size: 11px; color: #94a3b8; display: block; }
-.weekly-recap-tile strong { font-size: 14px; }
+.weekly-recap-tile strong { font-size: 17px; color: #e2e8f0; }
 
 .weekly-recap-highlights {
   display: grid;
@@ -7944,16 +7991,36 @@ textarea {
   gap: 8px;
 }
 
-.weekly-recap-highlight {
+.weekly-recap-highlight,
+.weekly-trade-card {
   background: rgba(2, 6, 23, 0.78);
   border: 1px solid rgba(71, 85, 105, 0.34);
   border-radius: 10px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: 12px;
+}
+
+.weekly-trade-card strong {
+  font-size: 18px;
+  display: block;
+  margin-top: 3px;
+}
+
+.weekly-trade-card__meta {
+  margin-top: 4px;
+  color: #cbd5e1;
 }
 
 .weekly-recap-modal-footer {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .weekly-support-grid,
+  .weekly-recap-stat-grid,
+  .weekly-recap-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
