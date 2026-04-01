@@ -2363,7 +2363,31 @@ select {
 .two-factor-qr { width: 220px; height: 220px; border-radius: 10px; border: 1px solid var(--border); background: #fff; padding: 8px; }
 .two-factor-secret { display: inline-block; padding: 8px 10px; border: 1px dashed var(--border); border-radius: 8px; font-size: 13px; word-break: break-all; }
 .two-factor-confirm { display: flex; align-items: center; gap: 8px; }
-.login-2fa-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.login-auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.login-auth-panel.hidden {
+  display: none;
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.login-2fa-panel {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border) 72%);
+}
+
+.login-2fa-methods {
+  display: flex;
+  justify-content: flex-start;
+}
 .site-announcement-modal__card { width: min(640px, 100%); border-color: rgba(212, 175, 55, 0.35); }
 .site-announcement-modal__head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 .site-announcement-modal__body { white-space: pre-wrap; line-height: 1.5; max-height: min(45vh, 300px); overflow: auto; padding-right: 4px; margin-bottom: 12px; }
