@@ -6086,6 +6086,20 @@ function buildOtpAuthUrl(secret, username) {
   return `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
 }
 
+async function generateTwoFactorQrDataUrl(otpauthUrl) {
+  const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&format=png&data=${encodeURIComponent(otpauthUrl)}`;
+  const response = await fetch(qrApiUrl);
+  if (!response.ok) {
+    throw new Error(`QR service responded with ${response.status}.`);
+  }
+  const bytes = await response.arrayBuffer();
+  const base64 = Buffer.from(bytes).toString('base64');
+  if (!base64) {
+    throw new Error('QR service returned an empty image payload.');
+  }
+  return `data:image/png;base64,${base64}`;
+}
+
 function generateTotpToken(secret, counter) {
   const key = base32Decode(secret);
   const counterBuffer = Buffer.alloc(8);
@@ -13865,30 +13879,41 @@ app.get('/api/account/security-dashboard', auth, (req, res) => {
 });
 
 app.post('/api/security/2fa/setup', auth, async (req, res) => {
+  console.info('[2FA] Setup request received.', { username: req.username });
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
   ensureTwoFactorTables(db);
-  const secret = generateTotpSecret();
-  const otpauthUrl = buildOtpAuthUrl(secret, req.username);
-  const setupId = crypto.randomUUID();
-  db.twoFactorSetups[setupId] = {
-    username: req.username,
-    secretEnc: encryptTwoFactorSecret(secret),
-    createdAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
-  };
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(otpauthUrl)}`;
-  console.info('[2FA] Setup generated.', { username: req.username, setupId });
-  saveDB(db);
-  res.json({
-    setupId,
-    otpauthUrl,
-    secret,
-    qrCodeUrl
-  });
+  try {
+    const secret = generateTotpSecret();
+    console.info('[2FA] Secret generated.', { username: req.username });
+    const otpauthUrl = buildOtpAuthUrl(secret, req.username);
+    const qrCode = await generateTwoFactorQrDataUrl(otpauthUrl);
+    console.info('[2FA] QR generated.', { username: req.username });
+    const setupId = crypto.randomUUID();
+    db.twoFactorSetups[setupId] = {
+      username: req.username,
+      secretEnc: encryptTwoFactorSecret(secret),
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
+    };
+    saveDB(db);
+    const payload = {
+      setupId,
+      secret,
+      otpauth_url: otpauthUrl,
+      qr_code: qrCode,
+      otpauthUrl,
+      qrCodeUrl: qrCode
+    };
+    console.info('[2FA] Setup response sent.', { username: req.username, setupId });
+    res.json(payload);
+  } catch (error) {
+    console.error('[2FA] Setup failed.', { username: req.username, error: error.message });
+    res.status(500).json({ error: `Unable to generate 2FA setup payload: ${error.message}` });
+  }
 });
 
 app.post('/api/security/2fa/verify', auth, (req, res) => {
