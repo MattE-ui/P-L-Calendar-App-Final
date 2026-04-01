@@ -49,5 +49,54 @@
   </section>
 </section>
 </main>
+
+<div id="two-factor-modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-card two-factor-modal-card">
+    <div class="modal-header">
+      <h3 id="two-factor-modal-title">Enable two-factor authentication</h3>
+      <button id="two-factor-modal-close" class="ghost small" type="button">Close</button>
+    </div>
+    <p id="two-factor-modal-status" class="helper"></p>
+
+    <section id="two-factor-step-setup" class="two-factor-step">
+      <h4>Step 1: Scan QR code</h4>
+      <p class="helper">Open Google Authenticator or Authy and scan this code.</p>
+      <img id="two-factor-qr" class="two-factor-qr" alt="2FA QR code">
+      <p class="helper">Manual setup key:</p>
+      <code id="two-factor-secret" class="two-factor-secret"></code>
+      <div class="modal-actions">
+        <button id="two-factor-to-verify" class="primary" type="button">Continue</button>
+      </div>
+    </section>
+
+    <section id="two-factor-step-verify" class="two-factor-step hidden">
+      <h4>Step 2: Verify code</h4>
+      <div class="profile-field">
+        <label for="two-factor-code-input">6-digit code</label>
+        <input id="two-factor-code-input" type="text" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+      </div>
+      <div class="modal-actions">
+        <button id="two-factor-verify-btn" class="primary" type="button">Verify & Enable</button>
+      </div>
+    </section>
+
+    <section id="two-factor-step-backup" class="two-factor-step hidden">
+      <h4>Step 3: Save backup codes</h4>
+      <p class="helper">Each code can be used once if your authenticator is unavailable.</p>
+      <textarea id="two-factor-backup-codes" readonly rows="8"></textarea>
+      <div class="modal-actions">
+        <button id="two-factor-copy-codes" class="ghost" type="button">Copy</button>
+        <button id="two-factor-download-codes" class="ghost" type="button">Download</button>
+      </div>
+      <label class="two-factor-confirm">
+        <input id="two-factor-backup-confirm" type="checkbox">
+        I have securely saved my backup codes.
+      </label>
+      <div class="modal-actions">
+        <button id="two-factor-finish" class="primary" type="button" disabled>Finish</button>
+      </div>
+    </section>
+  </div>
+</div>
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-security-page.js"></script>
 </body></html>

@@ -3,7 +3,11 @@
 
   const state = {
     dashboard: null,
-    settings: loadLocalSettings()
+    settings: loadLocalSettings(),
+    twoFactor: {
+      setupId: '',
+      backupCodes: []
+    }
   };
 
   function loadLocalSettings() {
@@ -133,6 +137,70 @@
     }
   }
 
+  function toggleModal(show) {
+    const modal = document.getElementById('two-factor-modal');
+    if (!modal) return;
+    modal.classList.toggle('hidden', !show);
+    modal.setAttribute('aria-hidden', show ? 'false' : 'true');
+  }
+
+  function showTwoFactorStep(stepId) {
+    document.querySelectorAll('.two-factor-step').forEach((el) => el.classList.add('hidden'));
+    document.getElementById(stepId)?.classList.remove('hidden');
+    setText('two-factor-modal-status', '');
+  }
+
+  function setTwoFactorStatus(message, isError = false) {
+    const el = document.getElementById('two-factor-modal-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('error', !!isError);
+  }
+
+  async function beginTwoFactorSetup() {
+    setTwoFactorStatus('Preparing setup...');
+    const button = document.getElementById('two-factor-toggle');
+    if (button) button.disabled = true;
+    try {
+      const setup = await api('/api/security/2fa/setup', { method: 'POST' });
+      state.twoFactor.setupId = setup.setupId;
+      document.getElementById('two-factor-qr').src = setup.qrCodeUrl;
+      setText('two-factor-secret', setup.secret);
+      showTwoFactorStep('two-factor-step-setup');
+      toggleModal(true);
+    } catch (error) {
+      setText('security-auth-status', error.message || 'Unable to begin 2FA setup.');
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function resetTwoFactorModal() {
+    state.twoFactor.setupId = '';
+    state.twoFactor.backupCodes = [];
+    document.getElementById('two-factor-code-input').value = '';
+    document.getElementById('two-factor-backup-codes').value = '';
+    const confirm = document.getElementById('two-factor-backup-confirm');
+    if (confirm) confirm.checked = false;
+    const finish = document.getElementById('two-factor-finish');
+    if (finish) finish.disabled = true;
+    setTwoFactorStatus('');
+    showTwoFactorStep('two-factor-step-setup');
+  }
+
+  function setButtonLoading(id, loading, label) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (loading) {
+      btn.dataset.originalLabel = btn.textContent;
+      btn.textContent = label;
+      btn.disabled = true;
+    } else {
+      btn.textContent = btn.dataset.originalLabel || btn.textContent;
+      btn.disabled = false;
+    }
+  }
+
   document.getElementById('security-save')?.addEventListener('click', async () => {
     const currentPassword = document.getElementById('security-current')?.value || '';
     const newPassword = document.getElementById('security-new')?.value || '';
@@ -151,17 +219,93 @@
 
   document.getElementById('two-factor-toggle')?.addEventListener('click', async () => {
     try {
-      const next = !state.dashboard?.twoFactorEnabled;
-      await api('/api/account/security/two-factor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: next })
-      });
-      setText('security-auth-status', `Two-factor authentication ${next ? 'enabled' : 'disabled'}.`);
-      await refreshDashboard();
+      if (state.dashboard?.twoFactorEnabled) {
+        await api('/api/security/2fa/disable', { method: 'POST' });
+        setText('security-auth-status', 'Two-factor authentication disabled.');
+        await refreshDashboard();
+        return;
+      }
+      await beginTwoFactorSetup();
     } catch (error) {
       setText('security-auth-status', error.message);
     }
+  });
+
+  document.getElementById('two-factor-modal-close')?.addEventListener('click', () => {
+    toggleModal(false);
+    resetTwoFactorModal();
+  });
+
+  document.getElementById('two-factor-modal')?.addEventListener('click', (event) => {
+    if (event.target?.id === 'two-factor-modal') {
+      toggleModal(false);
+      resetTwoFactorModal();
+    }
+  });
+
+  document.getElementById('two-factor-to-verify')?.addEventListener('click', () => {
+    showTwoFactorStep('two-factor-step-verify');
+    document.getElementById('two-factor-code-input')?.focus();
+  });
+
+  document.getElementById('two-factor-verify-btn')?.addEventListener('click', async () => {
+    const code = (document.getElementById('two-factor-code-input')?.value || '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      setTwoFactorStatus('Enter a valid 6-digit code.', true);
+      return;
+    }
+    setButtonLoading('two-factor-verify-btn', true, 'Verifying...');
+    try {
+      const response = await api('/api/security/2fa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setupId: state.twoFactor.setupId, code })
+      });
+      state.twoFactor.backupCodes = response.backupCodes || [];
+      document.getElementById('two-factor-backup-codes').value = state.twoFactor.backupCodes.join('\n');
+      showTwoFactorStep('two-factor-step-backup');
+      setTwoFactorStatus('2FA enabled. Save these backup codes before finishing.');
+      await refreshDashboard();
+    } catch (error) {
+      setTwoFactorStatus(error.message || 'Verification failed.', true);
+    } finally {
+      setButtonLoading('two-factor-verify-btn', false, 'Verifying...');
+    }
+  });
+
+  document.getElementById('two-factor-copy-codes')?.addEventListener('click', async () => {
+    const raw = state.twoFactor.backupCodes.join('\n');
+    if (!raw) return;
+    try {
+      await navigator.clipboard.writeText(raw);
+      setTwoFactorStatus('Backup codes copied.');
+    } catch (_error) {
+      setTwoFactorStatus('Unable to copy automatically. Please copy manually.', true);
+    }
+  });
+
+  document.getElementById('two-factor-download-codes')?.addEventListener('click', () => {
+    const raw = state.twoFactor.backupCodes.join('\n');
+    if (!raw) return;
+    const blob = new Blob([raw], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'veracity-2fa-backup-codes.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+    setTwoFactorStatus('Backup codes downloaded.');
+  });
+
+  document.getElementById('two-factor-backup-confirm')?.addEventListener('change', (event) => {
+    const target = event.target;
+    document.getElementById('two-factor-finish').disabled = !target.checked;
+  });
+
+  document.getElementById('two-factor-finish')?.addEventListener('click', () => {
+    toggleModal(false);
+    resetTwoFactorModal();
+    setText('security-auth-status', 'Two-factor authentication enabled successfully.');
   });
 
   document.getElementById('security-session-list')?.addEventListener('click', async (event) => {

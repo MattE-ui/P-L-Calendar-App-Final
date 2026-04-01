@@ -2358,6 +2358,12 @@ select {
 .modal.hidden { display:none; }
 .modal { position:fixed; inset:0; background: rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding: clamp(10px, 2.4vw, 24px); }
 .modal-card { background: var(--surface-1); border:1px solid var(--border); border-radius:16px; padding:18px; width: min(840px, 100%); box-shadow: var(--shadow), var(--glow-emerald); max-height: 90vh; overflow-y: auto; }
+.two-factor-modal-card { width: min(560px, 100%); }
+.two-factor-step { display: flex; flex-direction: column; gap: 10px; }
+.two-factor-qr { width: 220px; height: 220px; border-radius: 10px; border: 1px solid var(--border); background: #fff; padding: 8px; }
+.two-factor-secret { display: inline-block; padding: 8px 10px; border: 1px dashed var(--border); border-radius: 8px; font-size: 13px; word-break: break-all; }
+.two-factor-confirm { display: flex; align-items: center; gap: 8px; }
+.login-2fa-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
 .site-announcement-modal__card { width: min(640px, 100%); border-color: rgba(212, 175, 55, 0.35); }
 .site-announcement-modal__head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 .site-announcement-modal__body { white-space: pre-wrap; line-height: 1.5; max-height: min(45vh, 300px); overflow: auto; padding-right: 4px; margin-bottom: 12px; }
