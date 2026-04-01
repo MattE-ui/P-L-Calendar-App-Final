@@ -8171,8 +8171,9 @@ textarea {
 }
 
 .review-tab-content .weekly-recap--review {
-  width: min(940px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0;
   display: grid;
   gap: 8px;
 }
