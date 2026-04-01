@@ -8124,8 +8124,8 @@ textarea {
 .review-page {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 16px;
+  gap: 8px;
+  padding-top: 12px;
 }
 
 .review-page__head {
@@ -8140,29 +8140,131 @@ textarea {
 .review-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
+  background: rgba(13, 20, 32, 0.84);
+  border: 1px solid rgba(71, 85, 105, 0.32);
+  border-radius: 10px;
+  padding: 4px;
 }
 
 .review-tabs__btn {
-  border: 1px solid #1f2a3d;
-  background: #0d1420;
-  color: #9fb2d1;
-  border-radius: 9px;
-  padding: 8px 10px;
-  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8ea3c5;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .review-tabs__btn.is-active {
-  background: #172338;
+  background: #1a2941;
   color: #f8fafc;
-  border-color: #2f4568;
-  box-shadow: inset 0 0 0 1px rgba(97, 130, 187, 0.35);
+  border-color: rgba(129, 162, 214, 0.3);
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.16), inset 0 0 0 1px rgba(129, 162, 214, 0.24);
 }
 
 .review-tab-content {
-  padding: 12px;
+  padding: 10px;
   min-height: 320px;
+}
+
+.review-tab-content .weekly-recap--review {
+  width: min(940px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 8px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-topline {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-primary {
+  display: grid;
+  align-content: start;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-primary h4 {
+  margin: 2px 0 6px;
+  font-size: 22px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-primary-value {
+  font-size: 40px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-primary-subvalue {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-side {
+  min-width: 0;
+  gap: 7px;
+  align-content: start;
+  justify-items: stretch;
+}
+
+.review-tab-content .weekly-recap--review .weekly-support-grid {
+  gap: 6px;
+  margin-top: 0;
+}
+
+.review-tab-content .weekly-recap--review .weekly-support-item {
+  padding: 6px 8px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-support-item strong {
+  font-size: 14px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-chip {
+  justify-self: start;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-stat-groups,
+.review-tab-content .weekly-recap--review .weekly-recap-highlights {
+  gap: 7px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-stat-group {
+  padding: 7px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-tile {
+  padding: 6px 8px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-recap-tile strong {
+  font-size: 19px;
+}
+
+.review-tab-content .weekly-recap--review .weekly-trade-card__ticker {
+  font-size: 22px;
+  letter-spacing: 0.01em;
+}
+
+.review-tab-content .weekly-recap--review .weekly-trade-card__pnl {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.review-tab-content .weekly-recap--review .weekly-trade-card.is-positive {
+  background: linear-gradient(180deg, rgba(3, 12, 20, 0.84), rgba(2, 6, 23, 0.84));
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+.review-tab-content .weekly-recap--review .weekly-trade-card.is-negative {
+  background: linear-gradient(180deg, rgba(20, 9, 14, 0.66), rgba(2, 6, 23, 0.84));
+  border-color: rgba(248, 113, 113, 0.3);
 }
 
 .review-placeholder {
@@ -8172,5 +8274,9 @@ textarea {
 @media (max-width: 760px) {
   .review-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-tab-content .weekly-recap--review .weekly-recap-topline {
+    grid-template-columns: 1fr;
   }
 }
