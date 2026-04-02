@@ -297,7 +297,7 @@ function ReviewPage() {
   const content = $('#review-tab-content');
   if (!content) return;
   if (state.activeTab === 'recap') content.innerHTML = RecapPanel();
-  if (state.activeTab === 'trade-review') content.innerHTML = TradeReviewPanel();
+  if (state.activeTab === 'trade-review') refreshTradeReviewPanel({ preserveScroll: true });
   if (state.activeTab === 'scorecard') content.innerHTML = ScorecardPanel();
   if (state.activeTab === 'planning') content.innerHTML = PlaceholderPanel('Planning tools coming soon');
   ReviewTabs();
@@ -350,8 +350,18 @@ function TradeReviewPanel() {
   if (state.loadingTrades) return '<div class="tool-note">Loading trades…</div>';
   if (state.tradeError) return `<div class="error">${state.tradeError}</div>`;
   if (!state.trades.length) return '<section class="review-placeholder"><h3>No trades to review yet</h3><p class="tool-note">Close trades to start your review workflow.</p></section>';
-  const selected = getSelectedTrade();
-  const listHtml = state.trades.map((trade) => `
+  const listHtml = buildTradeReviewListHtml();
+  const detailHtml = buildTradeReviewDetailHtml();
+  return `
+    <section class="trade-review-layout">
+      <div class="trade-review-list-shell"><aside id="trade-review-list" class="trade-review-list">${listHtml}</aside></div>
+      <section id="trade-review-detail" class="trade-review-detail">${detailHtml}</section>
+    </section>
+  `;
+}
+
+function buildTradeReviewListHtml() {
+  return state.trades.map((trade) => `
     <button class="trade-review-row ${trade.id === state.selectedTradeId ? 'is-active' : ''}" data-trade-id="${trade.id}" type="button">
       <div class="trade-review-row__line">
         <strong class="trade-review-row__ticker">${trade.displayTicker || trade.displaySymbol || trade.symbol || '—'}</strong>
@@ -363,49 +373,82 @@ function TradeReviewPanel() {
       </div>
     </button>
   `).join('');
-  if (!selected) {
-    return `<section class="trade-review-layout"><div class="trade-review-list-shell"><aside class="trade-review-list">${listHtml}</aside></div><section class="trade-review-detail"><div class="tool-note">Select a trade.</div></section></section>`;
-  }
+}
+
+function buildTradeReviewDetailHtml() {
+  const selected = getSelectedTrade();
+  if (!selected) return '<div class="tool-note">Select a trade.</div>';
   const selectedTags = Array.isArray(selected.tags) ? selected.tags : [];
   const notes = typeof selected.notes === 'string' ? selected.notes : '';
   const outcomesHtml = REVIEW_OUTCOMES.map(item => `<button class="trade-review-outcome ${selected.outcome === item.key ? 'is-active' : ''}" data-outcome="${item.key}" type="button">${item.label}</button>`).join('');
   const tagsHtml = REVIEW_TAGS.map(tag => `<button class="trade-review-tag ${selectedTags.includes(tag) ? 'is-active' : ''}" data-tag="${tag}" type="button">${tag}</button>`).join('');
   return `
-    <section class="trade-review-layout">
-      <div class="trade-review-list-shell"><aside id="trade-review-list" class="trade-review-list">${listHtml}</aside></div>
-      <section class="trade-review-detail">
-        <section class="trade-review-card">
-          <p class="tool-overline">Trade summary</p>
-          <div class="trade-review-summary-top">
-            <h3>${selected.displayTicker || selected.displaySymbol || selected.symbol || '—'}</h3>
-            <span class="trade-review-row__dir ${selected.direction === 'short' ? 'short' : 'long'}">${formatDirection(selected.direction)}</span>
-          </div>
-          <div class="trade-review-pnl ${Number(selected.realizedPnlGBP) > 0 ? 'pos' : Number(selected.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(selected.realizedPnlGBP)}</div>
-          <div class="trade-review-summary-grid">
-            <div><span>Entry</span><strong>${Number.isFinite(Number(selected.avgEntryPrice)) ? selected.avgEntryPrice : selected.entry || '—'}</strong></div>
-            <div><span>Exit</span><strong>${Number.isFinite(Number(selected.avgExitPrice)) ? selected.avgExitPrice : selected.closePrice || '—'}</strong></div>
-            <div><span>Closed</span><strong>${selected.closeDate || '—'}</strong></div>
-            <div><span>Hold time</span><strong>${formatHoldTime(selected)}</strong></div>
-          </div>
-        </section>
-        <section class="trade-review-card trade-review-card--decision">
-          <p class="tool-overline">Decision</p>
-          <div class="trade-review-card__section">
-            <p class="trade-review-section-label">Outcome</p>
-          <div class="trade-review-outcomes">${outcomesHtml}</div>
-          </div>
-          <div class="trade-review-card__section">
-          <p class="trade-review-section-label">Tags</p>
-          <div class="trade-review-tags">${tagsHtml}</div>
-          </div>
-        </section>
-        <section class="trade-review-card trade-review-card--notes">
-          <p class="tool-overline">Notes</p>
-          <textarea id="trade-review-notes" class="trade-review-notes" rows="3" placeholder="Optional notes">${notes}</textarea>
-        </section>
-      </section>
+    <section class="trade-review-card">
+      <p class="tool-overline">Trade summary</p>
+      <div class="trade-review-summary-top">
+        <h3>${selected.displayTicker || selected.displaySymbol || selected.symbol || '—'}</h3>
+        <span class="trade-review-row__dir ${selected.direction === 'short' ? 'short' : 'long'}">${formatDirection(selected.direction)}</span>
+      </div>
+      <div class="trade-review-pnl ${Number(selected.realizedPnlGBP) > 0 ? 'pos' : Number(selected.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(selected.realizedPnlGBP)}</div>
+      <div class="trade-review-summary-grid">
+        <div><span>Entry</span><strong>${Number.isFinite(Number(selected.avgEntryPrice)) ? selected.avgEntryPrice : selected.entry || '—'}</strong></div>
+        <div><span>Exit</span><strong>${Number.isFinite(Number(selected.avgExitPrice)) ? selected.avgExitPrice : selected.closePrice || '—'}</strong></div>
+        <div><span>Closed</span><strong>${selected.closeDate || '—'}</strong></div>
+        <div><span>Hold time</span><strong>${formatHoldTime(selected)}</strong></div>
+      </div>
+    </section>
+    <section class="trade-review-card trade-review-card--decision">
+      <p class="tool-overline">Decision</p>
+      <div class="trade-review-card__section">
+        <p class="trade-review-section-label">Outcome</p>
+      <div class="trade-review-outcomes">${outcomesHtml}</div>
+      </div>
+      <div class="trade-review-card__section">
+      <p class="trade-review-section-label">Tags</p>
+      <div class="trade-review-tags">${tagsHtml}</div>
+      </div>
+    </section>
+    <section class="trade-review-card trade-review-card--notes">
+      <p class="tool-overline">Notes</p>
+      <textarea id="trade-review-notes" class="trade-review-notes" rows="3" placeholder="Optional notes">${notes}</textarea>
     </section>
   `;
+}
+
+function renderTradeReviewDetail() {
+  const detail = $('#trade-review-detail');
+  if (!detail) return;
+  detail.innerHTML = buildTradeReviewDetailHtml();
+}
+
+function renderTradeReviewList({ preserveScroll = false } = {}) {
+  const list = $('#trade-review-list');
+  if (!list) return;
+  const previousScrollTop = preserveScroll ? list.scrollTop : 0;
+  list.innerHTML = buildTradeReviewListHtml();
+  if (preserveScroll) list.scrollTop = previousScrollTop;
+}
+
+function updateTradeReviewSelection() {
+  const list = $('#trade-review-list');
+  if (!list) return;
+  list.querySelectorAll('.trade-review-row').forEach((row) => {
+    row.classList.toggle('is-active', row.dataset.tradeId === state.selectedTradeId);
+  });
+  renderTradeReviewDetail();
+}
+
+function refreshTradeReviewPanel({ preserveScroll = false } = {}) {
+  const content = $('#review-tab-content');
+  if (!content || state.activeTab !== 'trade-review') return;
+  const hasMountedLayout = Boolean(content.querySelector('.trade-review-layout'));
+  const nextHtml = TradeReviewPanel();
+  if (!hasMountedLayout || state.loadingTrades || state.tradeError || !state.trades.length) {
+    content.innerHTML = nextHtml;
+    return;
+  }
+  renderTradeReviewList({ preserveScroll });
+  renderTradeReviewDetail();
 }
 
 let saveNotesTimer = null;
@@ -414,7 +457,8 @@ async function patchTradeReview(tradeId, patch) {
   const trade = getTradeById(tradeId);
   if (!trade) return;
   Object.assign(trade, patch);
-  ReviewPage();
+  if (state.activeTab === 'trade-review') refreshTradeReviewPanel({ preserveScroll: true });
+  else ReviewPage();
   try {
     await api(`/api/trades/${encodeURIComponent(tradeId)}`, {
       method: 'PUT',
@@ -530,7 +574,7 @@ function bindTradeReviewActions() {
     const row = event.target.closest('.trade-review-row');
     if (row?.dataset?.tradeId) {
       state.selectedTradeId = row.dataset.tradeId;
-      ReviewPage();
+      updateTradeReviewSelection();
       return;
     }
     const outcomeBtn = event.target.closest('.trade-review-outcome');
