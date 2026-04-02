@@ -186,6 +186,14 @@ function isTradeTagged(trade) {
   return Array.isArray(trade?.tags) && trade.tags.length > 0;
 }
 
+function hasTradeNotes(trade) {
+  return typeof trade?.notes === 'string' && trade.notes.trim().length > 0;
+}
+
+function hasReviewProgress(trade) {
+  return isTradeReviewed(trade) || isTradeTagged(trade) || hasTradeNotes(trade);
+}
+
 function formatHoldTime(trade) {
   const start = new Date(`${trade?.openDate || ''}T00:00:00Z`);
   const end = new Date(`${trade?.closeDate || trade?.openDate || ''}T00:00:00Z`);
@@ -201,15 +209,13 @@ function TradeReviewPanel() {
   const selected = getSelectedTrade();
   const listHtml = state.trades.map((trade) => `
     <button class="trade-review-row ${trade.id === state.selectedTradeId ? 'is-active' : ''}" data-trade-id="${trade.id}" type="button">
-      <div class="trade-review-row__top">
-        <strong>${trade.displayTicker || trade.displaySymbol || trade.symbol || '—'}</strong>
-        <span class="trade-review-row__dir ${trade.direction === 'short' ? 'short' : 'long'}">${formatDirection(trade.direction)}</span>
+      <div class="trade-review-row__line">
+        <strong class="trade-review-row__ticker">${trade.displayTicker || trade.displaySymbol || trade.symbol || '—'}</strong>
+        ${hasReviewProgress(trade) ? '<span class="trade-review-row__review-indicator" title="Review started" aria-label="Review started"></span>' : ''}
       </div>
-      <div class="trade-review-row__meta">
-        <span class="${Number(trade.realizedPnlGBP) > 0 ? 'pos' : Number(trade.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(trade.realizedPnlGBP)}</span>
-        <span>${trade.closeDate || '—'}</span>
-        <span>R:${isTradeReviewed(trade) ? 'Y' : 'N'}</span>
-        <span>T:${isTradeTagged(trade) ? 'Y' : 'N'}</span>
+      <div class="trade-review-row__line trade-review-row__line--meta">
+        <span class="trade-review-row__pnl ${Number(trade.realizedPnlGBP) > 0 ? 'pos' : Number(trade.realizedPnlGBP) < 0 ? 'neg' : ''}">${fmtSignedMoney(trade.realizedPnlGBP)}</span>
+        <span class="trade-review-row__date">${trade.closeDate || '—'}</span>
       </div>
     </button>
   `).join('');
@@ -238,15 +244,18 @@ function TradeReviewPanel() {
             <div><span>Hold time</span><strong>${formatHoldTime(selected)}</strong></div>
           </div>
         </section>
-        <section class="trade-review-card">
-          <p class="tool-overline">Outcome</p>
+        <section class="trade-review-card trade-review-card--decision">
+          <p class="tool-overline">Decision</p>
+          <div class="trade-review-card__section">
+            <p class="trade-review-section-label">Outcome</p>
           <div class="trade-review-outcomes">${outcomesHtml}</div>
-        </section>
-        <section class="trade-review-card">
-          <p class="tool-overline">Tags</p>
+          </div>
+          <div class="trade-review-card__section">
+          <p class="trade-review-section-label">Tags</p>
           <div class="trade-review-tags">${tagsHtml}</div>
+          </div>
         </section>
-        <section class="trade-review-card">
+        <section class="trade-review-card trade-review-card--notes">
           <p class="tool-overline">Notes</p>
           <textarea id="trade-review-notes" class="trade-review-notes" rows="3" placeholder="Optional notes">${notes}</textarea>
         </section>
