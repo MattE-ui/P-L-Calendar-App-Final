@@ -458,6 +458,15 @@ function PlanningPanel() {
   if (state.loadingPlanning) return '<div class="tool-note">Loading planning workspace…</div>';
   if (state.planningError) return `<div class="error">${state.planningError}</div>`;
   const planning = normalizePlanningDocument(state.planning || createPlanningDocument());
+  const planFieldValues = [
+    planning.gamePlan.weekLabel,
+    planning.gamePlan.riskMode,
+    planning.gamePlan.weeklyFocus,
+    planning.gamePlan.mainObjective
+  ];
+  const completedFields = planFieldValues.filter(value => typeof value === 'string' && value.trim()).length;
+  const setupComplete = planning.setups.length > 0 ? 1 : 0;
+  const completeness = Math.round(((completedFields + setupComplete) / (planFieldValues.length + 1)) * 100);
   const setupCards = planning.setups.length
     ? planning.setups.map((setup, index) => `
       <article class="planning-setup-card" data-setup-id="${escapeHtml(setup.id)}">
@@ -476,7 +485,7 @@ function PlanningPanel() {
         </div>
       </article>
     `).join('')
-    : '<div class="tool-note planning-empty-note"><strong>No setups yet</strong><span>Define your highest-conviction trades for the week.</span></div>';
+    : '<div class="tool-note planning-empty-note"><strong>No setups yet</strong><span>Start by adding 1–3 high-conviction setups for the week.</span><span>Focus on quality, not quantity.</span></div>';
   const levelsRows = planning.levels.length
     ? planning.levels.map((level) => `
       <tr>
@@ -504,23 +513,24 @@ function PlanningPanel() {
           <div>
             <p class="tool-overline">A. Weekly game plan</p>
             <h3>Weekly Game Plan</h3>
+            <p class="planning-completeness">Plan completeness: ${completeness}%</p>
           </div>
           <span class="planning-save-state">${state.savingPlanning ? 'Saving…' : 'Saved'}</span>
         </div>
-        <div class="planning-grid planning-grid--plan">
-          <label><span>Week label</span><input data-section="gamePlan" data-field="weekLabel" value="${escapeHtml(planning.gamePlan.weekLabel || '')}" placeholder="07 Apr → 11 Apr"></label>
-          <label><span>Risk mode</span><select data-section="gamePlan" data-field="riskMode"><option value="Conservative" ${planning.gamePlan.riskMode === 'Conservative' ? 'selected' : ''}>Conservative</option><option value="Normal" ${planning.gamePlan.riskMode === 'Normal' ? 'selected' : ''}>Normal</option><option value="Aggressive" ${planning.gamePlan.riskMode === 'Aggressive' ? 'selected' : ''}>Aggressive</option></select></label>
-          <label><span>Week key</span><input data-section="meta" data-field="weekKey" value="${escapeHtml(planning.weekKey)}" type="date"></label>
-          <label class="planning-span-2"><span>Weekly focus</span><input data-section="gamePlan" data-field="weeklyFocus" value="${escapeHtml(planning.gamePlan.weeklyFocus || '')}" placeholder="What must be executed well"></label>
-          <label class="planning-span-2"><span>Primary market theme</span><input data-section="gamePlan" data-field="primaryTheme" value="${escapeHtml(planning.gamePlan.primaryTheme || '')}" placeholder="Macro / sector context"></label>
-          <label class="planning-span-2"><span>Main objective</span><input data-section="gamePlan" data-field="mainObjective" value="${escapeHtml(planning.gamePlan.mainObjective || '')}" placeholder="Single measurable goal"></label>
+        <div class="planning-toolbar">
+          <label class="planning-inline-field"><span>Week</span><input data-section="gamePlan" data-field="weekLabel" value="${escapeHtml(planning.gamePlan.weekLabel || '')}" placeholder="07 Apr → 11 Apr"></label>
+          <label class="planning-inline-field"><span>Risk mode</span><select data-section="gamePlan" data-field="riskMode"><option value="Conservative" ${planning.gamePlan.riskMode === 'Conservative' ? 'selected' : ''}>Conservative</option><option value="Normal" ${planning.gamePlan.riskMode === 'Normal' ? 'selected' : ''}>Normal</option><option value="Aggressive" ${planning.gamePlan.riskMode === 'Aggressive' ? 'selected' : ''}>Aggressive</option></select></label>
+          <label class="planning-inline-field planning-inline-field--wide"><span>Focus</span><input data-section="gamePlan" data-field="weeklyFocus" value="${escapeHtml(planning.gamePlan.weeklyFocus || '')}" placeholder="What must be executed well"></label>
+          <label class="planning-inline-field planning-inline-field--wide"><span>Objective</span><input data-section="gamePlan" data-field="mainObjective" value="${escapeHtml(planning.gamePlan.mainObjective || '')}" placeholder="Single measurable goal"></label>
+          <label class="planning-inline-field"><span>Week key</span><input data-section="meta" data-field="weekKey" value="${escapeHtml(planning.weekKey)}" type="date"></label>
+          <label class="planning-inline-field planning-inline-field--wide"><span>Theme</span><input data-section="gamePlan" data-field="primaryTheme" value="${escapeHtml(planning.gamePlan.primaryTheme || '')}" placeholder="Macro / sector context"></label>
         </div>
       </article>
 
       <article class="planning-card planning-card--primary">
         <div class="planning-card-head">
           <div><p class="tool-overline">B. Watchlist / setups</p><h3>Watchlist / Setups</h3></div>
-          <button class="planning-btn planning-btn--primary" data-action="add-setup" type="button">+ Add Setup</button>
+          <button class="planning-btn planning-btn--primary planning-btn--setup" data-action="add-setup" type="button">+ Add Setup</button>
         </div>
         <div class="planning-setup-list">${setupCards}</div>
       </article>
