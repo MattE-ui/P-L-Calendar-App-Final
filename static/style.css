@@ -8272,6 +8272,94 @@ textarea {
   padding: 8px 4px;
 }
 
+.scorecard-layout {
+  display: grid;
+  gap: 8px;
+}
+
+.scorecard-head {
+  border: 1px solid rgba(71, 85, 105, 0.34);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(2, 6, 23, 0.56);
+}
+
+.scorecard-head__score {
+  font-size: 29px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.scorecard-head__score strong {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.scorecard-head__summary {
+  margin: 4px 0 0;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.scorecard-head.is-strong {
+  border-color: rgba(74, 222, 128, 0.42);
+  background: linear-gradient(180deg, rgba(4, 28, 18, 0.58), rgba(2, 6, 23, 0.56));
+}
+
+.scorecard-head.is-solid {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: linear-gradient(180deg, rgba(13, 35, 68, 0.56), rgba(2, 6, 23, 0.56));
+}
+
+.scorecard-head.is-warning {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: linear-gradient(180deg, rgba(54, 36, 6, 0.56), rgba(2, 6, 23, 0.56));
+}
+
+.scorecard-head.is-risk {
+  border-color: rgba(248, 113, 113, 0.44);
+  background: linear-gradient(180deg, rgba(60, 12, 20, 0.56), rgba(2, 6, 23, 0.56));
+}
+
+.scorecard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scorecard-card {
+  border: 1px solid rgba(71, 85, 105, 0.28);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.52);
+  padding: 7px 8px;
+}
+
+.scorecard-card h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.scorecard-metric-list {
+  display: grid;
+  gap: 5px;
+}
+
+.scorecard-metric-list div {
+  border: 1px solid rgba(71, 85, 105, 0.2);
+  border-radius: 6px;
+  padding: 5px 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #a8bdd9;
+}
+
+.scorecard-metric-list strong {
+  color: #f8fafc;
+  font-size: 12px;
+}
+
 .trade-review-layout {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
@@ -8547,6 +8635,10 @@ textarea {
   }
 
   .trade-review-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .scorecard-grid {
     grid-template-columns: 1fr;
   }
 

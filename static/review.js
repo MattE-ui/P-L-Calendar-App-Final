@@ -75,6 +75,150 @@ function PlaceholderPanel(message) {
   `;
 }
 
+function fmtPlainPct(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe)) return '—';
+  return `${safe.toFixed(1)}%`;
+}
+
+function scoreTone(score) {
+  if (score >= 85) return { label: 'Strong', cls: 'is-strong' };
+  if (score >= 70) return { label: 'Solid', cls: 'is-solid' };
+  if (score >= 55) return { label: 'Needs work', cls: 'is-warning' };
+  return { label: 'At risk', cls: 'is-risk' };
+}
+
+function deriveScorecard(trades = []) {
+  const totalTrades = trades.length;
+  const reviewedTrades = trades.filter(isTradeReviewed).length;
+  const taggedTrades = trades.filter(isTradeTagged).length;
+  const classifiedTrades = reviewedTrades;
+  const goodTrades = trades.filter(trade => trade?.outcome === 'good').length;
+  const badTrades = trades.filter(trade => trade?.outcome === 'bad').length;
+  const fomoTrades = trades.filter(trade => Array.isArray(trade?.tags) && trade.tags.includes('FOMO')).length;
+  const revengeTrades = trades.filter(trade => Array.isArray(trade?.tags) && trade.tags.includes('Revenge')).length;
+  const unreviewedTrades = Math.max(0, totalTrades - reviewedTrades);
+  const untaggedTrades = Math.max(0, totalTrades - taggedTrades);
+  const reviewCompletionPct = totalTrades > 0 ? (reviewedTrades / totalTrades) * 100 : 0;
+  const taggingCompletionPct = totalTrades > 0 ? (taggedTrades / totalTrades) * 100 : 0;
+  const classifiedPct = totalTrades > 0 ? (classifiedTrades / totalTrades) * 100 : 0;
+
+  const winners = trades.filter(trade => Number(trade?.realizedPnlGBP) > 0);
+  const losers = trades.filter(trade => Number(trade?.realizedPnlGBP) < 0);
+  const totalGains = winners.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0);
+  const totalLossesAbs = Math.abs(losers.reduce((sum, trade) => sum + (Number(trade.realizedPnlGBP) || 0), 0));
+  const avgWinner = winners.length ? totalGains / winners.length : null;
+  const avgLoserAbs = losers.length ? totalLossesAbs / losers.length : null;
+  const profitFactor = totalLossesAbs > 0 ? totalGains / totalLossesAbs : (winners.length ? Infinity : null);
+  const winRate = totalTrades > 0 ? (winners.length / totalTrades) * 100 : 0;
+  const goodTradesProfitPct = goodTrades > 0
+    ? (trades.filter(trade => trade?.outcome === 'good' && Number(trade?.realizedPnlGBP) > 0).length / goodTrades) * 100
+    : null;
+
+  // Transparent, deterministic rule-based score:
+  // 1) Start at 100.
+  // 2) Apply penalties for weak process quality and repeat mistakes.
+  // 3) Apply positive adjustments for good outcomes and high completion.
+  // 4) Clamp to [0, 100] so the score remains readable and bounded.
+  let score = 100;
+  score -= unreviewedTrades * 6;
+  score -= untaggedTrades * 3;
+  score -= badTrades * 4;
+  score -= fomoTrades * 5;
+  score -= revengeTrades * 5;
+  score += goodTrades * 2;
+  if (reviewCompletionPct >= 90) score += 6;
+  else if (reviewCompletionPct >= 75) score += 3;
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  const summary = buildScoreSummary({
+    score,
+    reviewCompletionPct,
+    taggingCompletionPct,
+    goodTrades,
+    badTrades,
+    fomoTrades,
+    revengeTrades,
+    winRate,
+    profitFactor
+  });
+
+  return {
+    score,
+    tone: scoreTone(score),
+    summary,
+    discipline: { reviewCompletionPct, taggingCompletionPct, classifiedPct },
+    mistakes: { fomoTrades, revengeTrades, badTrades },
+    quality: { winRate, avgWinner, avgLoserAbs, profitFactor, goodTradesProfitPct },
+    counts: { totalTrades }
+  };
+}
+
+function buildScoreSummary(metrics) {
+  if (metrics.score >= 85 && metrics.fomoTrades + metrics.revengeTrades === 0 && metrics.reviewCompletionPct >= 80) {
+    return 'Good execution with consistent tagging and review.';
+  }
+  if (metrics.reviewCompletionPct >= 80 && (metrics.fomoTrades > 0 || metrics.revengeTrades > 0)) {
+    return 'Strong discipline but emotional tags are still dragging results.';
+  }
+  if (metrics.badTrades >= metrics.goodTrades && metrics.winRate < 50) {
+    return 'Losses are being driven by poor trade selection.';
+  }
+  if (metrics.profitFactor !== null && metrics.profitFactor >= 1.3 && metrics.reviewCompletionPct >= 70) {
+    return 'Process quality is supporting profitable execution.';
+  }
+  return 'Mixed scorecard: tighten review completion and reduce repeat mistakes.';
+}
+
+function formatProfitFactor(value) {
+  if (value === Infinity) return '∞';
+  if (!Number.isFinite(Number(value))) return '—';
+  return Number(value).toFixed(2);
+}
+
+function ScorecardPanel() {
+  if (state.loadingTrades) return '<div class="tool-note">Loading scorecard…</div>';
+  if (state.tradeError) return `<div class="error">${state.tradeError}</div>`;
+  if (!state.trades.length) return '<section class="review-placeholder"><h3>No closed trades yet</h3><p class="tool-note">Close trades to generate your scorecard.</p></section>';
+  const scorecard = deriveScorecard(state.trades);
+  return `
+    <section class="scorecard-layout">
+      <header class="scorecard-head ${scorecard.tone.cls}">
+        <p class="tool-overline">Performance scorecard</p>
+        <div class="scorecard-head__score">Score: <strong>${scorecard.score}</strong> / 100</div>
+        <p class="scorecard-head__summary">${scorecard.summary}</p>
+      </header>
+      <section class="scorecard-grid">
+        <article class="scorecard-card">
+          <h3>Discipline</h3>
+          <div class="scorecard-metric-list">
+            <div><span>Trades reviewed</span><strong>${fmtPlainPct(scorecard.discipline.reviewCompletionPct)}</strong></div>
+            <div><span>Trades tagged</span><strong>${fmtPlainPct(scorecard.discipline.taggingCompletionPct)}</strong></div>
+            <div><span>Outcome classified</span><strong>${fmtPlainPct(scorecard.discipline.classifiedPct)}</strong></div>
+          </div>
+        </article>
+        <article class="scorecard-card">
+          <h3>Mistakes</h3>
+          <div class="scorecard-metric-list">
+            <div><span>FOMO trades</span><strong>${scorecard.mistakes.fomoTrades}</strong></div>
+            <div><span>Revenge trades</span><strong>${scorecard.mistakes.revengeTrades}</strong></div>
+            <div><span>Bad trades</span><strong>${scorecard.mistakes.badTrades}</strong></div>
+          </div>
+        </article>
+        <article class="scorecard-card">
+          <h3>Quality</h3>
+          <div class="scorecard-metric-list">
+            <div><span>Win rate</span><strong>${fmtPlainPct(scorecard.quality.winRate)}</strong></div>
+            <div><span>Avg winner vs loser</span><strong>${fmtMoney(scorecard.quality.avgWinner)} / ${fmtMoney(scorecard.quality.avgLoserAbs)}</strong></div>
+            <div><span>Profit factor</span><strong>${formatProfitFactor(scorecard.quality.profitFactor)}</strong></div>
+            <div><span>Profitable good trades</span><strong>${fmtPlainPct(scorecard.quality.goodTradesProfitPct)}</strong></div>
+          </div>
+        </article>
+      </section>
+    </section>
+  `;
+}
+
 function RecapPanel() {
   if (state.loadingRecap) return '<div class="tool-note">Loading weekly recap…</div>';
   if (state.recapError) return `<div class="error">${state.recapError}</div>`;
@@ -154,7 +298,7 @@ function ReviewPage() {
   if (!content) return;
   if (state.activeTab === 'recap') content.innerHTML = RecapPanel();
   if (state.activeTab === 'trade-review') content.innerHTML = TradeReviewPanel();
-  if (state.activeTab === 'scorecard') content.innerHTML = PlaceholderPanel('Weekly scorecard coming soon');
+  if (state.activeTab === 'scorecard') content.innerHTML = ScorecardPanel();
   if (state.activeTab === 'planning') content.innerHTML = PlaceholderPanel('Planning tools coming soon');
   ReviewTabs();
 }
