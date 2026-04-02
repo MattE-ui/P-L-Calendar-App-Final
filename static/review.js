@@ -14,6 +14,15 @@ function fmtPct(value) {
   return `${sign}${safe.toFixed(2)}%`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function recapStatusClass(netPnlGBP) {
   const value = Number(netPnlGBP);
   if (value > 0) return { label: 'Positive', cls: 'pos' };
@@ -56,7 +65,11 @@ const state = {
   loadingTrades: false,
   tradeError: '',
   trades: [],
-  selectedTradeId: ''
+  selectedTradeId: '',
+  planning: null,
+  planningError: '',
+  loadingPlanning: false,
+  savingPlanning: false
 };
 
 const REVIEW_TAGS = ['Breakout', 'Pullback', 'News', 'Earnings', 'Scalping', 'Swing', 'FOMO', 'Revenge'];
@@ -333,8 +346,209 @@ function ReviewPage() {
   if (state.activeTab === 'recap') content.innerHTML = RecapPanel();
   if (state.activeTab === 'trade-review') refreshTradeReviewPanel({ preserveScroll: true });
   if (state.activeTab === 'scorecard') content.innerHTML = ScorecardPanel();
-  if (state.activeTab === 'planning') content.innerHTML = PlaceholderPanel('Planning tools coming soon');
+  if (state.activeTab === 'planning') content.innerHTML = PlanningPanel();
   ReviewTabs();
+}
+
+function getWeekStartKey(date = new Date()) {
+  const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = current.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  current.setUTCDate(current.getUTCDate() + diff);
+  return current.toISOString().slice(0, 10);
+}
+
+function formatWeekLabelFromKey(weekKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekKey || ''))) return '';
+  const start = new Date(`${weekKey}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime())) return '';
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 4);
+  const fmt = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' });
+  return `${fmt.format(start)} → ${fmt.format(end)}`;
+}
+
+function uid(prefix) {
+  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createEmptySetup() {
+  return {
+    id: uid('setup'),
+    ticker: '',
+    direction: 'bullish',
+    setupType: '',
+    entryIdea: '',
+    invalidation: '',
+    target: '',
+    notes: '',
+    status: 'active'
+  };
+}
+
+function createEmptyLevel() {
+  return {
+    id: uid('level'),
+    ticker: '',
+    triggerLevel: '',
+    reason: '',
+    action: ''
+  };
+}
+
+function createEmptyRiskNote() {
+  return {
+    id: uid('risk'),
+    text: '',
+    done: false
+  };
+}
+
+function createPlanningDocument(weekKey = getWeekStartKey()) {
+  return {
+    weekKey,
+    gamePlan: {
+      weekLabel: formatWeekLabelFromKey(weekKey),
+      weeklyFocus: '',
+      primaryTheme: '',
+      riskMode: 'Normal',
+      mainObjective: ''
+    },
+    setups: [],
+    levels: [],
+    risks: []
+  };
+}
+
+function normalizePlanningDocument(doc = {}) {
+  const weekKey = /^\d{4}-\d{2}-\d{2}$/.test(String(doc.weekKey || '')) ? doc.weekKey : getWeekStartKey();
+  const gamePlanRaw = doc.gamePlan && typeof doc.gamePlan === 'object' ? doc.gamePlan : {};
+  const riskModeRaw = typeof gamePlanRaw.riskMode === 'string' ? gamePlanRaw.riskMode.trim() : 'Normal';
+  const safeRiskMode = ['Conservative', 'Normal', 'Aggressive'].includes(riskModeRaw) ? riskModeRaw : 'Normal';
+  return {
+    weekKey,
+    gamePlan: {
+      weekLabel: typeof gamePlanRaw.weekLabel === 'string' ? gamePlanRaw.weekLabel : formatWeekLabelFromKey(weekKey),
+      weeklyFocus: typeof gamePlanRaw.weeklyFocus === 'string' ? gamePlanRaw.weeklyFocus : '',
+      primaryTheme: typeof gamePlanRaw.primaryTheme === 'string' ? gamePlanRaw.primaryTheme : '',
+      riskMode: safeRiskMode,
+      mainObjective: typeof gamePlanRaw.mainObjective === 'string' ? gamePlanRaw.mainObjective : ''
+    },
+    setups: Array.isArray(doc.setups) ? doc.setups.map((item) => ({
+      ...createEmptySetup(),
+      ...item,
+      id: typeof item?.id === 'string' && item.id ? item.id : uid('setup'),
+      direction: item?.direction === 'bearish' ? 'bearish' : 'bullish'
+    })) : [],
+    levels: Array.isArray(doc.levels) ? doc.levels.map((item) => ({
+      ...createEmptyLevel(),
+      ...item,
+      id: typeof item?.id === 'string' && item.id ? item.id : uid('level')
+    })) : [],
+    risks: Array.isArray(doc.risks) ? doc.risks.map((item) => ({
+      ...createEmptyRiskNote(),
+      ...item,
+      id: typeof item?.id === 'string' && item.id ? item.id : uid('risk'),
+      done: item?.done === true
+    })) : []
+  };
+}
+
+function PlanningPanel() {
+  if (state.loadingPlanning) return '<div class="tool-note">Loading planning workspace…</div>';
+  if (state.planningError) return `<div class="error">${state.planningError}</div>`;
+  const planning = normalizePlanningDocument(state.planning || createPlanningDocument());
+  const setupCards = planning.setups.length
+    ? planning.setups.map((setup, index) => `
+      <article class="planning-setup-card" data-setup-id="${escapeHtml(setup.id)}">
+        <div class="planning-card-head">
+          <strong>Setup ${index + 1}</strong>
+          <button class="ghost" data-action="delete-setup" data-id="${escapeHtml(setup.id)}" type="button">Remove</button>
+        </div>
+        <div class="planning-grid planning-grid--setup">
+          <label><span>Ticker</span><input data-field="ticker" data-id="${escapeHtml(setup.id)}" data-section="setups" value="${escapeHtml(setup.ticker || '')}" placeholder="e.g. NVDA"></label>
+          <label><span>Direction</span><select data-field="direction" data-id="${escapeHtml(setup.id)}" data-section="setups"><option value="bullish" ${setup.direction === 'bullish' ? 'selected' : ''}>Bullish</option><option value="bearish" ${setup.direction === 'bearish' ? 'selected' : ''}>Bearish</option></select></label>
+          <label><span>Setup type</span><input data-field="setupType" data-id="${escapeHtml(setup.id)}" data-section="setups" value="${escapeHtml(setup.setupType || '')}" placeholder="Breakout / pullback / trend"></label>
+          <label><span>Entry idea</span><input data-field="entryIdea" data-id="${escapeHtml(setup.id)}" data-section="setups" value="${escapeHtml(setup.entryIdea || '')}" placeholder="Location + trigger"></label>
+          <label><span>Invalidation / stop</span><input data-field="invalidation" data-id="${escapeHtml(setup.id)}" data-section="setups" value="${escapeHtml(setup.invalidation || '')}" placeholder="Price or condition"></label>
+          <label><span>Target</span><input data-field="target" data-id="${escapeHtml(setup.id)}" data-section="setups" value="${escapeHtml(setup.target || '')}" placeholder="R multiple or level"></label>
+          <label class="planning-span-2"><span>Notes</span><textarea data-field="notes" data-id="${escapeHtml(setup.id)}" data-section="setups" rows="2" placeholder="Execution details, catalysts, timing">${escapeHtml(setup.notes || '')}</textarea></label>
+        </div>
+      </article>
+    `).join('')
+    : '<div class="tool-note">No setups yet. Add your highest-conviction ideas for next week.</div>';
+  const levelsRows = planning.levels.length
+    ? planning.levels.map((level) => `
+      <tr>
+        <td><input data-field="ticker" data-id="${escapeHtml(level.id)}" data-section="levels" value="${escapeHtml(level.ticker || '')}" placeholder="Ticker"></td>
+        <td><input data-field="triggerLevel" data-id="${escapeHtml(level.id)}" data-section="levels" value="${escapeHtml(level.triggerLevel || '')}" placeholder="Price / level"></td>
+        <td><input data-field="reason" data-id="${escapeHtml(level.id)}" data-section="levels" value="${escapeHtml(level.reason || '')}" placeholder="Why this matters"></td>
+        <td><input data-field="action" data-id="${escapeHtml(level.id)}" data-section="levels" value="${escapeHtml(level.action || '')}" placeholder="If hit, then..."></td>
+        <td><button class="ghost" data-action="delete-level" data-id="${escapeHtml(level.id)}" type="button">✕</button></td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="5" class="tool-note">Add key trigger levels for priority names.</td></tr>';
+  const riskRows = planning.risks.length
+    ? planning.risks.map((risk) => `
+      <div class="planning-risk-row">
+        <input type="checkbox" data-field="done" data-id="${escapeHtml(risk.id)}" data-section="risks" ${risk.done ? 'checked' : ''}>
+        <input data-field="text" data-id="${escapeHtml(risk.id)}" data-section="risks" value="${escapeHtml(risk.text || '')}" placeholder="Discipline rule / thing to avoid">
+        <button class="ghost" data-action="delete-risk" data-id="${escapeHtml(risk.id)}" type="button">✕</button>
+      </div>
+    `).join('')
+    : '<div class="tool-note">Capture discipline reminders for the coming week.</div>';
+  return `
+    <section class="planning-layout">
+      <article class="planning-card">
+        <div class="planning-card-head">
+          <div>
+            <p class="tool-overline">A. Weekly game plan</p>
+            <h3>Weekly Game Plan</h3>
+          </div>
+          <span class="planning-save-state">${state.savingPlanning ? 'Saving…' : 'Saved'}</span>
+        </div>
+        <div class="planning-grid">
+          <label><span>Week label</span><input data-section="gamePlan" data-field="weekLabel" value="${escapeHtml(planning.gamePlan.weekLabel || '')}" placeholder="07 Apr → 11 Apr"></label>
+          <label><span>Week key</span><input data-section="meta" data-field="weekKey" value="${escapeHtml(planning.weekKey)}" type="date"></label>
+          <label><span>Weekly focus</span><input data-section="gamePlan" data-field="weeklyFocus" value="${escapeHtml(planning.gamePlan.weeklyFocus || '')}" placeholder="What must be executed well"></label>
+          <label><span>Primary market theme</span><input data-section="gamePlan" data-field="primaryTheme" value="${escapeHtml(planning.gamePlan.primaryTheme || '')}" placeholder="Macro / sector context"></label>
+          <label><span>Risk mode</span><select data-section="gamePlan" data-field="riskMode"><option value="Conservative" ${planning.gamePlan.riskMode === 'Conservative' ? 'selected' : ''}>Conservative</option><option value="Normal" ${planning.gamePlan.riskMode === 'Normal' ? 'selected' : ''}>Normal</option><option value="Aggressive" ${planning.gamePlan.riskMode === 'Aggressive' ? 'selected' : ''}>Aggressive</option></select></label>
+          <label><span>Main objective</span><input data-section="gamePlan" data-field="mainObjective" value="${escapeHtml(planning.gamePlan.mainObjective || '')}" placeholder="Single measurable goal"></label>
+        </div>
+      </article>
+
+      <article class="planning-card planning-card--primary">
+        <div class="planning-card-head">
+          <div><p class="tool-overline">B. Watchlist / setups</p><h3>Watchlist / Setups</h3></div>
+          <button class="btn small-btn" data-action="add-setup" type="button">+ Add setup</button>
+        </div>
+        <div class="planning-setup-list">${setupCards}</div>
+      </article>
+
+      <div class="planning-split-grid">
+        <article class="planning-card">
+          <div class="planning-card-head">
+            <div><p class="tool-overline">C. Key levels / triggers</p><h3>Key Levels / Triggers</h3></div>
+            <button class="ghost" data-action="add-level" type="button">+ Add</button>
+          </div>
+          <div class="planning-table-wrap">
+            <table class="planning-table">
+              <thead><tr><th>Ticker</th><th>Trigger level</th><th>Reason</th><th>Action if triggered</th><th></th></tr></thead>
+              <tbody>${levelsRows}</tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="planning-card">
+          <div class="planning-card-head">
+            <div><p class="tool-overline">D. Risks / things to avoid</p><h3>Risks / Things to Avoid</h3></div>
+            <button class="ghost" data-action="add-risk" type="button">+ Add</button>
+          </div>
+          <div class="planning-risk-list">${riskRows}</div>
+        </article>
+      </div>
+    </section>
+  `;
 }
 
 function formatDirection(direction) {
@@ -486,6 +700,7 @@ function refreshTradeReviewPanel({ preserveScroll = false } = {}) {
 }
 
 let saveNotesTimer = null;
+let savePlanningTimer = null;
 
 async function patchTradeReview(tradeId, patch) {
   const trade = getTradeById(tradeId);
@@ -603,6 +818,74 @@ async function loadTrades() {
   }
 }
 
+async function savePlanning() {
+  if (!state.planning) return;
+  state.savingPlanning = true;
+  if (state.activeTab === 'planning') ReviewPage();
+  try {
+    const payload = normalizePlanningDocument(state.planning);
+    const response = await api('/api/review/planning', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planning: payload, weekKey: payload.weekKey })
+    });
+    state.planning = normalizePlanningDocument(response?.planning || payload);
+    state.planningError = '';
+  } catch (error) {
+    state.planningError = error?.message || 'Failed to save planning workspace.';
+  } finally {
+    state.savingPlanning = false;
+    if (state.activeTab === 'planning') ReviewPage();
+  }
+}
+
+function schedulePlanningSave() {
+  if (savePlanningTimer) clearTimeout(savePlanningTimer);
+  savePlanningTimer = setTimeout(() => {
+    savePlanning();
+  }, 220);
+}
+
+function updatePlanningField(section, id, field, value) {
+  if (!state.planning) state.planning = createPlanningDocument();
+  if (section === 'gamePlan' && state.planning.gamePlan) {
+    state.planning.gamePlan[field] = value;
+  } else if (section === 'meta' && field === 'weekKey') {
+    const nextWeekKey = String(value || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(nextWeekKey)) {
+      state.planning.weekKey = nextWeekKey;
+      if (!state.planning.gamePlan.weekLabel) {
+        state.planning.gamePlan.weekLabel = formatWeekLabelFromKey(nextWeekKey);
+      }
+    }
+  } else if (section === 'setups') {
+    const item = (state.planning.setups || []).find(setup => setup.id === id);
+    if (item) item[field] = value;
+  } else if (section === 'levels') {
+    const item = (state.planning.levels || []).find(level => level.id === id);
+    if (item) item[field] = value;
+  } else if (section === 'risks') {
+    const item = (state.planning.risks || []).find(risk => risk.id === id);
+    if (item) item[field] = value;
+  }
+  schedulePlanningSave();
+}
+
+async function loadPlanning() {
+  state.loadingPlanning = true;
+  state.planningError = '';
+  if (state.activeTab === 'planning') ReviewPage();
+  try {
+    const response = await api('/api/review/planning');
+    state.planning = normalizePlanningDocument(response?.planning || createPlanningDocument());
+  } catch (error) {
+    state.planningError = error?.message || 'Failed to load planning workspace.';
+  } finally {
+    state.loadingPlanning = false;
+    if (state.activeTab === 'planning') ReviewPage();
+  }
+}
+
 function bindTradeReviewActions() {
   $('#review-tab-content')?.addEventListener('click', (event) => {
     const row = event.target.closest('.trade-review-row');
@@ -639,12 +922,75 @@ function bindTradeReviewActions() {
   });
 }
 
+function bindPlanningActions() {
+  $('#review-tab-content')?.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-action]');
+    if (!btn) return;
+    if (!state.planning) state.planning = createPlanningDocument();
+    if (btn.dataset.action === 'add-setup') {
+      state.planning.setups.push(createEmptySetup());
+      ReviewPage();
+      schedulePlanningSave();
+      return;
+    }
+    if (btn.dataset.action === 'delete-setup' && btn.dataset.id) {
+      state.planning.setups = state.planning.setups.filter(item => item.id !== btn.dataset.id);
+      ReviewPage();
+      schedulePlanningSave();
+      return;
+    }
+    if (btn.dataset.action === 'add-level') {
+      state.planning.levels.push(createEmptyLevel());
+      ReviewPage();
+      schedulePlanningSave();
+      return;
+    }
+    if (btn.dataset.action === 'delete-level' && btn.dataset.id) {
+      state.planning.levels = state.planning.levels.filter(item => item.id !== btn.dataset.id);
+      ReviewPage();
+      schedulePlanningSave();
+      return;
+    }
+    if (btn.dataset.action === 'add-risk') {
+      state.planning.risks.push(createEmptyRiskNote());
+      ReviewPage();
+      schedulePlanningSave();
+      return;
+    }
+    if (btn.dataset.action === 'delete-risk' && btn.dataset.id) {
+      state.planning.risks = state.planning.risks.filter(item => item.id !== btn.dataset.id);
+      ReviewPage();
+      schedulePlanningSave();
+    }
+  });
+  $('#review-tab-content')?.addEventListener('input', (event) => {
+    const input = event.target.closest('[data-section][data-field]');
+    if (!input) return;
+    const section = input.dataset.section;
+    const field = input.dataset.field;
+    const id = input.dataset.id || '';
+    const value = input.type === 'checkbox' ? input.checked : String(input.value || '');
+    updatePlanningField(section, id, field, value);
+  });
+  $('#review-tab-content')?.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-section][data-field]');
+    if (!input) return;
+    const section = input.dataset.section;
+    const field = input.dataset.field;
+    const id = input.dataset.id || '';
+    const value = input.type === 'checkbox' ? input.checked : String(input.value || '');
+    updatePlanningField(section, id, field, value);
+  });
+}
+
 async function init() {
   bindTabs();
   bindModalActions();
   bindTradeReviewActions();
+  bindPlanningActions();
   await loadRecap();
   await loadTrades();
+  await loadPlanning();
 
   const deepLinkOpen = shouldDeepLinkOpenWeeklyRecap();
   const weekendAutoOpen = shouldAutoOpenWeeklyRecap(state.recap);

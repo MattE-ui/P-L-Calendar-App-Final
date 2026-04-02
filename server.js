@@ -1966,6 +1966,90 @@ function upsertWeeklyRecap(user, recap) {
   }
 }
 
+function getWeekStartKeyFromDate(date = new Date()) {
+  const current = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = current.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  current.setUTCDate(current.getUTCDate() + diff);
+  return current.toISOString().slice(0, 10);
+}
+
+function createDefaultReviewPlanning(weekKey = getWeekStartKeyFromDate()) {
+  return {
+    weekKey,
+    gamePlan: {
+      weekLabel: formatWeekLabel(weekKey, weekKey),
+      weeklyFocus: '',
+      primaryTheme: '',
+      riskMode: 'Normal',
+      mainObjective: ''
+    },
+    setups: [],
+    levels: [],
+    risks: []
+  };
+}
+
+function normalizeReviewPlanning(input = {}, fallbackWeekKey = getWeekStartKeyFromDate()) {
+  const weekKeyRaw = typeof input.weekKey === 'string' ? input.weekKey.trim() : '';
+  const weekKey = /^\d{4}-\d{2}-\d{2}$/.test(weekKeyRaw) ? weekKeyRaw : fallbackWeekKey;
+  const gamePlanRaw = input?.gamePlan && typeof input.gamePlan === 'object' ? input.gamePlan : {};
+  const riskModeRaw = typeof gamePlanRaw.riskMode === 'string' ? gamePlanRaw.riskMode.trim() : '';
+  const riskMode = ['Conservative', 'Normal', 'Aggressive'].includes(riskModeRaw) ? riskModeRaw : 'Normal';
+  const asCleanText = (value, max = 500) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+  const normalizeSetup = (item = {}) => ({
+    id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : crypto.randomUUID(),
+    ticker: asCleanText(item.ticker, 24).toUpperCase(),
+    direction: item.direction === 'bearish' ? 'bearish' : 'bullish',
+    setupType: asCleanText(item.setupType, 120),
+    entryIdea: asCleanText(item.entryIdea, 240),
+    invalidation: asCleanText(item.invalidation, 160),
+    target: asCleanText(item.target, 160),
+    notes: asCleanText(item.notes, 1000),
+    status: typeof item.status === 'string' && item.status.trim() ? item.status.trim().toLowerCase() : 'active'
+  });
+  const normalizeLevel = (item = {}) => ({
+    id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : crypto.randomUUID(),
+    ticker: asCleanText(item.ticker, 24).toUpperCase(),
+    triggerLevel: asCleanText(item.triggerLevel, 80),
+    reason: asCleanText(item.reason, 320),
+    action: asCleanText(item.action, 320)
+  });
+  const normalizeRisk = (item = {}) => ({
+    id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : crypto.randomUUID(),
+    text: asCleanText(item.text, 320),
+    done: item.done === true
+  });
+  return {
+    weekKey,
+    gamePlan: {
+      weekLabel: asCleanText(gamePlanRaw.weekLabel, 120) || formatWeekLabel(weekKey, weekKey),
+      weeklyFocus: asCleanText(gamePlanRaw.weeklyFocus, 320),
+      primaryTheme: asCleanText(gamePlanRaw.primaryTheme, 320),
+      riskMode,
+      mainObjective: asCleanText(gamePlanRaw.mainObjective, 320)
+    },
+    setups: Array.isArray(input.setups) ? input.setups.map(normalizeSetup) : [],
+    levels: Array.isArray(input.levels) ? input.levels.map(normalizeLevel) : [],
+    risks: Array.isArray(input.risks) ? input.risks.map(normalizeRisk) : []
+  };
+}
+
+function upsertReviewPlanning(user, planning) {
+  if (!user.reviewPlanning || typeof user.reviewPlanning !== 'object') {
+    user.reviewPlanning = { currentWeekKey: planning.weekKey, plans: [planning] };
+    return;
+  }
+  if (!Array.isArray(user.reviewPlanning.plans)) user.reviewPlanning.plans = [];
+  const index = user.reviewPlanning.plans.findIndex(item => item && item.weekKey === planning.weekKey);
+  if (index >= 0) {
+    user.reviewPlanning.plans[index] = planning;
+  } else {
+    user.reviewPlanning.plans.push(planning);
+  }
+  user.reviewPlanning.currentWeekKey = planning.weekKey;
+}
+
 
 function computeHistoryPeriodReturnDetails(user, periodKey) {
   const history = ensurePortfolioHistory(user);
@@ -4933,6 +5017,38 @@ function ensureUserShape(user, identifier) {
       mutated = true;
     }
     user.weeklyRecaps = normalizedRecaps;
+  }
+  const defaultPlanningWeekKey = getWeekStartKeyFromDate();
+  if (!user.reviewPlanning || typeof user.reviewPlanning !== 'object') {
+    user.reviewPlanning = {
+      currentWeekKey: defaultPlanningWeekKey,
+      plans: [createDefaultReviewPlanning(defaultPlanningWeekKey)]
+    };
+    mutated = true;
+  } else {
+    const currentWeekKey = typeof user.reviewPlanning.currentWeekKey === 'string'
+      && /^\d{4}-\d{2}-\d{2}$/.test(user.reviewPlanning.currentWeekKey)
+      ? user.reviewPlanning.currentWeekKey
+      : defaultPlanningWeekKey;
+    const normalizedPlans = Array.isArray(user.reviewPlanning.plans)
+      ? user.reviewPlanning.plans
+        .filter(plan => plan && typeof plan === 'object')
+        .map(plan => normalizeReviewPlanning(plan, currentWeekKey))
+      : [];
+    if (!normalizedPlans.length) {
+      normalizedPlans.push(createDefaultReviewPlanning(currentWeekKey));
+      mutated = true;
+    }
+    if (!Array.isArray(user.reviewPlanning.plans) || normalizedPlans.length !== user.reviewPlanning.plans.length) {
+      mutated = true;
+    }
+    const currentExists = normalizedPlans.some(plan => plan.weekKey === currentWeekKey);
+    if (!currentExists) {
+      normalizedPlans.push(createDefaultReviewPlanning(currentWeekKey));
+      mutated = true;
+    }
+    user.reviewPlanning.currentWeekKey = currentWeekKey;
+    user.reviewPlanning.plans = normalizedPlans;
   }
   if (!Array.isArray(user.importBatches)) {
     user.importBatches = [];
@@ -16990,6 +17106,43 @@ app.post('/api/weekly-recap/:id/dismissed', auth, (req, res) => {
     saveDB(db);
   }
   res.json({ ok: true, recap });
+});
+
+app.get('/api/review/planning', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const requestedWeekKey = typeof req.query.weekKey === 'string' ? req.query.weekKey.trim() : '';
+  const fallbackWeekKey = user.reviewPlanning?.currentWeekKey || getWeekStartKeyFromDate();
+  const weekKey = /^\d{4}-\d{2}-\d{2}$/.test(requestedWeekKey) ? requestedWeekKey : fallbackWeekKey;
+  const plans = Array.isArray(user.reviewPlanning?.plans) ? user.reviewPlanning.plans : [];
+  const found = plans.find(plan => plan && plan.weekKey === weekKey);
+  if (found) {
+    user.reviewPlanning.currentWeekKey = weekKey;
+    saveDB(db);
+    return res.json({ planning: found, weekKey, availableWeeks: plans.map(plan => plan.weekKey).sort().reverse() });
+  }
+  const planning = createDefaultReviewPlanning(weekKey);
+  upsertReviewPlanning(user, planning);
+  saveDB(db);
+  return res.json({ planning, weekKey, availableWeeks: user.reviewPlanning.plans.map(plan => plan.weekKey).sort().reverse() });
+});
+
+app.put('/api/review/planning', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const payload = req.body?.planning && typeof req.body.planning === 'object' ? req.body.planning : {};
+  const requestedWeekKey = typeof req.body?.weekKey === 'string' ? req.body.weekKey.trim() : '';
+  const fallbackWeekKey = /^\d{4}-\d{2}-\d{2}$/.test(requestedWeekKey)
+    ? requestedWeekKey
+    : (user.reviewPlanning?.currentWeekKey || getWeekStartKeyFromDate());
+  const planning = normalizeReviewPlanning(payload, fallbackWeekKey);
+  upsertReviewPlanning(user, planning);
+  saveDB(db);
+  res.json({ ok: true, planning, weekKey: planning.weekKey });
 });
 
 app.get('/api/trades/export', auth, async (req, res) => {
