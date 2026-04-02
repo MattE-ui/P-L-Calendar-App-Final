@@ -220,7 +220,7 @@ function TradeReviewPanel() {
     </button>
   `).join('');
   if (!selected) {
-    return `<section class="trade-review-layout"><aside class="trade-review-list">${listHtml}</aside><section class="trade-review-detail"><div class="tool-note">Select a trade.</div></section></section>`;
+    return `<section class="trade-review-layout"><div class="trade-review-list-shell"><aside class="trade-review-list">${listHtml}</aside></div><section class="trade-review-detail"><div class="tool-note">Select a trade.</div></section></section>`;
   }
   const selectedTags = Array.isArray(selected.tags) ? selected.tags : [];
   const notes = typeof selected.notes === 'string' ? selected.notes : '';
@@ -228,7 +228,7 @@ function TradeReviewPanel() {
   const tagsHtml = REVIEW_TAGS.map(tag => `<button class="trade-review-tag ${selectedTags.includes(tag) ? 'is-active' : ''}" data-tag="${tag}" type="button">${tag}</button>`).join('');
   return `
     <section class="trade-review-layout">
-      <aside id="trade-review-list" class="trade-review-list">${listHtml}</aside>
+      <div class="trade-review-list-shell"><aside id="trade-review-list" class="trade-review-list">${listHtml}</aside></div>
       <section class="trade-review-detail">
         <section class="trade-review-card">
           <p class="tool-overline">Trade summary</p>
