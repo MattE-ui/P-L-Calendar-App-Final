@@ -115,59 +115,89 @@ function deriveScorecard(trades = []) {
     ? (trades.filter(trade => trade?.outcome === 'good' && Number(trade?.realizedPnlGBP) > 0).length / goodTrades) * 100
     : null;
 
-  // Transparent, deterministic rule-based score:
-  // 1) Start at 100.
-  // 2) Apply penalties for weak process quality and repeat mistakes.
-  // 3) Apply positive adjustments for good outcomes and high completion.
-  // 4) Clamp to [0, 100] so the score remains readable and bounded.
-  let score = 100;
-  score -= unreviewedTrades * 6;
-  score -= untaggedTrades * 3;
-  score -= badTrades * 4;
-  score -= fomoTrades * 5;
-  score -= revengeTrades * 5;
-  score += goodTrades * 2;
-  if (reviewCompletionPct >= 90) score += 6;
-  else if (reviewCompletionPct >= 75) score += 3;
-  score = Math.max(0, Math.min(100, Math.round(score)));
+  const clamp = (value, min = 0, max = 100) => Math.max(min, Math.min(max, value));
+  const asPct = (numerator, denominator) => (denominator > 0 ? (numerator / denominator) * 100 : 0);
+  const normalize = (value, min, max) => {
+    if (!Number.isFinite(value)) return null;
+    if (max <= min) return null;
+    return clamp(((value - min) / (max - min)) * 100, 0, 100);
+  };
+  const safeNumber = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+
+  // Scorecard redesign (weighted blend):
+  // Final = 40% Discipline + 30% Mistakes + 30% Quality.
+  // Why blend this way:
+  // - Discipline should be the largest lever because review process quality is the foundation.
+  // - Mistake control and trade quality still matter, but weak PnL alone should not zero-out the score.
+  // - Each section has a floor so one weak dimension cannot collapse the full score unrealistically.
+  const SECTION_MIN = 10;
+  const SECTION_MAX = 100;
+
+  // Discipline (40%): reward completion rates directly.
+  const disciplineRaw = (
+    (reviewCompletionPct * 0.4)
+    + (taggingCompletionPct * 0.3)
+    + (classifiedPct * 0.3)
+  );
+  const disciplineScore = clamp(disciplineRaw, SECTION_MIN, SECTION_MAX);
+
+  // Mistakes (30%): penalize rates, not raw counts, so higher activity alone is not punished.
+  const fomoRate = asPct(fomoTrades, totalTrades);
+  const revengeRate = asPct(revengeTrades, totalTrades);
+  const badTradeRate = asPct(badTrades, totalTrades);
+  const mistakesPenalty = (fomoRate * 0.35) + (revengeRate * 0.35) + (badTradeRate * 0.3);
+  const mistakesRaw = 100 - mistakesPenalty;
+  const mistakesScore = clamp(mistakesRaw, SECTION_MIN, SECTION_MAX);
+
+  // Quality (30%): combine win rate, profit factor, winner/loser efficiency, and good-trade profitability.
+  const avgWinLossRatio = (avgWinner && avgLoserAbs) ? (avgWinner / avgLoserAbs) : null;
+  const profitFactorScore = normalize(safeNumber(profitFactor, 0), 0.6, 2.0);
+  const winLossRatioScore = normalize(safeNumber(avgWinLossRatio, 0), 0.5, 2.0);
+  const goodTradesProfitScore = goodTradesProfitPct === null ? 50 : safeNumber(goodTradesProfitPct, 50);
+  const qualityRaw = (
+    (winRate * 0.35)
+    + (safeNumber(profitFactorScore, 0) * 0.3)
+    + (safeNumber(winLossRatioScore, 0) * 0.2)
+    + (goodTradesProfitScore * 0.15)
+  );
+  const qualityScore = clamp(qualityRaw, SECTION_MIN, SECTION_MAX);
+
+  const blendedScore = (
+    (disciplineScore * 0.4)
+    + (mistakesScore * 0.3)
+    + (qualityScore * 0.3)
+  );
+  const score = Math.round(clamp(blendedScore, 0, 100));
 
   const summary = buildScoreSummary({
     score,
-    reviewCompletionPct,
-    taggingCompletionPct,
-    goodTrades,
-    badTrades,
-    fomoTrades,
-    revengeTrades,
-    winRate,
-    profitFactor
+    disciplineScore,
+    mistakesScore,
+    qualityScore
   });
 
   return {
     score,
     tone: scoreTone(score),
     summary,
-    discipline: { reviewCompletionPct, taggingCompletionPct, classifiedPct },
-    mistakes: { fomoTrades, revengeTrades, badTrades },
-    quality: { winRate, avgWinner, avgLoserAbs, profitFactor, goodTradesProfitPct },
-    counts: { totalTrades }
+    discipline: { score: disciplineScore, reviewCompletionPct, taggingCompletionPct, classifiedPct },
+    mistakes: { score: mistakesScore, fomoTrades, revengeTrades, badTrades, fomoRate, revengeRate, badTradeRate },
+    quality: { score: qualityScore, winRate, avgWinner, avgLoserAbs, profitFactor, goodTradesProfitPct, avgWinLossRatio },
+    counts: { totalTrades, unreviewedTrades, untaggedTrades }
   };
 }
 
 function buildScoreSummary(metrics) {
-  if (metrics.score >= 85 && metrics.fomoTrades + metrics.revengeTrades === 0 && metrics.reviewCompletionPct >= 80) {
-    return 'Good execution with consistent tagging and review.';
+  if (metrics.disciplineScore >= 85 && metrics.qualityScore >= 70 && metrics.mistakesScore >= 70) {
+    return 'Strong process quality and execution are aligned across all score components.';
   }
-  if (metrics.reviewCompletionPct >= 80 && (metrics.fomoTrades > 0 || metrics.revengeTrades > 0)) {
-    return 'Strong discipline but emotional tags are still dragging results.';
+  if (metrics.disciplineScore >= 80 && metrics.qualityScore < 55) {
+    return 'Review discipline is strong; now focus on improving edge and execution quality.';
   }
-  if (metrics.badTrades >= metrics.goodTrades && metrics.winRate < 50) {
-    return 'Losses are being driven by poor trade selection.';
+  if (metrics.disciplineScore < 55 && metrics.qualityScore < 55) {
+    return 'Low discipline and weak performance are both contributing to the score.';
   }
-  if (metrics.profitFactor !== null && metrics.profitFactor >= 1.3 && metrics.reviewCompletionPct >= 70) {
-    return 'Process quality is supporting profitable execution.';
-  }
-  return 'Mixed scorecard: tighten review completion and reduce repeat mistakes.';
+  return 'Balanced scorecard: improve weak sections while protecting your strongest habits.';
 }
 
 function formatProfitFactor(value) {
@@ -186,12 +216,14 @@ function ScorecardPanel() {
       <header class="scorecard-head ${scorecard.tone.cls}">
         <p class="tool-overline">Performance scorecard</p>
         <div class="scorecard-head__score">Score: <strong>${scorecard.score}</strong> / 100</div>
+        <p class="tool-note">Score blends discipline, mistakes, and performance quality.</p>
         <p class="scorecard-head__summary">${scorecard.summary}</p>
       </header>
       <section class="scorecard-grid">
         <article class="scorecard-card">
           <h3>Discipline</h3>
           <div class="scorecard-metric-list">
+            <div><span>Section score</span><strong>${scorecard.discipline.score.toFixed(1)} / 100</strong></div>
             <div><span>Trades reviewed</span><strong>${fmtPlainPct(scorecard.discipline.reviewCompletionPct)}</strong></div>
             <div><span>Trades tagged</span><strong>${fmtPlainPct(scorecard.discipline.taggingCompletionPct)}</strong></div>
             <div><span>Outcome classified</span><strong>${fmtPlainPct(scorecard.discipline.classifiedPct)}</strong></div>
@@ -200,14 +232,16 @@ function ScorecardPanel() {
         <article class="scorecard-card">
           <h3>Mistakes</h3>
           <div class="scorecard-metric-list">
-            <div><span>FOMO trades</span><strong>${scorecard.mistakes.fomoTrades}</strong></div>
-            <div><span>Revenge trades</span><strong>${scorecard.mistakes.revengeTrades}</strong></div>
-            <div><span>Bad trades</span><strong>${scorecard.mistakes.badTrades}</strong></div>
+            <div><span>Section score</span><strong>${scorecard.mistakes.score.toFixed(1)} / 100</strong></div>
+            <div><span>FOMO trades</span><strong>${scorecard.mistakes.fomoTrades} (${fmtPlainPct(scorecard.mistakes.fomoRate)})</strong></div>
+            <div><span>Revenge trades</span><strong>${scorecard.mistakes.revengeTrades} (${fmtPlainPct(scorecard.mistakes.revengeRate)})</strong></div>
+            <div><span>Bad trades</span><strong>${scorecard.mistakes.badTrades} (${fmtPlainPct(scorecard.mistakes.badTradeRate)})</strong></div>
           </div>
         </article>
         <article class="scorecard-card">
           <h3>Quality</h3>
           <div class="scorecard-metric-list">
+            <div><span>Section score</span><strong>${scorecard.quality.score.toFixed(1)} / 100</strong></div>
             <div><span>Win rate</span><strong>${fmtPlainPct(scorecard.quality.winRate)}</strong></div>
             <div><span>Avg winner vs loser</span><strong>${fmtMoney(scorecard.quality.avgWinner)} / ${fmtMoney(scorecard.quality.avgLoserAbs)}</strong></div>
             <div><span>Profit factor</span><strong>${formatProfitFactor(scorecard.quality.profitFactor)}</strong></div>
