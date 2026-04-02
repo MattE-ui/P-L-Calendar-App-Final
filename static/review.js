@@ -476,7 +476,7 @@ function PlanningPanel() {
         </div>
       </article>
     `).join('')
-    : '<div class="tool-note">No setups yet. Add your highest-conviction ideas for next week.</div>';
+    : '<div class="tool-note planning-empty-note"><strong>No setups yet</strong><span>Define your highest-conviction trades for the week.</span></div>';
   const levelsRows = planning.levels.length
     ? planning.levels.map((level) => `
       <tr>
@@ -487,7 +487,7 @@ function PlanningPanel() {
         <td><button class="ghost" data-action="delete-level" data-id="${escapeHtml(level.id)}" type="button">✕</button></td>
       </tr>
     `).join('')
-    : '<tr><td colspan="5" class="tool-note">Add key trigger levels for priority names.</td></tr>';
+    : '<tr><td colspan="5" class="tool-note">Map key trigger levels for your priority names.</td></tr>';
   const riskRows = planning.risks.length
     ? planning.risks.map((risk) => `
       <div class="planning-risk-row">
@@ -496,10 +496,10 @@ function PlanningPanel() {
         <button class="ghost" data-action="delete-risk" data-id="${escapeHtml(risk.id)}" type="button">✕</button>
       </div>
     `).join('')
-    : '<div class="tool-note">Capture discipline reminders for the coming week.</div>';
+    : '<div class="tool-note">Capture discipline reminders so avoidable mistakes stay off the tape.</div>';
   return `
     <section class="planning-layout">
-      <article class="planning-card">
+      <article class="planning-card planning-card--secondary">
         <div class="planning-card-head">
           <div>
             <p class="tool-overline">A. Weekly game plan</p>
@@ -507,29 +507,29 @@ function PlanningPanel() {
           </div>
           <span class="planning-save-state">${state.savingPlanning ? 'Saving…' : 'Saved'}</span>
         </div>
-        <div class="planning-grid">
+        <div class="planning-grid planning-grid--plan">
           <label><span>Week label</span><input data-section="gamePlan" data-field="weekLabel" value="${escapeHtml(planning.gamePlan.weekLabel || '')}" placeholder="07 Apr → 11 Apr"></label>
-          <label><span>Week key</span><input data-section="meta" data-field="weekKey" value="${escapeHtml(planning.weekKey)}" type="date"></label>
-          <label><span>Weekly focus</span><input data-section="gamePlan" data-field="weeklyFocus" value="${escapeHtml(planning.gamePlan.weeklyFocus || '')}" placeholder="What must be executed well"></label>
-          <label><span>Primary market theme</span><input data-section="gamePlan" data-field="primaryTheme" value="${escapeHtml(planning.gamePlan.primaryTheme || '')}" placeholder="Macro / sector context"></label>
           <label><span>Risk mode</span><select data-section="gamePlan" data-field="riskMode"><option value="Conservative" ${planning.gamePlan.riskMode === 'Conservative' ? 'selected' : ''}>Conservative</option><option value="Normal" ${planning.gamePlan.riskMode === 'Normal' ? 'selected' : ''}>Normal</option><option value="Aggressive" ${planning.gamePlan.riskMode === 'Aggressive' ? 'selected' : ''}>Aggressive</option></select></label>
-          <label><span>Main objective</span><input data-section="gamePlan" data-field="mainObjective" value="${escapeHtml(planning.gamePlan.mainObjective || '')}" placeholder="Single measurable goal"></label>
+          <label><span>Week key</span><input data-section="meta" data-field="weekKey" value="${escapeHtml(planning.weekKey)}" type="date"></label>
+          <label class="planning-span-2"><span>Weekly focus</span><input data-section="gamePlan" data-field="weeklyFocus" value="${escapeHtml(planning.gamePlan.weeklyFocus || '')}" placeholder="What must be executed well"></label>
+          <label class="planning-span-2"><span>Primary market theme</span><input data-section="gamePlan" data-field="primaryTheme" value="${escapeHtml(planning.gamePlan.primaryTheme || '')}" placeholder="Macro / sector context"></label>
+          <label class="planning-span-2"><span>Main objective</span><input data-section="gamePlan" data-field="mainObjective" value="${escapeHtml(planning.gamePlan.mainObjective || '')}" placeholder="Single measurable goal"></label>
         </div>
       </article>
 
       <article class="planning-card planning-card--primary">
         <div class="planning-card-head">
           <div><p class="tool-overline">B. Watchlist / setups</p><h3>Watchlist / Setups</h3></div>
-          <button class="btn small-btn" data-action="add-setup" type="button">+ Add setup</button>
+          <button class="planning-btn planning-btn--primary" data-action="add-setup" type="button">+ Add Setup</button>
         </div>
         <div class="planning-setup-list">${setupCards}</div>
       </article>
 
       <div class="planning-split-grid">
-        <article class="planning-card">
+        <article class="planning-card planning-card--tertiary">
           <div class="planning-card-head">
             <div><p class="tool-overline">C. Key levels / triggers</p><h3>Key Levels / Triggers</h3></div>
-            <button class="ghost" data-action="add-level" type="button">+ Add</button>
+            <button class="planning-btn planning-btn--subtle" data-action="add-level" type="button">+ Add</button>
           </div>
           <div class="planning-table-wrap">
             <table class="planning-table">
@@ -539,10 +539,10 @@ function PlanningPanel() {
           </div>
         </article>
 
-        <article class="planning-card">
+        <article class="planning-card planning-card--quaternary">
           <div class="planning-card-head">
             <div><p class="tool-overline">D. Risks / things to avoid</p><h3>Risks / Things to Avoid</h3></div>
-            <button class="ghost" data-action="add-risk" type="button">+ Add</button>
+            <button class="planning-btn planning-btn--subtle" data-action="add-risk" type="button">+ Add</button>
           </div>
           <div class="planning-risk-list">${riskRows}</div>
         </article>
