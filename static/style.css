@@ -8634,18 +8634,19 @@ textarea {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 12px;
   background: rgba(15, 23, 42, 0.45);
-  padding: 8px;
+  padding: 7px;
 }
 
 .planning-card--secondary {
   border-color: rgba(148, 163, 184, 0.26);
   background: rgba(15, 23, 42, 0.42);
+  padding: 6px 7px;
 }
 
 .planning-card--primary {
-  border-color: rgba(34, 197, 94, 0.52);
-  background: rgba(11, 20, 35, 0.7);
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.18);
+  border-color: rgba(74, 222, 128, 0.62);
+  background: rgba(11, 20, 35, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.24), 0 8px 20px rgba(2, 6, 23, 0.24);
 }
 
 .planning-card--tertiary {
@@ -8659,43 +8660,72 @@ textarea {
 
 .planning-card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
+  gap: 8px;
+  margin-bottom: 5px;
 }
 
 .planning-card-head h3 {
-  margin: 2px 0 0;
+  margin: 1px 0 0;
   font-size: 15px;
 }
 
+.planning-head-status {
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 1px;
+}
+
 .planning-save-state {
-  font-size: 11px;
+  font-size: 10px;
   color: #94a3b8;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .planning-completeness {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 11px;
-  color: #94a3b8;
+  color: #cbd5e1;
 }
 
 .planning-toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px 6px;
 }
 
 .planning-inline-field {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
-.planning-inline-field--wide {
+.planning-inline-field--week {
   grid-column: span 2;
+}
+
+.planning-inline-field--risk {
+  grid-column: span 1;
+}
+
+.planning-inline-field--focus {
+  grid-column: span 3;
+}
+
+.planning-inline-field--objective {
+  grid-column: span 3;
+}
+
+.planning-inline-field--theme {
+  grid-column: span 3;
+}
+
+.planning-inline-field--meta {
+  grid-column: span 6;
+  justify-self: end;
+  width: min(190px, 100%);
 }
 
 .planning-grid {
@@ -8711,10 +8741,10 @@ textarea {
 
 .planning-grid span,
 .planning-inline-field span {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #94a3b8;
+  font-size: 10px;
+  letter-spacing: 0.015em;
+  color: #7f8ea4;
+  font-weight: 500;
 }
 
 .planning-grid input,
@@ -8729,7 +8759,7 @@ textarea {
   border: 1px solid rgba(148, 163, 184, 0.35);
   background: rgba(15, 23, 42, 0.9);
   color: #e2e8f0;
-  padding: 5px 8px;
+  padding: 4px 7px;
   font-size: 12px;
 }
 
@@ -8810,10 +8840,10 @@ textarea {
 }
 
 .planning-btn--setup {
-  padding: 8px 13px;
+  padding: 7px 12px;
   font-size: 13px;
-  border-color: rgba(56, 189, 248, 0.92);
-  box-shadow: 0 8px 24px rgba(2, 132, 199, 0.28);
+  border-color: rgba(125, 211, 252, 0.95);
+  box-shadow: 0 9px 22px rgba(2, 132, 199, 0.3);
 }
 
 .planning-btn--subtle {
@@ -8874,7 +8904,13 @@ textarea {
     grid-column: auto;
   }
 
-  .planning-inline-field--wide {
+  .planning-inline-field--week,
+  .planning-inline-field--risk,
+  .planning-inline-field--focus,
+  .planning-inline-field--objective,
+  .planning-inline-field--theme,
+  .planning-inline-field--meta {
     grid-column: auto;
+    width: auto;
   }
 }
