@@ -252,6 +252,74 @@ test('manual trim emits one POSITION_TRIM alert without quantity disclosure', ()
   assert.equal(db.tradeGroupAlerts[0].quantity ?? null, null);
 });
 
+test('manual trim unread payload and notification body are trim-specific (not close)', async () => {
+  const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Trim Banner Group' })
+  });
+  assert.equal(created.res.status, 201);
+  const groupId = created.data.group.id;
+
+  const addMember = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ friend_user_id: member })
+  });
+  assert.equal(addMember.res.status, 201);
+
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  const inviteId = inviteUnread.data.notifications[0]?.invite_id;
+  const acceptInvite = await authedFetch(tokens.member, `/api/social/trade-groups/invites/${inviteId}/accept`, { method: 'POST' });
+  assert.equal(acceptInvite.res.status, 200);
+
+  const tradeCreate = await authedFetch(tokens.leader, '/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 40,
+      stop: 36,
+      riskPct: 1,
+      symbol: 'TEST',
+      date: '2026-04-01'
+    })
+  });
+  assert.equal(tradeCreate.res.status, 200);
+  const tradeId = tradeCreate.data.trade.id;
+
+  const trimRes = await authedFetch(tokens.leader, `/api/trades/${tradeId}/trim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      units: 1,
+      price: 40.87,
+      date: '2026-04-02'
+    })
+  });
+  assert.equal(trimRes.res.status, 200);
+
+  const unread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  assert.equal(unread.res.status, 200);
+  const trimNotification = unread.data.notifications.find((item) => item.type === 'trade_group_alert' && item.ticker === 'TEST');
+  assert.ok(trimNotification);
+  assert.equal(trimNotification.position_event_type, 'POSITION_TRIM');
+  assert.equal(trimNotification.normalized_event_type, 'TRADE_TRIMMED');
+
+  const pushed = await waitFor(() => {
+    const current = loadDB();
+    return Array.isArray(current.notificationEvents)
+      && current.notificationEvents.some((item) => item.userId === member && item.eventType === 'trade_group_alert' && /trimmed/i.test(item.body || ''));
+  });
+  assert.equal(pushed, true);
+
+  const db = loadDB();
+  const trimPush = db.notificationEvents
+    .filter((item) => item.userId === member && item.eventType === 'trade_group_alert')
+    .find((item) => /trimmed/i.test(item.body || ''));
+  assert.ok(trimPush);
+  assert.equal(/closed/i.test(trimPush.body || ''), false);
+});
+
 test('coalesceTrading212FillEvents merges nearby partial sell fills with weighted average price', () => {
   const merged = coalesceTrading212FillEvents([
     { fillId: 'f1', orderId: 'o-1', accountId: 'acc', sourceTradeId: 'trade-1', side: 'SELL', ticker: 'SOUN', quantity: 10, fillPrice: 7.0, remainingQuantity: 90, tradeStatus: 'open', filledAt: '2026-04-08T10:00:00.000Z' },

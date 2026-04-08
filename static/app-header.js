@@ -585,8 +585,20 @@
         text.textContent = `joined ${notification.group_name || 'your trade group'}.`;
       } else if (isAlert && notification.ticker) {
         const isSell = String(notification.side || '').toUpperCase() === 'SELL';
+        const normalizedEventType = String(notification.normalized_event_type || '').toUpperCase();
+        const isTrim = normalizedEventType === 'TRADE_TRIMMED'
+          || String(notification.position_event_type || '').toUpperCase() === 'POSITION_TRIM'
+          || String(notification.alert_classification || '').toLowerCase() === 'partial_sell';
+        const fillPriceLabel = Number.isFinite(Number(notification.fill_price))
+          ? `$${Number(notification.fill_price).toFixed(2)}`
+          : '';
+        const trimPctLabel = Number.isFinite(Number(notification.trim_pct))
+          ? `${Number(notification.trim_pct).toFixed(Number(notification.trim_pct) % 1 === 0 ? 0 : 1)}%`
+          : '';
         text.textContent = isSell
-          ? `${notification.group_name}: ${notification.leader_nickname || 'Leader'} closed ${notification.ticker}.`
+          ? (isTrim
+            ? `${notification.group_name}: ${notification.leader_nickname || 'Leader'} trimmed ${trimPctLabel || 'part of'} ${notification.ticker}${fillPriceLabel ? ` at ${fillPriceLabel}` : ''}.`
+            : `${notification.group_name}: ${notification.leader_nickname || 'Leader'} closed ${notification.ticker}${fillPriceLabel ? ` at ${fillPriceLabel}` : ''}.`)
           : `${notification.group_name}: ${notification.ticker} entry ${Number(notification.entry_price || 0).toFixed(2)} stop ${Number(notification.stop_price || 0).toFixed(2)} risk ${Number(notification.risk_pct || 0).toFixed(2)}%`;
       } else {
         text.textContent = `${notification.group_name}: New trade group activity.`;
