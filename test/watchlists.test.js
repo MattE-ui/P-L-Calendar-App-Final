@@ -11,7 +11,8 @@ const {
   saveDB,
   loadDB,
   composeWatchlistMetrics,
-  isWatchlistQuotePayloadUsable
+  isWatchlistQuotePayloadUsable,
+  buildWatchlistQuoteFromChartResult
 } = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
@@ -264,6 +265,31 @@ test('isWatchlistQuotePayloadUsable rejects broken payloads to prevent cache poi
   };
   assert.equal(isWatchlistQuotePayloadUsable(goodQuote), true);
   assert.equal(isWatchlistQuotePayloadUsable(brokenQuote), false);
+});
+
+test('buildWatchlistQuoteFromChartResult derives quote fields from Yahoo chart payload', () => {
+  const normalized = buildWatchlistQuoteFromChartResult({
+    meta: {
+      symbol: 'AEHR',
+      currency: 'USD',
+      marketState: 'REGULAR',
+      chartPreviousClose: 18,
+      regularMarketVolume: 12345
+    },
+    indicators: {
+      quote: [{
+        open: [null, 19.5, 19.8],
+        close: [null, 19.9, 20.0],
+        volume: [100, 200, 300]
+      }]
+    }
+  }, 'AEHR');
+  assert.equal(normalized.ticker, 'AEHR');
+  assert.equal(normalized.currentPrice, 20);
+  assert.equal(normalized.dayOpenPrice, 19.5);
+  assert.equal(normalized.previousClosePrice, 18);
+  assert.equal(normalized.volume, 12345);
+  assert.equal(normalized.currency, 'USD');
 });
 
 test('group watchlist copy supports new/append, dedupes symbols, and blocks non-members', async () => {
