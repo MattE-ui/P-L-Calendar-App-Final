@@ -661,6 +661,47 @@ function normalizeTradeGroupNotificationType(type) {
   return LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP[type] || '';
 }
 
+function normalizeTradeGroupAlertEventType(alert = {}) {
+  const side = String(alert?.side || '').trim().toUpperCase();
+  if (side !== 'SELL') return 'TRADE_OPENED';
+  const positionEventType = String(alert?.position_event_type || '').trim().toUpperCase();
+  const classification = String(alert?.alert_classification || '').trim().toLowerCase();
+  if (positionEventType === 'POSITION_TRIM' || classification === 'partial_sell') return 'TRADE_TRIMMED';
+  if (positionEventType === 'POSITION_CLOSED' || classification === 'full_close') return 'TRADE_CLOSED';
+  return 'TRADE_REDUCED';
+}
+
+function buildTradeGroupAlertCopy(alert = {}, { groupName = '', leaderName = 'Leader' } = {}) {
+  const ticker = String(alert?.ticker || '').trim().toUpperCase();
+  const fillPriceText = Number.isFinite(Number(alert?.fill_price)) ? `$${Number(alert.fill_price).toFixed(2)}` : '';
+  const trimPctText = formatTrimPercentForUi(alert?.trim_pct);
+  const normalizedEventType = normalizeTradeGroupAlertEventType(alert);
+  if (normalizedEventType === 'TRADE_TRIMMED') {
+    return {
+      normalizedEventType,
+      body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} trimmed ${trimPctText || 'part of'}${ticker ? ` ${ticker}` : ' a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
+    };
+  }
+  if (normalizedEventType === 'TRADE_CLOSED') {
+    return {
+      normalizedEventType,
+      body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} closed ${ticker || 'a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
+    };
+  }
+  if (normalizedEventType === 'TRADE_REDUCED') {
+    return {
+      normalizedEventType,
+      body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} reduced ${ticker || 'a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
+    };
+  }
+  return {
+    normalizedEventType,
+    body: ticker
+      ? `${groupName || 'Trade group'}: new trade alert for ${ticker}.`
+      : `${groupName || 'Trade group'}: a new trade alert is available.`
+  };
+}
+
 function getTradeGroupsLedByUser(db, username) {
   ensureSocialTables(db);
   return db.tradeGroups.filter(group => group.leader_user_id === username && group.is_active !== false);
@@ -794,11 +835,18 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
     created_at: nowIso
   };
   db.tradeGroupNotifications.push(notification);
+  const sourceAlert = normalizedType === 'trade_group_alert'
+    ? db.tradeGroupAlerts.find((item) => item.id === alertId)
+    : null;
+  const normalizedAlertEventType = sourceAlert ? normalizeTradeGroupAlertEventType(sourceAlert) : null;
   console.info('[TradeGroup][Notifications] In-app banner notification created.', {
     notificationId: notification.id,
     userId,
     groupId,
     type: normalizedType,
+    sourceEventId: alertId || inviteId || announcementId || null,
+    rawEventType: sourceAlert?.position_event_type || null,
+    normalizedEventType: normalizedAlertEventType,
     alertId,
     inviteId,
     announcementId,
@@ -836,22 +884,26 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
   const fallbackLink = `/social/groups?group=${encodeURIComponent(resolvedGroup.id)}`;
   if (normalizedType === 'trade_group_alert') {
     const alert = db.tradeGroupAlerts.find((item) => item.id === notification.alert_id);
-    const ticker = String(alert?.ticker || '').trim().toUpperCase();
-    const trimPctText = formatTrimPercentForUi(alert?.trim_pct);
-    const fillPriceText = Number.isFinite(Number(alert?.fill_price)) ? `$${Number(alert.fill_price).toFixed(2)}` : '';
-    const isTrim = String(alert?.position_event_type || '').toUpperCase() === 'POSITION_TRIM'
-      || String(alert?.alert_classification || '').toLowerCase() === 'partial_sell';
-    const body = isTrim
-      ? `${resolvedGroup.name}: leader trimmed ${trimPctText || 'a position'}${ticker ? ` of ${ticker}` : ''}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
-      : (ticker
-        ? `${resolvedGroup.name}: new trade alert for ${ticker}.`
-        : `${resolvedGroup.name}: a new trade alert is available.`);
+    const leaderIdentity = socialIdentityForUser(db, alert?.leader_user_id || '');
+    const copy = buildTradeGroupAlertCopy(alert, {
+      groupName: resolvedGroup.name,
+      leaderName: leaderIdentity?.nickname || 'Leader'
+    });
+    console.info('[TradeGroup][Notifications] Alert push template selected.', {
+      notificationId: notification.id,
+      groupId: resolvedGroup.id,
+      sourceAlertId: alert?.id || null,
+      rawEventType: alert?.position_event_type || null,
+      normalizedEventType: copy.normalizedEventType,
+      template: 'trade_group_alert'
+    });
     return {
       eventType: 'trade_group_alert',
       context: {
         groupId: resolvedGroup.id,
         groupName: resolvedGroup.name,
-        body,
+        body: copy.body,
+        normalizedEventType: copy.normalizedEventType,
         link: fallbackLink,
         tag: `trade-group-alert:${resolvedGroup.id}:${notification.alert_id || notification.id}`
       }
@@ -944,13 +996,16 @@ function triggerPushForTradeGroupNotification(db, notification, { group = null }
     .then((log) => {
       const targeted = Array.isArray(log?.deliveries) ? log.deliveries.length : 0;
       const successCount = Array.isArray(log?.deliveries) ? log.deliveries.filter((entry) => entry?.ok).length : 0;
+      const failedCount = Math.max(0, targeted - successCount);
       console.info('[TradeGroup][Notifications] Push send attempted for trade-group in-app notification.', {
         notificationId: notification.id,
         userId: notification.user_id,
         groupId: notification.group_id,
         eventType: pushConfig.eventType,
+        normalizedEventType: pushConfig.context?.normalizedEventType || null,
         targetedDevices: targeted,
-        successfulDeliveries: successCount
+        successfulDeliveries: successCount,
+        failedDeliveries: failedCount
       });
       saveDB(db);
     })
@@ -1091,6 +1146,15 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
+    if (!activeMembers.length) {
+      console.info('[TradeGroup][Notifications] Fan-out skipped: no eligible members.', {
+        sourceAlertId: alert.id,
+        groupId: group.id,
+        rawEventType: alert.position_event_type,
+        normalizedEventType: normalizeTradeGroupAlertEventType(alert),
+        skipReason: 'no_active_members'
+      });
+    }
     for (const member of activeMembers) {
       const created = createTradeGroupNotification(db, {
         userId: member.user_id,
@@ -1193,6 +1257,15 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
+    if (!activeMembers.length) {
+      console.info('[TradeGroup][Notifications] Fan-out skipped: no eligible members.', {
+        sourceAlertId: alert.id,
+        groupId: group.id,
+        rawEventType: alert.position_event_type,
+        normalizedEventType: normalizeTradeGroupAlertEventType(alert),
+        skipReason: 'no_active_members'
+      });
+    }
     for (const member of activeMembers) {
       const created = createTradeGroupNotification(db, {
         userId: member.user_id,
@@ -1218,6 +1291,7 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
     reason: String(reason || '').trim() || null,
     closureEventKey,
     alertsCreated,
+    notificationsCreated,
     duplicates,
     skipReason: alertsCreated > 0 ? null : (duplicates > 0 ? 'duplicate' : 'unknown')
   });
@@ -1301,6 +1375,7 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
     selectedFillPrice: resolvedFillPrice,
     brokerEventKey,
     alertsCreated,
+    notificationsCreated,
     duplicates
   });
   return { alertsCreated, notificationsCreated, duplicates };
@@ -13305,6 +13380,7 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       side: alert.side || 'BUY',
       alert_classification: alert.alert_classification || 'buy',
       position_event_type: alert.position_event_type || null,
+      normalized_event_type: normalizeTradeGroupAlertEventType(alert),
       entry_price: alert.entry_price,
       fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
       trim_pct: alert.trim_pct ?? null,
@@ -13663,6 +13739,7 @@ app.get('/api/social/trade-groups/:groupId/alerts', auth, (req, res) => {
       side: alert.side || 'BUY',
       alert_classification: alert.alert_classification || 'buy',
       position_event_type: alert.position_event_type || null,
+      normalized_event_type: normalizeTradeGroupAlertEventType(alert),
       entry_price: alert.entry_price,
       fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
       trim_pct: alert.trim_pct ?? null,
@@ -13762,6 +13839,7 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
         side: alert.side || 'BUY',
         alert_classification: alert.alert_classification || 'buy',
         position_event_type: alert.position_event_type || null,
+        normalized_event_type: normalizeTradeGroupAlertEventType(alert),
         entry_price: alert.entry_price,
         fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
         trim_pct: alert.trim_pct ?? null,
