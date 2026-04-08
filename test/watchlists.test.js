@@ -6,7 +6,13 @@ const assert = require('node:assert');
 process.env.DATA_FILE = path.join(__dirname, 'data-watchlists-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
 
-const { app, saveDB, loadDB, composeWatchlistMetrics } = require('../server');
+const {
+  app,
+  saveDB,
+  loadDB,
+  composeWatchlistMetrics,
+  isWatchlistQuotePayloadUsable
+} = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
 const leader = 'leader';
@@ -176,7 +182,7 @@ test('deleting a watchlist posted to groups is blocked with a clear error', asyn
   assert.equal(blockedDelete.data.linkedGroupCount, 1);
 });
 
-test('composeWatchlistMetrics computes % today from previous close and handles missing previous close', () => {
+test('composeWatchlistMetrics populates quote fields, %today, dollar volume, and ADR when payloads are present', () => {
   const withPreviousClose = composeWatchlistMetrics('AAPL', {
     currentPrice: 110,
     dayOpenPrice: 105,
@@ -190,18 +196,74 @@ test('composeWatchlistMetrics computes % today from previous close and handles m
     asOfSessionTs: '2026-04-07T21:00:00.000Z',
     historyAt: '2026-04-08T10:00:00.000Z'
   });
+  assert.equal(withPreviousClose.currentPrice, 110);
   assert.equal(withPreviousClose.dayOpenPrice, 105);
   assert.equal(withPreviousClose.previousClosePrice, 100);
   assert.ok(Math.abs(withPreviousClose.percentChangeToday - 10) < 0.0001);
+  assert.equal(withPreviousClose.dollarVolume, 220000000);
+  assert.equal(withPreviousClose.adrPercent, 2.1);
+});
 
+test('composeWatchlistMetrics keeps quote fields null when quote payload is missing/incomplete', () => {
   const withoutPreviousClose = composeWatchlistMetrics('AAPL', {
+    currentPrice: null,
+    dayOpenPrice: undefined,
+    previousClosePrice: null,
+    volume: undefined,
+    quoteAt: '2026-04-08T10:00:00.000Z'
+  }, {
+    adrPercent: 1.9,
+    asOfSessionTs: '2026-04-07T21:00:00.000Z',
+    historyAt: '2026-04-08T10:00:00.000Z'
+  });
+  assert.equal(withoutPreviousClose.currentPrice, null);
+  assert.equal(withoutPreviousClose.dayOpenPrice, null);
+  assert.equal(withoutPreviousClose.previousClosePrice, null);
+  assert.equal(withoutPreviousClose.percentChangeToday, null);
+  assert.equal(withoutPreviousClose.dollarVolume, null);
+  assert.equal(withoutPreviousClose.dollarVolumeDisplay, '—');
+  assert.equal(withoutPreviousClose.adrPercent, 1.9);
+});
+
+test('composeWatchlistMetrics does not coerce missing quote values to zero', () => {
+  const metrics = composeWatchlistMetrics('MSFT', {}, null);
+  assert.equal(metrics.currentPrice, null);
+  assert.equal(metrics.dayOpenPrice, null);
+  assert.equal(metrics.previousClosePrice, null);
+  assert.equal(metrics.percentChangeToday, null);
+  assert.equal(metrics.dollarVolume, null);
+});
+
+test('isWatchlistQuotePayloadUsable only accepts quote payloads with meaningful price fields', () => {
+  assert.equal(isWatchlistQuotePayloadUsable({
+    currentPrice: 110,
+    dayOpenPrice: 0,
+    previousClosePrice: null
+  }), true);
+  assert.equal(isWatchlistQuotePayloadUsable({
+    currentPrice: null,
+    dayOpenPrice: undefined,
+    previousClosePrice: '',
+    volume: 1000000
+  }), false);
+});
+
+test('isWatchlistQuotePayloadUsable rejects broken payloads to prevent cache poisoning', () => {
+  const goodQuote = {
+    ticker: 'AAPL',
     currentPrice: 110,
     dayOpenPrice: 105,
+    previousClosePrice: 100
+  };
+  const brokenQuote = {
+    ticker: 'AAPL',
+    currentPrice: null,
+    dayOpenPrice: null,
     previousClosePrice: null,
-    volume: 2000000,
-    quoteAt: '2026-04-08T10:00:00.000Z'
-  }, null);
-  assert.equal(withoutPreviousClose.percentChangeToday, null);
+    volume: null
+  };
+  assert.equal(isWatchlistQuotePayloadUsable(goodQuote), true);
+  assert.equal(isWatchlistQuotePayloadUsable(brokenQuote), false);
 });
 
 test('group watchlist copy supports new/append, dedupes symbols, and blocks non-members', async () => {
