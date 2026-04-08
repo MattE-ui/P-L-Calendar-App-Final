@@ -6107,29 +6107,57 @@ function computePartialClosePnlCurrency(trade, units, price) {
     : (Number(trade.entry) - effectiveClose) * units;
 }
 
-function addTradeTrim(user, trade, units, price, closeDate, rates, defaultDate) {
+function addTradeTrim(user, trade, units, price, closeDate, rates, defaultDate, note = '') {
   const history = ensurePortfolioHistory(user);
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
     : (defaultDate || currentDateKey());
   const isProviderTrade = trade.source === 'trading212' || trade.trading212Id || trade.source === 'ibkr' || trade.ibkrPositionId;
-  const pnlCurrency = computePartialClosePnlCurrency(trade, units, price);
+  const trimUnits = Number(units);
+  const trimPrice = Number(price);
+  const trimNote = typeof note === 'string' ? note.trim() : '';
+  const summaryBefore = summarizeExecutionLegs(trade, rates);
+  const openBefore = Number(summaryBefore.openQuantity);
+  if (!Number.isFinite(openBefore) || openBefore <= 0 || !Number.isFinite(trimUnits) || trimUnits <= 0 || trimUnits > openBefore) {
+    throw new Error('Invalid trim quantity');
+  }
+  const nextExecutions = Array.isArray(summaryBefore.executions) ? summaryBefore.executions.slice() : [];
+  nextExecutions.push({
+    id: crypto.randomBytes(8).toString('hex'),
+    side: 'exit',
+    quantity: trimUnits,
+    price: trimPrice,
+    date: targetDate,
+    fee: 0,
+    ...(trimNote ? { note: trimNote } : {})
+  });
+  trade.executions = nextExecutions;
+  const summaryAfter = summarizeExecutionLegs(trade, rates);
+  trade.status = summaryAfter.status === 'closed' ? 'closed' : 'open';
+  trade.sizeUnits = Math.max(0, summaryAfter.openQuantity);
+  trade.closePrice = Number.isFinite(summaryAfter.avgExit) ? summaryAfter.avgExit : undefined;
+  trade.closeDate = summaryAfter.lastExitDate || targetDate;
+  trade.realizedPnlGBP = summaryAfter.realizedPnlGBP;
+  trade.realizedPnlCurrency = summaryAfter.realizedPnlCurrency;
+  if (trade.status === 'closed') {
+    trade.closedAt = trade.closedAt || new Date().toISOString();
+  }
+  const pnlCurrency = computePartialClosePnlCurrency(trade, trimUnits, trimPrice);
   const pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
   const pnlSafe = Number.isFinite(pnlGBP) ? pnlGBP : pnlCurrency;
   trade.partialCloses ||= [];
   trade.partialCloses.push({
     id: crypto.randomBytes(8).toString('hex'),
-    units,
-    price,
+    units: trimUnits,
+    price: trimPrice,
     date: targetDate,
     createdAt: new Date().toISOString()
   });
-  trade.sizeUnits = Number(trade.sizeUnits) - units;
   if (!isProviderTrade) {
     updateHistoryForClose(user, history, targetDate, pnlSafe);
     refreshAnchors(user, history);
   }
-  return { pnlGBP: pnlSafe, closeDateKey: targetDate };
+  return { pnlGBP: pnlSafe, closeDateKey: targetDate, remainingQuantity: trade.sizeUnits };
 }
 
 function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate) {
@@ -8666,6 +8694,59 @@ function buildTrading212HistoryFillKey(fill = {}, accountId = '') {
   ].join('|');
 }
 
+function coalesceTrading212HistoryFills(fills = [], { windowMs = 30000 } = {}) {
+  if (!Array.isArray(fills) || !fills.length) return [];
+  const sorted = fills.slice().sort((a, b) => Date.parse(a?.filledAt || '') - Date.parse(b?.filledAt || ''));
+  const coalesced = [];
+  for (const fill of sorted) {
+    const orderId = String(fill?.orderId || fill?.order?.id || fill?.id || '').trim();
+    const side = String(fill?.side || '').trim().toUpperCase();
+    const ticker = String(fill?.instrumentTicker || '').trim().toUpperCase();
+    const isin = String(fill?.instrumentIsin || '').trim().toUpperCase();
+    const uid = String(fill?.instrumentUid || '').trim();
+    const optionIdentity = [
+      String(fill?.optionType || '').trim().toLowerCase(),
+      String(fill?.optionExpiration || '').trim(),
+      Number.isFinite(Number(fill?.optionStrike)) ? Number(fill.optionStrike) : ''
+    ].join('|');
+    const fillTs = Date.parse(fill?.filledAt || '');
+    const key = [orderId, side, ticker, isin, uid, optionIdentity].join('|');
+    const last = coalesced[coalesced.length - 1];
+    const lastTs = Date.parse(last?.filledAt || '');
+    const canMerge = Boolean(last)
+      && key === last._coalesceKey
+      && Number.isFinite(fillTs)
+      && Number.isFinite(lastTs)
+      && Math.abs(fillTs - lastTs) <= windowMs;
+    if (!canMerge) {
+      coalesced.push({
+        ...fill,
+        _coalesceKey: key,
+        _fillIds: [String(fill?.fillId || '').trim()].filter(Boolean)
+      });
+      continue;
+    }
+    const prevQty = Number(last.quantity) || 0;
+    const nextQty = Number(fill.quantity) || 0;
+    const mergedQty = prevQty + nextQty;
+    const prevValue = prevQty * (Number(last.fillPrice) || 0);
+    const nextValue = nextQty * (Number(fill.fillPrice) || 0);
+    last.quantity = mergedQty;
+    if (mergedQty > 0) last.fillPrice = (prevValue + nextValue) / mergedQty;
+    last._fillIds = Array.from(new Set([...(last._fillIds || []), String(fill?.fillId || '').trim()].filter(Boolean)));
+    last.fillId = last._fillIds.join(',');
+    if (Number.isFinite(fillTs) && (!Number.isFinite(lastTs) || fillTs >= lastTs)) {
+      last.filledAt = fill.filledAt || last.filledAt;
+    }
+  }
+  return coalesced.map((fill) => {
+    const next = { ...fill };
+    delete next._coalesceKey;
+    delete next._fillIds;
+    return next;
+  });
+}
+
 function tradeMatchesTrading212HistoryFill(trade, fill, accountId = '') {
   if (!trade || !fill) return false;
   if (trade.status === 'closed') return false;
@@ -8719,7 +8800,8 @@ function applyTrading212ExecutionSummary(trade, rates = {}) {
 }
 
 function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, accountId = '', activeOrdersPayload = null, rates = {}) {
-  const fills = Array.isArray(historyOrdersPayload?.orders) ? historyOrdersPayload.orders : [];
+  const rawFills = Array.isArray(historyOrdersPayload?.orders) ? historyOrdersPayload.orders : [];
+  const fills = coalesceTrading212HistoryFills(rawFills);
   const historyState = ensureTrading212HistorySyncState(cfg);
   const stateKey = accountId || '__default__';
   const accountState = historyState[stateKey] && typeof historyState[stateKey] === 'object'
@@ -8743,7 +8825,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
   const importedOrderIds = new Set();
   const importedFillIds = new Set();
   const importedFillEvents = [];
-  console.info(`[T212] history reconcile account=${accountId || 'default'} fills=${fills.length}`);
+  console.info(`[T212] history reconcile account=${accountId || 'default'} fills=${fills.length} rawFills=${rawFills.length}`);
   for (const fill of fills) {
     const fillKey = buildTrading212HistoryFillKey(fill, accountId);
     const fillTs = Date.parse(fill.filledAt || '');
@@ -8823,7 +8905,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         ? summary.executions.find(leg => leg.side === 'exit' && leg.importFingerprint === executionFingerprint)
         : null;
       if (existing) {
-        console.info(`[T212] history fill already imported trade=${trade.id} fillKey=${fillKey}`);
+        console.info(`[T212][trim] duplicate_suppressed account=${accountId || 'default'} tradeId=${trade.id} fillKey=${fillKey} created=false`);
         remaining -= matchedQty;
         continue;
       }
@@ -8860,6 +8942,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
       }
       applyTrading212ExecutionSummary(trade, rates);
       const remainingQuantity = Number(trade.sizeUnits);
+      const previousQuantity = Number(openQty);
       const ticker = resolveCanonicalTickerForTrade(trade) || normalizeTrading212Symbol(fill.instrumentTicker || '');
       importedFillEvents.push({
         fillId: normalizedFillId,
@@ -8882,6 +8965,9 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
           remainingQuantity: Number.isFinite(remainingQuantity) ? remainingQuantity : null,
           tradeStatus: trade.status || ''
         });
+        if (classification === 'partial_sell') {
+          console.info(`[T212][trim] detected account=${accountId || 'default'} tradeId=${trade.id} previousQty=${previousQuantity} newQty=${remainingQuantity} trimQty=${matchedQty} fillPrice=${Number(fill.fillPrice)} created=true`);
+        }
         console.info(`[TradeGroup][SellAlert] stage=fill_matched matchedTradeId=${trade.id} accountId=${accountId || 'default'} fillId=${normalizedFillId || baseFillId || 'n/a'} classification=${classification} matchedQty=${matchedQty} remainingQty=${Number.isFinite(remainingQuantity) ? remainingQuantity : 'n/a'} tradeStatus=${trade.status || ''}`);
       }
       console.info(`[T212] history fill matched trade=${trade.id} qty=${matchedQty} remainingAfter=${Math.max(0, Number(summary.openQuantity) - matchedQty)} status=${trade.status}`);
@@ -18259,7 +18345,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
   const isTrimRequest = (!hasExecutionUpdate &&
     trade.status !== 'closed'
     && Number.isFinite(requestedUnitsNum)
-    && requestedUnitsNum > 0
+    && requestedUnitsNum >= 0
     && requestedUnitsNum < Number(trade.sizeUnits)
   );
   if (isTrimRequest) {
@@ -18270,8 +18356,19 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       return res.status(400).json({ error: 'Enter a valid trim fill price' });
     }
     const trimDate = typeof updates.trimDate === 'string' ? updates.trimDate : undefined;
-    const trimResult = addTradeTrim(user, trade, trimUnits, trimPrice, trimDate, rates, found.dateKey);
-    if (userLeadsTradeGroups(db, req.username)) {
+    let trimResult;
+    try {
+      trimResult = addTradeTrim(user, trade, trimUnits, trimPrice, trimDate, rates, found.dateKey, updates.trimNote);
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || 'Failed to apply trim' });
+    }
+  if (userLeadsTradeGroups(db, req.username)) {
+    if (trade.status === 'closed' || Number(trade.sizeUnits) <= 1e-8) {
+      emitTradeGroupSellAlertForClosedTrade(db, req.username, trade, {
+        reason: 'manual_trim_full_close',
+        classification: 'full_close'
+      });
+    } else {
       emitTradeGroupTrimAlertForTrade(db, req.username, trade, {
         previousQty,
         newQty: Number(trade.sizeUnits),
@@ -18281,13 +18378,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
         eventKey: `manual-trim:${trade.id}:${trimDate || trimResult.closeDateKey}:${trimUnits}:${trimPrice}`
       });
     }
-    if (requestedUnitsNum <= 0) {
-      const closeNum = Number(updates.closePrice);
-      if (!Number.isFinite(closeNum) || closeNum <= 0) {
-        return res.status(400).json({ error: 'Enter a valid closing price' });
-      }
-      applyTradeClose(user, trade, closeNum, updates.closeDate, rates, found.dateKey);
-    }
+  }
     saveDB(db);
     return res.json({ ok: true, trade, trim: trimResult });
   }
@@ -18515,24 +18606,38 @@ app.post('/api/trades/:id/trim', auth, async (req, res) => {
   const units = Number(req.body?.units);
   const price = Number(req.body?.price);
   const date = typeof req.body?.date === 'string' ? req.body.date : undefined;
-  if (!Number.isFinite(units) || units <= 0 || units >= Number(trade.sizeUnits)) {
-    return res.status(400).json({ error: 'Enter units less than the current position size' });
+  const summaryBefore = summarizeExecutionLegs(trade, {});
+  const openQuantity = Number(summaryBefore.openQuantity);
+  if (!Number.isFinite(units) || units <= 0 || !Number.isFinite(openQuantity) || units > openQuantity) {
+    return res.status(400).json({ error: 'Enter units up to the current open quantity' });
   }
   if (!Number.isFinite(price) || price <= 0) {
     return res.status(400).json({ error: 'Enter a valid trim fill price' });
   }
   const rates = await fetchRates();
-  const previousQty = Number(trade.sizeUnits);
-  const result = addTradeTrim(user, trade, units, price, date, rates, found.dateKey);
+  const previousQty = openQuantity;
+  let result;
+  try {
+    result = addTradeTrim(user, trade, units, price, date, rates, found.dateKey, req.body?.note);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || 'Failed to apply trim' });
+  }
   if (userLeadsTradeGroups(db, req.username)) {
-    emitTradeGroupTrimAlertForTrade(db, req.username, trade, {
-      previousQty,
-      newQty: Number(trade.sizeUnits),
-      fillPrice: price,
-      trimDate: date || result.closeDateKey,
-      reason: 'manual_trim',
-      eventKey: `manual-trim:${trade.id}:${date || result.closeDateKey}:${units}:${price}`
-    });
+    if (trade.status === 'closed' || Number(trade.sizeUnits) <= 1e-8) {
+      emitTradeGroupSellAlertForClosedTrade(db, req.username, trade, {
+        reason: 'manual_trim_full_close',
+        classification: 'full_close'
+      });
+    } else {
+      emitTradeGroupTrimAlertForTrade(db, req.username, trade, {
+        previousQty,
+        newQty: Number(trade.sizeUnits),
+        fillPrice: price,
+        trimDate: date || result.closeDateKey,
+        reason: 'manual_trim',
+        eventKey: `manual-trim:${trade.id}:${date || result.closeDateKey}:${units}:${price}`
+      });
+    }
   }
   saveDB(db);
   res.json({ ok: true, trade, trim: result });

@@ -187,3 +187,56 @@ test('reconcileTrading212HistoricalExits preserves option identity matching', ()
   assert.equal(trade.status, 'closed');
   assert.equal(trade.optionMultiplier, 100);
 });
+
+test('reconcileTrading212HistoricalExits coalesces multiple trim fills into weighted average price', () => {
+  const user = {
+    tradeJournal: {
+      '2026-03-01': [{
+        id: 't-coalesce',
+        source: 'trading212',
+        status: 'open',
+        direction: 'long',
+        symbol: 'AAPL',
+        trading212Ticker: 'AAPL_US_EQ',
+        trading212Isin: 'US0378331005',
+        trading212AccountId: 'acc-1',
+        currency: 'USD',
+        entry: 100,
+        sizeUnits: 10
+      }]
+    }
+  };
+  const cfg = { historySync: { accounts: {} } };
+  const payload = {
+    orders: [{
+      id: 'order-same',
+      fillId: 'fill-a',
+      side: 'SELL',
+      status: 'FILLED',
+      quantity: 2,
+      fillPrice: 110,
+      filledAt: '2026-03-03T10:00:00Z',
+      instrumentTicker: 'AAPL_US_EQ',
+      instrumentIsin: 'US0378331005'
+    }, {
+      id: 'order-same',
+      fillId: 'fill-b',
+      side: 'SELL',
+      status: 'FILLED',
+      quantity: 3,
+      fillPrice: 112,
+      filledAt: '2026-03-03T10:00:10Z',
+      instrumentTicker: 'AAPL_US_EQ',
+      instrumentIsin: 'US0378331005'
+    }]
+  };
+  const result = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
+  const trade = user.tradeJournal['2026-03-01'][0];
+  assert.equal(result.imported, 1);
+  assert.equal(result.importedFillEvents.length, 1);
+  const exit = trade.executions.filter(leg => leg.side === 'exit')[0];
+  assert.equal(exit.quantity, 5);
+  assert.equal(Number(exit.price.toFixed(4)), 111.2);
+  assert.equal(trade.sizeUnits, 5);
+  assert.equal(trade.status, 'open');
+});

@@ -2298,11 +2298,15 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     closeBtn.className = 'danger outline';
     closeBtn.textContent = 'Close trade';
     closeBtn.addEventListener('click', () => openCloseTradeModal(trade));
+    const trimBtn = document.createElement('button');
+    trimBtn.className = 'ghost';
+    trimBtn.textContent = 'Trim';
+    trimBtn.addEventListener('click', () => openTrimTradeModal(trade));
     const shareBtn = document.createElement('button');
     shareBtn.className = 'ghost trade-share-btn';
     shareBtn.textContent = 'Share card';
     shareBtn.addEventListener('click', () => openShareCardModal(trade));
-    actionRow.append(editToggle, closeBtn, shareBtn);
+    actionRow.append(editToggle, trimBtn, closeBtn, shareBtn);
     expandedWrap.appendChild(actionRow);
 
   return expandedWrap;
@@ -2619,6 +2623,54 @@ function openCloseTradeModal(trade) {
   modal.dataset.fxFeeEligible = trade.fxFeeEligible ? 'true' : 'false';
   modal.dataset.fxFeeRate = Number.isFinite(trade.fxFeeRate) ? trade.fxFeeRate : '';
   modal.classList.remove('hidden');
+}
+
+function updateTrimTradePreview() {
+  const modal = $('#trim-trade-modal');
+  if (!modal) return;
+  const mode = $('input[name="trim-mode"]:checked')?.value || 'quantity';
+  const qtyInput = $('#trim-trade-quantity');
+  const pctInput = $('#trim-trade-percent');
+  const preview = $('#trim-trade-preview');
+  const currentQty = Number(modal.dataset.openQuantity);
+  if (!preview || !Number.isFinite(currentQty) || currentQty <= 0) return;
+  const qtyFromInput = Number(qtyInput?.value);
+  const pctFromInput = Number(pctInput?.value);
+  const trimQty = mode === 'percent'
+    ? (Number.isFinite(pctFromInput) ? (currentQty * pctFromInput) / 100 : NaN)
+    : qtyFromInput;
+  const remaining = Number.isFinite(trimQty) ? currentQty - trimQty : NaN;
+  preview.textContent = Number.isFinite(trimQty) && trimQty > 0
+    ? `Current: ${formatShares(currentQty)} · Trim: ${formatShares(trimQty)} · Remaining: ${formatShares(Math.max(0, remaining))}`
+    : `Current: ${formatShares(currentQty)} · Trim: — · Remaining: —`;
+}
+
+function openTrimTradeModal(trade) {
+  const modal = $('#trim-trade-modal');
+  if (!modal) return;
+  const title = $('#trim-trade-title');
+  const qtyInput = $('#trim-trade-quantity');
+  const pctInput = $('#trim-trade-percent');
+  const priceInput = $('#trim-trade-price');
+  const dateInput = $('#trim-trade-date');
+  const notesInput = $('#trim-trade-notes');
+  const status = $('#trim-trade-status');
+  const qtyMode = $('#trim-mode-quantity');
+  const pctMode = $('#trim-mode-percent');
+  const sym = getTradeDisplaySymbol(trade);
+  if (title) title.textContent = `Trim ${sym}`;
+  if (qtyInput) qtyInput.value = '';
+  if (pctInput) pctInput.value = '';
+  if (priceInput) priceInput.value = Number.isFinite(trade.livePrice) ? trade.livePrice : '';
+  if (dateInput) dateInput.valueAsDate = new Date();
+  if (notesInput) notesInput.value = '';
+  if (status) status.textContent = '';
+  if (qtyMode) qtyMode.checked = true;
+  if (pctMode) pctMode.checked = false;
+  modal.dataset.tradeId = trade.id;
+  modal.dataset.openQuantity = Number(trade.openQuantity ?? trade.sizeUnits ?? 0) || 0;
+  modal.classList.remove('hidden');
+  updateTrimTradePreview();
 }
 
 function buildTradeSummary(trade) {
@@ -4325,6 +4377,17 @@ function bindControls() {
   $('#close-close-trade-btn')?.addEventListener('click', () => {
     $('#close-trade-modal')?.classList.add('hidden');
   });
+  $('#close-trim-trade-btn')?.addEventListener('click', () => {
+    $('#trim-trade-modal')?.classList.add('hidden');
+  });
+  $('#cancel-trim-trade-btn')?.addEventListener('click', () => {
+    $('#trim-trade-modal')?.classList.add('hidden');
+  });
+  document.querySelectorAll('input[name="trim-mode"]').forEach((el) => {
+    el.addEventListener('change', updateTrimTradePreview);
+  });
+  $('#trim-trade-quantity')?.addEventListener('input', updateTrimTradePreview);
+  $('#trim-trade-percent')?.addEventListener('input', updateTrimTradePreview);
   $('#close-share-card-btn')?.addEventListener('click', closeShareCardModal);
   $('#share-card-layout')?.addEventListener('change', () => {
     if (shareCardState.trade) {
@@ -4440,6 +4503,54 @@ function bindControls() {
 
   $('#cancel-close-trade-btn')?.addEventListener('click', () => {
     $('#close-trade-modal')?.classList.add('hidden');
+  });
+
+  $('#save-trim-trade-btn')?.addEventListener('click', async () => {
+    const modal = $('#trim-trade-modal');
+    if (!modal) return;
+    const tradeId = modal.dataset.tradeId;
+    const currentQty = Number(modal.dataset.openQuantity);
+    const mode = $('input[name="trim-mode"]:checked')?.value || 'quantity';
+    const qtyInput = $('#trim-trade-quantity');
+    const pctInput = $('#trim-trade-percent');
+    const priceInput = $('#trim-trade-price');
+    const dateInput = $('#trim-trade-date');
+    const notesInput = $('#trim-trade-notes');
+    const status = $('#trim-trade-status');
+    if (status) status.textContent = '';
+    const trimQty = mode === 'percent'
+      ? (currentQty * Number(pctInput?.value || 0)) / 100
+      : Number(qtyInput?.value || 0);
+    const priceVal = Number(priceInput?.value);
+    if (!Number.isFinite(trimQty) || trimQty <= 0) {
+      if (status) status.textContent = 'Enter a valid trim amount.';
+      return;
+    }
+    if (!Number.isFinite(currentQty) || trimQty > currentQty + 1e-8) {
+      if (status) status.textContent = 'Trim exceeds remaining quantity.';
+      return;
+    }
+    if (!Number.isFinite(priceVal) || priceVal <= 0) {
+      if (status) status.textContent = 'Enter a valid fill price.';
+      return;
+    }
+    try {
+      await api(`/api/trades/${tradeId}/trim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          units: trimQty,
+          price: priceVal,
+          date: dateInput?.value || undefined,
+          note: (notesInput?.value || '').trim()
+        })
+      });
+      modal.classList.add('hidden');
+      await loadData();
+      render();
+    } catch (e) {
+      if (status) status.textContent = e?.message || 'Failed to trim trade.';
+    }
   });
 
   $('#save-edit-trade-btn')?.addEventListener('click', async () => {
