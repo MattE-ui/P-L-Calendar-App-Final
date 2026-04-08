@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watchlists | Veracity Trading Suite</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container social-page watchlists-page">
+    <section class="card social-card" aria-labelledby="watchlists-title">
+      <header class="social-header watchlists-header">
+        <div>
+          <p class="tool-overline">Trading workflow</p>
+          <h1 id="watchlists-title">Personal Watchlists</h1>
+        </div>
+        <div class="social-add-friend-row"><input id="watchlist-new-name" type="text" maxlength="64" placeholder="New watchlist name"><button id="watchlist-new-btn" class="primary" type="button">New Watchlist</button></div>
+      </header>
+      <p id="watchlist-page-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+      <div class="watchlists-layout">
+        <aside>
+          <div id="watchlists-sidebar" class="social-list"></div>
+        </aside>
+        <section>
+          <div class="watchlist-detail-head">
+            <div><h3 id="watchlist-detail-title">Select a watchlist</h3><input id="watchlist-rename-input" type="text" maxlength="64" placeholder="Rename selected watchlist"></div>
+            <div class="social-row-actions">
+              <button id="watchlist-rename-btn" class="ghost" type="button">Save Name</button>
+              <button id="watchlist-delete-btn" class="danger outline" type="button">Delete</button>
+            </div>
+          </div>
+          <div class="social-add-friend-row">
+            <input id="watchlist-add-ticker-input" type="text" maxlength="24" placeholder="Add ticker (AAPL)">
+            <button id="watchlist-add-ticker-btn" class="ghost" type="button">Add</button>
+          </div>
+          <p id="watchlist-detail-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+          <div id="watchlist-table-wrap" class="social-watchlist-table-wrap"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/theme-utils.js"></script>
+  <script src="/static/app-header.js"></script>
+  <script src="/static/guest.js"></script>
+  <script src="/static/watchlists.js"></script>
+</body>
+</html>

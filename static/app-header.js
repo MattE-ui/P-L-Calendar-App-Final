@@ -8,6 +8,7 @@
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
     if (path.endsWith('/social.html') || path === '/social' || path.startsWith('/social/')) return 'social';
+    if (path.endsWith('/watchlists.html') || path === '/watchlists' || path.startsWith('/watchlists/')) return 'watchlists';
     if (path.endsWith('/review.html') || path === '/review' || path.startsWith('/review/')) return 'review';
     if (path.endsWith('/profile.html') || path.startsWith('/profile/')) return 'profile';
     if (isDashboardRoute) return 'dashboard';
@@ -19,6 +20,7 @@
     { key: 'trades', label: 'Trades', href: '/trades.html' },
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
     { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
+    { key: 'watchlists', label: 'Watchlists', href: '/watchlists' },
     { key: 'social', label: 'Social', href: '/social' },
     { key: 'review', label: 'Review', href: '/review' },
     { key: 'profile', label: 'Profile', href: '/profile.html' }
@@ -555,12 +557,13 @@
     const isAnnouncement = type === 'trade_group_announcement';
     const isAlert = type === 'trade_group_alert';
     const isMemberJoined = type === 'trade_group_member_joined';
+    const isWatchlistPosted = type === 'trade_group_watchlist_posted';
 
     const title = isInvite
       ? 'Trade group invite'
       : (isAnnouncement
         ? `${notification.group_name || 'Trade group'} announcement`
-        : (isMemberJoined ? 'Group membership update' : 'Trade group alert'));
+        : (isMemberJoined ? 'Group membership update' : (isWatchlistPosted ? 'New group watchlist' : 'Trade group alert')));
 
     shell.innerHTML = `
       <div class="social-global-alert__title">${title}</div>
@@ -583,6 +586,8 @@
         text.textContent = notification.text || 'New announcement.';
       } else if (isMemberJoined) {
         text.textContent = `joined ${notification.group_name || 'your trade group'}.`;
+      } else if (isWatchlistPosted) {
+        text.textContent = `${notification.leader_nickname || 'Leader'} posted a new watchlist: ${notification.watchlist_name || 'Watchlist'}.`;
       } else if (isAlert && notification.ticker) {
         const isSell = String(notification.side || '').toUpperCase() === 'SELL';
         const normalizedEventType = String(notification.normalized_event_type || '').toUpperCase();
@@ -625,7 +630,10 @@
         `;
         actions.querySelector('[data-social-alert-action="open"]')?.addEventListener('click', async () => {
           await dismissTradeGroupNotification(notification.notification_id);
-          window.location.href = `/social/groups?group=${encodeURIComponent(notification.group_id)}`;
+          const target = isWatchlistPosted
+            ? `/social/groups?group=${encodeURIComponent(notification.group_id)}&tab=watchlists&watchlist=${encodeURIComponent(notification.group_watchlist_id || '')}`
+            : `/social/groups?group=${encodeURIComponent(notification.group_id)}`;
+          window.location.href = target;
         });
         actions.querySelector('[data-social-alert-action="dismiss"]')?.addEventListener('click', async () => {
           await dismissTradeGroupNotification(notification.notification_id);
