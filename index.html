@@ -297,6 +297,13 @@
           <option value="EUR">EUR (€)</option>
         </select>
       </div>
+      <div class="modal-field">
+        <label for="qs-trim-mode-select">Default trim mode</label>
+        <select id="qs-trim-mode-select">
+          <option value="percent">By percent</option>
+          <option value="quantity" selected>By units</option>
+        </select>
+      </div>
       <div class="modal-field toggle-field">
         <label class="toggle" for="qs-safe-screenshot">
           <input id="qs-safe-screenshot" type="checkbox">
@@ -456,7 +463,7 @@
       </div>
 
       <div id="trim-trade-mode" class="trim-trade-mode-toggle" role="tablist" aria-label="Trim input mode">
-        <button id="trim-mode-percent" type="button" class="trim-mode-pill" data-mode="percent" role="tab" aria-selected="false">By %</button>
+        <button id="trim-mode-percent" type="button" class="trim-mode-pill" data-mode="percent" role="tab" aria-selected="false">By percent</button>
         <button id="trim-mode-quantity" type="button" class="trim-mode-pill is-active" data-mode="quantity" role="tab" aria-selected="true">By units</button>
       </div>
 
