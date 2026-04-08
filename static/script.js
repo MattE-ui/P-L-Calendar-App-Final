@@ -33,6 +33,7 @@ const state = {
   },
   direction: 'long',
   defaultRiskPct: 1,
+  defaultTrimMode: 'quantity',
   riskPct: 1,
   riskAmount: 0,
   riskInputSource: 'percent',
@@ -65,6 +66,7 @@ const SHOW_MAPPING_BADGE = false;
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 const RISK_PREFILL_STORE_EVENT = 'risk-prefill:store';
 const RISK_PREFILL_APPLY_EVENT = 'risk-prefill:apply';
+const TRIM_INPUT_MODES = new Set(['percent', 'quantity']);
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 const shareCardState = { blob: null, url: null, trade: null, orientation: 'landscape' };
@@ -2734,7 +2736,7 @@ function openTrimTradeModal(trade) {
   modal.dataset.openQuantity = Number(trade.openQuantity ?? trade.sizeUnits ?? 0) || 0;
   modal.dataset.currency = trade.currency || 'GBP';
   modal.classList.remove('hidden');
-  setTrimTradeMode('quantity');
+  setTrimTradeMode(state.defaultTrimMode);
   updateTrimTradePreview();
 }
 
@@ -3754,6 +3756,7 @@ function persistLocalPrefs() {
     localStorage.setItem('plc-prefs', JSON.stringify({
       defaultRiskPct: state.defaultRiskPct,
       defaultRiskCurrency: state.defaultRiskCurrency,
+      defaultTrimMode: state.defaultTrimMode,
       safeScreenshot: state.safeScreenshot
     }));
   } catch (e) {
@@ -3773,20 +3776,26 @@ async function loadUiPrefs() {
   if (typeof localPrefs?.safeScreenshot === 'boolean') {
     state.safeScreenshot = localPrefs.safeScreenshot;
   }
+  if (TRIM_INPUT_MODES.has(localPrefs?.defaultTrimMode)) {
+    state.defaultTrimMode = localPrefs.defaultTrimMode;
+  }
   try {
     const prefs = await api('/api/prefs');
     const hasServerPrefs = Number.isFinite(prefs?.defaultRiskPct)
-      || (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency));
+      || (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency))
+      || TRIM_INPUT_MODES.has(prefs?.defaultTrimMode);
     if (hasServerPrefs) {
       if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
       if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) {
         state.defaultRiskCurrency = prefs.defaultRiskCurrency;
       }
+      if (TRIM_INPUT_MODES.has(prefs?.defaultTrimMode)) state.defaultTrimMode = prefs.defaultTrimMode;
     } else if (localPrefs) {
       if (Number.isFinite(localPrefs?.defaultRiskPct)) state.defaultRiskPct = Number(localPrefs.defaultRiskPct);
       if (localPrefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(localPrefs.defaultRiskCurrency)) {
         state.defaultRiskCurrency = localPrefs.defaultRiskCurrency;
       }
+      if (TRIM_INPUT_MODES.has(localPrefs?.defaultTrimMode)) state.defaultTrimMode = localPrefs.defaultTrimMode;
       await saveUiPrefs();
     }
     if (state.riskSource !== 'alert' && state.riskSource !== 'manual') {
@@ -3812,7 +3821,8 @@ async function saveUiPrefs() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         defaultRiskPct: state.defaultRiskPct,
-        defaultRiskCurrency: state.defaultRiskCurrency
+        defaultRiskCurrency: state.defaultRiskCurrency,
+        defaultTrimMode: state.defaultTrimMode
       })
     });
   } catch (e) {
@@ -4854,9 +4864,11 @@ function bindControls() {
     const modal = $('#quick-settings-modal');
     const riskSel = $('#qs-risk-select');
     const curSel = $('#qs-currency-select');
+    const trimModeSel = $('#qs-trim-mode-select');
     const safeToggle = $('#qs-safe-screenshot');
     if (riskSel) riskSel.value = String(state.defaultRiskPct || 1);
     if (curSel) curSel.value = state.defaultRiskCurrency || 'GBP';
+    if (trimModeSel) trimModeSel.value = TRIM_INPUT_MODES.has(state.defaultTrimMode) ? state.defaultTrimMode : 'quantity';
     if (safeToggle) safeToggle.checked = !!state.safeScreenshot;
     modal?.classList.remove('hidden');
   };
@@ -4867,6 +4879,7 @@ function bindControls() {
   $('#save-qs-btn')?.addEventListener('click', () => {
     const riskSel = $('#qs-risk-select');
     const curSel = $('#qs-currency-select');
+    const trimModeSel = $('#qs-trim-mode-select');
     const safeToggle = $('#qs-safe-screenshot');
     const pct = Number(riskSel?.value);
     const cur = curSel?.value;
@@ -4885,6 +4898,9 @@ function bindControls() {
     if (cur && ['GBP', 'USD', 'EUR'].includes(cur)) {
       state.defaultRiskCurrency = cur;
       state.riskCurrency = cur;
+    }
+    if (TRIM_INPUT_MODES.has(trimModeSel?.value)) {
+      state.defaultTrimMode = trimModeSel.value;
     }
     if (safeToggle) {
       state.safeScreenshot = safeToggle.checked;
@@ -5165,6 +5181,7 @@ async function init() {
       const prefs = JSON.parse(saved);
       if (Number.isFinite(prefs?.defaultRiskPct)) state.defaultRiskPct = Number(prefs.defaultRiskPct);
       if (prefs?.defaultRiskCurrency && ['GBP', 'USD', 'EUR'].includes(prefs.defaultRiskCurrency)) state.defaultRiskCurrency = prefs.defaultRiskCurrency;
+      if (TRIM_INPUT_MODES.has(prefs?.defaultTrimMode)) state.defaultTrimMode = prefs.defaultTrimMode;
       if (typeof prefs?.safeScreenshot === 'boolean') state.safeScreenshot = prefs.safeScreenshot;
       state.riskPct = state.defaultRiskPct;
       state.riskInputSource = 'percent';

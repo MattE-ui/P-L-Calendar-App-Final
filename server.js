@@ -14072,7 +14072,7 @@ app.get('/api/prefs', auth, (req, res) => {
 });
 
 app.post('/api/prefs', auth, (req, res) => {
-  const { defaultRiskPct, defaultRiskCurrency } = req.body || {};
+  const { defaultRiskPct, defaultRiskCurrency, defaultTrimMode } = req.body || {};
   const db = loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -14082,6 +14082,9 @@ app.post('/api/prefs', auth, (req, res) => {
   }
   if (typeof defaultRiskCurrency === 'string' && ['GBP', 'USD', 'EUR'].includes(defaultRiskCurrency)) {
     user.uiPrefs.defaultRiskCurrency = defaultRiskCurrency;
+  }
+  if (typeof defaultTrimMode === 'string' && ['percent', 'quantity'].includes(defaultTrimMode)) {
+    user.uiPrefs.defaultTrimMode = defaultTrimMode;
   }
   saveDB(db);
   res.json(user.uiPrefs || {});
