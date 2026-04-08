@@ -13200,6 +13200,139 @@ function parseWatchlistQuote(rawQuote = {}, fallbackTicker = '') {
   };
 }
 
+function buildWatchlistQuoteFromChartResult(result = {}, fallbackTicker = '') {
+  const meta = result?.meta || {};
+  const quote = result?.indicators?.quote?.[0] || {};
+  const closes = Array.isArray(quote?.close) ? quote.close : [];
+  const opens = Array.isArray(quote?.open) ? quote.open : [];
+  const volumes = Array.isArray(quote?.volume) ? quote.volume : [];
+  let currentPrice = null;
+  for (let i = closes.length - 1; i >= 0; i -= 1) {
+    currentPrice = parsePositiveNumber(closes[i], currentPrice);
+    if (Number.isFinite(currentPrice)) break;
+  }
+  let dayOpenPrice = null;
+  for (let i = 0; i < opens.length; i += 1) {
+    dayOpenPrice = parsePositiveNumber(opens[i], dayOpenPrice);
+    if (Number.isFinite(dayOpenPrice)) break;
+  }
+  let volume = Number.isFinite(Number(meta?.regularMarketVolume)) ? Number(meta.regularMarketVolume) : null;
+  if (!Number.isFinite(volume)) {
+    for (let i = volumes.length - 1; i >= 0; i -= 1) {
+      const parsed = Number(volumes[i]);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        volume = parsed;
+        break;
+      }
+    }
+  }
+  const previousClosePrice = parsePositiveNumber(
+    meta?.chartPreviousClose,
+    meta?.previousClose,
+    result?.previousClose
+  );
+  return {
+    ticker: normalizeWatchlistTicker(meta?.symbol || fallbackTicker),
+    currentPrice: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : null,
+    dayOpenPrice: Number.isFinite(dayOpenPrice) && dayOpenPrice > 0 ? dayOpenPrice : null,
+    previousClosePrice,
+    volume: Number.isFinite(volume) && volume >= 0 ? volume : null,
+    currency: meta?.currency || 'USD',
+    marketState: String(meta?.marketState || '').trim().toLowerCase(),
+    quoteAt: new Date().toISOString()
+  };
+}
+
+async function fetchSingleWatchlistQuoteFromYahoo(ticker) {
+  const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' };
+  const baseUrls = [
+    'https://query1.finance.yahoo.com/v7/finance/quote',
+    'https://query2.finance.yahoo.com/v7/finance/quote'
+  ];
+  const normalizedTicker = normalizeWatchlistTicker(ticker);
+  for (const baseUrl of baseUrls) {
+    const url = `${baseUrl}?symbols=${encodeURIComponent(normalizedTicker)}&includePrePost=true`;
+    let res;
+    try {
+      res = await fetch(url, { headers });
+    } catch (error) {
+      if (shouldTraceWatchlistTicker(normalizedTicker)) {
+        console.warn('[WATCHLIST_QUOTE_DEBUG] single quote request failed', {
+          ticker: normalizedTicker,
+          provider: 'yahoo-v7-single',
+          baseUrl,
+          error: error?.message || 'fetch_failed'
+        });
+      }
+      continue;
+    }
+    if (!res.ok) {
+      if (shouldTraceWatchlistTicker(normalizedTicker)) {
+        console.warn('[WATCHLIST_QUOTE_DEBUG] single quote response not ok', {
+          ticker: normalizedTicker,
+          provider: 'yahoo-v7-single',
+          baseUrl,
+          status: res.status
+        });
+      }
+      continue;
+    }
+    const data = await res.json();
+    const rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
+    const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === normalizedTicker) || rows[0] || null;
+    const parsed = rawRow ? parseWatchlistQuote(rawRow, normalizedTicker) : null;
+    if (shouldTraceWatchlistTicker(normalizedTicker)) {
+      console.info('[WATCHLIST_QUOTE_DEBUG] single quote raw/normalized', {
+        ticker: normalizedTicker,
+        provider: 'yahoo-v7-single',
+        baseUrl,
+        rawRow,
+        parsed
+      });
+    }
+    if (isWatchlistQuotePayloadUsable(parsed)) {
+      return { quote: parsed, source: `yahoo-v7-single:${baseUrl}` };
+    }
+  }
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalizedTicker)}?interval=1m&range=1d&includePrePost=true`;
+  try {
+    const chartRes = await fetch(chartUrl, { headers });
+    if (!chartRes.ok) {
+      if (shouldTraceWatchlistTicker(normalizedTicker)) {
+        console.warn('[WATCHLIST_QUOTE_DEBUG] chart fallback response not ok', {
+          ticker: normalizedTicker,
+          provider: 'yahoo-v8-chart',
+          status: chartRes.status
+        });
+      }
+      return null;
+    }
+    const chartData = await chartRes.json();
+    const result = chartData?.chart?.result?.[0] || null;
+    if (!result) return null;
+    const parsed = buildWatchlistQuoteFromChartResult(result, normalizedTicker);
+    if (shouldTraceWatchlistTicker(normalizedTicker)) {
+      console.info('[WATCHLIST_QUOTE_DEBUG] chart fallback normalized', {
+        ticker: normalizedTicker,
+        provider: 'yahoo-v8-chart',
+        parsed
+      });
+    }
+    if (isWatchlistQuotePayloadUsable(parsed)) {
+      return { quote: parsed, source: 'yahoo-v8-chart' };
+    }
+  } catch (error) {
+    if (shouldTraceWatchlistTicker(normalizedTicker)) {
+      console.warn('[WATCHLIST_QUOTE_DEBUG] chart fallback request failed', {
+        ticker: normalizedTicker,
+        provider: 'yahoo-v8-chart',
+        error: error?.message || 'fetch_failed'
+      });
+    }
+  }
+  return null;
+}
+
 function toFiniteNumberOrNull(value, { allowZero = true } = {}) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -13329,13 +13462,63 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
   const requestNow = toRequest.filter((ticker) => !watchlistQuoteInFlight.has(ticker));
   if (requestNow.length) {
     const batchPromise = (async () => {
-      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(requestNow.join(','))}&includePrePost=true`;
-      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
-      if (!res.ok) throw new Error('Quote batch unavailable');
-      const data = await res.json();
-      const rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
+      const batchProviders = [
+        'https://query1.finance.yahoo.com/v7/finance/quote',
+        'https://query2.finance.yahoo.com/v7/finance/quote'
+      ];
+      const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' };
+      if (WATCHLIST_QUOTE_DEBUG) {
+        console.info('[WATCHLIST_QUOTE_DEBUG] quote batch request stage', {
+          requestedTickers: requestNow,
+          providerPath: 'yahoo-v7-batch'
+        });
+      }
+      let rows = [];
+      let providerUsed = null;
+      let lastProviderError = null;
+      for (const baseUrl of batchProviders) {
+        const url = `${baseUrl}?symbols=${encodeURIComponent(requestNow.join(','))}&includePrePost=true`;
+        let res;
+        try {
+          res = await fetch(url, { headers });
+        } catch (error) {
+          lastProviderError = error?.message || 'batch_fetch_failed';
+          if (WATCHLIST_QUOTE_DEBUG) {
+            console.warn('[WATCHLIST_QUOTE_DEBUG] quote batch provider fetch failed', {
+              provider: baseUrl,
+              requestedTickers: requestNow,
+              error: lastProviderError
+            });
+          }
+          continue;
+        }
+        if (!res.ok) {
+          lastProviderError = `http_${res.status}`;
+          if (WATCHLIST_QUOTE_DEBUG) {
+            console.warn('[WATCHLIST_QUOTE_DEBUG] quote batch provider non-ok response', {
+              provider: baseUrl,
+              status: res.status,
+              requestedTickers: requestNow
+            });
+          }
+          continue;
+        }
+        const data = await res.json();
+        rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
+        providerUsed = baseUrl;
+        if (WATCHLIST_QUOTE_DEBUG) {
+          console.info('[WATCHLIST_QUOTE_DEBUG] quote batch provider response stage', {
+            provider: baseUrl,
+            requestedTickers: requestNow,
+            rowCount: rows.length
+          });
+        }
+        break;
+      }
+      if (!providerUsed) throw new Error(lastProviderError || 'Quote batch unavailable');
       const indexed = new Map(rows.map((row) => [normalizeWatchlistTicker(row?.symbol), parseWatchlistQuote(row, row?.symbol)]));
       let loggedSample = false;
+      const fallbackTargets = [];
       requestNow.forEach((ticker) => {
         const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === ticker) || null;
         const parsed = indexed.get(ticker) || null;
@@ -13359,6 +13542,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
           }
           return;
         }
+        fallbackTargets.push(ticker);
         if (shouldTraceWatchlistTicker(ticker)) {
           console.warn('[WATCHLIST_QUOTE_DEBUG] unusable normalized quote payload', {
             ticker,
@@ -13369,6 +13553,26 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
           });
         }
       });
+      for (const ticker of fallbackTargets) {
+        const fallback = await fetchSingleWatchlistQuoteFromYahoo(ticker);
+        if (fallback?.quote && isWatchlistQuotePayloadUsable(fallback.quote)) {
+          indexed.set(ticker, fallback.quote);
+          watchlistQuoteCache.set(ticker, { at: Date.now(), payload: fallback.quote });
+          if (shouldTraceWatchlistTicker(ticker)) {
+            console.info('[WATCHLIST_QUOTE_DEBUG] fallback quote accepted and cached', {
+              ticker,
+              source: fallback.source,
+              normalized: fallback.quote,
+              cacheReadback: watchlistQuoteCache.get(ticker) || null
+            });
+          }
+        } else if (shouldTraceWatchlistTicker(ticker)) {
+          console.warn('[WATCHLIST_QUOTE_DEBUG] fallback quote unavailable', {
+            ticker,
+            reason: 'fallback_unusable_or_missing'
+          });
+        }
+      }
       return indexed;
     })();
     requestNow.forEach((ticker) => {
@@ -13426,6 +13630,14 @@ async function fetchWatchlistHistoryBatch(tickers = [], { preferStale = true } =
         const row = data?.chart?.result?.[0];
         const payload = row ? normalizeWatchlistHistoryResult(row) : null;
         if (payload) watchlistHistoryCache.set(ticker, { at: Date.now(), payload });
+      } catch (error) {
+        if (shouldTraceWatchlistTicker(ticker)) {
+          console.warn('[WATCHLIST_QUOTE_DEBUG] history fetch failed', {
+            ticker,
+            provider: 'yahoo-v8-chart-history',
+            error: error?.message || 'history_fetch_failed'
+          });
+        }
       } finally {
         watchlistHistoryInFlight.delete(ticker);
       }
@@ -20131,6 +20343,7 @@ module.exports = {
   getLastCompletedWeekRange,
   composeWatchlistMetrics,
   isWatchlistQuotePayloadUsable,
+  buildWatchlistQuoteFromChartResult,
   ensureInstrumentRegistry,
   upsertRegistryEntry,
   applyRegistryResolution,
