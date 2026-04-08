@@ -1,3 +1,23 @@
+function toFiniteDisplayNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatWatchlistValue(value, kind = 'num') {
+  const n = toFiniteDisplayNumber(value);
+  if (!Number.isFinite(n)) return '—';
+  if (kind === 'price') return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
+  if (kind === 'pct') return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
+  if (kind === 'volume') {
+    if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+    if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+    if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+    return n.toFixed(0);
+  }
+  return String(n);
+}
+
 (() => {
   const state = {
     watchlists: [],
@@ -41,17 +61,7 @@
   }
 
   function fmt(value, kind = 'num') {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return '—';
-    if (kind === 'price') return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
-    if (kind === 'pct') return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
-    if (kind === 'volume') {
-      if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-      if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-      if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-      return n.toFixed(0);
-    }
-    return String(n);
+    return formatWatchlistValue(value, kind);
   }
 
   function updateManualSortButton() {
@@ -123,6 +133,13 @@
       renderTable();
     }
     const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data`);
+    if (typeof window !== 'undefined') {
+      const traceTicker = String(window.localStorage?.getItem('watchlistQuoteDebugTicker') || '').trim().toUpperCase();
+      if (traceTicker) {
+        const tracedRow = (payload.rows || []).find((row) => String(row?.ticker || '').trim().toUpperCase() === traceTicker);
+        console.info('[WATCHLIST_QUOTE_DEBUG] frontend fetch row', { watchlistId, traceTicker, row: tracedRow || null });
+      }
+    }
     setRowsForSelected(payload.rows || [], payload.lastUpdated || '');
     state.loadingMarketData = false;
     renderTable();
@@ -193,6 +210,20 @@
     sorted.forEach((row) => {
       const today = Number(row.percentChangeToday);
       const todayClass = today > 0 ? 'is-pos' : (today < 0 ? 'is-neg' : '');
+      if (typeof window !== 'undefined') {
+        const traceTicker = String(window.localStorage?.getItem('watchlistQuoteDebugTicker') || '').trim().toUpperCase();
+        if (traceTicker && String(row?.ticker || '').trim().toUpperCase() === traceTicker) {
+          console.info('[WATCHLIST_QUOTE_DEBUG] frontend render row', {
+            row,
+            rendered: {
+              current: fmt(row.currentPrice, 'price'),
+              open: fmt(row.dayOpenPrice, 'price'),
+              pctToday: fmt(row.percentChangeToday, 'pct'),
+              dollarVolume: row.dollarVolumeDisplay || fmt(row.dollarVolume, 'volume')
+            }
+          });
+        }
+      }
       const tr = document.createElement('tr');
       tr.innerHTML = `<td class="col-ticker"><strong>${row.ticker || '—'}</strong>${row.name ? `<div class="helper watchlist-company-name">${row.name}</div>` : ''}</td>
         <td>${fmt(row.currentPrice, 'price')}</td>
@@ -333,5 +364,11 @@
     await loadWatchlists();
   }
 
-  init().catch((error) => setFeedback('watchlist-page-feedback', error.message || 'Unable to load watchlists.', 'error'));
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    init().catch((error) => setFeedback('watchlist-page-feedback', error.message || 'Unable to load watchlists.', 'error'));
+  }
 })();
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { toFiniteDisplayNumber, formatWatchlistValue };
+}

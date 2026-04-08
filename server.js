@@ -13096,6 +13096,13 @@ const watchlistQuoteInFlight = new Map();
 const watchlistHistoryCache = new Map();
 const watchlistHistoryInFlight = new Map();
 const WATCHLIST_QUOTE_DEBUG = process.env.WATCHLIST_QUOTE_DEBUG === '1';
+const WATCHLIST_QUOTE_DEBUG_TICKER = normalizeWatchlistTicker(process.env.WATCHLIST_QUOTE_DEBUG_TICKER || '');
+
+function shouldTraceWatchlistTicker(ticker = '') {
+  if (!WATCHLIST_QUOTE_DEBUG) return false;
+  if (!WATCHLIST_QUOTE_DEBUG_TICKER) return true;
+  return normalizeWatchlistTicker(ticker) === WATCHLIST_QUOTE_DEBUG_TICKER;
+}
 
 function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -13249,16 +13256,18 @@ function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
     .sort()
     .slice(-1)[0] || new Date().toISOString();
   const isUnavailable = !quoteData && !historyData;
-  if (WATCHLIST_QUOTE_DEBUG) {
+  if (shouldTraceWatchlistTicker(ticker)) {
     console.info('[WATCHLIST_QUOTE_DEBUG] composeWatchlistMetrics inputs', {
       ticker: normalizeWatchlistTicker(ticker),
+      quoteData,
+      historyData,
       currentPrice,
       dayOpenPrice,
       previousClosePrice,
       volume
     });
   }
-  return {
+  const composed = {
     ticker: normalizeWatchlistTicker(ticker),
     currentPrice,
     dayOpenPrice,
@@ -13273,6 +13282,13 @@ function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
     dataStatus: isUnavailable ? 'unavailable' : 'ok',
     asOfSessionTs: historyData?.asOfSessionTs || null
   };
+  if (shouldTraceWatchlistTicker(ticker)) {
+    console.info('[WATCHLIST_QUOTE_DEBUG] composeWatchlistMetrics output', {
+      ticker: normalizeWatchlistTicker(ticker),
+      composed
+    });
+  }
+  return composed;
 }
 
 async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {}) {
@@ -13288,10 +13304,16 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
     const age = cached ? (now - Number(cached.at || 0)) : Number.POSITIVE_INFINITY;
     if (cached && age < WATCHLIST_MARKET_CACHE_TTL_MS) {
       resultMap.set(ticker, cached.payload);
+      if (shouldTraceWatchlistTicker(ticker)) {
+        console.info('[WATCHLIST_QUOTE_DEBUG] cache hit (fresh)', { ticker, ageMs: age, payload: cached.payload });
+      }
       return;
     }
     if (cached && preferStale && age < WATCHLIST_MARKET_STALE_TTL_MS) {
       resultMap.set(ticker, cached.payload);
+      if (shouldTraceWatchlistTicker(ticker)) {
+        console.info('[WATCHLIST_QUOTE_DEBUG] cache hit (stale-serve, refresh queued)', { ticker, ageMs: age, payload: cached.payload });
+      }
       if (!watchlistQuoteInFlight.has(ticker)) toRequest.push(ticker);
       return;
     }
@@ -13315,22 +13337,35 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
       const indexed = new Map(rows.map((row) => [normalizeWatchlistTicker(row?.symbol), parseWatchlistQuote(row, row?.symbol)]));
       let loggedSample = false;
       requestNow.forEach((ticker) => {
+        const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === ticker) || null;
         const parsed = indexed.get(ticker) || null;
-        if (isWatchlistQuotePayloadUsable(parsed)) {
+        if (shouldTraceWatchlistTicker(ticker)) {
+          console.info('[WATCHLIST_QUOTE_DEBUG] provider raw quote row', {
+            ticker,
+            rawRow
+          });
+          console.info('[WATCHLIST_QUOTE_DEBUG] normalized quote row', { ticker, parsed });
+        }
+        const isUsable = isWatchlistQuotePayloadUsable(parsed);
+        if (isUsable) {
           watchlistQuoteCache.set(ticker, { at: Date.now(), payload: parsed });
+          if (shouldTraceWatchlistTicker(ticker)) {
+            const cachedReadback = watchlistQuoteCache.get(ticker) || null;
+            console.info('[WATCHLIST_QUOTE_DEBUG] cache write/readback', { ticker, cachedReadback });
+          }
           if (WATCHLIST_QUOTE_DEBUG && !loggedSample) {
             console.info('[WATCHLIST_QUOTE_DEBUG] sample normalized quote', { ticker, parsed });
             loggedSample = true;
           }
           return;
         }
-        if (WATCHLIST_QUOTE_DEBUG) {
-          const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === ticker) || null;
+        if (shouldTraceWatchlistTicker(ticker)) {
           console.warn('[WATCHLIST_QUOTE_DEBUG] unusable normalized quote payload', {
             ticker,
             normalized: parsed,
             rawShape: rawRow ? Object.keys(rawRow) : [],
-            hasQuoteResponseResult: Array.isArray(data?.quoteResponse?.result)
+            hasQuoteResponseResult: Array.isArray(data?.quoteResponse?.result),
+            rejectedByUsableGuard: true
           });
         }
       });
@@ -13349,6 +13384,9 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
   await Promise.all(inFlightPromises);
   normalizedTickers.forEach((ticker) => {
     const cached = watchlistQuoteCache.get(ticker);
+    if (shouldTraceWatchlistTicker(ticker)) {
+      console.info('[WATCHLIST_QUOTE_DEBUG] cache final read', { ticker, cached: cached || null });
+    }
     if (cached?.payload) resultMap.set(ticker, cached.payload);
   });
   return resultMap;
@@ -14465,9 +14503,12 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
     return !latest || iso > latest ? iso : latest;
   }, null) || new Date().toISOString();
   if (WATCHLIST_QUOTE_DEBUG) {
+    const tracedRows = WATCHLIST_QUOTE_DEBUG_TICKER
+      ? rows.filter((row) => normalizeWatchlistTicker(row?.ticker) === WATCHLIST_QUOTE_DEBUG_TICKER)
+      : rows.slice(0, 3);
     console.info('[WATCHLIST_QUOTE_DEBUG] market-data response sample', {
       watchlistId: watchlist.id,
-      rows: rows.slice(0, 3).map((row) => ({
+      rows: tracedRows.map((row) => ({
         ticker: row.ticker,
         currentPrice: row.currentPrice,
         dayOpenPrice: row.dayOpenPrice,
