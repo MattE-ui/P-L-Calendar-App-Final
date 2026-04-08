@@ -944,19 +944,28 @@ function renderTradeGroupSection() {
       }
     } else {
       const isSell = String(item.side || '').toUpperCase() === 'SELL';
+      const isTrim = String(item.position_event_type || '').toUpperCase() === 'POSITION_TRIM'
+        || String(item.alert_classification || '').toLowerCase() === 'partial_sell';
+      if (isTrim) row.classList.add('social-list-row--trim');
       const prefillPayload = normalizeAlertRiskPrefillPayload(item);
       const canSizeTrade = !isSell && !!prefillPayload;
       const missingStop = !isSell && Number(item.stop_price) <= 0;
+      const trimPctLabel = Number.isFinite(Number(item.trim_pct)) ? `${Number(item.trim_pct).toFixed(Number(item.trim_pct) % 1 === 0 ? 0 : 1)}%` : '';
+      const fillPriceLabel = Number.isFinite(Number(item.fill_price)) ? Number(item.fill_price).toFixed(2) : '';
       row.appendChild(createIdentityRow(
         item.leader_nickname || 'Leader',
         item.created_at ? new Date(item.created_at).toLocaleString() : '',
-        isSell ? `${item.ticker} · Closed` : `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`,
+        isSell
+          ? (isTrim ? `${item.ticker} · Trimmed${trimPctLabel ? ` ${trimPctLabel}` : ''}` : `${item.ticker} · Closed`)
+          : `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`,
         { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }
       ));
       const meta = document.createElement('div');
       meta.className = 'helper';
       meta.textContent = isSell
-        ? `${item.leader_nickname || 'Leader'} closed ${item.ticker}.`
+        ? (isTrim
+          ? `${item.leader_nickname || 'Leader'} trimmed ${trimPctLabel || 'part of'} ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`
+          : `${item.leader_nickname || 'Leader'} closed ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`)
         : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
       row.appendChild(meta);
       if (canSizeTrade || isLeader || missingStop) {

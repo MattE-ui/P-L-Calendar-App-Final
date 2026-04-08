@@ -836,14 +836,21 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
   if (normalizedType === 'trade_group_alert') {
     const alert = db.tradeGroupAlerts.find((item) => item.id === notification.alert_id);
     const ticker = String(alert?.ticker || '').trim().toUpperCase();
+    const trimPctText = formatTrimPercentForUi(alert?.trim_pct);
+    const fillPriceText = Number.isFinite(Number(alert?.fill_price)) ? `$${Number(alert.fill_price).toFixed(2)}` : '';
+    const isTrim = String(alert?.position_event_type || '').toUpperCase() === 'POSITION_TRIM'
+      || String(alert?.alert_classification || '').toLowerCase() === 'partial_sell';
+    const body = isTrim
+      ? `${resolvedGroup.name}: leader trimmed ${trimPctText || 'a position'}${ticker ? ` of ${ticker}` : ''}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
+      : (ticker
+        ? `${resolvedGroup.name}: new trade alert for ${ticker}.`
+        : `${resolvedGroup.name}: a new trade alert is available.`);
     return {
       eventType: 'trade_group_alert',
       context: {
         groupId: resolvedGroup.id,
         groupName: resolvedGroup.name,
-        body: ticker
-          ? `${resolvedGroup.name}: new trade alert for ${ticker}.`
-          : `${resolvedGroup.name}: a new trade alert is available.`,
+        body,
         link: fallbackLink,
         tag: `trade-group-alert:${resolvedGroup.id}:${notification.alert_id || notification.id}`
       }
@@ -1176,6 +1183,7 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
       ticker,
       side: 'SELL',
       alert_classification: classification || 'full_close',
+      position_event_type: 'POSITION_CLOSED',
       closure_event_key: closureEventKey,
       closure_reason: String(reason || '').trim() || null,
       created_at: nowIso
@@ -1215,11 +1223,193 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
   return { alertsCreated, notificationsCreated, duplicates };
 }
 
+function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
+  previousQty = null,
+  newQty = null,
+  fillPrice = null,
+  trimDate = '',
+  reason = 'manual_trim',
+  eventKey = ''
+} = {}) {
+  ensureSocialTables(db);
+  const groups = getTradeGroupsLedByUser(db, leaderUsername);
+  if (!groups.length) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const ticker = resolveCanonicalTickerForTrade(trade);
+  if (!ticker) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const trimPct = computeTrimPercent(previousQty, newQty);
+  if (!Number.isFinite(trimPct) || trimPct <= 0) return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
+  const resolvedFillPrice = Number.isFinite(Number(fillPrice)) ? Number(fillPrice) : null;
+  const brokerEventKey = String(eventKey || `${trade?.id || 'unknown'}|trim|${trimDate || ''}|${trimPct}|${resolvedFillPrice || 'n/a'}`).trim();
+  const nowIso = new Date().toISOString();
+  let alertsCreated = 0;
+  let notificationsCreated = 0;
+  let duplicates = 0;
+  for (const group of groups) {
+    const duplicate = db.tradeGroupAlerts.find((alert) => (
+      alert.group_id === group.id
+      && String(alert.side || '').toUpperCase() === 'SELL'
+      && String(alert.broker_event_key || '') === brokerEventKey
+    ));
+    if (duplicate) {
+      duplicates += 1;
+      continue;
+    }
+    const alert = {
+      id: crypto.randomUUID(),
+      group_id: group.id,
+      leader_user_id: leaderUsername,
+      source_trade_id: trade?.id || null,
+      broker_source: trade?.source === 'trading212' || trade?.trading212Id ? 'trading212' : 'manual',
+      broker_event_key: brokerEventKey,
+      ticker,
+      side: 'SELL',
+      alert_classification: 'partial_sell',
+      position_event_type: 'POSITION_TRIM',
+      trim_pct: trimPct,
+      fill_price: resolvedFillPrice,
+      closure_reason: String(reason || '').trim() || null,
+      filled_at: trimDate || null,
+      created_at: nowIso
+    };
+    db.tradeGroupAlerts.push(alert);
+    alertsCreated += 1;
+    const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
+      .filter(member => member.user_id !== leaderUsername);
+    for (const member of activeMembers) {
+      const created = createTradeGroupNotification(db, {
+        userId: member.user_id,
+        groupId: group.id,
+        type: 'trade_group_alert',
+        alertId: alert.id,
+        dedupeKey: `trade-trim:${brokerEventKey}:${group.id}`
+      });
+      if (created) {
+        notificationsCreated += 1;
+        triggerPushForTradeGroupNotification(db, created, { group });
+      }
+    }
+  }
+  console.info('[TradeGroup][TrimAlert]', {
+    stage: alertsCreated > 0 ? 'trim_alert_emitted' : 'trim_alert_skipped',
+    leader: leaderUsername,
+    tradeId: trade?.id || null,
+    ticker,
+    previousQty: Number(previousQty) || null,
+    newQty: Number(newQty) || null,
+    trimPct,
+    selectedFillPrice: resolvedFillPrice,
+    brokerEventKey,
+    alertsCreated,
+    duplicates
+  });
+  return { alertsCreated, notificationsCreated, duplicates };
+}
+
 function classifyTrading212SellAlert({ matchedQuantity = null, remainingQuantity = null, tradeStatus = '' } = {}) {
   if (Number.isFinite(remainingQuantity) && remainingQuantity <= 1e-8) return 'full_close';
   if (String(tradeStatus || '').toLowerCase() === 'closed') return 'full_close';
   if (Number.isFinite(matchedQuantity) && matchedQuantity > 0) return 'partial_sell';
   return 'sell';
+}
+
+function classifyPositionDeltaEvent({ previousQty = null, nextQty = null } = {}) {
+  const prev = Number(previousQty);
+  const next = Number(nextQty);
+  if (!Number.isFinite(prev) || prev <= 1e-8) {
+    if (Number.isFinite(next) && next > 1e-8) return 'NEW_POSITION';
+    return '';
+  }
+  if (!Number.isFinite(next) || next <= 1e-8) return 'POSITION_CLOSED';
+  if (next > prev + 1e-8) return 'POSITION_INCREASE';
+  if (next < prev - 1e-8) return 'POSITION_TRIM';
+  return '';
+}
+
+function computeTrimPercent(previousQty, nextQty) {
+  const prev = Number(previousQty);
+  const next = Number(nextQty);
+  if (!Number.isFinite(prev) || prev <= 0 || !Number.isFinite(next)) return null;
+  const raw = ((prev - next) / prev) * 100;
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Number(raw.toFixed(raw % 1 === 0 ? 0 : 2));
+}
+
+function formatTrimPercentForUi(percent) {
+  const value = Number(percent);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (Math.abs(value - Math.round(value)) <= 1e-6) return `${Math.round(value)}%`;
+  if (Math.abs((value * 10) - Math.round(value * 10)) <= 1e-6) return `${value.toFixed(1)}%`;
+  return `${value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+}
+
+function coalesceTrading212FillEvents(fillEvents = [], { windowMs = 15000 } = {}) {
+  if (!Array.isArray(fillEvents) || !fillEvents.length) return [];
+  const sorted = fillEvents
+    .filter(Boolean)
+    .slice()
+    .sort((a, b) => Date.parse(a?.filledAt || '') - Date.parse(b?.filledAt || ''));
+  const coalesced = [];
+  for (const event of sorted) {
+    const side = String(event?.side || '').toUpperCase();
+    const classification = side === 'SELL'
+      ? classifyTrading212SellAlert({
+        matchedQuantity: event?.quantity,
+        remainingQuantity: event?.remainingQuantity,
+        tradeStatus: event?.tradeStatus
+      })
+      : 'buy';
+    if (side !== 'SELL' || classification !== 'partial_sell') {
+      coalesced.push(event);
+      continue;
+    }
+    const eventTs = Date.parse(event?.filledAt || '');
+    const key = [
+      String(event?.accountId || '').trim(),
+      String(event?.sourceTradeId || '').trim(),
+      String(event?.orderId || '').trim(),
+      String(event?.ticker || '').trim().toUpperCase(),
+      side,
+      classification
+    ].join('|');
+    const last = coalesced[coalesced.length - 1];
+    if (!last) {
+      coalesced.push({ ...event, _coalesceKey: key, _fillIds: [String(event?.fillId || '').trim()].filter(Boolean) });
+      continue;
+    }
+    const lastTs = Date.parse(last?.filledAt || '');
+    const canMerge = last._coalesceKey === key
+      && Number.isFinite(eventTs)
+      && Number.isFinite(lastTs)
+      && Math.abs(eventTs - lastTs) <= windowMs;
+    if (!canMerge) {
+      coalesced.push({ ...event, _coalesceKey: key, _fillIds: [String(event?.fillId || '').trim()].filter(Boolean) });
+      continue;
+    }
+    const previousQty = Number(last.quantity) || 0;
+    const incomingQty = Number(event.quantity) || 0;
+    const mergedQty = previousQty + incomingQty;
+    const previousValue = previousQty * (Number(last.fillPrice) || 0);
+    const incomingValue = incomingQty * (Number(event.fillPrice) || 0);
+    const mergedFillIds = Array.from(new Set([...(last._fillIds || []), String(event?.fillId || '').trim()].filter(Boolean)));
+    last.quantity = mergedQty;
+    if (mergedQty > 0 && Number.isFinite(previousValue + incomingValue)) {
+      last.fillPrice = (previousValue + incomingValue) / mergedQty;
+    }
+    last.fillId = mergedFillIds.join(',');
+    last._fillIds = mergedFillIds;
+    if (Number.isFinite(eventTs) && (!Number.isFinite(lastTs) || eventTs >= lastTs)) {
+      last.filledAt = event.filledAt || last.filledAt;
+      last.remainingQuantity = event.remainingQuantity ?? last.remainingQuantity;
+      last.tradeStatus = event.tradeStatus || last.tradeStatus;
+      last.stopTriggered = event.stopTriggered === true || last.stopTriggered === true;
+    }
+  }
+  return coalesced.map((event) => {
+    const clean = { ...event };
+    delete clean._coalesceKey;
+    delete clean._fillIds;
+    return clean;
+  });
 }
 
 function buildTrading212FillEventKey(fillEvent = {}) {
@@ -1287,8 +1477,23 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       remainingQuantity: fillEvent?.remainingQuantity,
       tradeStatus: fillEvent?.tradeStatus
     });
+  const positionEventType = side === 'BUY'
+    ? 'NEW_POSITION'
+    : (classification === 'full_close' ? 'POSITION_CLOSED' : (classification === 'partial_sell' ? 'POSITION_TRIM' : 'POSITION_REDUCED'));
+  const fillPrice = Number.isFinite(Number(fillEvent?.fillPrice)) ? Number(fillEvent.fillPrice) : null;
+  const trimPercent = side === 'SELL' && classification === 'partial_sell'
+    ? computeTrimPercent(fillEvent?.previousQuantity, fillEvent?.remainingQuantity)
+    : null;
   if (side === 'SELL') {
-    logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'fill_detected', { eligibleGroups: groups.length, skipped: 'false' });
+    logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'fill_detected', {
+      eligibleGroups: groups.length,
+      skipped: 'false',
+      positionEventType,
+      previousQty: Number(fillEvent?.previousQuantity) || null,
+      newQty: Number(fillEvent?.remainingQuantity) || null,
+      trimPct: trimPercent,
+      selectedFillPrice: fillPrice
+    });
   }
   const nowIso = new Date().toISOString();
   const sourceTradeId = String(fillEvent?.sourceTradeId || '').trim();
@@ -1337,7 +1542,9 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       ticker: fillEvent?.ticker || '',
       side,
       alert_classification: classification,
-      fill_price: side === 'SELL' ? null : (Number.isFinite(Number(fillEvent?.fillPrice)) ? Number(fillEvent.fillPrice) : null),
+      position_event_type: positionEventType,
+      fill_price: fillPrice,
+      trim_pct: trimPercent,
       quantity: side === 'SELL' ? null : (Number.isFinite(Number(fillEvent?.quantity)) ? Number(fillEvent.quantity) : null),
       remaining_quantity: side === 'SELL' ? null : (Number.isFinite(Number(fillEvent?.remainingQuantity)) ? Number(fillEvent.remainingQuantity) : null),
       realized_pnl_gbp: Number.isFinite(Number(fillEvent?.realizedPnlGbp)) ? Number(fillEvent.realizedPnlGbp) : null,
@@ -1348,7 +1555,15 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
     };
     db.tradeGroupAlerts.push(alert);
     alertsCreated += 1;
-    logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'alert_emitted', { groupId: group.id, skipped: 'false' });
+    logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'alert_emitted', {
+      groupId: group.id,
+      skipped: 'false',
+      positionEventType,
+      previousQty: Number(fillEvent?.previousQuantity) || null,
+      newQty: Number(fillEvent?.remainingQuantity) || null,
+      trimPct: trimPercent,
+      selectedFillPrice: fillPrice
+    });
     console.info(`[TradeGroup][LeaderSync] alert emitted leader=${leaderUsername} group=${group.id} fillId=${fillId || 'n/a'} eventKey=${brokerEventKey} side=${side} classification=${classification}`);
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
@@ -9974,20 +10189,23 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         const nextPositionByKey = buildLeaderPositionQuantityMap(snapshot?.positions || [], accountId);
         for (const [key, nextQty] of Object.entries(nextPositionByKey)) {
           const prevQty = Number(previousPositionByKey[key] || 0);
-          if ((prevQty - nextQty) > 1e-8) {
+          const deltaType = classifyPositionDeltaEvent({ previousQty: prevQty, nextQty });
+          if (deltaType === 'POSITION_TRIM') {
             forceHistoryFetch = true;
             const existingPending = leaderAlertState.pendingChanges.find(item => item.key === key);
             if (!existingPending) {
               leaderAlertState.pendingChanges.push({
                 id: crypto.randomUUID(),
                 key,
+                type: deltaType,
                 previousQty: prevQty,
                 nextQty,
+                trimPct: computeTrimPercent(prevQty, nextQty),
                 detectedAt: new Date().toISOString(),
                 status: 'pending_fill_confirmation'
               });
             }
-            console.info(`[TradeGroup][LeaderSync] position_decrease_detected leader=${username} account=${accountId || 'default'} key=${key} from=${prevQty} to=${nextQty}`);
+            console.info(`[TradeGroup][LeaderSync] position_change_detected leader=${username} account=${accountId || 'default'} key=${key} type=${deltaType} previousQty=${prevQty} newQty=${nextQty} trimPct=${computeTrimPercent(prevQty, nextQty) ?? 'n/a'}`);
           }
         }
         for (const [key, prevQtyRaw] of Object.entries(previousPositionByKey)) {
@@ -10000,13 +10218,15 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             leaderAlertState.pendingChanges.push({
               id: crypto.randomUUID(),
               key,
+              type: 'POSITION_CLOSED',
               previousQty: prevQty,
               nextQty: 0,
+              trimPct: null,
               detectedAt: new Date().toISOString(),
               status: 'pending_fill_confirmation'
             });
           }
-          console.info(`[TradeGroup][LeaderSync] position_closed_detected leader=${username} account=${accountId || 'default'} key=${key} from=${prevQty} to=0`);
+          console.info(`[TradeGroup][LeaderSync] position_change_detected leader=${username} account=${accountId || 'default'} key=${key} type=POSITION_CLOSED previousQty=${prevQty} newQty=0 trimPct=n/a`);
         }
         leaderAlertState.positionByKey = nextPositionByKey;
         if (forceHistoryFetch) shouldFetchOrders = true;
@@ -10140,11 +10360,26 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         }
         if (lane === 'leader_alert' && userLeadsTradeGroups(db, username)) {
           const leaderState = ensureTrading212LeaderAlertState(cfg, result.accountId);
-          for (const fillEvent of historyResult.importedFillEvents || []) {
+          const groupedFillEvents = coalesceTrading212FillEvents(historyResult.importedFillEvents || []);
+          for (const fillEvent of groupedFillEvents) {
             console.info(`[TradeGroup][LeaderSync] new fill detected leader=${username} account=${result.accountId} fillId=${fillEvent?.fillId || 'n/a'} side=${fillEvent?.side || ''}`);
+            if (String(fillEvent?.side || '').toUpperCase() === 'SELL') {
+              const key = `${result.accountId || ''}:${String(fillEvent?.ticker || '').toUpperCase()}`;
+              const pendingForKey = leaderState.pendingChanges
+                .filter((item) => String(item?.key || '') === key && String(item?.status || '') === 'pending_fill_confirmation')
+                .sort((a, b) => Date.parse(a?.detectedAt || '') - Date.parse(b?.detectedAt || ''));
+              const matchedPending = pendingForKey[pendingForKey.length - 1] || null;
+              if (matchedPending) {
+                fillEvent.previousQuantity = Number(matchedPending.previousQty);
+                fillEvent.remainingQuantity = Number.isFinite(Number(fillEvent?.remainingQuantity))
+                  ? Number(fillEvent.remainingQuantity)
+                  : Number(matchedPending.nextQty);
+                fillEvent.trimPct = computeTrimPercent(fillEvent.previousQuantity, fillEvent.remainingQuantity);
+              }
+            }
             const emitted = emitTradeGroupAlertFromTrading212Fill(db, username, fillEvent);
             if (emitted.alertsCreated > 0) {
-              const pendingKey = `${String(fillEvent?.ticker || '').toUpperCase()}`;
+              const pendingKey = `${result.accountId || ''}:${String(fillEvent?.ticker || '').toUpperCase()}`;
               leaderState.pendingChanges = leaderState.pendingChanges.filter(item => String(item.key || '') !== pendingKey);
             }
           }
@@ -12961,8 +13196,10 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       ticker: alert.ticker,
       side: alert.side || 'BUY',
       alert_classification: alert.alert_classification || 'buy',
+      position_event_type: alert.position_event_type || null,
       entry_price: alert.entry_price,
-      fill_price: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.fill_price ?? alert.entry_price ?? null),
+      fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
+      trim_pct: alert.trim_pct ?? null,
       quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.quantity ?? null),
       remaining_quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.remaining_quantity ?? null),
       realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
@@ -13317,8 +13554,10 @@ app.get('/api/social/trade-groups/:groupId/alerts', auth, (req, res) => {
       ticker: alert.ticker,
       side: alert.side || 'BUY',
       alert_classification: alert.alert_classification || 'buy',
+      position_event_type: alert.position_event_type || null,
       entry_price: alert.entry_price,
-      fill_price: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.fill_price ?? alert.entry_price ?? null),
+      fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
+      trim_pct: alert.trim_pct ?? null,
       quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.quantity ?? null),
       remaining_quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.remaining_quantity ?? null),
       realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
@@ -13414,8 +13653,10 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
         ticker: alert.ticker,
         side: alert.side || 'BUY',
         alert_classification: alert.alert_classification || 'buy',
+        position_event_type: alert.position_event_type || null,
         entry_price: alert.entry_price,
-        fill_price: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.fill_price ?? alert.entry_price ?? null),
+        fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
+        trim_pct: alert.trim_pct ?? null,
         quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.quantity ?? null),
         remaining_quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.remaining_quantity ?? null),
         realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
@@ -18022,6 +18263,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     && requestedUnitsNum < Number(trade.sizeUnits)
   );
   if (isTrimRequest) {
+    const previousQty = Number(trade.sizeUnits);
     const trimUnits = Number(trade.sizeUnits) - requestedUnitsNum;
     const trimPrice = Number(updates.trimPrice);
     if (!Number.isFinite(trimPrice) || trimPrice <= 0) {
@@ -18029,6 +18271,16 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }
     const trimDate = typeof updates.trimDate === 'string' ? updates.trimDate : undefined;
     const trimResult = addTradeTrim(user, trade, trimUnits, trimPrice, trimDate, rates, found.dateKey);
+    if (userLeadsTradeGroups(db, req.username)) {
+      emitTradeGroupTrimAlertForTrade(db, req.username, trade, {
+        previousQty,
+        newQty: Number(trade.sizeUnits),
+        fillPrice: trimPrice,
+        trimDate: trimDate || trimResult.closeDateKey,
+        reason: 'manual_trim',
+        eventKey: `manual-trim:${trade.id}:${trimDate || trimResult.closeDateKey}:${trimUnits}:${trimPrice}`
+      });
+    }
     if (requestedUnitsNum <= 0) {
       const closeNum = Number(updates.closePrice);
       if (!Number.isFinite(closeNum) || closeNum <= 0) {
@@ -18270,7 +18522,18 @@ app.post('/api/trades/:id/trim', auth, async (req, res) => {
     return res.status(400).json({ error: 'Enter a valid trim fill price' });
   }
   const rates = await fetchRates();
+  const previousQty = Number(trade.sizeUnits);
   const result = addTradeTrim(user, trade, units, price, date, rates, found.dateKey);
+  if (userLeadsTradeGroups(db, req.username)) {
+    emitTradeGroupTrimAlertForTrade(db, req.username, trade, {
+      previousQty,
+      newQty: Number(trade.sizeUnits),
+      fillPrice: price,
+      trimDate: date || result.closeDateKey,
+      reason: 'manual_trim',
+      eventKey: `manual-trim:${trade.id}:${date || result.closeDateKey}:${units}:${price}`
+    });
+  }
   saveDB(db);
   res.json({ ok: true, trade, trim: result });
 });
@@ -18784,7 +19047,9 @@ module.exports = {
   resolveCanonicalTickerForTrade,
   createTradeGroupAlertsForNewTrade,
   emitTradeGroupSellAlertForClosedTrade,
+  emitTradeGroupTrimAlertForTrade,
   emitTradeGroupAlertFromTrading212Fill,
+  coalesceTrading212FillEvents,
   processLeaderTradeDisappearancesAfterValidSnapshot,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts,

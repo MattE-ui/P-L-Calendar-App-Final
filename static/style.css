@@ -5296,6 +5296,11 @@ textarea {
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
 }
 
+.social-list-row--trim {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.03));
+}
+
 .social-list-row--friend {
   background: linear-gradient(180deg, rgba(11,191,122,0.06), rgba(11,191,122,0.015));
 }
