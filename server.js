@@ -47,6 +47,7 @@ const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
 const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
 const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
 const isProduction = process.env.RENDER || process.env.NODE_ENV === 'production';
+const ACTIVE_TRADE_DEBUG_LOGS = String(process.env.ACTIVE_TRADE_DEBUG_LOGS || '').trim().toLowerCase() === 'true';
 const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || '';
 const IBKR_TOKEN_SECRET_FALLBACK = IBKR_TOKEN_SECRET || (isProduction ? crypto.randomBytes(32).toString('hex') : 'ibkr-dev-secret');
 if (!IBKR_TOKEN_SECRET) {
@@ -5850,7 +5851,7 @@ function flattenTrades(user, rates = {}) {
       if (!base.createdAt) {
         base.createdAt = new Date().toISOString();
       }
-      const executionSummary = summarizeExecutionLegs(base, rates);
+      const executionSummary = deriveTradePositionState(base, rates);
       base.executions = executionSummary.executions;
       base.entryExecutions = executionSummary.entries;
       base.exitExecutions = executionSummary.exits;
@@ -6093,6 +6094,27 @@ function summarizeExecutionLegs(trade, rates = {}) {
     lastExitDate: exits.length ? exits[exits.length - 1].date : null,
     firstEntryDate: entries.length ? entries[0].date : null,
     isValid: totalEntered > 0 && totalExited <= totalEntered
+  };
+}
+
+function deriveTradePositionState(trade, rates = {}) {
+  const summary = summarizeExecutionLegs(trade, rates);
+  return {
+    executions: summary.executions,
+    entries: summary.entries,
+    exits: summary.exits,
+    totalEntered: Number(summary.totalEntered) || 0,
+    totalExited: Number(summary.totalExited) || 0,
+    openQuantity: Number(summary.openQuantity) || 0,
+    status: summary.status,
+    avgEntry: summary.avgEntry,
+    avgExit: summary.avgExit,
+    lastExitDate: summary.lastExitDate,
+    firstEntryDate: summary.firstEntryDate,
+    isValid: summary.isValid,
+    realizedPnlCurrency: summary.realizedPnlCurrency,
+    realizedPnlGBP: summary.realizedPnlGBP,
+    feesCurrency: summary.feesCurrency
   };
 }
 
@@ -16993,10 +17015,49 @@ async function buildActiveTrades(user, rates = {}) {
   let manualTrades = 0;
   let providerCurrency = null;
   const ibkrTradeKeys = new Set();
+  let loggedManualDebugSample = false;
   for (const [dateKey, items] of Object.entries(journal)) {
     for (const trade of items || []) {
-      if (!trade || trade.status === 'closed' || Number.isFinite(Number(trade.closePrice))) continue;
-      const base = { ...trade, date: dateKey };
+      if (!trade || typeof trade !== 'object') continue;
+      const canonicalTrade = { ...trade, openDate: dateKey };
+      const positionState = deriveTradePositionState(canonicalTrade, rates);
+      const includeByCanonicalOpenQty = positionState.isValid && positionState.openQuantity > 0;
+      const source = trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual'));
+      const isManualSource = source === 'manual';
+      if (ACTIVE_TRADE_DEBUG_LOGS && isManualSource && !loggedManualDebugSample) {
+        console.info('[ACTIVE_TRADE_DEBUG] manual_trade_evaluation', {
+          tradeId: trade.id || null,
+          source,
+          rawStoredTrade: trade,
+          derivedTotalEntered: positionState.totalEntered,
+          derivedTotalExited: positionState.totalExited,
+          derivedOpenQuantity: positionState.openQuantity,
+          derivedStatus: positionState.status,
+          includeInDashboard: includeByCanonicalOpenQty,
+          exclusionReason: includeByCanonicalOpenQty
+            ? null
+            : (!positionState.isValid ? 'invalid_execution_state' : 'open_quantity_not_positive')
+        });
+        loggedManualDebugSample = true;
+      }
+      if (!includeByCanonicalOpenQty) continue;
+      const base = {
+        ...trade,
+        date: dateKey,
+        executions: positionState.executions,
+        entryExecutions: positionState.entries,
+        exitExecutions: positionState.exits,
+        totalEnteredQuantity: positionState.totalEntered,
+        totalExitedQuantity: positionState.totalExited,
+        openQuantity: positionState.openQuantity,
+        status: positionState.status
+      };
+      if (Number.isFinite(positionState.avgEntry) && positionState.avgEntry > 0) {
+        base.entry = positionState.avgEntry;
+      }
+      if (Number.isFinite(positionState.openQuantity) && positionState.openQuantity >= 0) {
+        base.sizeUnits = positionState.openQuantity;
+      }
       trades.push(base);
       if (trade.source === 'ibkr' || trade.ibkrPositionId) {
         const ticker = normalizeIbkrTicker(trade.ibkrTicker || trade.brokerTicker || trade.symbol || '');
@@ -17145,6 +17206,10 @@ async function buildActiveTrades(user, rates = {}) {
         stop: Number(trade.stop),
         currency: tradeCurrency,
         sizeUnits,
+        totalEnteredQuantity: Number(trade.totalEnteredQuantity) || sizeUnits,
+        totalExitedQuantity: Number(trade.totalExitedQuantity) || 0,
+        openQuantity: Number(trade.openQuantity) || sizeUnits,
+        status: trade.status || 'open',
         riskPct,
         direction: trade.direction || 'long',
         fees: Number(trade.fees) || 0,
@@ -17252,6 +17317,10 @@ async function buildActiveTrades(user, rates = {}) {
         stop: Number(trade.stop),
         currency: tradeCurrency,
       sizeUnits,
+      totalEnteredQuantity: Number(trade.totalEnteredQuantity) || sizeUnits,
+      totalExitedQuantity: Number(trade.totalExitedQuantity) || 0,
+      openQuantity: Number(trade.openQuantity) || sizeUnits,
+      status: trade.status || 'open',
       riskPct: Number.isFinite(derivedRiskPct) ? derivedRiskPct : 0,
       direction: trade.direction || 'long',
       fees: Number(trade.fees) || 0,
