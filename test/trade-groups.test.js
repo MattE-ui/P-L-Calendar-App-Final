@@ -13,7 +13,9 @@ const {
   loadDB,
   buildGroupCurrentPositions,
   emitTradeGroupSellAlertForClosedTrade,
+  emitTradeGroupTrimAlertForTrade,
   emitTradeGroupAlertFromTrading212Fill,
+  coalesceTrading212FillEvents,
   processLeaderTradeDisappearancesAfterValidSnapshot,
   scheduleTrading212TradeGroupAlertsForNewPosition,
   processPendingTrading212GroupAlerts
@@ -179,7 +181,9 @@ test('emitTradeGroupAlertFromTrading212Fill emits SELL alerts for partial and fu
     side: 'SELL',
     ticker: 'AAPL',
     quantity: 1,
+    previousQuantity: 10,
     remainingQuantity: 2,
+    fillPrice: 182.75,
     tradeStatus: 'open',
     filledAt: now,
     sourceTradeId: 'trade-1'
@@ -201,7 +205,62 @@ test('emitTradeGroupAlertFromTrading212Fill emits SELL alerts for partial and fu
   const sellAlerts = db.tradeGroupAlerts.filter((item) => item.side === 'SELL');
   assert.equal(sellAlerts.length, 2);
   assert.equal(sellAlerts[0].alert_classification, 'partial_sell');
+  assert.equal(sellAlerts[0].position_event_type, 'POSITION_TRIM');
+  assert.equal(sellAlerts[0].trim_pct, 80);
+  assert.equal(sellAlerts[0].fill_price, 182.75);
   assert.equal(sellAlerts[1].alert_classification, 'full_close');
+});
+
+test('manual trim emits one POSITION_TRIM alert without quantity disclosure', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{
+    id: 'group-trim-1',
+    leader_user_id: leader,
+    name: 'Trim Group',
+    is_active: true,
+    created_at: now
+  }];
+  db.tradeGroupMembers = [{
+    id: 'member-trim-1',
+    group_id: 'group-trim-1',
+    user_id: leader,
+    role: 'leader',
+    status: 'active',
+    joined_at: now
+  }, {
+    id: 'member-trim-2',
+    group_id: 'group-trim-1',
+    user_id: member,
+    role: 'member',
+    status: 'active',
+    joined_at: now
+  }];
+  const trade = { id: 'trim-trade-1', symbol: 'NVDA', source: 'manual', sizeUnits: 90 };
+  const result = emitTradeGroupTrimAlertForTrade(db, leader, trade, {
+    previousQty: 100,
+    newQty: 90,
+    fillPrice: 842.15,
+    trimDate: now,
+    eventKey: 'manual-trim:1'
+  });
+  assert.equal(result.alertsCreated, 1);
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  assert.equal(db.tradeGroupAlerts[0].position_event_type, 'POSITION_TRIM');
+  assert.equal(db.tradeGroupAlerts[0].trim_pct, 10);
+  assert.equal(db.tradeGroupAlerts[0].fill_price, 842.15);
+  assert.equal(db.tradeGroupAlerts[0].quantity ?? null, null);
+});
+
+test('coalesceTrading212FillEvents merges nearby partial sell fills with weighted average price', () => {
+  const merged = coalesceTrading212FillEvents([
+    { fillId: 'f1', orderId: 'o-1', accountId: 'acc', sourceTradeId: 'trade-1', side: 'SELL', ticker: 'SOUN', quantity: 10, fillPrice: 7.0, remainingQuantity: 90, tradeStatus: 'open', filledAt: '2026-04-08T10:00:00.000Z' },
+    { fillId: 'f2', orderId: 'o-1', accountId: 'acc', sourceTradeId: 'trade-1', side: 'SELL', ticker: 'SOUN', quantity: 30, fillPrice: 8.0, remainingQuantity: 60, tradeStatus: 'open', filledAt: '2026-04-08T10:00:05.000Z' }
+  ], { windowMs: 15000 });
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].quantity, 40);
+  assert.equal(merged[0].fillPrice, 7.75);
+  assert.equal(merged[0].remainingQuantity, 60);
 });
 
 test('derived fill identity dedupes repeated BUY events without fillId', () => {
@@ -711,7 +770,7 @@ test('Trading212 fill-based leader alerts emit sell metadata and dedupe on fill 
   assert.equal(db.tradeGroupAlerts[0].alert_classification, 'partial_sell');
   assert.equal(db.tradeGroupAlerts[0].side, 'SELL');
   assert.equal(db.tradeGroupAlerts[0].stop_triggered, true);
-  assert.equal(db.tradeGroupAlerts[0].fill_price, null);
+  assert.equal(db.tradeGroupAlerts[0].fill_price, 120.5);
   assert.equal(db.tradeGroupAlerts[0].quantity, null);
 
   const second = emitTradeGroupAlertFromTrading212Fill(db, leader, {
