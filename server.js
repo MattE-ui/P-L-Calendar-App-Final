@@ -13097,6 +13097,7 @@ const watchlistHistoryCache = new Map();
 const watchlistHistoryInFlight = new Map();
 const WATCHLIST_QUOTE_DEBUG = process.env.WATCHLIST_QUOTE_DEBUG === '1';
 const WATCHLIST_QUOTE_DEBUG_TICKER = normalizeWatchlistTicker(process.env.WATCHLIST_QUOTE_DEBUG_TICKER || '');
+const WATCHLIST_DIAGNOSTICS_VERSION = process.env.WATCHLIST_DIAGNOSTICS_VERSION || 'watchlist-diagnostics-2026-04-08-v1';
 
 function shouldTraceWatchlistTicker(ticker = '') {
   if (!WATCHLIST_QUOTE_DEBUG) return false;
@@ -13333,6 +13334,44 @@ async function fetchSingleWatchlistQuoteFromYahoo(ticker) {
   return null;
 }
 
+async function fetchWatchlistQuoteFromStooq(ticker) {
+  const normalizedTicker = normalizeWatchlistTicker(ticker);
+  if (!normalizedTicker) return null;
+  const candidates = [normalizedTicker.toLowerCase(), `${normalizedTicker.toLowerCase()}.us`];
+  for (const symbol of candidates) {
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol)}&i=d`;
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (_error) {
+      continue;
+    }
+    if (!res.ok) continue;
+    const csv = await res.text();
+    const lines = String(csv || '').trim().split('\n').filter(Boolean);
+    if (lines.length < 2) continue;
+    const rows = lines.slice(1).map((line) => line.split(','));
+    const latest = rows[rows.length - 1] || [];
+    const prior = rows.length >= 2 ? rows[rows.length - 2] : [];
+    const currentPrice = toFiniteNumberOrNull(latest[4], { allowZero: false });
+    const dayOpenPrice = toFiniteNumberOrNull(latest[1], { allowZero: false });
+    const previousClosePrice = toFiniteNumberOrNull(prior[4], { allowZero: false });
+    const volume = toFiniteNumberOrNull(latest[5], { allowZero: true });
+    const normalized = {
+      ticker: normalizedTicker,
+      currentPrice,
+      dayOpenPrice,
+      previousClosePrice,
+      volume,
+      currency: 'USD',
+      marketState: '',
+      quoteAt: new Date().toISOString()
+    };
+    if (isWatchlistQuotePayloadUsable(normalized)) return normalized;
+  }
+  return null;
+}
+
 function toFiniteNumberOrNull(value, { allowZero = true } = {}) {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
@@ -13422,6 +13461,89 @@ function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
     });
   }
   return composed;
+}
+
+function summarizeWatchlistProviderPayloadShape(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (Array.isArray(payload)) return { type: 'array', length: payload.length };
+  const topKeys = Object.keys(payload).slice(0, 20);
+  const summary = { type: 'object', keys: topKeys };
+  if (payload.quoteResponse && typeof payload.quoteResponse === 'object') {
+    const rows = Array.isArray(payload.quoteResponse.result) ? payload.quoteResponse.result : [];
+    summary.quoteResponse = {
+      resultCount: rows.length,
+      sampleSymbol: String(rows[0]?.symbol || '').trim() || null,
+      sampleKeys: rows[0] && typeof rows[0] === 'object' ? Object.keys(rows[0]).slice(0, 20) : []
+    };
+  }
+  if (payload.chart && typeof payload.chart === 'object') {
+    const chartResult = Array.isArray(payload.chart.result) ? payload.chart.result : [];
+    summary.chart = {
+      resultCount: chartResult.length,
+      hasError: payload.chart.error != null,
+      sampleMetaKeys: chartResult[0]?.meta && typeof chartResult[0].meta === 'object' ? Object.keys(chartResult[0].meta).slice(0, 20) : []
+    };
+  }
+  return summary;
+}
+
+async function probeWatchlistProviderEndpoint({ provider, url, ticker }) {
+  const startedAt = new Date().toISOString();
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json,text/plain,*/*'
+      }
+    });
+    const text = await res.text();
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch (_error) {
+      parsed = null;
+    }
+    const bodySample = text ? text.slice(0, 400) : '';
+    const payloadShape = summarizeWatchlistProviderPayloadShape(parsed);
+    const completedAt = new Date().toISOString();
+    console.info('[WATCHLIST_PROVIDER_DIAGNOSTICS] provider probe result', {
+      ticker,
+      provider,
+      status: res.status,
+      ok: res.ok,
+      payloadShape,
+      bodySample,
+      startedAt,
+      completedAt
+    });
+    return {
+      provider,
+      url,
+      status: res.status,
+      ok: res.ok,
+      networkOk: true,
+      payloadShape,
+      bodySample
+    };
+  } catch (error) {
+    const completedAt = new Date().toISOString();
+    console.warn('[WATCHLIST_PROVIDER_DIAGNOSTICS] provider probe failed', {
+      ticker,
+      provider,
+      error: error?.message || 'fetch_failed',
+      startedAt,
+      completedAt
+    });
+    return {
+      provider,
+      url,
+      status: null,
+      ok: false,
+      networkOk: false,
+      error: error?.message || 'fetch_failed',
+      errorCode: error?.code || error?.cause?.code || null
+    };
+  }
 }
 
 async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {}) {
@@ -13571,6 +13693,56 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
             ticker,
             reason: 'fallback_unusable_or_missing'
           });
+        }
+      }
+      for (const ticker of fallbackTargets) {
+        if (indexed.has(ticker) && isWatchlistQuotePayloadUsable(indexed.get(ticker))) continue;
+        try {
+          const stooqFallback = await fetchWatchlistQuoteFromStooq(ticker);
+          if (stooqFallback && isWatchlistQuotePayloadUsable(stooqFallback)) {
+            indexed.set(ticker, stooqFallback);
+            watchlistQuoteCache.set(ticker, { at: Date.now(), payload: stooqFallback });
+            console.info('[WATCHLIST_QUOTE_DEBUG] fallback quote accepted from stooq', {
+              ticker,
+              source: 'stooq-daily-history',
+              normalized: stooqFallback
+            });
+            continue;
+          }
+        } catch (_error) {
+          // ignore and continue to next fallback
+        }
+      }
+      for (const ticker of fallbackTargets) {
+        if (indexed.has(ticker) && isWatchlistQuotePayloadUsable(indexed.get(ticker))) continue;
+        try {
+          const snapshot = await fetchMarketQuoteSnapshot(ticker);
+          const normalizedFallback = {
+            ticker,
+            currentPrice: toFiniteNumberOrNull(snapshot?.selectedPrice, { allowZero: false }),
+            dayOpenPrice: null,
+            previousClosePrice: toFiniteNumberOrNull(snapshot?.previousClose, { allowZero: false }),
+            volume: null,
+            currency: snapshot?.currency || 'USD',
+            marketState: String(snapshot?.marketState || '').trim().toLowerCase(),
+            quoteAt: new Date().toISOString()
+          };
+          if (isWatchlistQuotePayloadUsable(normalizedFallback)) {
+            indexed.set(ticker, normalizedFallback);
+            watchlistQuoteCache.set(ticker, { at: Date.now(), payload: normalizedFallback });
+            console.info('[WATCHLIST_QUOTE_DEBUG] fallback quote accepted from market snapshot pipeline', {
+              ticker,
+              source: 'market_quote_snapshot',
+              normalized: normalizedFallback
+            });
+          }
+        } catch (error) {
+          if (shouldTraceWatchlistTicker(ticker)) {
+            console.warn('[WATCHLIST_QUOTE_DEBUG] market snapshot fallback failed', {
+              ticker,
+              error: error?.message || 'market_snapshot_fetch_failed'
+            });
+          }
         }
       }
       return indexed;
@@ -14729,7 +14901,36 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
       }))
     });
   }
-  res.json({ watchlistId: watchlist.id, lastUpdated, rows });
+  res.json({
+    watchlistId: watchlist.id,
+    lastUpdated,
+    rows,
+    diagnostics: {
+      markerVersion: WATCHLIST_DIAGNOSTICS_VERSION,
+      generatedAt: new Date().toISOString()
+    }
+  });
+}));
+
+app.get('/api/watchlists/provider-diagnostics/:ticker', auth, asyncHandler(async (req, res) => {
+  const ticker = normalizeWatchlistTicker(req.params.ticker || '');
+  if (!ticker || !isValidWatchlistTicker(ticker)) {
+    return res.status(400).json({ error: 'Invalid ticker format.' });
+  }
+  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&includePrePost=true`;
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d&includePrePost=true`;
+  const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(ticker.toLowerCase())}.us&i=d`;
+  const [quoteProbe, chartProbe, stooqProbe] = await Promise.all([
+    probeWatchlistProviderEndpoint({ provider: 'yahoo-v7-quote', url: quoteUrl, ticker }),
+    probeWatchlistProviderEndpoint({ provider: 'yahoo-v8-chart', url: chartUrl, ticker }),
+    probeWatchlistProviderEndpoint({ provider: 'stooq-daily-history', url: stooqUrl, ticker })
+  ]);
+  res.json({
+    ticker,
+    diagnosticsVersion: WATCHLIST_DIAGNOSTICS_VERSION,
+    ranAt: new Date().toISOString(),
+    probes: [quoteProbe, chartProbe, stooqProbe]
+  });
 }));
 
 app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req, res) => {
