@@ -31,7 +31,8 @@ function formatWatchlistValue(value, kind = 'num') {
     addTickerPending: new Set(),
     addTickerQueue: Promise.resolve(),
     localRowsByWatchlist: new Map(),
-    localUpdatedByWatchlist: new Map()
+    localUpdatedByWatchlist: new Map(),
+    diagnosticsMarker: ''
   };
 
   const SORTABLE_COLUMNS = [
@@ -133,6 +134,14 @@ function formatWatchlistValue(value, kind = 'num') {
       renderTable();
     }
     const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data`);
+    state.diagnosticsMarker = String(payload?.diagnostics?.markerVersion || '');
+    if (state.diagnosticsMarker) {
+      console.info('[WATCHLIST_DIAGNOSTICS] market-data marker', {
+        watchlistId,
+        markerVersion: state.diagnosticsMarker,
+        generatedAt: payload?.diagnostics?.generatedAt || null
+      });
+    }
     if (typeof window !== 'undefined') {
       const traceTicker = String(window.localStorage?.getItem('watchlistQuoteDebugTicker') || '').trim().toUpperCase();
       if (traceTicker) {
