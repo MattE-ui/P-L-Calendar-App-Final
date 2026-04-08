@@ -2298,6 +2298,20 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     shareBtn.setAttribute('aria-label', 'Share trade card');
     shareBtn.title = 'Share trade card';
     shareBtn.textContent = 'Share';
+    const shareIcon = document.createElement('img');
+    shareIcon.className = 'trade-share-btn__icon';
+    shareIcon.alt = '';
+    shareIcon.setAttribute('aria-hidden', 'true');
+    shareIcon.src = '/static/White-Share-Icon.png';
+    shareIcon.onerror = () => {
+      shareIcon.remove();
+      const fallbackIcon = document.createElement('span');
+      fallbackIcon.className = 'trade-share-btn__fallback';
+      fallbackIcon.setAttribute('aria-hidden', 'true');
+      fallbackIcon.textContent = '↗';
+      shareBtn.appendChild(fallbackIcon);
+    };
+    shareBtn.appendChild(shareIcon);
     shareBtn.addEventListener('click', () => openShareCardModal(trade));
     metaRow.appendChild(shareBtn);
 
@@ -2308,7 +2322,7 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     closeBtn.textContent = 'Close trade';
     closeBtn.addEventListener('click', () => openCloseTradeModal(trade));
     const trimBtn = document.createElement('button');
-    trimBtn.className = 'ghost';
+    trimBtn.className = 'ghost trade-trim-btn';
     trimBtn.textContent = 'Trim';
     trimBtn.addEventListener('click', () => openTrimTradeModal(trade));
     actionRow.append(editToggle, trimBtn, closeBtn);
@@ -2643,7 +2657,8 @@ function updateTrimTradePreview() {
   const derivedPercent = $('#trim-trade-derived-percent');
   const derivedQuantity = $('#trim-trade-derived-quantity');
   const currentQty = Number(modal.dataset.openQuantity);
-  const currency = modal.dataset.currency || 'GBP';
+  const tradeCurrency = modal.dataset.currency || 'GBP';
+  const displayCurrency = state.currency || 'GBP';
   if (!Number.isFinite(currentQty) || currentQty <= 0) return;
   const qtyFromInput = Number(qtyInput?.value);
   const pctFromInput = Number(pctInput?.value);
@@ -2660,7 +2675,20 @@ function updateTrimTradePreview() {
   if (currentNode) currentNode.textContent = formatShares(currentQty);
   if (trimNode) trimNode.textContent = Number.isFinite(safeTrimQty) ? formatShares(safeTrimQty) : '—';
   if (remainingNode) remainingNode.textContent = Number.isFinite(remaining) ? formatShares(Math.max(0, remaining)) : '—';
-  if (valueNode) valueNode.textContent = Number.isFinite(realizedValue) ? formatPrice(realizedValue, currency, 2) : '—';
+  const fxRate = Number(state.rates?.[tradeCurrency]);
+  const hasFxRateForTradeCurrency = tradeCurrency === 'GBP' || (Number.isFinite(fxRate) && fxRate > 0);
+  const realizedValueGBP = Number.isFinite(realizedValue) && hasFxRateForTradeCurrency
+    ? toGBP(realizedValue, tradeCurrency)
+    : NaN;
+  if (valueNode) {
+    if (!Number.isFinite(realizedValue)) {
+      valueNode.textContent = '—';
+    } else if (!Number.isFinite(realizedValueGBP)) {
+      valueNode.textContent = `${formatPrice(realizedValue, tradeCurrency, 2)} (FX unavailable)`;
+    } else {
+      valueNode.textContent = formatCurrency(realizedValueGBP, displayCurrency);
+    }
+  }
   if (derivedPercent) derivedPercent.textContent = `Derived trim: ${Number.isFinite(trimPercent) ? `${trimPercent.toFixed(2)}%` : '—%'}`;
   if (derivedQuantity) derivedQuantity.textContent = `Derived trim: ${Number.isFinite(safeTrimQty) ? formatShares(safeTrimQty) : '— units'}`;
 }
@@ -4246,6 +4274,7 @@ function bindControls() {
   if (currencySelect) {
     currencySelect.addEventListener('change', () => {
       state.currency = currencySelect.value;
+      updateTrimTradePreview();
       render();
     });
   }
