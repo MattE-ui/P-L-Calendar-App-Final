@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const dns = require('dns');
 const { z } = require('zod');
 let nodemailer = null;
 try {
@@ -31,6 +32,16 @@ const DEFAULT_EMOTION_TAGS = ['FOMO', 'revenge', 'disciplined', 'hesitant', 'con
 const DIRECTIONS = ['long', 'short'];
 const OPTION_TYPES = ['call', 'put'];
 const USER_ROLES = ['user', 'admin', 'owner'];
+
+const FORCE_IPV4_FIRST = String(process.env.FORCE_IPV4_FIRST || 'true').trim().toLowerCase() !== 'false';
+if (FORCE_IPV4_FIRST && typeof dns.setDefaultResultOrder === 'function') {
+  try {
+    dns.setDefaultResultOrder('ipv4first');
+    console.info('[NETWORK] DNS result order forced to ipv4first.');
+  } catch (error) {
+    console.warn('[NETWORK] Unable to set DNS result order to ipv4first.', error?.message || error);
+  }
+}
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('UnhandledRejection:', reason, { promise });
@@ -13201,6 +13212,32 @@ function parseWatchlistQuote(rawQuote = {}, fallbackTicker = '') {
   };
 }
 
+async function fetchWatchlistQuoteBatchFromConfiguredMarketData(tickers = []) {
+  const marketDataUrl = String(process.env.MARKET_DATA_URL || '').trim();
+  if (!marketDataUrl) return null;
+  const normalizedTickers = [...new Set((Array.isArray(tickers) ? tickers : [])
+    .map((ticker) => normalizeWatchlistTicker(ticker))
+    .filter(Boolean))];
+  if (!normalizedTickers.length) return new Map();
+  const url = `${marketDataUrl}?symbols=${encodeURIComponent(normalizedTickers.join(','))}&includePrePost=true`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`market_data_url_http_${res.status}`);
+  }
+  const data = await res.json();
+  const rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
+  const map = new Map();
+  rows.forEach((row) => {
+    const ticker = normalizeWatchlistTicker(row?.symbol);
+    if (!ticker) return;
+    const parsed = parseWatchlistQuote(row, ticker);
+    if (isWatchlistQuotePayloadUsable(parsed)) {
+      map.set(ticker, parsed);
+    }
+  });
+  return map;
+}
+
 function buildWatchlistQuoteFromChartResult(result = {}, fallbackTicker = '') {
   const meta = result?.meta || {};
   const quote = result?.indicators?.quote?.[0] || {};
@@ -13546,6 +13583,31 @@ async function probeWatchlistProviderEndpoint({ provider, url, ticker }) {
   }
 }
 
+async function inspectRuntimeNetworkForHosts(hosts = []) {
+  const dnsModule = dns.promises;
+  return Promise.all((Array.isArray(hosts) ? hosts : []).map(async (host) => {
+    const normalizedHost = String(host || '').trim();
+    if (!normalizedHost) return null;
+    try {
+      const addresses = await dnsModule.lookup(normalizedHost, { all: true });
+      return {
+        host: normalizedHost,
+        ok: true,
+        addresses: Array.isArray(addresses)
+          ? addresses.map((entry) => ({ address: entry.address, family: entry.family }))
+          : []
+      };
+    } catch (error) {
+      return {
+        host: normalizedHost,
+        ok: false,
+        error: error?.message || 'dns_lookup_failed',
+        code: error?.code || null
+      };
+    }
+  })).then((rows) => rows.filter(Boolean));
+}
+
 async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {}) {
   const normalizedTickers = [...new Set((Array.isArray(tickers) ? tickers : [])
     .map((ticker) => normalizeWatchlistTicker(ticker))
@@ -13584,6 +13646,38 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
   const requestNow = toRequest.filter((ticker) => !watchlistQuoteInFlight.has(ticker));
   if (requestNow.length) {
     const batchPromise = (async () => {
+      let configuredProviderQuotes = null;
+      try {
+        configuredProviderQuotes = await fetchWatchlistQuoteBatchFromConfiguredMarketData(requestNow);
+        if (configuredProviderQuotes?.size) {
+          requestNow.forEach((ticker) => {
+            const payload = configuredProviderQuotes.get(ticker);
+            if (payload && isWatchlistQuotePayloadUsable(payload)) {
+              watchlistQuoteCache.set(ticker, { at: Date.now(), payload });
+            }
+          });
+          if (WATCHLIST_QUOTE_DEBUG) {
+            console.info('[WATCHLIST_QUOTE_DEBUG] watchlist quotes served from MARKET_DATA_URL', {
+              requestedTickers: requestNow,
+              fulfilledCount: configuredProviderQuotes.size
+            });
+          }
+        }
+      } catch (error) {
+        if (WATCHLIST_QUOTE_DEBUG) {
+          console.warn('[WATCHLIST_QUOTE_DEBUG] MARKET_DATA_URL quote batch unavailable', {
+            requestedTickers: requestNow,
+            error: error?.message || 'market_data_url_unavailable'
+          });
+        }
+      }
+      const remainingTickers = requestNow.filter((ticker) => {
+        const fromConfigured = configuredProviderQuotes?.get(ticker) || null;
+        return !isWatchlistQuotePayloadUsable(fromConfigured);
+      });
+      if (!remainingTickers.length) {
+        return configuredProviderQuotes || new Map();
+      }
       const batchProviders = [
         'https://query1.finance.yahoo.com/v7/finance/quote',
         'https://query2.finance.yahoo.com/v7/finance/quote'
@@ -13591,7 +13685,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
       const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' };
       if (WATCHLIST_QUOTE_DEBUG) {
         console.info('[WATCHLIST_QUOTE_DEBUG] quote batch request stage', {
-          requestedTickers: requestNow,
+          requestedTickers: remainingTickers,
           providerPath: 'yahoo-v7-batch'
         });
       }
@@ -13599,7 +13693,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
       let providerUsed = null;
       let lastProviderError = null;
       for (const baseUrl of batchProviders) {
-        const url = `${baseUrl}?symbols=${encodeURIComponent(requestNow.join(','))}&includePrePost=true`;
+        const url = `${baseUrl}?symbols=${encodeURIComponent(remainingTickers.join(','))}&includePrePost=true`;
         let res;
         try {
           res = await fetch(url, { headers });
@@ -13608,7 +13702,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
           if (WATCHLIST_QUOTE_DEBUG) {
             console.warn('[WATCHLIST_QUOTE_DEBUG] quote batch provider fetch failed', {
               provider: baseUrl,
-              requestedTickers: requestNow,
+              requestedTickers: remainingTickers,
               error: lastProviderError
             });
           }
@@ -13620,7 +13714,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
             console.warn('[WATCHLIST_QUOTE_DEBUG] quote batch provider non-ok response', {
               provider: baseUrl,
               status: res.status,
-              requestedTickers: requestNow
+              requestedTickers: remainingTickers
             });
           }
           continue;
@@ -13631,7 +13725,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
         if (WATCHLIST_QUOTE_DEBUG) {
           console.info('[WATCHLIST_QUOTE_DEBUG] quote batch provider response stage', {
             provider: baseUrl,
-            requestedTickers: requestNow,
+            requestedTickers: remainingTickers,
             rowCount: rows.length
           });
         }
@@ -13641,7 +13735,7 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
       const indexed = new Map(rows.map((row) => [normalizeWatchlistTicker(row?.symbol), parseWatchlistQuote(row, row?.symbol)]));
       let loggedSample = false;
       const fallbackTargets = [];
-      requestNow.forEach((ticker) => {
+      remainingTickers.forEach((ticker) => {
         const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === ticker) || null;
         const parsed = indexed.get(ticker) || null;
         if (shouldTraceWatchlistTicker(ticker)) {
@@ -13745,7 +13839,9 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
           }
         }
       }
-      return indexed;
+      const merged = configuredProviderQuotes || new Map();
+      indexed.forEach((value, key) => merged.set(key, value));
+      return merged;
     })();
     requestNow.forEach((ticker) => {
       const singlePromise = batchPromise
@@ -14917,19 +15013,52 @@ app.get('/api/watchlists/provider-diagnostics/:ticker', auth, asyncHandler(async
   if (!ticker || !isValidWatchlistTicker(ticker)) {
     return res.status(400).json({ error: 'Invalid ticker format.' });
   }
+  const marketDataUrl = String(process.env.MARKET_DATA_URL || '').trim();
   const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&includePrePost=true`;
   const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d&includePrePost=true`;
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(ticker.toLowerCase())}.us&i=d`;
-  const [quoteProbe, chartProbe, stooqProbe] = await Promise.all([
+  const genericProbeUrl = 'https://api.ipify.org?format=json';
+  const probes = [
+    probeWatchlistProviderEndpoint({ provider: 'generic-https-egress', url: genericProbeUrl, ticker }),
     probeWatchlistProviderEndpoint({ provider: 'yahoo-v7-quote', url: quoteUrl, ticker }),
     probeWatchlistProviderEndpoint({ provider: 'yahoo-v8-chart', url: chartUrl, ticker }),
     probeWatchlistProviderEndpoint({ provider: 'stooq-daily-history', url: stooqUrl, ticker })
+  ];
+  if (marketDataUrl) {
+    probes.push(probeWatchlistProviderEndpoint({
+      provider: 'configured-market-data-url',
+      url: `${marketDataUrl}?symbols=${encodeURIComponent(ticker)}&includePrePost=true`,
+      ticker
+    }));
+  }
+  const [genericProbe, quoteProbe, chartProbe, stooqProbe, configuredMarketProbe = null] = await Promise.all(probes);
+  const dnsInspection = await inspectRuntimeNetworkForHosts([
+    'query1.finance.yahoo.com',
+    'query2.finance.yahoo.com',
+    'stooq.com'
   ]);
+  const diagnosticsProbes = [genericProbe, quoteProbe, chartProbe, stooqProbe, configuredMarketProbe].filter(Boolean);
+  const genericNetworkOk = genericProbe?.networkOk === true;
+  const providerNetworkFailures = [quoteProbe, chartProbe, stooqProbe].filter((probe) => probe && probe.networkOk === false);
+  const providerReachable = [quoteProbe, chartProbe, stooqProbe].some((probe) => probe && probe.networkOk === true);
+  let diagnosis = 'watchlist_fetch_path_misconfigured_or_provider_response_invalid';
+  if (!genericNetworkOk) {
+    diagnosis = 'general_outbound_network_broken';
+  } else if (!providerReachable && providerNetworkFailures.length >= 2) {
+    diagnosis = 'specific_providers_unreachable';
+  } else if (providerNetworkFailures.length) {
+    diagnosis = 'provider_partial_network_failure';
+  }
   res.json({
     ticker,
     diagnosticsVersion: WATCHLIST_DIAGNOSTICS_VERSION,
     ranAt: new Date().toISOString(),
-    probes: [quoteProbe, chartProbe, stooqProbe]
+    runtime: {
+      forceIpv4First: FORCE_IPV4_FIRST,
+      diagnosis
+    },
+    dnsInspection,
+    probes: diagnosticsProbes
   });
 }));
 

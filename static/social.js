@@ -930,6 +930,13 @@ function renderGroupWatchlistsSection(isLeader = false) {
 
     const tableWrap = document.createElement('div');
     tableWrap.className = 'social-watchlist-table-wrap';
+    const hasUnavailableRows = (posted.rows || []).some((item) => String(item?.dataStatus || '').toLowerCase() === 'unavailable');
+    if (hasUnavailableRows) {
+      const unavailable = document.createElement('div');
+      unavailable.className = 'watchlist-data-unavailable helper';
+      unavailable.textContent = 'Live market data temporarily unavailable.';
+      tableWrap.appendChild(unavailable);
+    }
     const table = document.createElement('table');
     table.className = 'social-watchlist-table';
     table.innerHTML = '<thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead>';

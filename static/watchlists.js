@@ -210,7 +210,12 @@ function formatWatchlistValue(value, kind = 'num') {
 
     const sorted = sortRows(state.marketRows);
     const refreshing = state.loadingMarketData ? '<span class="helper watchlist-refresh-indicator">Refreshing…</span>' : '';
+    const hasUnavailableRows = sorted.some((row) => String(row?.dataStatus || '').toLowerCase() === 'unavailable');
+    const unavailableBanner = hasUnavailableRows
+      ? '<div class="watchlist-data-unavailable helper">Live market data temporarily unavailable.</div>'
+      : '';
     wrap.innerHTML = `<div class="watchlist-table-meta helper">${state.lastUpdated ? `Updated ${new Date(state.lastUpdated).toLocaleTimeString()}` : ''} ${refreshing}</div>
+      ${unavailableBanner}
       <table class="social-watchlist-table"><thead><tr>${buildHeaderHtml()}<th class="col-actions"></th></tr></thead><tbody></tbody></table>
       <div class="watchlist-mobile-cards"></div>`;
     const body = wrap.querySelector('tbody');

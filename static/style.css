@@ -9063,6 +9063,14 @@ textarea {
 .watchlist-table-meta { padding: 6px 8px; display: flex; justify-content: space-between; gap: 8px; }
 .watchlist-manual-sort-btn.is-active { border-color: rgba(124,140,255,0.5); box-shadow: inset 0 0 0 1px rgba(124,140,255,0.3); }
 .watchlist-refresh-indicator { margin-left: 8px; }
+.watchlist-data-unavailable {
+  margin: 6px 10px 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 214, 102, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 214, 102, 0.08);
+  color: rgba(255, 236, 179, 0.95);
+}
 .watchlist-mobile-cards { display: none; }
 .watchlist-mobile-card { border-bottom: 1px solid rgba(255,255,255,0.06); padding: 8px; }
 .watchlist-mobile-card:last-child { border-bottom: 0; }
