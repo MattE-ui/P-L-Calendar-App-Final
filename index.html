@@ -446,29 +446,33 @@
     </div>
   </div>
   <div id="trim-trade-modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3 id="trim-trade-title">Trim trade</h3>
+    <div class="modal-card trim-trade-modal-card">
+      <div class="modal-header trim-trade-header">
+        <div class="trim-trade-header-copy">
+          <h3 id="trim-trade-title">Trim trade</h3>
+          <p id="trim-trade-open-position" class="modal-subtitle trim-trade-open-position">Open position: — units</p>
+        </div>
         <button id="close-trim-trade-btn" class="ghost close-btn" type="button">✕</button>
       </div>
-      <div class="modal-field">
-        <label>Trim input mode</label>
-        <div class="row">
-          <label><input id="trim-mode-quantity" type="radio" name="trim-mode" value="quantity" checked> Quantity</label>
-          <label><input id="trim-mode-percent" type="radio" name="trim-mode" value="percent"> Percent</label>
-        </div>
+
+      <div id="trim-trade-mode" class="trim-trade-mode-toggle" role="tablist" aria-label="Trim input mode">
+        <button id="trim-mode-percent" type="button" class="trim-mode-pill" data-mode="percent" role="tab" aria-selected="false">By %</button>
+        <button id="trim-mode-quantity" type="button" class="trim-mode-pill is-active" data-mode="quantity" role="tab" aria-selected="true">By units</button>
       </div>
-      <div class="modal-field two-col">
-        <div>
-          <label for="trim-trade-quantity">Trim quantity</label>
-          <input id="trim-trade-quantity" type="number" step="0.0001" min="0">
-        </div>
-        <div>
-          <label for="trim-trade-percent">Trim percent (%)</label>
-          <input id="trim-trade-percent" type="number" step="0.01" min="0" max="100">
-        </div>
+
+      <div class="modal-field trim-trade-primary-input" id="trim-trade-quantity-field">
+        <label for="trim-trade-quantity">Trim units</label>
+        <input id="trim-trade-quantity" type="number" step="0.0001" min="0" placeholder="0.0000">
+        <p id="trim-trade-derived-percent" class="trim-trade-derived-label">Derived trim: —%</p>
       </div>
-      <div class="modal-field two-col">
+
+      <div class="modal-field trim-trade-primary-input is-hidden" id="trim-trade-percent-field">
+        <label for="trim-trade-percent">Trim percent (%)</label>
+        <input id="trim-trade-percent" type="number" step="0.01" min="0" max="100" placeholder="0.00">
+        <p id="trim-trade-derived-quantity" class="trim-trade-derived-label">Derived trim: — units</p>
+      </div>
+
+      <div class="modal-field two-col trim-trade-execution-grid">
         <div>
           <label for="trim-trade-price">Fill price</label>
           <input id="trim-trade-price" type="number" step="0.0001" min="0">
@@ -478,15 +482,35 @@
           <input id="trim-trade-date" type="date">
         </div>
       </div>
-      <div class="modal-field">
+
+      <div class="modal-field trim-trade-notes-field">
         <label for="trim-trade-notes">Notes (optional)</label>
-        <input id="trim-trade-notes" type="text" maxlength="240">
+        <input id="trim-trade-notes" type="text" maxlength="240" placeholder="Execution context or rationale">
       </div>
-      <div id="trim-trade-preview" class="close-trade-preview"></div>
+
+      <div id="trim-trade-preview" class="trim-trade-summary" aria-live="polite">
+        <div class="trim-trade-summary-item">
+          <span>Current</span>
+          <strong id="trim-trade-preview-current">—</strong>
+        </div>
+        <div class="trim-trade-summary-item">
+          <span>Trim</span>
+          <strong id="trim-trade-preview-trim">—</strong>
+        </div>
+        <div class="trim-trade-summary-item">
+          <span>Remaining</span>
+          <strong id="trim-trade-preview-remaining">—</strong>
+        </div>
+        <div class="trim-trade-summary-item">
+          <span>Realized value</span>
+          <strong id="trim-trade-preview-value">—</strong>
+        </div>
+      </div>
+
       <div id="trim-trade-status" class="error" aria-live="polite"></div>
-      <div class="row">
-        <button id="save-trim-trade-btn" class="primary">Save trim</button>
+      <div class="row trim-trade-footer-actions">
         <button id="cancel-trim-trade-btn" class="ghost">Cancel</button>
+        <button id="save-trim-trade-btn" class="primary">Save trim</button>
       </div>
     </div>
   </div>
