@@ -13212,6 +13212,69 @@ function parseWatchlistQuote(rawQuote = {}, fallbackTicker = '') {
   };
 }
 
+function parseWatchlistQuoteFromFmp(rawQuote = {}, fallbackTicker = '') {
+  const currentPrice = parsePositiveNumber(rawQuote?.price);
+  const dayOpenPrice = parsePositiveNumber(rawQuote?.open);
+  const previousClosePrice = parsePositiveNumber(rawQuote?.previousClose);
+  const volume = toFiniteNumberOrNull(rawQuote?.volume, { allowZero: true });
+  return {
+    ticker: normalizeWatchlistTicker(rawQuote?.symbol || fallbackTicker),
+    currentPrice,
+    dayOpenPrice,
+    previousClosePrice,
+    volume,
+    currency: rawQuote?.currency || 'USD',
+    marketState: '',
+    quoteAt: new Date().toISOString()
+  };
+}
+
+function normalizeMarketDataBaseUrl(url = '') {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
+function isWatchlistFmpProviderEnabled() {
+  const provider = String(process.env.MARKET_DATA_PROVIDER || '').trim().toLowerCase();
+  const marketDataUrl = normalizeMarketDataBaseUrl(process.env.MARKET_DATA_URL || '');
+  return provider === 'fmp' || marketDataUrl.includes('financialmodelingprep.com/stable');
+}
+
+function buildFmpQuoteUrl(tickers = []) {
+  const marketDataUrl = normalizeMarketDataBaseUrl(process.env.MARKET_DATA_URL || '');
+  const apiKey = String(process.env.MARKET_DATA_API_KEY || '').trim();
+  if (!marketDataUrl || !apiKey) return null;
+  const normalizedTickers = [...new Set((Array.isArray(tickers) ? tickers : [])
+    .map((ticker) => normalizeWatchlistTicker(ticker))
+    .filter(Boolean))];
+  if (!normalizedTickers.length) return null;
+  const joined = normalizedTickers.join(',');
+  return `${marketDataUrl}/quote?symbol=${encodeURIComponent(joined)}&apikey=${encodeURIComponent(apiKey)}`;
+}
+
+async function fetchWatchlistQuoteBatchFromFmp(tickers = []) {
+  const url = buildFmpQuoteUrl(tickers);
+  if (!url) return null;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': 'application/json,text/plain,*/*'
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`fmp_quote_http_${res.status}`);
+  }
+  const data = await res.json();
+  const rows = Array.isArray(data) ? data : [];
+  const map = new Map();
+  rows.forEach((row) => {
+    const ticker = normalizeWatchlistTicker(row?.symbol);
+    if (!ticker) return;
+    const parsed = parseWatchlistQuoteFromFmp(row, ticker);
+    if (isWatchlistQuotePayloadUsable(parsed)) map.set(ticker, parsed);
+  });
+  return map;
+}
+
 async function fetchWatchlistQuoteBatchFromConfiguredMarketData(tickers = []) {
   const marketDataUrl = String(process.env.MARKET_DATA_URL || '').trim();
   if (!marketDataUrl) return null;
@@ -13646,6 +13709,18 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
   const requestNow = toRequest.filter((ticker) => !watchlistQuoteInFlight.has(ticker));
   if (requestNow.length) {
     const batchPromise = (async () => {
+      if (isWatchlistFmpProviderEnabled()) {
+        const fmpQuotes = await fetchWatchlistQuoteBatchFromFmp(requestNow);
+        if (fmpQuotes?.size) {
+          requestNow.forEach((ticker) => {
+            const payload = fmpQuotes.get(ticker);
+            if (payload && isWatchlistQuotePayloadUsable(payload)) {
+              watchlistQuoteCache.set(ticker, { at: Date.now(), payload });
+            }
+          });
+        }
+        return fmpQuotes || new Map();
+      }
       let configuredProviderQuotes = null;
       try {
         configuredProviderQuotes = await fetchWatchlistQuoteBatchFromConfiguredMarketData(requestNow);
@@ -15013,31 +15088,48 @@ app.get('/api/watchlists/provider-diagnostics/:ticker', auth, asyncHandler(async
   if (!ticker || !isValidWatchlistTicker(ticker)) {
     return res.status(400).json({ error: 'Invalid ticker format.' });
   }
-  const marketDataUrl = String(process.env.MARKET_DATA_URL || '').trim();
+  const marketDataUrl = normalizeMarketDataBaseUrl(process.env.MARKET_DATA_URL || '');
+  const fmpQuoteUrl = buildFmpQuoteUrl([ticker]);
   const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&includePrePost=true`;
   const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=1d&includePrePost=true`;
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(ticker.toLowerCase())}.us&i=d`;
   const genericProbeUrl = 'https://api.ipify.org?format=json';
   const probes = [
     probeWatchlistProviderEndpoint({ provider: 'generic-https-egress', url: genericProbeUrl, ticker }),
+    ...(fmpQuoteUrl ? [probeWatchlistProviderEndpoint({ provider: 'fmp-stable-quote', url: fmpQuoteUrl, ticker })] : []),
     probeWatchlistProviderEndpoint({ provider: 'yahoo-v7-quote', url: quoteUrl, ticker }),
     probeWatchlistProviderEndpoint({ provider: 'yahoo-v8-chart', url: chartUrl, ticker }),
     probeWatchlistProviderEndpoint({ provider: 'stooq-daily-history', url: stooqUrl, ticker })
   ];
-  if (marketDataUrl) {
+  if (marketDataUrl && !isWatchlistFmpProviderEnabled()) {
     probes.push(probeWatchlistProviderEndpoint({
       provider: 'configured-market-data-url',
       url: `${marketDataUrl}?symbols=${encodeURIComponent(ticker)}&includePrePost=true`,
       ticker
     }));
   }
-  const [genericProbe, quoteProbe, chartProbe, stooqProbe, configuredMarketProbe = null] = await Promise.all(probes);
+  const probeResults = await Promise.all(probes);
+  const [genericProbe, ...providerProbes] = probeResults;
+  const quoteProbe = providerProbes.find((probe) => probe?.provider === 'yahoo-v7-quote') || null;
+  const chartProbe = providerProbes.find((probe) => probe?.provider === 'yahoo-v8-chart') || null;
+  const stooqProbe = providerProbes.find((probe) => probe?.provider === 'stooq-daily-history') || null;
+  const configuredMarketProbe = providerProbes.find((probe) => probe?.provider === 'configured-market-data-url') || null;
+  const fmpProbe = providerProbes.find((probe) => probe?.provider === 'fmp-stable-quote') || null;
+  const fmpHost = (() => {
+    if (!marketDataUrl) return null;
+    try {
+      return new URL(marketDataUrl).hostname;
+    } catch (_error) {
+      return null;
+    }
+  })();
   const dnsInspection = await inspectRuntimeNetworkForHosts([
+    ...(fmpHost ? [fmpHost] : []),
     'query1.finance.yahoo.com',
     'query2.finance.yahoo.com',
     'stooq.com'
   ]);
-  const diagnosticsProbes = [genericProbe, quoteProbe, chartProbe, stooqProbe, configuredMarketProbe].filter(Boolean);
+  const diagnosticsProbes = [genericProbe, fmpProbe, quoteProbe, chartProbe, stooqProbe, configuredMarketProbe].filter(Boolean);
   const genericNetworkOk = genericProbe?.networkOk === true;
   const providerNetworkFailures = [quoteProbe, chartProbe, stooqProbe].filter((probe) => probe && probe.networkOk === false);
   const providerReachable = [quoteProbe, chartProbe, stooqProbe].some((probe) => probe && probe.networkOk === true);
@@ -20674,6 +20766,8 @@ module.exports = {
   composeWatchlistMetrics,
   isWatchlistQuotePayloadUsable,
   buildWatchlistQuoteFromChartResult,
+  parseWatchlistQuoteFromFmp,
+  buildFmpQuoteUrl,
   ensureInstrumentRegistry,
   upsertRegistryEntry,
   applyRegistryResolution,

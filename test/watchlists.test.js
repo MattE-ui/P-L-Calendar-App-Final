@@ -12,7 +12,9 @@ const {
   loadDB,
   composeWatchlistMetrics,
   isWatchlistQuotePayloadUsable,
-  buildWatchlistQuoteFromChartResult
+  buildWatchlistQuoteFromChartResult,
+  parseWatchlistQuoteFromFmp,
+  buildFmpQuoteUrl
 } = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
@@ -290,6 +292,32 @@ test('buildWatchlistQuoteFromChartResult derives quote fields from Yahoo chart p
   assert.equal(normalized.previousClosePrice, 18);
   assert.equal(normalized.volume, 12345);
   assert.equal(normalized.currency, 'USD');
+});
+
+test('parseWatchlistQuoteFromFmp maps stable quote fields into watchlist quote payload', () => {
+  const normalized = parseWatchlistQuoteFromFmp({
+    symbol: 'AAPL',
+    price: 212.12,
+    open: 210.5,
+    previousClose: 209.1,
+    volume: 1234567
+  });
+  assert.equal(normalized.ticker, 'AAPL');
+  assert.equal(normalized.currentPrice, 212.12);
+  assert.equal(normalized.dayOpenPrice, 210.5);
+  assert.equal(normalized.previousClosePrice, 209.1);
+  assert.equal(normalized.volume, 1234567);
+});
+
+test('buildFmpQuoteUrl builds stable quote batch endpoint with symbol list and API key', () => {
+  const prevUrl = process.env.MARKET_DATA_URL;
+  const prevKey = process.env.MARKET_DATA_API_KEY;
+  process.env.MARKET_DATA_URL = 'https://financialmodelingprep.com/stable/';
+  process.env.MARKET_DATA_API_KEY = 'test-key';
+  const url = buildFmpQuoteUrl(['aapl', ' msft ', 'AAPL']);
+  assert.equal(url, 'https://financialmodelingprep.com/stable/quote?symbol=AAPL%2CMSFT&apikey=test-key');
+  process.env.MARKET_DATA_URL = prevUrl;
+  process.env.MARKET_DATA_API_KEY = prevKey;
 });
 
 test('group watchlist copy supports new/append, dedupes symbols, and blocks non-members', async () => {
