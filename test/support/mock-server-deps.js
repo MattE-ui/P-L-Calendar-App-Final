@@ -11,12 +11,14 @@ Module._load = function load(request, parent, isMain) {
       use: () => {},
       get: () => {},
       post: () => {},
+      patch: () => {},
       delete: () => {},
       put: () => {},
       listen: () => ({ address: () => ({ port: 0 }), close: () => {} })
     });
     express.static = () => (req, res, next) => next && next();
     express.urlencoded = () => (req, res, next) => next && next();
+    express.raw = () => (req, res, next) => next && next();
     return express;
   }
   if (request === 'body-parser' && process.env.TEST_USE_REAL_EXPRESS !== '1') {

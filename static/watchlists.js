@@ -1,5 +1,5 @@
 (() => {
-  const state = { watchlists: [], selectedId: '', marketRows: [] };
+  const state = { watchlists: [], selectedId: '', marketRows: [], lastUpdated: '', loadingWatchlists: false, loadingMarketData: false };
 
   async function api(path, opts = {}) {
     const res = await fetch(path, { credentials: 'include', ...opts });
@@ -27,18 +27,25 @@
   }
 
   async function loadWatchlists(selectId = '') {
+    state.loadingWatchlists = true;
+    render();
     const payload = await api('/api/watchlists');
     state.watchlists = Array.isArray(payload.watchlists) ? payload.watchlists : [];
     if (selectId) state.selectedId = selectId;
     if (!state.selectedId) state.selectedId = state.watchlists[0]?.id || '';
     if (!state.watchlists.some((w) => w.id === state.selectedId)) state.selectedId = state.watchlists[0]?.id || '';
+    state.loadingWatchlists = false;
     render();
     if (state.selectedId) await loadMarketData(state.selectedId);
   }
 
   async function loadMarketData(watchlistId) {
+    state.loadingMarketData = true;
+    renderTable();
     const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data`);
     state.marketRows = Array.isArray(payload.rows) ? payload.rows : [];
+    state.lastUpdated = payload.lastUpdated || '';
+    state.loadingMarketData = false;
     renderTable();
   }
 
@@ -46,8 +53,11 @@
     const sidebar = el('watchlists-sidebar');
     if (sidebar) {
       sidebar.innerHTML = '';
+      if (state.loadingWatchlists) {
+        sidebar.innerHTML = '<div class="social-list-row">Loading watchlists…</div>';
+      }
       if (!state.watchlists.length) {
-        sidebar.innerHTML = '<div class="social-list-row">No watchlists yet.</div>';
+        sidebar.innerHTML = '<div class="social-empty-state"><p class="social-empty-state-title">No watchlists yet</p><p class="social-empty-state-detail">Create a personal watchlist to track symbols with live market context.</p></div>';
       }
       state.watchlists.forEach((w) => {
         const row = document.createElement('article');
@@ -68,18 +78,19 @@
     const selected = state.watchlists.find((w) => w.id === state.selectedId);
     if (!wrap) return;
     if (!selected) { wrap.innerHTML = '<div class="social-list-row">Select a watchlist.</div>'; return; }
-    if (!state.marketRows.length) { wrap.innerHTML = '<div class="social-list-row">No symbols yet. Add one above.</div>'; return; }
-    wrap.innerHTML = '<table class="social-watchlist-table"><thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th><th></th></tr></thead><tbody></tbody></table>';
+    if (state.loadingMarketData) { wrap.innerHTML = '<div class="social-list-row">Loading market data…</div>'; return; }
+    if (!state.marketRows.length) { wrap.innerHTML = '<div class="social-empty-state"><p class="social-empty-state-title">No symbols yet</p><p class="social-empty-state-detail">Add a ticker above to populate this table.</p></div>'; return; }
+    wrap.innerHTML = '<table class="social-watchlist-table"><thead><tr><th class="col-ticker">Ticker</th><th class="col-num">Current</th><th class="col-num">Open</th><th class="col-num">% Today</th><th class="col-num">ADR%</th><th class="col-num">$ Volume</th><th class="col-actions"></th></tr></thead><tbody></tbody></table>';
     const body = wrap.querySelector('tbody');
     state.marketRows.forEach((row) => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td><strong>${row.ticker || '—'}</strong>${row.name ? `<div class="helper">${row.name}</div>` : ''}</td>
+      tr.innerHTML = `<td class="col-ticker"><strong>${row.ticker || '—'}</strong>${row.name ? `<div class="helper watchlist-company-name">${row.name}</div>` : ''}</td>
         <td>${fmt(row.currentPrice, 'price')}</td>
         <td>${fmt(row.dayOpenPrice, 'price')}</td>
         <td class="${Number(row.percentChangeToday) > 0 ? 'is-pos' : (Number(row.percentChangeToday) < 0 ? 'is-neg' : '')}">${fmt(row.percentChangeToday, 'pct')}</td>
         <td>${fmt(row.adrPercent, 'pct')}</td>
         <td>${row.dollarVolumeDisplay || '—'}</td>
-        <td><button class="ghost" data-remove="${row.itemId}">Remove</button></td>`;
+        <td class="col-actions"><button class="ghost" data-remove="${row.itemId}">Remove</button></td>`;
       tr.querySelector('[data-remove]')?.addEventListener('click', async () => {
         try {
           await api(`/api/watchlists/${encodeURIComponent(state.selectedId)}/items/${encodeURIComponent(row.itemId)}`, { method: 'DELETE' });
@@ -138,7 +149,13 @@
   async function init() {
     el('watchlist-new-btn')?.addEventListener('click', () => onCreate().catch((e) => setFeedback('watchlist-page-feedback', e.message, 'error')));
     el('watchlist-rename-btn')?.addEventListener('click', () => onRename().catch((e) => setFeedback('watchlist-page-feedback', e.message, 'error')));
-    el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((e) => setFeedback('watchlist-page-feedback', e.message, 'error')));
+    el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((e) => {
+      if (e?.message?.includes('Remove it from each group first')) {
+        setFeedback('watchlist-page-feedback', `${e.message} Open Trading Groups → Watchlists to remove shared posts first.`, 'error');
+        return;
+      }
+      setFeedback('watchlist-page-feedback', e.message, 'error');
+    }));
     el('watchlist-add-ticker-btn')?.addEventListener('click', () => onAddTicker());
     el('watchlist-add-ticker-input')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); onAddTicker(); } });
     await loadWatchlists();

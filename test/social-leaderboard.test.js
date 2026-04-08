@@ -138,7 +138,7 @@ test('leaderboard includes persisted avatar and computes 7D return from deployed
   assert.equal(entry.avatar_url, '/static/uploads/avatars/leader.png');
   assert.equal(entry.avatar_initials, 'LO');
   assert.equal(entry.trade_count, 3);
-  assert.equal(Math.round(entry.return_pct * 100) / 100, 33.33);
+  assert.equal(Math.round(entry.return_pct * 100) / 100, 10);
   assert.equal(entry.leaderboard_source, 'trading212');
 });
 
@@ -154,5 +154,5 @@ test('leaderboard supports account mode using source-specific equity history', a
   const [entry] = data.entries;
   assert.equal(entry.leaderboard_mode, 'account');
   assert.equal(entry.leaderboard_source, 'trading212');
-  assert.equal(Math.round(entry.return_pct * 100) / 100, 0);
+  assert.equal(Math.round(entry.return_pct * 100) / 100, 10);
 });

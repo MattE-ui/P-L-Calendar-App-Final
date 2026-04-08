@@ -969,14 +969,15 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
   if (normalizedType === 'trade_group_watchlist_posted') {
     const groupWatchlist = db.tradeGroupWatchlists.find((item) => item.id === notification.group_watchlist_id);
     const sourceWatchlist = groupWatchlist ? db.watchlists.find((item) => item.id === groupWatchlist.source_watchlist_id) : null;
+    const watchlistTargetId = groupWatchlist?.id || notification.group_watchlist_id || '';
     return {
       eventType: 'trade_group_watchlist_posted',
       context: {
         groupId: resolvedGroup.id,
         groupName: resolvedGroup.name,
         watchlistName: sourceWatchlist?.name || 'Shared Watchlist',
-        groupWatchlistId: groupWatchlist?.id || notification.group_watchlist_id || '',
-        link: `/social/groups?group=${encodeURIComponent(resolvedGroup.id)}&tab=watchlists&watchlist=${encodeURIComponent(groupWatchlist?.id || notification.group_watchlist_id || '')}`,
+        groupWatchlistId: watchlistTargetId,
+        link: `/social/groups?group=${encodeURIComponent(resolvedGroup.id)}&tab=watchlists${watchlistTargetId ? `&watchlist=${encodeURIComponent(watchlistTargetId)}` : ''}`,
         tag: `trade-group-watchlist:${resolvedGroup.id}:${groupWatchlist?.id || notification.id}`
       }
     };
@@ -13082,6 +13083,7 @@ const groupWatchlistCreateSchema = z.object({
 
 const WATCHLIST_MARKET_CACHE_TTL_MS = Number(process.env.WATCHLIST_MARKET_CACHE_TTL_MS) || 20 * 1000;
 const watchlistMarketDataCache = new Map();
+const watchlistMarketDataInFlight = new Map();
 
 function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -13094,9 +13096,21 @@ function isValidWatchlistTicker(raw) {
 async function resolveWatchlistTickerMetadata(rawTicker) {
   const ticker = normalizeWatchlistTicker(rawTicker);
   if (!ticker || !isValidWatchlistTicker(ticker)) return null;
-  const candidates = await runYahooSearchLookup(ticker);
+  let candidates = [];
+  try {
+    candidates = await runYahooSearchLookup(ticker);
+  } catch (_error) {
+    candidates = [];
+  }
   const exact = candidates.find((item) => String(item.symbol || '').toUpperCase() === ticker);
-  if (!exact) return null;
+  if (!exact) {
+    return {
+      ticker,
+      canonicalTicker: ticker,
+      displayTicker: ticker,
+      displayName: ''
+    };
+  }
   return {
     ticker,
     canonicalTicker: String(exact.symbol || '').toUpperCase(),
@@ -13147,63 +13161,76 @@ async function fetchWatchlistTickerMetrics(ticker) {
   const now = Date.now();
   if (cached && now - cached.at < WATCHLIST_MARKET_CACHE_TTL_MS) return cached.payload;
 
-  const snapshot = await fetchMarketQuoteSnapshot(normalized);
-  const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?range=2mo&interval=1d&includePrePost=false`;
-  const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
-  if (!res.ok) throw new Error('Historical chart unavailable');
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  const quote = result?.indicators?.quote?.[0] || {};
-  const highs = Array.isArray(quote.high) ? quote.high : [];
-  const lows = Array.isArray(quote.low) ? quote.low : [];
-  const opens = Array.isArray(quote.open) ? quote.open : [];
-  const volumes = Array.isArray(quote.volume) ? quote.volume : [];
-  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const inFlight = watchlistMarketDataInFlight.get(normalized);
+  if (inFlight) return inFlight;
+  const requestPromise = (async () => {
+    const snapshot = await fetchMarketQuoteSnapshot(normalized);
+    const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?range=2mo&interval=1d&includePrePost=false`;
+    const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
+    if (!res.ok) throw new Error('Historical chart unavailable');
+    const data = await res.json();
+    const result = data?.chart?.result?.[0];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const highs = Array.isArray(quote.high) ? quote.high : [];
+    const lows = Array.isArray(quote.low) ? quote.low : [];
+    const opens = Array.isArray(quote.open) ? quote.open : [];
+    const volumes = Array.isArray(quote.volume) ? quote.volume : [];
+    const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
 
-  let latestIndex = opens.length - 1;
-  while (latestIndex >= 0 && !Number.isFinite(Number(opens[latestIndex]))) latestIndex -= 1;
-  const open = latestIndex >= 0 ? Number(opens[latestIndex]) : null;
-  const volume = latestIndex >= 0 ? Number(volumes[latestIndex]) : null;
+    let latestIndex = opens.length - 1;
+    while (latestIndex >= 0 && !Number.isFinite(Number(opens[latestIndex]))) latestIndex -= 1;
+    const open = latestIndex >= 0 ? Number(opens[latestIndex]) : null;
+    const volume = latestIndex >= 0 ? Number(volumes[latestIndex]) : null;
 
-  // ADR% formula: average over lookback sessions of ((dailyHigh - dailyLow) / dailyLow) * 100.
-  const adrSeries = [];
-  for (let i = 0; i < highs.length; i += 1) {
-    const hi = Number(highs[i]);
-    const lo = Number(lows[i]);
-    if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
-    adrSeries.push(((hi - lo) / lo) * 100);
+    // ADR% formula:
+    // - For each session in a 2-month chart: ((high - low) / low) * 100
+    // - Lookback: most recent 20 valid sessions
+    // - Minimum data requirement: 5 valid sessions
+    const adrSeries = [];
+    for (let i = 0; i < highs.length; i += 1) {
+      const hi = Number(highs[i]);
+      const lo = Number(lows[i]);
+      if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
+      adrSeries.push(((hi - lo) / lo) * 100);
+    }
+    const adrLookback = adrSeries.slice(-20);
+    const adrPercent = adrLookback.length >= 5
+      ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
+      : null;
+
+    const currentPrice = Number(snapshot?.selectedPrice);
+    const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
+    const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(dayOpenPrice) && dayOpenPrice > 0
+      ? ((currentPrice - dayOpenPrice) / dayOpenPrice) * 100
+      : null;
+    const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
+      ? volume * currentPrice
+      : null;
+
+    const payload = {
+      ticker: normalized,
+      currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+      dayOpenPrice,
+      percentChangeToday,
+      adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
+      dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
+      dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
+      currency: snapshot?.currency || 'USD',
+      marketState: snapshot?.marketState || '',
+      lastUpdated: new Date().toISOString(),
+      dataStatus: 'ok',
+      asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
+    };
+
+    watchlistMarketDataCache.set(normalized, { at: Date.now(), payload });
+    return payload;
+  })();
+  watchlistMarketDataInFlight.set(normalized, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    watchlistMarketDataInFlight.delete(normalized);
   }
-  const adrLookback = adrSeries.slice(-20);
-  const adrPercent = adrLookback.length >= 5
-    ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
-    : null;
-
-  const currentPrice = Number(snapshot?.selectedPrice);
-  const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
-  const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(dayOpenPrice) && dayOpenPrice > 0
-    ? ((currentPrice - dayOpenPrice) / dayOpenPrice) * 100
-    : null;
-  const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
-    ? volume * currentPrice
-    : null;
-
-  const payload = {
-    ticker: normalized,
-    currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
-    dayOpenPrice,
-    percentChangeToday,
-    adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
-    dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
-    dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
-    currency: snapshot?.currency || 'USD',
-    marketState: snapshot?.marketState || '',
-    lastUpdated: new Date().toISOString(),
-    dataStatus: 'ok',
-    asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
-  };
-
-  watchlistMarketDataCache.set(normalized, { at: now, payload });
-  return payload;
 }
 
 async function buildWatchlistMarketDataRows(db, watchlist) {
@@ -13238,7 +13265,11 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
   return rows;
 }
 
-const zRecord = typeof z.record === 'function' ? z.record.bind(z) : (() => z.any());
+const zRecord = (valueSchema) => {
+  if (typeof z.record === 'function') return z.record(valueSchema);
+  if (typeof z.object === 'function') return z.object({});
+  return valueSchema;
+};
 
 const notificationDeviceRegisterSchema = z.object({
   deviceId: z.string().min(8).max(128),
@@ -14049,18 +14080,17 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
 
       if (normalizedType === 'trade_group_watchlist_posted') {
         const posted = db.tradeGroupWatchlists.find((item) => item.id === notification.group_watchlist_id);
-        if (!posted || posted.group_id !== group.id) return null;
-        const source = db.watchlists.find((item) => item.id === posted.source_watchlist_id);
-        if (!source) return null;
-        const actorIdentity = socialIdentityForUser(db, posted.posted_by_user_id);
+        const source = posted ? db.watchlists.find((item) => item.id === posted.source_watchlist_id) : null;
+        const actorIdentity = socialIdentityForUser(db, posted?.posted_by_user_id || group.leader_user_id);
         return {
           notification_id: notification.id,
           type: 'trade_group_watchlist_posted',
-          group_watchlist_id: posted.id,
+          group_watchlist_id: posted?.id || notification.group_watchlist_id || '',
           group_id: group.id,
           group_name: group.name,
-          watchlist_name: source.name,
-          created_at: posted.created_at,
+          watchlist_name: source?.name || 'Shared Watchlist',
+          created_at: posted?.created_at || notification.created_at,
+          unavailable: !posted || !source,
           leader_nickname: actorIdentity.nickname || 'Unknown trader',
           leader_avatar_url: actorIdentity.avatar_url,
           leader_avatar_initials: actorIdentity.avatar_initials
@@ -14170,9 +14200,21 @@ app.delete('/api/watchlists/:watchlistId', auth, (req, res) => {
   ensureSocialTables(db);
   const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
   if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const linkedPosts = db.tradeGroupWatchlists.filter((item) => item.source_watchlist_id === watchlist.id);
+  if (linkedPosts.length) {
+    const linkedGroups = linkedPosts
+      .map((item) => db.tradeGroups.find((group) => group.id === item.group_id && group.is_active !== false))
+      .filter(Boolean)
+      .map((group) => ({ id: group.id, name: group.name || 'Trading group' }));
+    return res.status(409).json({
+      error: 'This watchlist is shared in one or more trading groups. Remove it from each group first.',
+      code: 'watchlist_posted_to_group',
+      linkedGroupCount: linkedPosts.length,
+      linkedGroups
+    });
+  }
   db.watchlists = db.watchlists.filter((item) => item.id !== watchlist.id);
   db.watchlistItems = db.watchlistItems.filter((item) => item.watchlist_id !== watchlist.id);
-  db.tradeGroupWatchlists = db.tradeGroupWatchlists.filter((item) => item.source_watchlist_id !== watchlist.id);
   watchlist.updated_at = new Date().toISOString();
   saveDB(db);
   res.json({ ok: true });
@@ -14234,7 +14276,12 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
   const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
   if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
   const rows = await buildWatchlistMarketDataRows(db, watchlist);
-  res.json({ watchlistId: watchlist.id, lastUpdated: new Date().toISOString(), rows });
+  const lastUpdated = rows.reduce((latest, row) => {
+    const iso = typeof row?.lastUpdated === 'string' ? row.lastUpdated : null;
+    if (!iso) return latest;
+    return !latest || iso > latest ? iso : latest;
+  }, null) || new Date().toISOString();
+  res.json({ watchlistId: watchlist.id, lastUpdated, rows });
 }));
 
 app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req, res) => {

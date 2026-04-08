@@ -820,13 +820,17 @@ function renderGroupWatchlistsSection(isLeader = false) {
   rows.forEach((posted) => {
     const card = document.createElement('article');
     card.className = 'social-list-row social-list-row--request social-watchlist-card';
+    card.dataset.watchlistId = posted.id;
+    if (socialState.activeGroupWatchlistId && posted.id === socialState.activeGroupWatchlistId) {
+      card.classList.add('is-selected');
+    }
     const head = document.createElement('div');
     head.className = 'social-watchlist-head';
     head.innerHTML = `<strong>${posted.name || 'Watchlist'}</strong><span class="helper">Posted by ${posted.postedByName || 'Leader'} • ${posted.createdAt ? new Date(posted.createdAt).toLocaleString() : 'Recently'}</span>`;
     card.appendChild(head);
 
     if (isLeader) {
-      const removeBtn = createActionButton('Remove', 'danger outline');
+      const removeBtn = createActionButton('Remove shared', 'danger outline');
       removeBtn.addEventListener('click', async () => {
         try {
           await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists/${encodeURIComponent(posted.id)}`, { method: 'DELETE' });
@@ -863,6 +867,15 @@ function renderGroupWatchlistsSection(isLeader = false) {
     card.appendChild(tableWrap);
     listEl?.appendChild(card);
   });
+
+  if (socialState.activeGroupWatchlistId) {
+    const active = listEl?.querySelector(`[data-watchlist-id="${CSS.escape(socialState.activeGroupWatchlistId)}"]`);
+    if (active) {
+      active.scrollIntoView({ block: 'nearest' });
+    } else {
+      socialState.activeGroupWatchlistId = '';
+    }
+  }
 }
 
 
