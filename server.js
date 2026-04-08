@@ -13095,6 +13095,7 @@ const watchlistQuoteCache = new Map();
 const watchlistQuoteInFlight = new Map();
 const watchlistHistoryCache = new Map();
 const watchlistHistoryInFlight = new Map();
+const WATCHLIST_QUOTE_DEBUG = process.env.WATCHLIST_QUOTE_DEBUG === '1';
 
 function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -13192,6 +13193,22 @@ function parseWatchlistQuote(rawQuote = {}, fallbackTicker = '') {
   };
 }
 
+function toFiniteNumberOrNull(value, { allowZero = true } = {}) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (!allowZero && parsed <= 0) return null;
+  return parsed;
+}
+
+function isWatchlistQuotePayloadUsable(quote = null) {
+  if (!quote || typeof quote !== 'object') return false;
+  const currentPrice = toFiniteNumberOrNull(quote.currentPrice, { allowZero: false });
+  const dayOpenPrice = toFiniteNumberOrNull(quote.dayOpenPrice, { allowZero: false });
+  const previousClosePrice = toFiniteNumberOrNull(quote.previousClosePrice, { allowZero: false });
+  return Number.isFinite(currentPrice) || Number.isFinite(dayOpenPrice) || Number.isFinite(previousClosePrice);
+}
+
 function normalizeWatchlistHistoryResult(result = {}) {
   const quote = result?.indicators?.quote?.[0] || {};
   const highs = Array.isArray(quote.high) ? quote.high : [];
@@ -13217,14 +13234,14 @@ function normalizeWatchlistHistoryResult(result = {}) {
 }
 
 function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
-  const currentPrice = Number(quoteData?.currentPrice);
-  const dayOpenPrice = Number(quoteData?.dayOpenPrice);
-  const previousClosePrice = Number(quoteData?.previousClosePrice);
-  const volume = Number(quoteData?.volume);
+  const currentPrice = toFiniteNumberOrNull(quoteData?.currentPrice, { allowZero: false });
+  const dayOpenPrice = toFiniteNumberOrNull(quoteData?.dayOpenPrice, { allowZero: false });
+  const previousClosePrice = toFiniteNumberOrNull(quoteData?.previousClosePrice, { allowZero: false });
+  const volume = toFiniteNumberOrNull(quoteData?.volume, { allowZero: true });
   const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(previousClosePrice) && previousClosePrice > 0
     ? ((currentPrice - previousClosePrice) / previousClosePrice) * 100
     : null;
-  const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
+  const dollarVolumeRaw = Number.isFinite(volume) && volume >= 0 && Number.isFinite(currentPrice)
     ? volume * currentPrice
     : null;
   const latestAt = [quoteData?.quoteAt, historyData?.historyAt]
@@ -13232,11 +13249,20 @@ function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
     .sort()
     .slice(-1)[0] || new Date().toISOString();
   const isUnavailable = !quoteData && !historyData;
+  if (WATCHLIST_QUOTE_DEBUG) {
+    console.info('[WATCHLIST_QUOTE_DEBUG] composeWatchlistMetrics inputs', {
+      ticker: normalizeWatchlistTicker(ticker),
+      currentPrice,
+      dayOpenPrice,
+      previousClosePrice,
+      volume
+    });
+  }
   return {
     ticker: normalizeWatchlistTicker(ticker),
-    currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
-    dayOpenPrice: Number.isFinite(dayOpenPrice) && dayOpenPrice > 0 ? dayOpenPrice : null,
-    previousClosePrice: Number.isFinite(previousClosePrice) && previousClosePrice > 0 ? previousClosePrice : null,
+    currentPrice,
+    dayOpenPrice,
+    previousClosePrice,
     percentChangeToday,
     adrPercent: Number.isFinite(Number(historyData?.adrPercent)) ? Number(historyData.adrPercent) : null,
     dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
@@ -13287,9 +13313,26 @@ async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {
       const data = await res.json();
       const rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
       const indexed = new Map(rows.map((row) => [normalizeWatchlistTicker(row?.symbol), parseWatchlistQuote(row, row?.symbol)]));
+      let loggedSample = false;
       requestNow.forEach((ticker) => {
         const parsed = indexed.get(ticker) || null;
-        if (parsed) watchlistQuoteCache.set(ticker, { at: Date.now(), payload: parsed });
+        if (isWatchlistQuotePayloadUsable(parsed)) {
+          watchlistQuoteCache.set(ticker, { at: Date.now(), payload: parsed });
+          if (WATCHLIST_QUOTE_DEBUG && !loggedSample) {
+            console.info('[WATCHLIST_QUOTE_DEBUG] sample normalized quote', { ticker, parsed });
+            loggedSample = true;
+          }
+          return;
+        }
+        if (WATCHLIST_QUOTE_DEBUG) {
+          const rawRow = rows.find((row) => normalizeWatchlistTicker(row?.symbol) === ticker) || null;
+          console.warn('[WATCHLIST_QUOTE_DEBUG] unusable normalized quote payload', {
+            ticker,
+            normalized: parsed,
+            rawShape: rawRow ? Object.keys(rawRow) : [],
+            hasQuoteResponseResult: Array.isArray(data?.quoteResponse?.result)
+          });
+        }
       });
       return indexed;
     })();
@@ -14421,6 +14464,18 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
     if (!iso) return latest;
     return !latest || iso > latest ? iso : latest;
   }, null) || new Date().toISOString();
+  if (WATCHLIST_QUOTE_DEBUG) {
+    console.info('[WATCHLIST_QUOTE_DEBUG] market-data response sample', {
+      watchlistId: watchlist.id,
+      rows: rows.slice(0, 3).map((row) => ({
+        ticker: row.ticker,
+        currentPrice: row.currentPrice,
+        dayOpenPrice: row.dayOpenPrice,
+        previousClosePrice: row.previousClosePrice,
+        dollarVolume: row.dollarVolume
+      }))
+    });
+  }
   res.json({ watchlistId: watchlist.id, lastUpdated, rows });
 }));
 
@@ -20034,6 +20089,7 @@ module.exports = {
   calculateWeeklyRecap,
   getLastCompletedWeekRange,
   composeWatchlistMetrics,
+  isWatchlistQuotePayloadUsable,
   ensureInstrumentRegistry,
   upsertRegistryEntry,
   applyRegistryResolution,
