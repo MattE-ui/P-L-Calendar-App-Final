@@ -77,6 +77,7 @@ const socialState = {
   selectedTradeGroupRole: '',
   selectedTradeGroupWatchlists: [],
   myWatchlists: [],
+  copyingGroupWatchlist: null,
   activeGroupWatchlistId: '',
   unreadTradeGroupNotifications: [],
   pendingTradeGroupInvites: [],
@@ -781,6 +782,83 @@ function formatWatchlistValue(value, kind = 'number') {
   return num.toFixed(2);
 }
 
+function openWatchlistCopyModal(posted = {}) {
+  const modal = getEl('social-watchlist-copy-modal');
+  if (!modal) return;
+  socialState.copyingGroupWatchlist = posted;
+  const mode = getEl('social-watchlist-copy-mode');
+  const nameInput = getEl('social-watchlist-copy-name');
+  const targetSelect = getEl('social-watchlist-copy-target');
+  const sourceName = String(posted?.name || 'Shared Watchlist').trim();
+  if (mode) mode.value = 'new';
+  if (nameInput) nameInput.value = sourceName.slice(0, 64);
+  if (targetSelect) {
+    targetSelect.innerHTML = '';
+    const mine = Array.isArray(socialState.myWatchlists) ? socialState.myWatchlists : [];
+    mine.forEach((watchlist) => {
+      const option = document.createElement('option');
+      option.value = watchlist.id;
+      option.textContent = `${watchlist.name} (${watchlist.tickerCount || 0})`;
+      targetSelect.appendChild(option);
+    });
+    targetSelect.disabled = !mine.length;
+  }
+  setFeedback(getEl('social-watchlist-copy-feedback'), '', 'muted');
+  updateWatchlistCopyModalMode();
+  modal.classList.remove('hidden');
+}
+
+function closeWatchlistCopyModal() {
+  const modal = getEl('social-watchlist-copy-modal');
+  modal?.classList.add('hidden');
+  socialState.copyingGroupWatchlist = null;
+}
+
+function updateWatchlistCopyModalMode() {
+  const mode = getEl('social-watchlist-copy-mode')?.value || 'new';
+  const newWrap = getEl('social-watchlist-copy-new-wrap');
+  const existingWrap = getEl('social-watchlist-copy-existing-wrap');
+  const existingSelect = getEl('social-watchlist-copy-target');
+  const isAppend = mode === 'append';
+  newWrap?.classList.toggle('hidden', isAppend);
+  existingWrap?.classList.toggle('hidden', !isAppend);
+  if (existingSelect) existingSelect.disabled = !isAppend || !existingSelect.options.length;
+}
+
+async function submitWatchlistCopy() {
+  const posted = socialState.copyingGroupWatchlist;
+  if (!posted?.id || !socialState.selectedTradeGroupId) return;
+  const mode = getEl('social-watchlist-copy-mode')?.value === 'append' ? 'append' : 'new';
+  const feedback = getEl('social-watchlist-copy-feedback');
+  const payload = { mode };
+  if (mode === 'new') {
+    payload.name = String(getEl('social-watchlist-copy-name')?.value || '').trim() || `${posted.name || 'Shared Watchlist'} copy`;
+  } else {
+    payload.targetWatchlistId = String(getEl('social-watchlist-copy-target')?.value || '').trim();
+    if (!payload.targetWatchlistId) {
+      setFeedback(feedback, 'Select a destination watchlist.', 'error');
+      return;
+    }
+  }
+  try {
+    setFeedback(feedback, 'Copying…');
+    const response = await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists/${encodeURIComponent(posted.id)}/copy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const added = Number(response?.addedCount || 0);
+    const skipped = Number(response?.skippedDuplicates || 0);
+    setFeedback(getEl('social-group-watchlist-feedback'), `Watchlist copied (${added} added${skipped ? `, ${skipped} skipped duplicates` : ''}).`, 'success');
+    closeWatchlistCopyModal();
+    const mine = await socialApi('/api/watchlists');
+    socialState.myWatchlists = Array.isArray(mine?.watchlists) ? mine.watchlists : [];
+    renderGroupWatchlistsSection(socialState.selectedTradeGroupRole === 'leader');
+  } catch (error) {
+    setFeedback(feedback, error?.message || 'Unable to copy watchlist.', 'error');
+  }
+}
+
 function renderGroupWatchlistsSection(isLeader = false) {
   const listEl = getEl('social-group-watchlists-list');
   const postSelect = getEl('social-group-post-watchlist-select');
@@ -829,6 +907,12 @@ function renderGroupWatchlistsSection(isLeader = false) {
     head.innerHTML = `<strong>${posted.name || 'Watchlist'}</strong><span class="helper">Posted by ${posted.postedByName || 'Leader'} • ${posted.createdAt ? new Date(posted.createdAt).toLocaleString() : 'Recently'}</span>`;
     card.appendChild(head);
 
+    const rowActions = document.createElement('div');
+    rowActions.className = 'social-row-actions';
+    const copyBtn = createActionButton('Copy to My Watchlists', 'ghost');
+    copyBtn.addEventListener('click', () => openWatchlistCopyModal(posted));
+    rowActions.appendChild(copyBtn);
+
     if (isLeader) {
       const removeBtn = createActionButton('Remove shared', 'danger outline');
       removeBtn.addEventListener('click', async () => {
@@ -840,9 +924,9 @@ function renderGroupWatchlistsSection(isLeader = false) {
           setFeedback(feedback, error?.message || 'Unable to remove watchlist.', 'error');
         }
       });
-      const wrap = document.createElement('div'); wrap.className = 'social-row-actions'; wrap.appendChild(removeBtn);
-      card.appendChild(wrap);
+      rowActions.appendChild(removeBtn);
     }
+    card.appendChild(rowActions);
 
     const tableWrap = document.createElement('div');
     tableWrap.className = 'social-watchlist-table-wrap';
@@ -864,6 +948,23 @@ function renderGroupWatchlistsSection(isLeader = false) {
     });
     table.appendChild(body);
     tableWrap.appendChild(table);
+    const mobileWrap = document.createElement('div');
+    mobileWrap.className = 'watchlist-mobile-cards';
+    (posted.rows || []).forEach((item) => {
+      const todayClass = Number(item.percentChangeToday) > 0 ? 'is-pos' : (Number(item.percentChangeToday) < 0 ? 'is-neg' : '');
+      const cardItem = document.createElement('article');
+      cardItem.className = 'watchlist-mobile-card';
+      cardItem.innerHTML = `<div class="watchlist-mobile-card-top"><strong>${item.ticker || '—'}</strong><span class="${todayClass}">${formatWatchlistValue(item.percentChangeToday, 'percent')}</span></div>
+        ${item.name ? `<div class="helper watchlist-company-name">${item.name}</div>` : ''}
+        <div class="watchlist-mobile-grid">
+          <span>Current</span><strong>${formatWatchlistValue(item.currentPrice, 'price')}</strong>
+          <span>Open</span><strong>${formatWatchlistValue(item.dayOpenPrice, 'price')}</strong>
+          <span>ADR%</span><strong>${formatWatchlistValue(item.adrPercent, 'percent')}</strong>
+          <span>$ Volume</span><strong>${item.dollarVolumeDisplay || formatWatchlistValue(item.dollarVolume, 'volume')}</strong>
+        </div>`;
+      mobileWrap.appendChild(cardItem);
+    });
+    tableWrap.appendChild(mobileWrap);
     card.appendChild(tableWrap);
     listEl?.appendChild(card);
   });
@@ -2153,6 +2254,12 @@ function bindActions() {
   getEl('social-group-add-member-form')?.addEventListener('submit', addTradeGroupMember);
   getEl('social-group-announcement-form')?.addEventListener('submit', postGroupAnnouncement);
   getEl('social-group-delete-btn')?.addEventListener('click', deleteSelectedGroup);
+  getEl('social-watchlist-copy-close')?.addEventListener('click', closeWatchlistCopyModal);
+  getEl('social-watchlist-copy-submit')?.addEventListener('click', submitWatchlistCopy);
+  getEl('social-watchlist-copy-mode')?.addEventListener('change', updateWatchlistCopyModalMode);
+  getEl('social-watchlist-copy-modal')?.addEventListener('click', (event) => {
+    if (event.target === getEl('social-watchlist-copy-modal')) closeWatchlistCopyModal();
+  });
   getEl('social-overview-feed-filter')?.addEventListener('click', (event) => {
     const btn = event.target instanceof Element ? event.target.closest('.social-feed-filter-btn') : null;
     const nextFilter = btn?.dataset?.feedFilter;
@@ -2164,6 +2271,9 @@ function bindActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeWatchlistCopyModal();
+  });
 
   Promise.allSettled([
     loadSocialData(),

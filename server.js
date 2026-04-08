@@ -13080,10 +13080,21 @@ const groupWatchlistCreateSchema = z.object({
   customTitle: z.string().max(120).optional()
 });
 
+const groupWatchlistCopySchema = z.object({
+  mode: z.enum(['new', 'append']).default('new'),
+  targetWatchlistId: z.string().min(1).optional(),
+  name: z.string().min(1).max(64).optional()
+});
+
 
 const WATCHLIST_MARKET_CACHE_TTL_MS = Number(process.env.WATCHLIST_MARKET_CACHE_TTL_MS) || 20 * 1000;
-const watchlistMarketDataCache = new Map();
-const watchlistMarketDataInFlight = new Map();
+const WATCHLIST_MARKET_STALE_TTL_MS = Number(process.env.WATCHLIST_MARKET_STALE_TTL_MS) || 5 * 60 * 1000;
+const WATCHLIST_HISTORY_CACHE_TTL_MS = Number(process.env.WATCHLIST_HISTORY_CACHE_TTL_MS) || 10 * 60 * 1000;
+const WATCHLIST_HISTORY_STALE_TTL_MS = Number(process.env.WATCHLIST_HISTORY_STALE_TTL_MS) || 2 * 60 * 60 * 1000;
+const watchlistQuoteCache = new Map();
+const watchlistQuoteInFlight = new Map();
+const watchlistHistoryCache = new Map();
+const watchlistHistoryInFlight = new Map();
 
 function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -13157,91 +13168,218 @@ function formatAbbrevNumber(value) {
 
 async function fetchWatchlistTickerMetrics(ticker) {
   const normalized = normalizeWatchlistTicker(ticker);
-  const cached = watchlistMarketDataCache.get(normalized);
-  const now = Date.now();
-  if (cached && now - cached.at < WATCHLIST_MARKET_CACHE_TTL_MS) return cached.payload;
+  const quoteMap = await fetchWatchlistQuoteBatch([normalized]);
+  const historyMap = await fetchWatchlistHistoryBatch([normalized], { preferStale: true });
+  const quoteData = quoteMap.get(normalized) || null;
+  const historyData = historyMap.get(normalized) || null;
+  return composeWatchlistMetrics(normalized, quoteData, historyData);
+}
 
-  const inFlight = watchlistMarketDataInFlight.get(normalized);
-  if (inFlight) return inFlight;
-  const requestPromise = (async () => {
-    const snapshot = await fetchMarketQuoteSnapshot(normalized);
-    const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?range=2mo&interval=1d&includePrePost=false`;
-    const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
-    if (!res.ok) throw new Error('Historical chart unavailable');
-    const data = await res.json();
-    const result = data?.chart?.result?.[0];
-    const quote = result?.indicators?.quote?.[0] || {};
-    const highs = Array.isArray(quote.high) ? quote.high : [];
-    const lows = Array.isArray(quote.low) ? quote.low : [];
-    const opens = Array.isArray(quote.open) ? quote.open : [];
-    const volumes = Array.isArray(quote.volume) ? quote.volume : [];
-    const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+function parseWatchlistQuote(rawQuote = {}, fallbackTicker = '') {
+  const currentPrice = parsePositiveNumber(rawQuote?.regularMarketPrice, rawQuote?.marketPrice, rawQuote?.price, rawQuote?.postMarketPrice, rawQuote?.preMarketPrice);
+  const dayOpenPrice = parsePositiveNumber(rawQuote?.regularMarketOpen, rawQuote?.open);
+  const previousClosePrice = parsePositiveNumber(rawQuote?.regularMarketPreviousClose, rawQuote?.previousClose, rawQuote?.close);
+  const volume = Number(rawQuote?.regularMarketVolume);
+  return {
+    ticker: normalizeWatchlistTicker(rawQuote?.symbol || fallbackTicker),
+    currentPrice,
+    dayOpenPrice,
+    previousClosePrice,
+    volume: Number.isFinite(volume) && volume >= 0 ? volume : null,
+    currency: rawQuote?.currency || 'USD',
+    marketState: String(rawQuote?.marketState || '').trim().toLowerCase(),
+    quoteAt: new Date().toISOString()
+  };
+}
 
-    let latestIndex = opens.length - 1;
-    while (latestIndex >= 0 && !Number.isFinite(Number(opens[latestIndex]))) latestIndex -= 1;
-    const open = latestIndex >= 0 ? Number(opens[latestIndex]) : null;
-    const volume = latestIndex >= 0 ? Number(volumes[latestIndex]) : null;
-
-    // ADR% formula:
-    // - For each session in a 2-month chart: ((high - low) / low) * 100
-    // - Lookback: most recent 20 valid sessions
-    // - Minimum data requirement: 5 valid sessions
-    const adrSeries = [];
-    for (let i = 0; i < highs.length; i += 1) {
-      const hi = Number(highs[i]);
-      const lo = Number(lows[i]);
-      if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
-      adrSeries.push(((hi - lo) / lo) * 100);
-    }
-    const adrLookback = adrSeries.slice(-20);
-    const adrPercent = adrLookback.length >= 5
-      ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
-      : null;
-
-    const currentPrice = Number(snapshot?.selectedPrice);
-    const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
-    const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(dayOpenPrice) && dayOpenPrice > 0
-      ? ((currentPrice - dayOpenPrice) / dayOpenPrice) * 100
-      : null;
-    const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
-      ? volume * currentPrice
-      : null;
-
-    const payload = {
-      ticker: normalized,
-      currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
-      dayOpenPrice,
-      percentChangeToday,
-      adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
-      dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
-      dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
-      currency: snapshot?.currency || 'USD',
-      marketState: snapshot?.marketState || '',
-      lastUpdated: new Date().toISOString(),
-      dataStatus: 'ok',
-      asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
-    };
-
-    watchlistMarketDataCache.set(normalized, { at: Date.now(), payload });
-    return payload;
-  })();
-  watchlistMarketDataInFlight.set(normalized, requestPromise);
-  try {
-    return await requestPromise;
-  } finally {
-    watchlistMarketDataInFlight.delete(normalized);
+function normalizeWatchlistHistoryResult(result = {}) {
+  const quote = result?.indicators?.quote?.[0] || {};
+  const highs = Array.isArray(quote.high) ? quote.high : [];
+  const lows = Array.isArray(quote.low) ? quote.low : [];
+  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const adrSeries = [];
+  for (let i = 0; i < highs.length; i += 1) {
+    const hi = Number(highs[i]);
+    const lo = Number(lows[i]);
+    if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
+    adrSeries.push(((hi - lo) / lo) * 100);
   }
+  const adrLookback = adrSeries.slice(-20);
+  const adrPercent = adrLookback.length >= 5
+    ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
+    : null;
+  const lastTimestamp = timestamps.length ? Number(timestamps[timestamps.length - 1]) : null;
+  return {
+    adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
+    asOfSessionTs: Number.isFinite(lastTimestamp) ? new Date(lastTimestamp * 1000).toISOString() : null,
+    historyAt: new Date().toISOString()
+  };
+}
+
+function composeWatchlistMetrics(ticker, quoteData = null, historyData = null) {
+  const currentPrice = Number(quoteData?.currentPrice);
+  const dayOpenPrice = Number(quoteData?.dayOpenPrice);
+  const previousClosePrice = Number(quoteData?.previousClosePrice);
+  const volume = Number(quoteData?.volume);
+  const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(previousClosePrice) && previousClosePrice > 0
+    ? ((currentPrice - previousClosePrice) / previousClosePrice) * 100
+    : null;
+  const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
+    ? volume * currentPrice
+    : null;
+  const latestAt = [quoteData?.quoteAt, historyData?.historyAt]
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || new Date().toISOString();
+  const isUnavailable = !quoteData && !historyData;
+  return {
+    ticker: normalizeWatchlistTicker(ticker),
+    currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+    dayOpenPrice: Number.isFinite(dayOpenPrice) && dayOpenPrice > 0 ? dayOpenPrice : null,
+    previousClosePrice: Number.isFinite(previousClosePrice) && previousClosePrice > 0 ? previousClosePrice : null,
+    percentChangeToday,
+    adrPercent: Number.isFinite(Number(historyData?.adrPercent)) ? Number(historyData.adrPercent) : null,
+    dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
+    dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
+    currency: quoteData?.currency || 'USD',
+    marketState: quoteData?.marketState || '',
+    lastUpdated: latestAt,
+    dataStatus: isUnavailable ? 'unavailable' : 'ok',
+    asOfSessionTs: historyData?.asOfSessionTs || null
+  };
+}
+
+async function fetchWatchlistQuoteBatch(tickers = [], { preferStale = true } = {}) {
+  const normalizedTickers = [...new Set((Array.isArray(tickers) ? tickers : [])
+    .map((ticker) => normalizeWatchlistTicker(ticker))
+    .filter(Boolean))];
+  const now = Date.now();
+  const resultMap = new Map();
+  const toRequest = [];
+
+  normalizedTickers.forEach((ticker) => {
+    const cached = watchlistQuoteCache.get(ticker);
+    const age = cached ? (now - Number(cached.at || 0)) : Number.POSITIVE_INFINITY;
+    if (cached && age < WATCHLIST_MARKET_CACHE_TTL_MS) {
+      resultMap.set(ticker, cached.payload);
+      return;
+    }
+    if (cached && preferStale && age < WATCHLIST_MARKET_STALE_TTL_MS) {
+      resultMap.set(ticker, cached.payload);
+      if (!watchlistQuoteInFlight.has(ticker)) toRequest.push(ticker);
+      return;
+    }
+    toRequest.push(ticker);
+  });
+
+  const inFlightPromises = [];
+  toRequest.forEach((ticker) => {
+    const pending = watchlistQuoteInFlight.get(ticker);
+    if (pending) inFlightPromises.push(pending);
+  });
+
+  const requestNow = toRequest.filter((ticker) => !watchlistQuoteInFlight.has(ticker));
+  if (requestNow.length) {
+    const batchPromise = (async () => {
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(requestNow.join(','))}&includePrePost=true`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
+      if (!res.ok) throw new Error('Quote batch unavailable');
+      const data = await res.json();
+      const rows = Array.isArray(data?.quoteResponse?.result) ? data.quoteResponse.result : [];
+      const indexed = new Map(rows.map((row) => [normalizeWatchlistTicker(row?.symbol), parseWatchlistQuote(row, row?.symbol)]));
+      requestNow.forEach((ticker) => {
+        const parsed = indexed.get(ticker) || null;
+        if (parsed) watchlistQuoteCache.set(ticker, { at: Date.now(), payload: parsed });
+      });
+      return indexed;
+    })();
+    requestNow.forEach((ticker) => {
+      const singlePromise = batchPromise
+        .then((map) => map.get(ticker) || null)
+        .catch(() => null)
+        .finally(() => { watchlistQuoteInFlight.delete(ticker); });
+      watchlistQuoteInFlight.set(ticker, singlePromise);
+      inFlightPromises.push(singlePromise);
+    });
+  }
+
+  await Promise.all(inFlightPromises);
+  normalizedTickers.forEach((ticker) => {
+    const cached = watchlistQuoteCache.get(ticker);
+    if (cached?.payload) resultMap.set(ticker, cached.payload);
+  });
+  return resultMap;
+}
+
+async function fetchWatchlistHistoryBatch(tickers = [], { preferStale = true } = {}) {
+  const normalizedTickers = [...new Set((Array.isArray(tickers) ? tickers : [])
+    .map((ticker) => normalizeWatchlistTicker(ticker))
+    .filter(Boolean))];
+  const now = Date.now();
+  const resultMap = new Map();
+  const toRequest = [];
+  normalizedTickers.forEach((ticker) => {
+    const cached = watchlistHistoryCache.get(ticker);
+    const age = cached ? (now - Number(cached.at || 0)) : Number.POSITIVE_INFINITY;
+    if (cached && age < WATCHLIST_HISTORY_CACHE_TTL_MS) {
+      resultMap.set(ticker, cached.payload);
+      return;
+    }
+    if (cached && preferStale && age < WATCHLIST_HISTORY_STALE_TTL_MS) {
+      resultMap.set(ticker, cached.payload);
+      if (!watchlistHistoryInFlight.has(ticker)) toRequest.push(ticker);
+      return;
+    }
+    toRequest.push(ticker);
+  });
+
+  const tasks = toRequest.map((ticker) => {
+    const pending = watchlistHistoryInFlight.get(ticker);
+    if (pending) return pending;
+    const task = (async () => {
+      try {
+        const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=2mo&interval=1d&includePrePost=false`;
+        const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
+        if (!res.ok) throw new Error('Historical chart unavailable');
+        const data = await res.json();
+        const row = data?.chart?.result?.[0];
+        const payload = row ? normalizeWatchlistHistoryResult(row) : null;
+        if (payload) watchlistHistoryCache.set(ticker, { at: Date.now(), payload });
+      } finally {
+        watchlistHistoryInFlight.delete(ticker);
+      }
+    })();
+    watchlistHistoryInFlight.set(ticker, task);
+    return task;
+  });
+  await Promise.all(tasks);
+  normalizedTickers.forEach((ticker) => {
+    const cached = watchlistHistoryCache.get(ticker);
+    if (cached?.payload) resultMap.set(ticker, cached.payload);
+  });
+  return resultMap;
 }
 
 async function buildWatchlistMarketDataRows(db, watchlist) {
   const items = db.watchlistItems
     .filter((item) => item.watchlist_id === watchlist.id)
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+  const tickers = items.map((item) => item.canonical_ticker || item.ticker);
+  const [quoteMap, historyMap] = await Promise.all([
+    fetchWatchlistQuoteBatch(tickers, { preferStale: true }),
+    fetchWatchlistHistoryBatch(tickers, { preferStale: true })
+  ]);
   const rows = await Promise.all(items.map(async (item) => {
     try {
-      const metrics = await fetchWatchlistTickerMetrics(item.canonical_ticker || item.ticker);
+      const canonicalTicker = normalizeWatchlistTicker(item.canonical_ticker || item.ticker);
+      const metrics = composeWatchlistMetrics(
+        canonicalTicker,
+        quoteMap.get(canonicalTicker) || null,
+        historyMap.get(canonicalTicker) || null
+      );
       return {
         itemId: item.id,
+        orderIndex: Number.isFinite(Number(item.order_index)) ? Number(item.order_index) : 0,
         ticker: item.display_ticker || item.ticker,
         name: item.display_name || '',
         ...metrics
@@ -13249,10 +13387,12 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
     } catch (_error) {
       return {
         itemId: item.id,
+        orderIndex: Number.isFinite(Number(item.order_index)) ? Number(item.order_index) : 0,
         ticker: item.display_ticker || item.ticker,
         name: item.display_name || '',
         currentPrice: null,
         dayOpenPrice: null,
+        previousClosePrice: null,
         percentChangeToday: null,
         adrPercent: null,
         dollarVolume: null,
@@ -14315,6 +14455,77 @@ app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req
   }));
   res.json({ watchlists: watchlists.filter(Boolean), isLeader: access.isLeader });
 }));
+
+app.post('/api/trading-groups/:groupId/watchlists/:groupWatchlistId/copy', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = groupWatchlistCopySchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  ensureSocialTables(db);
+  const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const posted = db.tradeGroupWatchlists.find((item) => item.id === req.params.groupWatchlistId && item.group_id === access.group.id);
+  if (!posted) return res.status(404).json({ error: 'Shared watchlist not found.' });
+  const source = db.watchlists.find((item) => item.id === posted.source_watchlist_id);
+  if (!source) return res.status(404).json({ error: 'Source watchlist no longer exists.' });
+  const sourceItems = db.watchlistItems
+    .filter((item) => item.watchlist_id === source.id)
+    .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+  const nowIso = new Date().toISOString();
+  const payload = parsed.data;
+  let targetWatchlist = null;
+
+  if (payload.mode === 'append') {
+    targetWatchlist = db.watchlists.find((item) => item.id === payload.targetWatchlistId && item.owner_user_id === req.username);
+    if (!targetWatchlist) return res.status(404).json({ error: 'Target watchlist not found.' });
+  } else {
+    const maxOrder = db.watchlists
+      .filter((item) => item.owner_user_id === req.username)
+      .reduce((max, item) => Math.max(max, Number(item.order_index || 0)), -1);
+    targetWatchlist = {
+      id: crypto.randomUUID(),
+      owner_user_id: req.username,
+      name: String(payload.name || `${source.name} copy`).trim().slice(0, 64) || `${source.name} copy`,
+      order_index: maxOrder + 1,
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+    db.watchlists.push(targetWatchlist);
+  }
+
+  const targetItems = db.watchlistItems
+    .filter((item) => item.watchlist_id === targetWatchlist.id)
+    .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+  const existing = new Set(targetItems.map((item) => normalizeWatchlistTicker(item.ticker)));
+  let maxOrder = targetItems.reduce((max, item) => Math.max(max, Number(item.order_index || 0)), -1);
+  let addedCount = 0;
+  for (const sourceItem of sourceItems) {
+    const normalized = normalizeWatchlistTicker(sourceItem.ticker);
+    if (!normalized || existing.has(normalized)) continue;
+    maxOrder += 1;
+    db.watchlistItems.push({
+      id: crypto.randomUUID(),
+      watchlist_id: targetWatchlist.id,
+      ticker: normalized,
+      canonical_ticker: sourceItem.canonical_ticker || normalized,
+      display_ticker: sourceItem.display_ticker || normalized,
+      display_name: sourceItem.display_name || '',
+      created_at: nowIso,
+      order_index: maxOrder
+    });
+    existing.add(normalized);
+    addedCount += 1;
+  }
+  targetWatchlist.updated_at = nowIso;
+  saveDB(db);
+  res.status(payload.mode === 'new' ? 201 : 200).json({
+    mode: payload.mode,
+    addedCount,
+    skippedDuplicates: Math.max(0, sourceItems.length - addedCount),
+    watchlist: sanitizeWatchlistRow(db, targetWatchlist, req.username)
+  });
+});
 
 app.post('/api/trading-groups/:groupId/watchlists', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
@@ -19822,6 +20033,7 @@ module.exports = {
   exchangeIbkrConnectorToken,
   calculateWeeklyRecap,
   getLastCompletedWeekRange,
+  composeWatchlistMetrics,
   ensureInstrumentRegistry,
   upsertRegistryEntry,
   applyRegistryResolution,

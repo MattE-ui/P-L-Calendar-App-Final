@@ -6,7 +6,7 @@ const assert = require('node:assert');
 process.env.DATA_FILE = path.join(__dirname, 'data-watchlists-test.json');
 process.env.SKIP_RATE_FETCH = 'true';
 
-const { app, saveDB, loadDB } = require('../server');
+const { app, saveDB, loadDB, composeWatchlistMetrics } = require('../server');
 
 const DATA_FILE = process.env.DATA_FILE;
 const leader = 'leader';
@@ -174,4 +174,76 @@ test('deleting a watchlist posted to groups is blocked with a clear error', asyn
   assert.equal(blockedDelete.res.status, 409);
   assert.equal(blockedDelete.data.code, 'watchlist_posted_to_group');
   assert.equal(blockedDelete.data.linkedGroupCount, 1);
+});
+
+test('composeWatchlistMetrics computes % today from previous close and handles missing previous close', () => {
+  const withPreviousClose = composeWatchlistMetrics('AAPL', {
+    currentPrice: 110,
+    dayOpenPrice: 105,
+    previousClosePrice: 100,
+    volume: 2000000,
+    currency: 'USD',
+    marketState: 'regular',
+    quoteAt: '2026-04-08T10:00:00.000Z'
+  }, {
+    adrPercent: 2.1,
+    asOfSessionTs: '2026-04-07T21:00:00.000Z',
+    historyAt: '2026-04-08T10:00:00.000Z'
+  });
+  assert.equal(withPreviousClose.dayOpenPrice, 105);
+  assert.equal(withPreviousClose.previousClosePrice, 100);
+  assert.ok(Math.abs(withPreviousClose.percentChangeToday - 10) < 0.0001);
+
+  const withoutPreviousClose = composeWatchlistMetrics('AAPL', {
+    currentPrice: 110,
+    dayOpenPrice: 105,
+    previousClosePrice: null,
+    volume: 2000000,
+    quoteAt: '2026-04-08T10:00:00.000Z'
+  }, null);
+  assert.equal(withoutPreviousClose.percentChangeToday, null);
+});
+
+test('group watchlist copy supports new/append, dedupes symbols, and blocks non-members', async () => {
+  const groupId = await createGroupWithMember();
+  const created = await authedFetch(tokens.leader, '/api/watchlists', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Leader Shared' })
+  });
+  const leaderWatchlistId = created.data.watchlist.id;
+  await authedFetch(tokens.leader, `/api/watchlists/${leaderWatchlistId}/items`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: 'AAPL' })
+  });
+  await authedFetch(tokens.leader, `/api/watchlists/${leaderWatchlistId}/items`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: 'MSFT' })
+  });
+  const posted = await authedFetch(tokens.leader, `/api/trading-groups/${groupId}/watchlists`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceWatchlistId: leaderWatchlistId })
+  });
+  assert.equal(posted.res.status, 201);
+  const groupWatchlistId = posted.data.groupWatchlist.id;
+
+  const newCopy = await authedFetch(tokens.member, `/api/trading-groups/${groupId}/watchlists/${groupWatchlistId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'new', name: 'Copied from Group' })
+  });
+  assert.equal(newCopy.res.status, 201);
+  assert.equal(newCopy.data.addedCount, 2);
+  const targetWatchlistId = newCopy.data.watchlist.id;
+
+  const appendDuplicate = await authedFetch(tokens.member, `/api/trading-groups/${groupId}/watchlists/${groupWatchlistId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'append', targetWatchlistId })
+  });
+  assert.equal(appendDuplicate.res.status, 200);
+  assert.equal(appendDuplicate.data.addedCount, 0);
+  assert.equal(appendDuplicate.data.skippedDuplicates, 2);
+
+  const outsiderAttempt = await authedFetch(tokens.outsider, `/api/trading-groups/${groupId}/watchlists/${groupWatchlistId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'new', name: 'Should fail' })
+  });
+  assert.equal(outsiderAttempt.res.status, 403);
 });

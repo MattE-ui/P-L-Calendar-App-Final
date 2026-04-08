@@ -128,6 +128,37 @@
     </section>
   </main>
 
+  <div id="social-watchlist-copy-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="social-watchlist-copy-title">
+    <div class="modal-card social-watchlist-copy-modal">
+      <div class="modal-header">
+        <div>
+          <p class="tool-overline">Watchlists</p>
+          <h3 id="social-watchlist-copy-title">Copy to My Watchlists</h3>
+        </div>
+        <button id="social-watchlist-copy-close" class="ghost" type="button">Close</button>
+      </div>
+      <div class="modal-field">
+        <label for="social-watchlist-copy-mode">Destination</label>
+        <select id="social-watchlist-copy-mode">
+          <option value="new">Create new watchlist</option>
+          <option value="append">Append to existing watchlist</option>
+        </select>
+      </div>
+      <div id="social-watchlist-copy-new-wrap" class="modal-field">
+        <label for="social-watchlist-copy-name">New watchlist name</label>
+        <input id="social-watchlist-copy-name" type="text" maxlength="64" placeholder="Momentum Setup">
+      </div>
+      <div id="social-watchlist-copy-existing-wrap" class="modal-field hidden">
+        <label for="social-watchlist-copy-target">Choose watchlist</label>
+        <select id="social-watchlist-copy-target"></select>
+      </div>
+      <p id="social-watchlist-copy-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button id="social-watchlist-copy-submit" class="primary" type="button">Copy</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/theme-utils.js"></script>
   <script src="/static/social-avatar.js"></script>
   <script src="/static/app-header.js"></script>
