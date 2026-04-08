@@ -426,6 +426,61 @@ test('active option trades return unavailable reason when neither IBKR nor Polyg
   assert.equal(data.trades[0].optionUnavailableReason, 'ibkr_unavailable_polygon_no_contract_quote');
 });
 
+test('active trades endpoint includes manual trades using canonical open-quantity derivation even when legacy status is stale', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: 'NVDA',
+      assetClass: 'stocks',
+      currency: 'USD',
+      executions: [
+        { side: 'entry', quantity: 5, price: 100, date: '2026-03-01' }
+      ]
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const tradeId = create.data.trade.id;
+
+  const db = loadDB();
+  const datedBucket = Object.values(db.users[username].tradeJournal || {}).find(items => Array.isArray(items) && items.some(item => item?.id === tradeId));
+  const storedTrade = datedBucket.find(item => item?.id === tradeId);
+  storedTrade.status = 'closed';
+  storedTrade.closePrice = 150;
+  saveDB(db);
+
+  const { res, data } = await authedFetch('/api/trades/active');
+  assert.equal(res.status, 200);
+  const activeTrade = data.trades.find(item => item.id === tradeId);
+  assert.ok(activeTrade);
+  assert.equal(activeTrade.status, 'open');
+  assert.equal(activeTrade.totalEnteredQuantity, 5);
+  assert.equal(activeTrade.totalExitedQuantity, 0);
+  assert.equal(activeTrade.openQuantity, 5);
+});
+
+test('active trades endpoint excludes fully closed manual trades using canonical execution totals', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: 'AMD',
+      assetClass: 'stocks',
+      currency: 'USD',
+      executions: [
+        { side: 'entry', quantity: 3, price: 90, date: '2026-03-01' },
+        { side: 'exit', quantity: 3, price: 94, date: '2026-03-02' }
+      ]
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const tradeId = create.data.trade.id;
+
+  const { res, data } = await authedFetch('/api/trades/active');
+  assert.equal(res.status, 200);
+  assert.equal(data.trades.some(item => item.id === tradeId), false);
+});
+
 test('persists and lists fully closed execution-leg trades', async () => {
   const create = await authedFetch('/api/trades', {
     method: 'POST',
