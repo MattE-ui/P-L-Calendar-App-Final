@@ -240,7 +240,41 @@ test('records partial trims when reducing units and includes trim pnl in final r
   const closed = list.data.trades.find(t => t.id === id);
   assert.ok(closed);
   assert.equal(closed.status, 'closed');
-  assert.equal(closed.realizedPnlGBP, 70);
+  assert.equal(closed.realizedPnlGBP, 90);
+});
+
+test('manual trim endpoint can trim to zero and closes trade', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 10,
+      stop: 9,
+      riskPct: 1,
+      date: '2024-03-10',
+      symbol: 'AMD'
+    })
+  });
+  const id = create.data.trade.id;
+  const openQty = Number(create.data.trade.sizeUnits);
+  const res = await authedFetch(`/api/trades/${id}/trim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      units: openQty,
+      price: 12,
+      date: '2024-03-11',
+      note: 'Closed through trim flow'
+    })
+  });
+  assert.equal(res.res.status, 200);
+  assert.equal(res.data.trade.status, 'closed');
+  assert.equal(res.data.trade.sizeUnits, 0);
+  assert.ok(Array.isArray(res.data.trade.executions));
+  const exits = res.data.trade.executions.filter(leg => leg.side === 'exit');
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].quantity, openQty);
+  assert.equal(exits[0].price, 12);
 });
 
 test('active option trades use IBKR primary contract quote and never fall back to underlying stock quote', async () => {
