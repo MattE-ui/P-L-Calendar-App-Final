@@ -644,6 +644,18 @@ function ensureSocialTables(db) {
     db.tradeGroupWatchlists = [];
     mutated = true;
   }
+  if (!Array.isArray(db.groupChats)) {
+    db.groupChats = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.groupChatMessages)) {
+    db.groupChatMessages = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.groupChatReadStates)) {
+    db.groupChatReadStates = [];
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -658,6 +670,7 @@ const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
 const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined', 'trade_group_watchlist_posted'];
+const GROUP_CHAT_MESSAGE_TYPES = ['user', 'system', 'leader_announcement'];
 const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, Number(process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS) || 30000);
 const pendingTradeGroupAlertTimers = new Map();
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
@@ -13079,6 +13092,12 @@ const groupWatchlistCreateSchema = z.object({
   customTitle: z.string().max(120).optional()
 });
 
+const groupChatMessageCreateSchema = z.object({
+  content: z.string().min(1).max(2000),
+  messageType: z.enum(GROUP_CHAT_MESSAGE_TYPES).optional(),
+  metadata: z.record(z.unknown()).optional()
+});
+
 
 const WATCHLIST_MARKET_CACHE_TTL_MS = Number(process.env.WATCHLIST_MARKET_CACHE_TTL_MS) || 20 * 1000;
 const watchlistMarketDataCache = new Map();
@@ -13495,6 +13514,62 @@ function getTradeGroupIfAccessible(db, groupId, username) {
   const isMember = isTradeGroupMember(db, group.id, username);
   if (!isLeader && !isMember) return { error: 'forbidden' };
   return { group, isLeader };
+}
+
+function getOrCreateGroupChat(db, tradingGroupId) {
+  ensureSocialTables(db);
+  let chat = db.groupChats.find((item) => item.trading_group_id === tradingGroupId);
+  if (chat) return chat;
+  const nowIso = new Date().toISOString();
+  chat = {
+    id: crypto.randomUUID(),
+    trading_group_id: tradingGroupId,
+    is_locked: false,
+    pinned_message_id: null,
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+  db.groupChats.push(chat);
+  return chat;
+}
+
+function computeGroupChatUnreadCount(db, chatId, username) {
+  const readState = db.groupChatReadStates.find((item) => item.group_chat_id === chatId && item.user_id === username);
+  const readAtValue = Date.parse(readState?.last_read_message_created_at || readState?.last_read_at || '');
+  const readAtMs = Number.isFinite(readAtValue) ? readAtValue : 0;
+  return db.groupChatMessages.filter((message) => {
+    if (message.group_chat_id !== chatId) return false;
+    if (message.deleted_at) return false;
+    const createdValue = Date.parse(message.created_at || '');
+    const createdAtMs = Number.isFinite(createdValue) ? createdValue : 0;
+    return createdAtMs > readAtMs && message.sender_user_id !== username;
+  }).length;
+}
+
+function sanitizeGroupChatMessageForViewer(db, message) {
+  const identity = socialIdentityForUser(db, message.sender_user_id || '');
+  return {
+    id: message.id,
+    groupChatId: message.group_chat_id,
+    senderUserId: message.sender_user_id,
+    senderNickname: message.sender_nickname || identity.nickname || message.sender_user_id || 'Unknown',
+    senderAvatarUrl: identity.avatar_url,
+    senderAvatarInitials: identity.avatar_initials,
+    messageType: GROUP_CHAT_MESSAGE_TYPES.includes(message.message_type) ? message.message_type : 'user',
+    content: message.content,
+    metadata: message.metadata || {},
+    createdAt: message.created_at,
+    updatedAt: message.updated_at,
+    deletedAt: message.deleted_at || null
+  };
+}
+
+function getGroupChatAccess(db, groupId, username) {
+  ensureSocialTables(db);
+  const access = getTradeGroupIfAccessible(db, groupId, username);
+  if (access.error) return access;
+  const chat = getOrCreateGroupChat(db, access.group.id);
+  return { ...access, chat };
 }
 
 app.post('/api/social/trade-groups', auth, (req, res) => {
@@ -14111,6 +14186,213 @@ app.post('/api/social/trade-groups/notifications/:notificationId/read', auth, (r
   if (!notification) return res.status(404).json({ error: 'Notification not found.' });
   notification.is_read = true;
   notification.read_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/group-chats', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const memberships = db.tradeGroupMembers.filter((member) => member.user_id === req.username && member.status === 'active');
+  const chats = memberships
+    .map((member) => {
+      const group = db.tradeGroups.find((item) => item.id === member.group_id && item.is_active !== false);
+      if (!group) return null;
+      const chat = getOrCreateGroupChat(db, group.id);
+      const messages = db.groupChatMessages
+        .filter((item) => item.group_chat_id === chat.id && !item.deleted_at)
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      const latest = messages[0] || null;
+      const unreadCount = computeGroupChatUnreadCount(db, chat.id, req.username);
+      return {
+        id: chat.id,
+        groupId: group.id,
+        groupName: group.name,
+        isLeaderOwned: group.leader_user_id === req.username,
+        isLocked: chat.is_locked === true,
+        unreadCount,
+        participantCount: getTradeGroupMembers(db, group.id, { status: 'active' }).length,
+        latestMessage: latest ? sanitizeGroupChatMessageForViewer(db, latest) : null,
+        pinnedMessageId: chat.pinned_message_id || null,
+        updatedAt: latest?.created_at || chat.updated_at || chat.created_at
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  saveDB(db);
+  res.json({ chats });
+});
+
+app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const participantCount = getTradeGroupMembers(db, access.group.id, { status: 'active' }).length;
+  const messages = db.groupChatMessages
+    .filter((item) => item.group_chat_id === access.chat.id)
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    .slice(-300)
+    .map((item) => sanitizeGroupChatMessageForViewer(db, item));
+  const pinnedMessage = access.chat.pinned_message_id
+    ? messages.find((item) => item.id === access.chat.pinned_message_id) || null
+    : null;
+  saveDB(db);
+  res.json({
+    chat: {
+      id: access.chat.id,
+      groupId: access.group.id,
+      groupName: access.group.name,
+      isLeader: access.isLeader,
+      isLocked: access.chat.is_locked === true,
+      pinnedMessageId: access.chat.pinned_message_id || null,
+      participantCount,
+      canModerate: access.isLeader,
+      canSend: !(access.chat.is_locked === true && !access.isLeader)
+    },
+    pinnedMessage,
+    messages
+  });
+});
+
+app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const parsed = groupChatMessageCreateSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!requireSocialNickname(db, req.username, res)) return;
+  if (access.chat.is_locked === true && !access.isLeader) {
+    return res.status(403).json({ error: 'Chat is locked by the group leader.' });
+  }
+
+  const requestedType = parsed.data.messageType || 'user';
+  const messageType = requestedType === 'leader_announcement'
+    ? (access.isLeader ? 'leader_announcement' : 'user')
+    : (GROUP_CHAT_MESSAGE_TYPES.includes(requestedType) ? requestedType : 'user');
+  const identity = socialIdentityForUser(db, req.username);
+  const nowIso = new Date().toISOString();
+  const message = {
+    id: crypto.randomUUID(),
+    group_chat_id: access.chat.id,
+    sender_user_id: req.username,
+    sender_nickname: identity.nickname || req.username,
+    message_type: messageType,
+    content: String(parsed.data.content || '').trim(),
+    metadata: parsed.data.metadata || {},
+    created_at: nowIso,
+    updated_at: nowIso,
+    deleted_at: null
+  };
+  db.groupChatMessages.push(message);
+  access.chat.updated_at = nowIso;
+  saveDB(db);
+  res.status(201).json({ message: sanitizeGroupChatMessageForViewer(db, message) });
+});
+
+app.post('/api/group-chats/:groupId/read', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const latest = db.groupChatMessages
+    .filter((item) => item.group_chat_id === access.chat.id && !item.deleted_at)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null;
+  const nowIso = new Date().toISOString();
+  let readState = db.groupChatReadStates.find((item) => item.group_chat_id === access.chat.id && item.user_id === req.username);
+  if (!readState) {
+    readState = {
+      id: crypto.randomUUID(),
+      group_chat_id: access.chat.id,
+      user_id: req.username,
+      last_read_message_id: null,
+      last_read_message_created_at: null,
+      last_read_at: nowIso
+    };
+    db.groupChatReadStates.push(readState);
+  }
+  readState.last_read_message_id = latest?.id || null;
+  readState.last_read_message_created_at = latest?.created_at || nowIso;
+  readState.last_read_at = nowIso;
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/group-chats/:groupId/pin/:messageId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!access.isLeader) return res.status(403).json({ error: 'Only group leaders can pin messages.' });
+  const message = db.groupChatMessages.find((item) => item.id === req.params.messageId && item.group_chat_id === access.chat.id && !item.deleted_at);
+  if (!message) return res.status(404).json({ error: 'Message not found.' });
+  access.chat.pinned_message_id = message.id;
+  access.chat.updated_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, pinnedMessageId: message.id });
+});
+
+app.post('/api/group-chats/:groupId/unpin', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!access.isLeader) return res.status(403).json({ error: 'Only group leaders can unpin messages.' });
+  access.chat.pinned_message_id = null;
+  access.chat.updated_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, pinnedMessageId: null });
+});
+
+app.post('/api/group-chats/:groupId/lock', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!access.isLeader) return res.status(403).json({ error: 'Only group leaders can lock chats.' });
+  access.chat.is_locked = true;
+  access.chat.updated_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, isLocked: true });
+});
+
+app.post('/api/group-chats/:groupId/unlock', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!access.isLeader) return res.status(403).json({ error: 'Only group leaders can unlock chats.' });
+  access.chat.is_locked = false;
+  access.chat.updated_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true, isLocked: false });
+});
+
+app.delete('/api/group-chats/:groupId/messages/:messageId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const message = db.groupChatMessages.find((item) => item.id === req.params.messageId && item.group_chat_id === access.chat.id && !item.deleted_at);
+  if (!message) return res.status(404).json({ error: 'Message not found.' });
+  const ownRecentWindowMs = 15 * 60 * 1000;
+  const messageCreatedAtMs = Date.parse(message.created_at || '');
+  const ownRecentAllowed = message.sender_user_id === req.username && Number.isFinite(messageCreatedAtMs) && (Date.now() - messageCreatedAtMs <= ownRecentWindowMs);
+  if (!access.isLeader && !ownRecentAllowed) return res.status(403).json({ error: 'You cannot delete this message.' });
+  message.deleted_at = new Date().toISOString();
+  message.updated_at = message.deleted_at;
+  message.content = '[message deleted]';
+  if (access.chat.pinned_message_id === message.id) {
+    access.chat.pinned_message_id = null;
+  }
+  access.chat.updated_at = message.updated_at;
   saveDB(db);
   res.json({ ok: true });
 });
