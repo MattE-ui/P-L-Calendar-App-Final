@@ -670,7 +670,7 @@ const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
 const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined', 'trade_group_watchlist_posted'];
-const GROUP_CHAT_MESSAGE_TYPES = ['user', 'system', 'leader_announcement'];
+const GROUP_CHAT_MESSAGE_TYPES = ['user_message', 'system', 'leader_announcement', 'trade_share', 'trade_event_system'];
 const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, Number(process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS) || 30000);
 const pendingTradeGroupAlertTimers = new Map();
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
@@ -1186,6 +1186,7 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
       created_at: nowIso
     };
     db.tradeGroupAlerts.push(alert);
+    createGroupTradeEventSystemMessage(db, group.id, leaderUsername, { ...alert, side: 'BUY', position_event_type: 'POSITION_OPENED' });
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
@@ -1297,6 +1298,7 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
       created_at: nowIso
     };
     db.tradeGroupAlerts.push(alert);
+    createGroupTradeEventSystemMessage(db, group.id, leaderUsername, alert);
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
@@ -1390,6 +1392,7 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
       created_at: nowIso
     };
     db.tradeGroupAlerts.push(alert);
+    createGroupTradeEventSystemMessage(db, group.id, leaderUsername, alert);
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
@@ -13073,14 +13076,19 @@ const tradeGroupAnnouncementCreateSchema = z.object({
   text: z.string().min(1).max(500)
 });
 
+const WATCHLIST_SCOPE_VALUES = ['personal', 'group'];
+
 const watchlistCreateSchema = z.object({
   name: z.string().min(1).max(64),
-  order_index: z.number().min(0).optional()
+  order_index: z.number().min(0).optional(),
+  scope: z.enum(WATCHLIST_SCOPE_VALUES).optional(),
+  tradingGroupId: z.string().min(1).optional()
 });
 
 const watchlistPatchSchema = z.object({
   name: z.string().min(1).max(64).optional(),
-  order_index: z.number().min(0).optional()
+  order_index: z.number().min(0).optional(),
+  can_members_edit: z.boolean().optional()
 });
 
 const watchlistItemCreateSchema = z.object({
@@ -13093,9 +13101,9 @@ const groupWatchlistCreateSchema = z.object({
 });
 
 const groupChatMessageCreateSchema = z.object({
-  content: z.string().min(1).max(2000),
+  content: z.string().min(0).max(2000).optional(),
   messageType: z.enum(GROUP_CHAT_MESSAGE_TYPES).optional(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.any()).optional()
 });
 
 
@@ -13128,15 +13136,24 @@ function sanitizeWatchlistRow(db, watchlist, viewerUserId) {
   const items = db.watchlistItems
     .filter((item) => item.watchlist_id === watchlist.id)
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+  let canEdit = watchlist.owner_user_id === viewerUserId;
+  if (watchlist.scope === 'group' && watchlist.trading_group_id) {
+    const access = getTradeGroupIfAccessible(db, watchlist.trading_group_id, viewerUserId);
+    canEdit = !access.error && (access.isLeader || watchlist.can_members_edit === true);
+  }
   return {
     id: watchlist.id,
     ownerUserId: watchlist.owner_user_id,
     name: watchlist.name,
+    scope: watchlist.scope === 'group' ? 'group' : 'personal',
+    tradingGroupId: watchlist.trading_group_id || null,
+    canMembersEdit: watchlist.can_members_edit === true,
     createdAt: watchlist.created_at,
     updatedAt: watchlist.updated_at,
     orderIndex: Number.isFinite(Number(watchlist.order_index)) ? Number(watchlist.order_index) : 0,
     tickerCount: items.length,
     isOwner: watchlist.owner_user_id === viewerUserId,
+    canEdit,
     items: items.map((item) => ({
       id: item.id,
       watchlistId: item.watchlist_id,
@@ -13516,6 +13533,78 @@ function getTradeGroupIfAccessible(db, groupId, username) {
   return { group, isLeader };
 }
 
+function getWatchlistAccess(db, watchlistId, username, { requireEdit = false } = {}) {
+  ensureSocialTables(db);
+  const watchlist = db.watchlists.find((item) => item.id === watchlistId);
+  if (!watchlist) return { error: 'not_found' };
+  const scope = watchlist.scope === 'group' ? 'group' : 'personal';
+  if (scope === 'personal') {
+    if (watchlist.owner_user_id !== username) return { error: 'forbidden' };
+    return { watchlist, scope, canEdit: true, isLeader: false };
+  }
+  const groupId = watchlist.trading_group_id || '';
+  const access = getTradeGroupIfAccessible(db, groupId, username);
+  if (access.error) return access;
+  const canEdit = access.isLeader || watchlist.can_members_edit === true;
+  if (requireEdit && !canEdit) return { error: 'forbidden' };
+  return { watchlist, scope, canEdit, isLeader: access.isLeader, group: access.group };
+}
+
+function buildTradeShareMetadataFromTrade(trade = {}, groupId = '') {
+  const ticker = resolveCanonicalTickerForTrade(trade) || String(trade?.symbol || '').trim().toUpperCase();
+  return {
+    version: 1,
+    groupId: String(groupId || ''),
+    sourceTradeId: String(trade?.id || ''),
+    ticker: ticker || '—',
+    direction: trade?.direction === 'short' ? 'short' : 'long',
+    entryPrice: Number.isFinite(Number(trade?.entry)) ? Number(trade.entry) : null,
+    stopPrice: Number.isFinite(Number(trade?.currentStop)) ? Number(trade.currentStop) : (Number.isFinite(Number(trade?.stop)) ? Number(trade.stop) : null),
+    riskPercent: Number.isFinite(Number(trade?.riskPct)) ? Number(trade.riskPct) : null,
+    status: String(trade?.status || '').trim().toLowerCase() || 'open',
+    timestamp: new Date().toISOString()
+  };
+}
+
+function createGroupTradeEventSystemMessage(db, groupId, leaderUsername, alert = {}) {
+  const chat = getOrCreateGroupChat(db, groupId);
+  const identity = socialIdentityForUser(db, leaderUsername || '');
+  const normalizedEventType = normalizeTradeGroupAlertEventType(alert);
+  const nowIso = new Date().toISOString();
+  const message = {
+    id: crypto.randomUUID(),
+    group_chat_id: chat.id,
+    sender_user_id: leaderUsername,
+    sender_nickname: identity.nickname || leaderUsername || 'System',
+    message_type: 'trade_event_system',
+    content: normalizedEventType === 'TRADE_TRIMMED'
+      ? `Trade trimmed · ${String(alert?.ticker || '').toUpperCase()}`
+      : (normalizedEventType === 'TRADE_CLOSED'
+        ? `Trade closed · ${String(alert?.ticker || '').toUpperCase()}`
+        : `Trade opened · ${String(alert?.ticker || '').toUpperCase()}`),
+    metadata: {
+      version: 1,
+      eventType: normalizedEventType,
+      ticker: String(alert?.ticker || '').toUpperCase(),
+      side: String(alert?.side || 'BUY').toUpperCase(),
+      direction: String(alert?.side || '').toUpperCase() === 'SELL' ? 'short' : (alert?.direction === 'short' ? 'short' : 'long'),
+      entryPrice: Number.isFinite(Number(alert?.entry_price)) ? Number(alert.entry_price) : null,
+      fillPrice: Number.isFinite(Number(alert?.fill_price)) ? Number(alert.fill_price) : null,
+      stopPrice: Number.isFinite(Number(alert?.stop_price)) ? Number(alert.stop_price) : null,
+      riskPercent: Number.isFinite(Number(alert?.risk_pct)) ? Number(alert.risk_pct) : null,
+      trimPercent: Number.isFinite(Number(alert?.trim_pct)) ? Number(alert.trim_pct) : null,
+      status: normalizedEventType === 'TRADE_CLOSED' ? 'closed' : (normalizedEventType === 'TRADE_TRIMMED' ? 'trimmed' : 'opened'),
+      sourceAlertId: alert?.id || null,
+      timestamp: nowIso
+    },
+    created_at: nowIso,
+    updated_at: nowIso,
+    deleted_at: null
+  };
+  db.groupChatMessages.push(message);
+  chat.updated_at = nowIso;
+}
+
 function getOrCreateGroupChat(db, tradingGroupId) {
   ensureSocialTables(db);
   let chat = db.groupChats.find((item) => item.trading_group_id === tradingGroupId);
@@ -13548,6 +13637,8 @@ function computeGroupChatUnreadCount(db, chatId, username) {
 
 function sanitizeGroupChatMessageForViewer(db, message) {
   const identity = socialIdentityForUser(db, message.sender_user_id || '');
+  const rawType = String(message.message_type || '').trim();
+  const normalizedType = rawType === 'user' ? 'user_message' : rawType;
   return {
     id: message.id,
     groupChatId: message.group_chat_id,
@@ -13555,7 +13646,7 @@ function sanitizeGroupChatMessageForViewer(db, message) {
     senderNickname: message.sender_nickname || identity.nickname || message.sender_user_id || 'Unknown',
     senderAvatarUrl: identity.avatar_url,
     senderAvatarInitials: identity.avatar_initials,
-    messageType: GROUP_CHAT_MESSAGE_TYPES.includes(message.message_type) ? message.message_type : 'user',
+    messageType: GROUP_CHAT_MESSAGE_TYPES.includes(normalizedType) ? normalizedType : 'user_message',
     content: message.content,
     metadata: message.metadata || {},
     createdAt: message.created_at,
@@ -14203,6 +14294,8 @@ app.get('/api/group-chats', auth, (req, res) => {
         .filter((item) => item.group_chat_id === chat.id && !item.deleted_at)
         .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
       const latest = messages[0] || null;
+      const latestTradeEvent = messages.find((item) => String(item.message_type || '') === 'trade_event_system' && !item.deleted_at) || null;
+      const hasGroupWatchlist = db.watchlists.some((item) => item.scope === 'group' && item.trading_group_id === group.id);
       const unreadCount = computeGroupChatUnreadCount(db, chat.id, req.username);
       return {
         id: chat.id,
@@ -14213,6 +14306,8 @@ app.get('/api/group-chats', auth, (req, res) => {
         unreadCount,
         participantCount: getTradeGroupMembers(db, group.id, { status: 'active' }).length,
         latestMessage: latest ? sanitizeGroupChatMessageForViewer(db, latest) : null,
+        latestTradeEvent: latestTradeEvent?.content || '',
+        hasGroupWatchlist,
         pinnedMessageId: chat.pinned_message_id || null,
         updatedAt: latest?.created_at || chat.updated_at || chat.created_at
       };
@@ -14248,7 +14343,14 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
       pinnedMessageId: access.chat.pinned_message_id || null,
       participantCount,
       canModerate: access.isLeader,
-      canSend: !(access.chat.is_locked === true && !access.isLeader)
+      canSend: !(access.chat.is_locked === true && !access.isLeader),
+      hasGroupWatchlist: db.watchlists.some((item) => item.scope === 'group' && item.trading_group_id === access.group.id),
+      latestTradeEvent: (() => {
+        const latestEvent = db.groupChatMessages
+          .filter((item) => item.group_chat_id === access.chat.id && !item.deleted_at && String(item.message_type || '') === 'trade_event_system')
+          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+        return latestEvent?.content || '';
+      })()
     },
     pinnedMessage,
     messages
@@ -14268,10 +14370,14 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     return res.status(403).json({ error: 'Chat is locked by the group leader.' });
   }
 
-  const requestedType = parsed.data.messageType || 'user';
+  const requestedType = (parsed.data.messageType || 'user_message') === 'user' ? 'user_message' : (parsed.data.messageType || 'user_message');
   const messageType = requestedType === 'leader_announcement'
-    ? (access.isLeader ? 'leader_announcement' : 'user')
-    : (GROUP_CHAT_MESSAGE_TYPES.includes(requestedType) ? requestedType : 'user');
+    ? (access.isLeader ? 'leader_announcement' : 'user_message')
+    : (GROUP_CHAT_MESSAGE_TYPES.includes(requestedType) ? requestedType : 'user_message');
+  const normalizedContent = String(parsed.data.content || '').trim();
+  if (!normalizedContent && messageType === 'user_message') {
+    return res.status(400).json({ error: 'Message content is required.' });
+  }
   const identity = socialIdentityForUser(db, req.username);
   const nowIso = new Date().toISOString();
   const message = {
@@ -14280,8 +14386,45 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     sender_user_id: req.username,
     sender_nickname: identity.nickname || req.username,
     message_type: messageType,
-    content: String(parsed.data.content || '').trim(),
+    content: normalizedContent || '[structured message]',
     metadata: parsed.data.metadata || {},
+    created_at: nowIso,
+    updated_at: nowIso,
+    deleted_at: null
+  };
+  db.groupChatMessages.push(message);
+  access.chat.updated_at = nowIso;
+  saveDB(db);
+  res.status(201).json({ message: sanitizeGroupChatMessageForViewer(db, message) });
+});
+
+app.post('/api/group-chats/:groupId/share-trade/:tradeId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  if (!requireSocialNickname(db, req.username, res)) return;
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.tradeId);
+  if (!found?.trade) return res.status(404).json({ error: 'Trade not found.' });
+  const trade = found.trade;
+  const metadata = buildTradeShareMetadataFromTrade(trade, access.group.id);
+  if (!metadata.ticker || !Number.isFinite(Number(metadata.entryPrice))) {
+    return res.status(400).json({ error: 'Trade cannot be shared. Missing core fields.' });
+  }
+  const identity = socialIdentityForUser(db, req.username);
+  const nowIso = new Date().toISOString();
+  const message = {
+    id: crypto.randomUUID(),
+    group_chat_id: access.chat.id,
+    sender_user_id: req.username,
+    sender_nickname: identity.nickname || req.username,
+    message_type: 'trade_share',
+    content: `Shared trade · ${metadata.ticker}`,
+    metadata,
     created_at: nowIso,
     updated_at: nowIso,
     deleted_at: null
@@ -14400,8 +14543,16 @@ app.delete('/api/group-chats/:groupId/messages/:messageId', auth, (req, res) => 
 app.get('/api/watchlists', auth, (req, res) => {
   const db = loadDB();
   ensureSocialTables(db);
+  const memberGroupIds = new Set(
+    db.tradeGroupMembers
+      .filter((member) => member.user_id === req.username && member.status === 'active')
+      .map((member) => member.group_id)
+  );
   const watchlists = db.watchlists
-    .filter((item) => item.owner_user_id === req.username)
+    .filter((item) => (
+      (item.scope === 'group' && item.trading_group_id && memberGroupIds.has(item.trading_group_id))
+      || ((item.scope !== 'group') && item.owner_user_id === req.username)
+    ))
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0))
     .map((item) => sanitizeWatchlistRow(db, item, req.username));
   saveDB(db);
@@ -14415,12 +14566,31 @@ app.post('/api/watchlists', auth, (req, res) => {
   const db = loadDB();
   ensureSocialTables(db);
   const nowIso = new Date().toISOString();
+  const scope = parsed.data.scope === 'group' ? 'group' : 'personal';
+  let ownerUserId = req.username;
+  let tradingGroupId = null;
+  let canMembersEdit = false;
+  if (scope === 'group') {
+    const groupId = String(parsed.data.tradingGroupId || '').trim();
+    const group = db.tradeGroups.find((item) => item.id === groupId && item.is_active !== false);
+    if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+    if (group.leader_user_id !== req.username) return res.status(403).json({ error: 'Only group leaders can create group watchlists.' });
+    ownerUserId = req.username;
+    tradingGroupId = group.id;
+    canMembersEdit = false;
+  }
   const maxOrder = db.watchlists
-    .filter((item) => item.owner_user_id === req.username)
+    .filter((item) => {
+      if (scope === 'group') return item.scope === 'group' && item.trading_group_id === tradingGroupId;
+      return (item.scope !== 'group') && item.owner_user_id === req.username;
+    })
     .reduce((max, item) => Math.max(max, Number(item.order_index || 0)), -1);
   const watchlist = {
     id: crypto.randomUUID(),
-    owner_user_id: req.username,
+    owner_user_id: ownerUserId,
+    scope,
+    trading_group_id: tradingGroupId,
+    can_members_edit: canMembersEdit,
     name: parsed.data.name.trim(),
     order_index: Number.isFinite(Number(parsed.data.order_index)) ? Number(parsed.data.order_index) : (maxOrder + 1),
     created_at: nowIso,
@@ -14437,10 +14607,15 @@ app.patch('/api/watchlists/:watchlistId', auth, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const db = loadDB();
   ensureSocialTables(db);
-  const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
-  if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username, { requireEdit: true });
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
   if (parsed.data.name !== undefined) watchlist.name = parsed.data.name.trim();
   if (parsed.data.order_index !== undefined) watchlist.order_index = Number(parsed.data.order_index);
+  if (access.isLeader && parsed.data.can_members_edit !== undefined && watchlist.scope === 'group') {
+    watchlist.can_members_edit = parsed.data.can_members_edit === true;
+  }
   watchlist.updated_at = new Date().toISOString();
   saveDB(db);
   res.json({ watchlist: sanitizeWatchlistRow(db, watchlist, req.username) });
@@ -14450,8 +14625,10 @@ app.delete('/api/watchlists/:watchlistId', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureSocialTables(db);
-  const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
-  if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username, { requireEdit: true });
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
   db.watchlists = db.watchlists.filter((item) => item.id !== watchlist.id);
   db.watchlistItems = db.watchlistItems.filter((item) => item.watchlist_id !== watchlist.id);
   db.tradeGroupWatchlists = db.tradeGroupWatchlists.filter((item) => item.source_watchlist_id !== watchlist.id);
@@ -14466,8 +14643,10 @@ app.post('/api/watchlists/:watchlistId/items', auth, asyncHandler(async (req, re
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const db = loadDB();
   ensureSocialTables(db);
-  const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
-  if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username, { requireEdit: true });
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
   const normalizedTicker = normalizeWatchlistTicker(parsed.data.ticker);
   if (!isValidWatchlistTicker(normalizedTicker)) return res.status(400).json({ error: 'Invalid ticker format.' });
   const duplicate = db.watchlistItems.find((item) => item.watchlist_id === watchlist.id && normalizeWatchlistTicker(item.ticker) === normalizedTicker);
@@ -14500,8 +14679,10 @@ app.delete('/api/watchlists/:watchlistId/items/:itemId', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const db = loadDB();
   ensureSocialTables(db);
-  const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
-  if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username, { requireEdit: true });
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
   const before = db.watchlistItems.length;
   db.watchlistItems = db.watchlistItems.filter((item) => !(item.id === req.params.itemId && item.watchlist_id === watchlist.id));
   if (db.watchlistItems.length === before) return res.status(404).json({ error: 'Watchlist item not found.' });
@@ -14513,8 +14694,10 @@ app.delete('/api/watchlists/:watchlistId/items/:itemId', auth, (req, res) => {
 app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (req, res) => {
   const db = loadDB();
   ensureSocialTables(db);
-  const watchlist = db.watchlists.find((item) => item.id === req.params.watchlistId && item.owner_user_id === req.username);
-  if (!watchlist) return res.status(404).json({ error: 'Watchlist not found.' });
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
   const rows = await buildWatchlistMarketDataRows(db, watchlist);
   res.json({ watchlistId: watchlist.id, lastUpdated: new Date().toISOString(), rows });
 }));

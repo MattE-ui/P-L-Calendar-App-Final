@@ -764,6 +764,7 @@
     chatError: '',
     watchlistError: ''
   };
+  const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 
   const body = root.querySelector('#utility-sidebar-body');
   const searchInput = root.querySelector('#utility-sidebar-search');
@@ -811,8 +812,53 @@
     badge.textContent = chatUnread > 99 ? '99+' : String(chatUnread || '');
   }
 
+  function getMessageType(msg) {
+    const raw = String(msg?.messageType || '').trim();
+    return raw === 'user' ? 'user_message' : (raw || 'user_message');
+  }
+
   function isLeaderAnnouncement(msg) {
-    return String(msg?.messageType || '') === 'leader_announcement';
+    return getMessageType(msg) === 'leader_announcement';
+  }
+
+  function renderTradeShareMessage(msg) {
+    const meta = msg?.metadata || {};
+    const ticker = String(meta.ticker || '—').toUpperCase();
+    const direction = String(meta.direction || 'long').toUpperCase();
+    const entry = Number(meta.entryPrice);
+    const stop = Number(meta.stopPrice);
+    const riskPct = Number(meta.riskPercent);
+    const status = String(meta.status || '').trim() || 'open';
+    return `
+      <div class="utility-chat-msg__type utility-chat-msg__type--trade">Trade share</div>
+      <div class="utility-trade-ticket">
+        <div><strong>${ticker}</strong><span>${direction}</span></div>
+        <div><span>Entry</span><strong>${Number.isFinite(entry) ? entry.toFixed(4) : '—'}</strong></div>
+        <div><span>Stop</span><strong>${Number.isFinite(stop) ? stop.toFixed(4) : '—'}</strong></div>
+        <div><span>Risk</span><strong>${Number.isFinite(riskPct) ? `${riskPct.toFixed(2)}%` : '—'}</strong></div>
+        <div><span>Status</span><strong>${status}</strong></div>
+      </div>
+      <div class="utility-chat-msg__actions"><button data-action="size-trade" data-mid="${msg.id}" type="button">Size this trade</button></div>
+    `;
+  }
+
+  function renderTradeEventSystemMessage(msg) {
+    const meta = msg?.metadata || {};
+    const eventType = String(meta.eventType || '').toUpperCase();
+    const label = eventType === 'TRADE_TRIMMED' ? 'Trade trimmed' : (eventType === 'TRADE_CLOSED' ? 'Trade closed' : 'Trade opened');
+    const ticker = String(meta.ticker || '—').toUpperCase();
+    return `
+      <div class="utility-chat-msg__type utility-chat-msg__type--system">${label}</div>
+      <div class="utility-trade-event-line"><strong>${ticker}</strong><span>${msg.content || ''}</span></div>
+    `;
+  }
+
+  function renderChatMessageBody(msg) {
+    const type = getMessageType(msg);
+    if (type === 'trade_share') return renderTradeShareMessage(msg);
+    if (type === 'trade_event_system') return renderTradeEventSystemMessage(msg);
+    if (type === 'leader_announcement') return `<div class="utility-chat-msg__type">Leader announcement</div><p>${msg.content}</p>`;
+    return `<p>${msg.content}</p>`;
   }
 
   function renderChatRoom() {
@@ -830,13 +876,18 @@
           </div>
           ${chat.chat.canModerate ? `<div class="utility-chat-room__mod"><button data-action="${chat.chat.isLocked ? 'unlock' : 'lock'}" type="button">${chat.chat.isLocked ? 'Unlock room' : 'Lock room'}</button>${chat.chat.pinnedMessageId ? '<button data-action="unpin" type="button">Unpin note</button>' : ''}</div>` : ''}
         </div>
+        <div class="utility-chat-context-strip">
+          <span>${chat.chat.groupName}</span>
+          <span>${chat.chat.participantCount || 0} members</span>
+          ${chat.chat.latestTradeEvent ? `<span>${chat.chat.latestTradeEvent}</span>` : '<span>No recent trade event</span>'}
+          ${chat.chat.hasGroupWatchlist ? '<button data-action="open-group-watchlist" type="button">Open group watchlist</button>' : ''}
+        </div>
         ${pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : ''}
         <div class="utility-chat-feed">
           ${messages.length ? messages.map((msg) => `
-            <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''}">
+            <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${getMessageType(msg) === 'trade_share' ? 'is-trade-share' : ''} ${getMessageType(msg) === 'trade_event_system' ? 'is-trade-event-system' : ''}">
               <header><strong>${msg.senderNickname}</strong><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
-              ${isLeaderAnnouncement(msg) ? '<div class="utility-chat-msg__type">Leader announcement</div>' : ''}
-              <p>${msg.content}</p>
+              ${renderChatMessageBody(msg)}
               ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
             </article>
           `).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
@@ -879,6 +930,8 @@
 
   function renderWatchlists() {
     const active = state.watchlists.find((w) => w.id === state.selectedWatchlistId) || state.watchlists[0];
+    const personalWatchlists = state.watchlists.filter((w) => (w.scope || 'personal') !== 'group');
+    const groupWatchlists = state.watchlists.filter((w) => w.scope === 'group');
     const rows = (state.selectedWatchlistRows || []).map((row) => {
       const ticker = String(row?.ticker || row?.displayTicker || row?.symbol || '—').trim() || '—';
       const currentPrice = Number(row?.currentPrice);
@@ -907,11 +960,15 @@
       return;
     }
     body.innerHTML = `
-      <div class="utility-watchlists">
-        <div class="utility-watchlists__select-wrap"><select id="utility-watchlist-select" ${state.watchlists.length ? '' : 'disabled'}>${state.watchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name}</option>`).join('')}</select></div>
+        <div class="utility-watchlists">
+        <div class="utility-watchlists__select-wrap"><select id="utility-watchlist-select" ${state.watchlists.length ? '' : 'disabled'}>
+          ${personalWatchlists.length ? `<optgroup label="Personal">${personalWatchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name}</option>`).join('')}</optgroup>` : ''}
+          ${groupWatchlists.length ? `<optgroup label="Group">${groupWatchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name} · ${w.tradingGroupId ? 'Desk' : 'Group'}</option>`).join('')}</optgroup>` : ''}
+        </select></div>
+        ${active ? `<div class="utility-watchlist-scope">${active.scope === 'group' ? `Group watchlist${active.canMembersEdit ? ' · Member editable' : ' · Leader managed'}` : 'Personal watchlist'}</div>` : ''}
         ${state.watchlists.length ? `
-          <div class="utility-watchlist-actions"><input id="utility-watchlist-add" placeholder="Ticker"><button id="utility-watchlist-add-btn" type="button">Add</button></div>
-          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.ticker}</strong><span>${formatPrice(row.currentPrice)}</span><span class="${row.percentChangeToday === null ? 'is-flat' : (row.percentChangeToday >= 0 ? 'is-up' : 'is-down')}">${formatChange(row.percentChangeToday)}</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button" aria-label="Remove ${row.ticker} from watchlist">Remove</button></div>`).join('') : '<div class="utility-empty"><strong>No symbols in this watchlist</strong><p>Add tickers to monitor real-time movement.</p></div>'}</div>
+          <div class="utility-watchlist-actions"><input id="utility-watchlist-add" placeholder="Ticker" ${active?.scope === 'group' && !active?.canEdit ? 'disabled' : ''}><button id="utility-watchlist-add-btn" type="button" ${active?.scope === 'group' && !active?.canEdit ? 'disabled' : ''}>Add</button></div>
+          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.ticker}</strong><span>${formatPrice(row.currentPrice)}</span><span class="${row.percentChangeToday === null ? 'is-flat' : (row.percentChangeToday >= 0 ? 'is-up' : 'is-down')}">${formatChange(row.percentChangeToday)}</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button" ${active?.canEdit ? '' : 'disabled'} aria-label="Remove ${row.ticker} from watchlist">Remove</button></div>`).join('') : '<div class="utility-empty"><strong>No symbols in this watchlist</strong><p>Add tickers to monitor real-time movement.</p></div>'}</div>
         ` : '<div class="utility-empty"><strong>No watchlists yet</strong><p>Create one from the Watchlists page to pin symbols here.</p></div>'}
       </div>
     `;
@@ -1014,6 +1071,33 @@
       await api(`/api/group-chats/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(event.target.dataset.mid)}`, { method: 'DELETE' });
       return openChat(groupId);
     }
+    if (action === 'open-group-watchlist' && state.activeChat?.chat?.groupId) {
+      const target = state.watchlists.find((item) => item.scope === 'group' && item.tradingGroupId === state.activeChat.chat.groupId);
+      if (target) {
+        state.activeUtilitySidebarTab = 'watchlist';
+        state.selectedWatchlistId = target.id;
+        setUtilitySidebarOpen(true);
+        await loadWatchlists();
+      }
+      return;
+    }
+    if (action === 'size-trade' && event.target.dataset.mid && state.activeChat?.messages?.length) {
+      const message = state.activeChat.messages.find((item) => item.id === event.target.dataset.mid);
+      const meta = message?.metadata || {};
+      if (!meta?.ticker || !Number.isFinite(Number(meta.entryPrice)) || !Number.isFinite(Number(meta.stopPrice))) return;
+      const payload = {
+        source: 'chat_trade_share',
+        groupId: state.activeChat.chat.groupId,
+        ticker: String(meta.ticker || '').toUpperCase(),
+        side: String(meta.direction || 'long').toUpperCase(),
+        entryPrice: Number(meta.entryPrice),
+        stopPrice: Number(meta.stopPrice),
+        riskPercent: Number.isFinite(Number(meta.riskPercent)) ? Number(meta.riskPercent) : undefined
+      };
+      localStorage.setItem(ALERT_RISK_PREFILL_STORAGE_KEY, JSON.stringify(payload));
+      window.location.href = '/index.html?focus=risk';
+      return;
+    }
     if (action === 'remove-symbol' && state.selectedWatchlistId && event.target.dataset.itemId) {
       await api(`/api/watchlists/${encodeURIComponent(state.selectedWatchlistId)}/items/${encodeURIComponent(event.target.dataset.itemId)}`, { method: 'DELETE' });
       return loadWatchlists();
@@ -1027,7 +1111,7 @@
     const fd = new FormData(form);
     const content = String(fd.get('content') || '').trim();
     if (!content) return;
-    const messageType = fd.get('announcement') ? 'leader_announcement' : 'user';
+    const messageType = fd.get('announcement') ? 'leader_announcement' : 'user_message';
     await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1062,6 +1146,22 @@
     if (input) input.value = '';
     await loadWatchlists();
   });
+
+  window.VeracityUtilitySidebar = {
+    async shareTradeToGroupChats(tradeId) {
+      if (!tradeId) throw new Error('Missing tradeId');
+      const chatsData = await api('/api/group-chats');
+      const chats = Array.isArray(chatsData?.chats) ? chatsData.chats : [];
+      if (!chats.length) throw new Error('No eligible group chats found.');
+      const optionsText = chats.map((chat, index) => `${index + 1}. ${chat.groupName}`).join('\n');
+      const pick = window.prompt(`Share trade to which group?\n${optionsText}`);
+      if (!pick) return null;
+      const selected = chats[Math.max(0, Number(pick) - 1)];
+      if (!selected?.groupId) throw new Error('Invalid group selection.');
+      await api(`/api/group-chats/${encodeURIComponent(selected.groupId)}/share-trade/${encodeURIComponent(tradeId)}`, { method: 'POST' });
+      return selected.groupName;
+    }
+  };
 
   loadChats();
   render();

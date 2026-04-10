@@ -393,6 +393,22 @@ async function loadTrades() {
   renderTrades();
 }
 
+async function shareTradeToGroupChat(trade) {
+  if (!trade?.id) return;
+  try {
+    const sidebar = window.VeracityUtilitySidebar;
+    if (!sidebar?.shareTradeToGroupChats) {
+      throw new Error('Trading chat sidebar is unavailable.');
+    }
+    const groupName = await sidebar.shareTradeToGroupChats(trade.id);
+    if (groupName) {
+      alert(`Trade shared to ${groupName}.`);
+    }
+  } catch (error) {
+    alert(error?.message || 'Unable to share trade to group chat.');
+  }
+}
+
 function renderTrades() {
   const tbody = document.querySelector('#trade-table tbody');
   const empty = document.querySelector('#trade-empty');
@@ -498,6 +514,12 @@ function renderTrades() {
       }
     });
     wrap.appendChild(deleteBtn);
+
+    const shareBtn = document.createElement('button');
+    shareBtn.className = 'ghost';
+    shareBtn.textContent = 'Share';
+    shareBtn.addEventListener('click', () => shareTradeToGroupChat(trade));
+    wrap.appendChild(shareBtn);
 
     if (trade.status !== 'closed') {
       const closeBtn = document.createElement('button');
