@@ -758,7 +758,11 @@
     watchlists: [],
     selectedWatchlistId: '',
     selectedWatchlistRows: [],
-    query: ''
+    query: '',
+    chatsLoading: false,
+    watchlistsLoading: false,
+    chatError: '',
+    watchlistError: ''
   };
 
   const body = root.querySelector('#utility-sidebar-body');
@@ -819,25 +823,29 @@
     body.innerHTML = `
       <div class="utility-chat-room">
         <div class="utility-chat-room__header">
-          <button class="utility-link-btn" data-action="back" type="button">← Back</button>
-          <h4>${chat.chat.groupName}</h4>
-          <p>${chat.chat.participantCount || 0} participants</p>
-          ${chat.chat.canModerate ? `<div class="utility-chat-room__mod"><button data-action="${chat.chat.isLocked ? 'unlock' : 'lock'}" type="button">${chat.chat.isLocked ? 'Unlock' : 'Lock'} chat</button>${chat.chat.pinnedMessageId ? '<button data-action="unpin" type="button">Unpin</button>' : ''}</div>` : ''}
+          <button class="utility-link-btn" data-action="back" type="button">← Chats</button>
+          <div class="utility-chat-room__title-wrap">
+            <h4>${chat.chat.groupName}</h4>
+            <p>${chat.chat.participantCount || 0} participants${chat.chat.isLocked ? ' · Locked by leader' : ''}</p>
+          </div>
+          ${chat.chat.canModerate ? `<div class="utility-chat-room__mod"><button data-action="${chat.chat.isLocked ? 'unlock' : 'lock'}" type="button">${chat.chat.isLocked ? 'Unlock room' : 'Lock room'}</button>${chat.chat.pinnedMessageId ? '<button data-action="unpin" type="button">Unpin note</button>' : ''}</div>` : ''}
         </div>
-        ${pinned ? `<div class="utility-chat-pinned">Pinned · ${pinned.senderNickname}: ${pinned.content}</div>` : ''}
+        ${pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : ''}
         <div class="utility-chat-feed">
           ${messages.length ? messages.map((msg) => `
             <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''}">
               <header><strong>${msg.senderNickname}</strong><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
+              ${isLeaderAnnouncement(msg) ? '<div class="utility-chat-msg__type">Leader announcement</div>' : ''}
               <p>${msg.content}</p>
               ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
             </article>
-          `).join('') : '<div class="utility-empty">No messages yet.</div>'}
+          `).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
         </div>
         <form class="utility-chat-composer" data-action="send">
-          <textarea name="content" placeholder="Send message" ${!chat.chat.canSend ? 'disabled' : ''}></textarea>
+          ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
+          <textarea name="content" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend ? 'disabled' : ''}></textarea>
           <div>
-            ${chat.chat.canModerate ? '<label><input type="checkbox" name="announcement"> Leader announcement</label>' : ''}
+            ${chat.chat.canModerate ? '<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement"> Post as leader announcement</label>' : '<span></span>'}
             <button type="submit" ${!chat.chat.canSend ? 'disabled' : ''}>Send</button>
           </div>
         </form>
@@ -848,16 +856,23 @@
   function renderChats() {
     if (state.activeChat) return renderChatRoom();
     const filtered = state.chats.filter((chat) => `${chat.groupName} ${chat.latestMessage?.content || ''}`.toLowerCase().includes(state.query.toLowerCase()));
+    if (state.chatsLoading) {
+      body.innerHTML = '<div class="utility-empty utility-empty--loading"><strong>Loading chats</strong><p>Syncing your desk rooms…</p></div>';
+      return;
+    }
+    if (state.chatError) {
+      body.innerHTML = `<div class="utility-empty"><strong>Chat feed unavailable</strong><p>${state.chatError}</p></div>`;
+      return;
+    }
     body.innerHTML = `
       <div class="utility-list">
         ${filtered.length ? filtered.map((chat) => `
-          <button class="utility-chat-row" data-group-id="${chat.groupId}" type="button">
-            <div><strong>${chat.groupName}</strong>${chat.isLeaderOwned ? '<span class="utility-chip">Leader</span>' : ''}</div>
-            <p>${chat.latestMessage?.content || 'No messages yet'}</p>
-            <small>${chat.latestMessage?.createdAt ? new Date(chat.latestMessage.createdAt).toLocaleString() : ''}</small>
-            ${chat.unreadCount ? `<span class="utility-pill">${chat.unreadCount}</span>` : ''}
+          <button class="utility-chat-row ${chat.unreadCount ? 'has-unread' : ''}" data-group-id="${chat.groupId}" type="button">
+            <div class="utility-chat-row__top"><strong>${chat.groupName}</strong><span class="utility-chat-row__time">${chat.latestMessage?.createdAt ? new Date(chat.latestMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>
+            <p title="${chat.latestMessage?.content || 'No messages yet'}">${chat.latestMessage?.content || 'No messages yet'}</p>
+            <div class="utility-chat-row__meta">${chat.isLeaderOwned ? '<span class="utility-chip">Leader desk</span>' : '<span></span>'}${chat.unreadCount ? `<span class="utility-pill">${chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>` : '<span class="utility-chat-row__read">Read</span>'}</div>
           </button>
-        `).join('') : '<div class="utility-empty">No chats yet. Join or create a trading group to start collaborating.</div>'}
+        `).join('') : '<div class="utility-empty"><strong>No chats yet</strong><p>Join or create a trading group to start collaborating.</p></div>'}
       </div>
     `;
   }
@@ -879,17 +894,25 @@
       ? `$${Number(value).toFixed(Number(value) >= 100 ? 2 : 4)}`
       : '—';
     const formatChange = (value) => {
-      if (!Number.isFinite(Number(value))) return 'Quote unavailable';
+      if (!Number.isFinite(Number(value))) return '—';
       const numeric = Number(value);
       return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`;
     };
+    if (state.watchlistsLoading) {
+      body.innerHTML = '<div class="utility-empty utility-empty--loading"><strong>Loading watchlists</strong><p>Pulling latest symbols and quotes…</p></div>';
+      return;
+    }
+    if (state.watchlistError) {
+      body.innerHTML = `<div class="utility-empty"><strong>Watchlist unavailable</strong><p>${state.watchlistError}</p></div>`;
+      return;
+    }
     body.innerHTML = `
       <div class="utility-watchlists">
-        <div class="utility-watchlists__select-wrap"><select id="utility-watchlist-select">${state.watchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name}</option>`).join('')}</select></div>
+        <div class="utility-watchlists__select-wrap"><select id="utility-watchlist-select" ${state.watchlists.length ? '' : 'disabled'}>${state.watchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name}</option>`).join('')}</select></div>
         ${state.watchlists.length ? `
           <div class="utility-watchlist-actions"><input id="utility-watchlist-add" placeholder="Ticker"><button id="utility-watchlist-add-btn" type="button">Add</button></div>
-          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.ticker}</strong><span>${formatPrice(row.currentPrice)}</span><span class="${row.percentChangeToday === null ? '' : (row.percentChangeToday >= 0 ? 'is-up' : 'is-down')}">${formatChange(row.percentChangeToday)}</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button">×</button></div>`).join('') : '<div class="utility-empty">No symbols yet.</div>'}</div>
-        ` : '<div class="utility-empty">No watchlists yet. Create one to monitor symbols here.</div>'}
+          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.ticker}</strong><span>${formatPrice(row.currentPrice)}</span><span class="${row.percentChangeToday === null ? 'is-flat' : (row.percentChangeToday >= 0 ? 'is-up' : 'is-down')}">${formatChange(row.percentChangeToday)}</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button" aria-label="Remove ${row.ticker} from watchlist">Remove</button></div>`).join('') : '<div class="utility-empty"><strong>No symbols in this watchlist</strong><p>Add tickers to monitor real-time movement.</p></div>'}</div>
+        ` : '<div class="utility-empty"><strong>No watchlists yet</strong><p>Create one from the Watchlists page to pin symbols here.</p></div>'}
       </div>
     `;
   }
@@ -908,11 +931,18 @@
   }
 
   async function loadChats() {
+    state.chatsLoading = true;
+    state.chatError = '';
+    render();
     try {
       const data = await api('/api/group-chats');
       state.chats = Array.isArray(data.chats) ? data.chats : [];
+    } catch (error) {
+      state.chatError = error?.message || 'Unable to load chat rooms.';
+    } finally {
+      state.chatsLoading = false;
       render();
-    } catch (_) {}
+    }
   }
 
   async function openChat(groupId) {
@@ -927,6 +957,9 @@
   }
 
   async function loadWatchlists() {
+    state.watchlistsLoading = true;
+    state.watchlistError = '';
+    render();
     try {
       const data = await api('/api/watchlists');
       state.watchlists = Array.isArray(data.watchlists) ? data.watchlists : [];
@@ -935,8 +968,12 @@
         const market = await api(`/api/watchlists/${encodeURIComponent(state.selectedWatchlistId)}/market-data`);
         state.selectedWatchlistRows = Array.isArray(market.rows) ? market.rows : [];
       }
+    } catch (error) {
+      state.watchlistError = error?.message || 'Unable to load watchlists.';
+    } finally {
+      state.watchlistsLoading = false;
       render();
-    } catch (_) {}
+    }
   }
 
   root.addEventListener('click', async (event) => {
