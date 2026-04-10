@@ -864,13 +864,31 @@
 
   function renderWatchlists() {
     const active = state.watchlists.find((w) => w.id === state.selectedWatchlistId) || state.watchlists[0];
-    const rows = state.selectedWatchlistRows || [];
+    const rows = (state.selectedWatchlistRows || []).map((row) => {
+      const ticker = String(row?.ticker || row?.displayTicker || row?.symbol || '—').trim() || '—';
+      const currentPrice = Number(row?.currentPrice);
+      const percentChangeToday = Number(row?.percentChangeToday);
+      return {
+        itemId: row?.itemId || '',
+        ticker,
+        currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+        percentChangeToday: Number.isFinite(percentChangeToday) ? percentChangeToday : null
+      };
+    });
+    const formatPrice = (value) => Number.isFinite(Number(value))
+      ? `$${Number(value).toFixed(Number(value) >= 100 ? 2 : 4)}`
+      : '—';
+    const formatChange = (value) => {
+      if (!Number.isFinite(Number(value))) return 'Quote unavailable';
+      const numeric = Number(value);
+      return `${numeric > 0 ? '+' : ''}${numeric.toFixed(2)}%`;
+    };
     body.innerHTML = `
       <div class="utility-watchlists">
         <div class="utility-watchlists__select-wrap"><select id="utility-watchlist-select">${state.watchlists.map((w) => `<option value="${w.id}" ${w.id === active?.id ? 'selected' : ''}>${w.name}</option>`).join('')}</select></div>
         ${state.watchlists.length ? `
           <div class="utility-watchlist-actions"><input id="utility-watchlist-add" placeholder="Ticker"><button id="utility-watchlist-add-btn" type="button">Add</button></div>
-          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.displayTicker || row.symbol}</strong><span>${Number(row.price).toFixed(2)}</span><span class="${Number(row.changePercent) >= 0 ? 'is-up' : 'is-down'}">${Number(row.changePercent || 0).toFixed(2)}%</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button">×</button></div>`).join('') : '<div class="utility-empty">No symbols yet.</div>'}</div>
+          <div class="utility-watchlist-rows">${rows.length ? rows.map((row) => `<div class="utility-watchlist-row"><strong>${row.ticker}</strong><span>${formatPrice(row.currentPrice)}</span><span class="${row.percentChangeToday === null ? '' : (row.percentChangeToday >= 0 ? 'is-up' : 'is-down')}">${formatChange(row.percentChangeToday)}</span><button data-action="remove-symbol" data-item-id="${row.itemId}" type="button">×</button></div>`).join('') : '<div class="utility-empty">No symbols yet.</div>'}</div>
         ` : '<div class="utility-empty">No watchlists yet. Create one to monitor symbols here.</div>'}
       </div>
     `;

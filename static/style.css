@@ -9059,8 +9059,7 @@ textarea {
   top: 86px;
   bottom: 18px;
   z-index: 1400;
-  display: flex;
-  align-items: flex-start;
+  width: 54px;
   pointer-events: none;
 }
 .utility-sidebar__icon,
@@ -9115,9 +9114,12 @@ textarea {
   padding: 0 5px;
 }
 .utility-sidebar__panel {
-  width: min(420px, calc(100vw - 26px));
+  position: absolute;
+  top: 0;
+  right: 54px;
+  width: min(420px, calc(100vw - 54px));
   height: 100%;
-  transform: translateX(105%);
+  transform: translateX(calc(100% + 22px));
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -9205,6 +9207,7 @@ textarea {
   .utility-sidebar { top: 0; bottom: 0; }
   .utility-sidebar__dock { width: 48px; border-radius: 0; }
   .utility-sidebar__panel {
+    right: 48px;
     width: min(100vw - 48px, 420px);
     border-right: 1px solid rgba(61, 76, 99, 0.82);
   }
