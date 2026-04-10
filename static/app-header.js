@@ -765,6 +765,7 @@
     watchlistError: ''
   };
   const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
+  const SHARE_TOAST_TIMEOUT_MS = 2600;
 
   const body = root.querySelector('#utility-sidebar-body');
   const searchInput = root.querySelector('#utility-sidebar-search');
@@ -776,6 +777,92 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
+  }
+
+  function ensureToastContainer() {
+    let container = document.getElementById('global-toast-container');
+    if (container) return container;
+    container = document.createElement('div');
+    container.id = 'global-toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+    return container;
+  }
+
+  function showToast(message, tone = 'success') {
+    if (!message) return;
+    const container = ensureToastContainer();
+    const toast = document.createElement('div');
+    toast.className = `toast-item toast-${tone === 'error' ? 'error' : (tone === 'info' ? 'info' : 'success')}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    window.setTimeout(() => {
+      toast.classList.add('is-leaving');
+      window.setTimeout(() => toast.remove(), 220);
+    }, SHARE_TOAST_TIMEOUT_MS);
+  }
+
+  async function openTradeSharePicker(chats) {
+    const rankedChats = [...chats].sort((a, b) => {
+      const aMs = Date.parse(a?.latestMessage?.createdAt || '') || 0;
+      const bMs = Date.parse(b?.latestMessage?.createdAt || '') || 0;
+      return bMs - aMs;
+    });
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'trade-share-picker-overlay';
+      overlay.innerHTML = `
+        <section class="trade-share-picker" role="dialog" aria-modal="true" aria-labelledby="trade-share-picker-title">
+          <header class="trade-share-picker__head">
+            <h4 id="trade-share-picker-title">Share trade to chat</h4>
+            <button class="trade-share-picker__close" type="button" data-action="cancel" aria-label="Close share picker">×</button>
+          </header>
+          <p class="trade-share-picker__sub">Choose a trading group.</p>
+          <div class="trade-share-picker__list">
+            ${rankedChats.map((chat) => `
+              <button class="trade-share-picker__group" type="button" data-action="pick-group" data-group-id="${chat.groupId}">
+                <strong>${chat.groupName}</strong>
+                <span>${chat.latestMessage?.createdAt ? `Active ${new Date(chat.latestMessage.createdAt).toLocaleDateString()}` : 'No recent activity'}</span>
+              </button>
+            `).join('')}
+          </div>
+        </section>
+      `;
+      let isDone = false;
+      const onEsc = (event) => {
+        if (event.key !== 'Escape') return;
+        finish(null);
+      };
+      const finish = (value) => {
+        if (isDone) return;
+        isDone = true;
+        window.removeEventListener('keydown', onEsc);
+        overlay.remove();
+        resolve(value);
+      };
+      overlay.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.dataset.action === 'cancel' || target === overlay) {
+          finish(null);
+          return;
+        }
+        if (target.dataset.action === 'pick-group') {
+          const groupId = target.dataset.groupId;
+          const selected = rankedChats.find((chat) => chat.groupId === groupId);
+          finish(selected || null);
+          return;
+        }
+        const row = target.closest('[data-action="pick-group"]');
+        if (row instanceof HTMLElement) {
+          const selected = rankedChats.find((chat) => chat.groupId === row.dataset.groupId);
+          finish(selected || null);
+        }
+      });
+      window.addEventListener('keydown', onEsc);
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-action="pick-group"]')?.focus();
+    });
   }
 
   function setUtilitySidebarOpen(nextOpen) {
@@ -1173,14 +1260,14 @@
     async shareTradeToGroupChats(tradeId) {
       if (!tradeId) throw new Error('Missing tradeId');
       const chatsData = await api('/api/group-chats');
-      const chats = Array.isArray(chatsData?.chats) ? chatsData.chats : [];
+      const chats = Array.isArray(chatsData?.chats)
+        ? chatsData.chats.filter((chat) => chat?.groupId && chat?.groupName)
+        : [];
       if (!chats.length) throw new Error('No eligible group chats found.');
-      const optionsText = chats.map((chat, index) => `${index + 1}. ${chat.groupName}`).join('\n');
-      const pick = window.prompt(`Share trade to which group?\n${optionsText}`);
-      if (!pick) return null;
-      const selected = chats[Math.max(0, Number(pick) - 1)];
-      if (!selected?.groupId) throw new Error('Invalid group selection.');
+      const selected = await openTradeSharePicker(chats);
+      if (!selected?.groupId) return null;
       await api(`/api/group-chats/${encodeURIComponent(selected.groupId)}/share-trade/${encodeURIComponent(tradeId)}`, { method: 'POST' });
+      showToast(`Shared to ${selected.groupName}`, 'success');
       return selected.groupName;
     }
   };

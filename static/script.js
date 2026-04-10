@@ -2327,7 +2327,24 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     trimBtn.className = 'ghost trade-trim-btn';
     trimBtn.textContent = 'Trim';
     trimBtn.addEventListener('click', () => openTrimTradeModal(trade));
-    actionRow.append(editToggle, trimBtn, closeBtn);
+    const shareToChatBtn = document.createElement('button');
+    shareToChatBtn.className = 'ghost trade-share-chat-btn';
+    shareToChatBtn.textContent = 'Share to chat';
+    shareToChatBtn.type = 'button';
+    shareToChatBtn.addEventListener('click', async () => {
+      if (!trade?.id) return;
+      const sidebar = window.VeracityUtilitySidebar;
+      if (!sidebar?.shareTradeToGroupChats) {
+        alert('Trading chat sidebar is unavailable.');
+        return;
+      }
+      try {
+        await sidebar.shareTradeToGroupChats(trade.id);
+      } catch (error) {
+        alert(error?.message || 'Unable to share trade to group chat.');
+      }
+    });
+    actionRow.append(editToggle, shareToChatBtn, trimBtn, closeBtn);
     expandedWrap.appendChild(actionRow);
 
   return expandedWrap;

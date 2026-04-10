@@ -400,10 +400,7 @@ async function shareTradeToGroupChat(trade) {
     if (!sidebar?.shareTradeToGroupChats) {
       throw new Error('Trading chat sidebar is unavailable.');
     }
-    const groupName = await sidebar.shareTradeToGroupChats(trade.id);
-    if (groupName) {
-      alert(`Trade shared to ${groupName}.`);
-    }
+    await sidebar.shareTradeToGroupChats(trade.id);
   } catch (error) {
     alert(error?.message || 'Unable to share trade to group chat.');
   }
@@ -517,7 +514,7 @@ function renderTrades() {
 
     const shareBtn = document.createElement('button');
     shareBtn.className = 'ghost';
-    shareBtn.textContent = 'Share';
+    shareBtn.textContent = 'Share to chat';
     shareBtn.addEventListener('click', () => shareTradeToGroupChat(trade));
     wrap.appendChild(shareBtn);
 
