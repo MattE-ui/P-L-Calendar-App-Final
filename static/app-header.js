@@ -731,18 +731,17 @@
   const root = document.createElement('aside');
   root.className = 'utility-sidebar';
   root.innerHTML = `
-    <button class="utility-sidebar__expand" type="button" aria-label="Expand utility sidebar" aria-expanded="false">‹</button>
-    <div class="utility-sidebar__rail">
-      <button class="utility-sidebar__icon is-active" data-tab="chats" type="button">💬<span id="utility-chat-unread" class="utility-sidebar__badge hidden"></span></button>
-      <button class="utility-sidebar__icon" data-tab="watchlists" type="button">◎<span id="utility-watchlist-unread" class="utility-sidebar__badge hidden"></span></button>
+    <div class="utility-sidebar__dock">
+      <button class="utility-sidebar__icon" data-tab="chat" type="button" aria-label="Toggle chats panel">💬<span id="utility-chat-unread" class="utility-sidebar__badge hidden"></span></button>
+      <button class="utility-sidebar__icon" data-tab="watchlist" type="button" aria-label="Toggle watchlists panel">◎</button>
     </div>
     <div class="utility-sidebar__panel" aria-hidden="true">
       <div class="utility-sidebar__head">
         <div class="utility-sidebar__tabs">
-          <button class="utility-sidebar__tab is-active" data-tab="chats" type="button">Chats</button>
-          <button class="utility-sidebar__tab" data-tab="watchlists" type="button">Watchlists</button>
+          <button class="utility-sidebar__tab" data-tab="chat" type="button">Chats</button>
+          <button class="utility-sidebar__tab" data-tab="watchlist" type="button">Watchlists</button>
         </div>
-        <button class="utility-sidebar__collapse" type="button" aria-label="Collapse utility sidebar">→</button>
+        <button class="utility-sidebar__close" type="button" data-action="close" aria-label="Close utility panel">→</button>
       </div>
       <div class="utility-sidebar__search-wrap"><input id="utility-sidebar-search" class="utility-sidebar__search" type="search" placeholder="Search"></div>
       <div id="utility-sidebar-body" class="utility-sidebar__body"></div>
@@ -751,8 +750,8 @@
   document.body.append(root);
 
   const state = {
-    expanded: false,
-    tab: 'chats',
+    isUtilitySidebarOpen: false,
+    activeUtilitySidebarTab: 'chat',
     chats: [],
     selectedGroupId: '',
     activeChat: null,
@@ -764,7 +763,7 @@
 
   const body = root.querySelector('#utility-sidebar-body');
   const searchInput = root.querySelector('#utility-sidebar-search');
-  const expandBtn = root.querySelector('.utility-sidebar__expand');
+  const panelEl = root.querySelector('.utility-sidebar__panel');
 
   async function api(path, opts = {}) {
     const res = await fetch(path, { credentials: 'include', ...opts });
@@ -774,20 +773,38 @@
     return data;
   }
 
-  function setExpanded(expanded) {
-    state.expanded = expanded;
-    root.classList.toggle('is-expanded', expanded);
-    expandBtn.setAttribute('aria-expanded', String(expanded));
-    root.querySelector('.utility-sidebar__panel').setAttribute('aria-hidden', String(!expanded));
+  function setUtilitySidebarOpen(nextOpen) {
+    state.isUtilitySidebarOpen = !!nextOpen;
+    root.classList.toggle('is-open', state.isUtilitySidebarOpen);
+    panelEl.setAttribute('aria-hidden', String(!state.isUtilitySidebarOpen));
+    if (!state.isUtilitySidebarOpen) {
+      state.activeChat = null;
+    }
+  }
+
+  function handleTabToggle(tab) {
+    const sameTab = state.activeUtilitySidebarTab === tab;
+    if (!state.isUtilitySidebarOpen) {
+      state.activeUtilitySidebarTab = tab;
+      setUtilitySidebarOpen(true);
+    } else if (sameTab) {
+      setUtilitySidebarOpen(false);
+    } else {
+      state.activeUtilitySidebarTab = tab;
+      setUtilitySidebarOpen(true);
+    }
+    if (state.activeUtilitySidebarTab === 'watchlist' && state.isUtilitySidebarOpen) {
+      loadWatchlists();
+    }
+    render();
   }
 
   function renderUnread() {
     const chatUnread = state.chats.reduce((sum, chat) => sum + Number(chat.unreadCount || 0), 0);
     const badge = document.getElementById('utility-chat-unread');
-    if (badge) {
-      badge.classList.toggle('hidden', chatUnread <= 0);
-      badge.textContent = chatUnread > 99 ? '99+' : String(chatUnread || '');
-    }
+    if (!badge) return;
+    badge.classList.toggle('hidden', chatUnread <= 0);
+    badge.textContent = chatUnread > 99 ? '99+' : String(chatUnread || '');
   }
 
   function isLeaderAnnouncement(msg) {
@@ -860,8 +877,14 @@
   }
 
   function render() {
-    root.querySelectorAll('[data-tab]').forEach((el) => el.classList.toggle('is-active', el.dataset.tab === state.tab));
-    if (state.tab === 'chats') renderChats();
+    root.querySelectorAll('[data-tab]').forEach((el) => {
+      const tab = el.dataset.tab;
+      const isActive = state.activeUtilitySidebarTab === tab;
+      const shouldHighlight = state.isUtilitySidebarOpen ? isActive : false;
+      el.classList.toggle('is-active', shouldHighlight);
+    });
+    if (!state.isUtilitySidebarOpen) return renderUnread();
+    if (state.activeUtilitySidebarTab === 'chat') renderChats();
     else renderWatchlists();
     renderUnread();
   }
@@ -899,17 +922,16 @@
   }
 
   root.addEventListener('click', async (event) => {
-    const icon = event.target.closest('.utility-sidebar__icon,.utility-sidebar__tab');
-    if (icon?.dataset.tab) {
-      state.tab = icon.dataset.tab;
-      if (!state.expanded) setExpanded(true);
-      if (state.tab === 'watchlists') loadWatchlists();
+    const toggle = event.target.closest('.utility-sidebar__icon,.utility-sidebar__tab');
+    if (toggle?.dataset.tab) {
+      handleTabToggle(toggle.dataset.tab);
+      return;
+    }
+    if (event.target.dataset.action === 'close') {
+      setUtilitySidebarOpen(false);
       render();
       return;
     }
-    if (event.target.closest('.utility-sidebar__expand')) return setExpanded(true);
-    if (event.target.closest('.utility-sidebar__collapse')) return setExpanded(false);
-
     const chatRow = event.target.closest('[data-group-id]');
     if (chatRow) return openChat(chatRow.dataset.groupId);
 
@@ -987,8 +1009,11 @@
   });
 
   loadChats();
+  render();
   window.setInterval(loadChats, 15000);
   window.setInterval(() => {
-    if (state.activeChat?.chat?.groupId) openChat(state.activeChat.chat.groupId);
+    if (state.activeChat?.chat?.groupId && state.isUtilitySidebarOpen && state.activeUtilitySidebarTab === 'chat') {
+      openChat(state.activeChat.chat.groupId);
+    }
   }, 5000);
 })();
