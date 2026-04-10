@@ -9218,6 +9218,8 @@ textarea {
 .utility-chat-room__title-wrap h4 { margin: 0 0 2px; font-size: 14px; color: #e4edf8; }
 .utility-chat-room__title-wrap p { margin: 0; color: #8f9daf; font-size: 11px; }
 .utility-chat-room__mod { display: flex; gap: 6px; margin-bottom: 2px; flex-wrap: wrap; }
+.utility-chat-context-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 10px; color: #8ea1b6; border: 1px solid rgba(47,59,79,0.7); background: rgba(12,18,26,0.72); border-radius: 8px; padding: 5px 7px; }
+.utility-chat-context-strip button { margin-left: auto; height: 24px; padding: 2px 7px; font-size: 10px; }
 .utility-chat-room__mod button,
 .utility-link-btn,
 .utility-chat-msg__actions button,
@@ -9232,8 +9234,16 @@ textarea {
 .utility-chat-feed { max-height: 48vh; overflow: auto; display: flex; flex-direction: column; gap: 7px; padding-right: 2px; }
 .utility-chat-msg { background: rgba(16,24,33,0.84); border: 1px solid rgba(44,56,75,0.8); border-radius: 10px; padding: 8px 9px; }
 .utility-chat-msg.is-announcement { border-color: rgba(57, 173, 123, 0.62); background: linear-gradient(180deg, rgba(16, 40, 33, 0.84), rgba(11, 30, 25, 0.72)); box-shadow: inset 0 1px 0 rgba(152, 235, 200, 0.1); }
+.utility-chat-msg.is-trade-share { border-color: rgba(54, 116, 178, 0.58); background: linear-gradient(180deg, rgba(16, 27, 39, 0.92), rgba(13, 22, 33, 0.85)); }
+.utility-chat-msg.is-trade-event-system { border-color: rgba(90, 104, 130, 0.65); background: rgba(15, 21, 30, 0.92); }
 .utility-chat-msg header { display: flex; justify-content: space-between; font-size: 11px; color: #95a6bb; margin-bottom: 4px; }
 .utility-chat-msg__type { margin-bottom: 4px; display: inline-flex; border-radius: 999px; border: 1px solid rgba(114, 210, 167, 0.45); color: #bcead7; font-size: 9px; padding: 2px 7px; letter-spacing: 0.06em; text-transform: uppercase; }
+.utility-chat-msg__type--trade { border-color: rgba(113, 186, 248, 0.45); color: #b8dcff; }
+.utility-chat-msg__type--system { border-color: rgba(144, 159, 184, 0.45); color: #c4d1e1; }
+.utility-trade-ticket { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px 8px; margin-bottom: 6px; font-size: 11px; }
+.utility-trade-ticket div { display: flex; justify-content: space-between; gap: 8px; color: #9fb0c4; }
+.utility-trade-ticket div strong { color: #e4edf8; }
+.utility-trade-event-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #9db0c7; margin-bottom: 3px; }
 .utility-chat-msg p { margin: 0 0 6px; font-size: 12px; color: #dae4f0; white-space: pre-wrap; line-height: 1.35; }
 .utility-chat-msg__actions { display: flex; gap: 6px; }
 .utility-chat-locked { border: 1px solid rgba(164, 132, 49, 0.44); background: rgba(53, 41, 15, 0.38); border-radius: 8px; padding: 7px 8px; color: #e1cb90; font-size: 11px; margin-top: 6px; }
@@ -9242,6 +9252,7 @@ textarea {
 .utility-chat-composer__announcement { display: inline-flex; gap: 6px; align-items: center; color: #9fb1c6; font-size: 11px; }
 .utility-watchlists__select-wrap select,
 .utility-watchlist-actions input { width: 100%; height: 34px; border-radius: 8px; border: 1px solid rgba(44,56,75,0.9); background: rgba(14,22,31,0.95); color: #d8e4ef; padding: 0 8px; }
+.utility-watchlist-scope { font-size: 10px; color: #8ea3bb; margin-top: 7px; }
 .utility-watchlists__select-wrap select { font-size: 12px; }
 .utility-watchlist-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 10px 0; }
 .utility-watchlist-actions #utility-watchlist-add-btn { min-width: 56px; }
