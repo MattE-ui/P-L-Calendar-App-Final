@@ -824,32 +824,43 @@
   function renderTradeShareMessage(msg) {
     const meta = msg?.metadata || {};
     const ticker = String(meta.ticker || '—').toUpperCase();
-    const direction = String(meta.direction || 'long').toUpperCase();
+    const directionRaw = String(meta.direction || 'long').toLowerCase();
+    const direction = directionRaw === 'short' ? 'Short' : 'Long';
     const entry = Number(meta.entryPrice);
     const stop = Number(meta.stopPrice);
     const riskPct = Number(meta.riskPercent);
-    const status = String(meta.status || '').trim() || 'open';
+    const status = String(meta.status || '').trim() || 'Open';
     return `
-      <div class="utility-chat-msg__type utility-chat-msg__type--trade">Trade share</div>
       <div class="utility-trade-ticket">
-        <div><strong>${ticker}</strong><span>${direction}</span></div>
-        <div><span>Entry</span><strong>${Number.isFinite(entry) ? entry.toFixed(4) : '—'}</strong></div>
-        <div><span>Stop</span><strong>${Number.isFinite(stop) ? stop.toFixed(4) : '—'}</strong></div>
-        <div><span>Risk</span><strong>${Number.isFinite(riskPct) ? `${riskPct.toFixed(2)}%` : '—'}</strong></div>
-        <div><span>Status</span><strong>${status}</strong></div>
+        <div class="utility-trade-ticket__top">
+          <strong class="utility-trade-ticket__ticker">${ticker}</strong>
+          <span class="utility-trade-ticket__direction utility-trade-ticket__direction--${directionRaw === 'short' ? 'short' : 'long'}">${direction}</span>
+          <span class="utility-trade-ticket__status">${status}</span>
+        </div>
+        <div class="utility-trade-ticket__grid">
+          <div><span>Entry</span><strong>${Number.isFinite(entry) ? entry.toFixed(4) : '—'}</strong></div>
+          <div><span>Stop</span><strong>${Number.isFinite(stop) ? stop.toFixed(4) : '—'}</strong></div>
+          <div><span>Risk %</span><strong>${Number.isFinite(riskPct) ? `${riskPct.toFixed(2)}%` : '—'}</strong></div>
+        </div>
+        <div class="utility-trade-ticket__bottom">
+          <span class="utility-trade-ticket__meta">Trade share</span>
+          <button data-action="size-trade" data-mid="${msg.id}" type="button" class="utility-chat-msg__workflow-btn">Size this trade</button>
+        </div>
       </div>
-      <div class="utility-chat-msg__actions"><button data-action="size-trade" data-mid="${msg.id}" type="button">Size this trade</button></div>
     `;
   }
 
   function renderTradeEventSystemMessage(msg) {
     const meta = msg?.metadata || {};
-    const eventType = String(meta.eventType || '').toUpperCase();
-    const label = eventType === 'TRADE_TRIMMED' ? 'Trade trimmed' : (eventType === 'TRADE_CLOSED' ? 'Trade closed' : 'Trade opened');
+    const eventType = String(meta.eventType || '').toUpperCase().trim();
+    const label = eventType === 'TRADE_TRIMMED' ? 'Trimmed' : (eventType === 'TRADE_CLOSED' ? 'Closed' : 'Opened');
     const ticker = String(meta.ticker || '—').toUpperCase();
+    const keyInfo = String(msg.content || meta.summary || '').trim() || 'System update';
     return `
-      <div class="utility-chat-msg__type utility-chat-msg__type--system">${label}</div>
-      <div class="utility-trade-event-line"><strong>${ticker}</strong><span>${msg.content || ''}</span></div>
+      <div class="utility-trade-event-line">
+        <span class="utility-trade-event-line__type">${label}</span>
+        <span class="utility-trade-event-line__main"><strong>${ticker}</strong><span>${keyInfo}</span></span>
+      </div>
     `;
   }
 
@@ -884,13 +895,24 @@
         </div>
         ${pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : ''}
         <div class="utility-chat-feed">
-          ${messages.length ? messages.map((msg) => `
-            <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${getMessageType(msg) === 'trade_share' ? 'is-trade-share' : ''} ${getMessageType(msg) === 'trade_event_system' ? 'is-trade-event-system' : ''}">
+          ${messages.length ? messages.map((msg, index) => {
+            const prev = messages[index - 1];
+            const type = getMessageType(msg);
+            const sameSender = prev && prev.senderNickname === msg.senderNickname;
+            const sameType = prev && getMessageType(prev) === type;
+            const isGrouped = !!(sameSender && sameType);
+            const createdAtMs = new Date(msg.createdAt).getTime();
+            const isFresh = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= 12000;
+            const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender">${msg.senderNickname}</div>` : '';
+            return `
+            <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${type === 'trade_share' ? 'is-trade-share' : ''} ${type === 'trade_event_system' ? 'is-trade-event-system' : ''} ${isGrouped ? 'is-grouped' : 'is-group-break'} ${isFresh ? 'is-fresh' : ''}">
+              ${senderLabel}
               <header><strong>${msg.senderNickname}</strong><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
               ${renderChatMessageBody(msg)}
               ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
             </article>
-          `).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
+          `;
+          }).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
         </div>
         <form class="utility-chat-composer" data-action="send">
           ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
@@ -918,10 +940,10 @@
     body.innerHTML = `
       <div class="utility-list">
         ${filtered.length ? filtered.map((chat) => `
-          <button class="utility-chat-row ${chat.unreadCount ? 'has-unread' : ''}" data-group-id="${chat.groupId}" type="button">
+          <button class="utility-chat-row ${chat.unreadCount ? 'has-unread' : ''} ${state.activeChat?.chat?.groupId === chat.groupId ? 'is-active' : ''}" data-group-id="${chat.groupId}" type="button">
             <div class="utility-chat-row__top"><strong>${chat.groupName}</strong><span class="utility-chat-row__time">${chat.latestMessage?.createdAt ? new Date(chat.latestMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>
             <p title="${chat.latestMessage?.content || 'No messages yet'}">${chat.latestMessage?.content || 'No messages yet'}</p>
-            <div class="utility-chat-row__meta">${chat.isLeaderOwned ? '<span class="utility-chip">Leader desk</span>' : '<span></span>'}${chat.unreadCount ? `<span class="utility-pill">${chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>` : '<span class="utility-chat-row__read">Read</span>'}</div>
+            <div class="utility-chat-row__meta">${chat.isLeaderOwned ? '<span class="utility-chat-row__leader">Leader</span>' : '<span></span>'}${chat.unreadCount ? `<span class="utility-pill">${chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>` : '<span class="utility-chat-row__read">Read</span>'}</div>
           </button>
         `).join('') : '<div class="utility-empty"><strong>No chats yet</strong><p>Join or create a trading group to start collaborating.</p></div>'}
       </div>
