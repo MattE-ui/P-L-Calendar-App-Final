@@ -902,10 +902,43 @@
         isSending: false,
         sendError: '',
         suggestions: [],
-        suggestionIndex: 0
+        suggestionIndex: 0,
+        selectedEntities: [],
+        activeTokenRange: null,
+        lastDraft: ''
       };
     }
     return state.composerUiByGroupId[groupId];
+  }
+
+  function shiftComposerEntities(entities, pivot, delta) {
+    return (Array.isArray(entities) ? entities : []).map((entity) => {
+      const next = { ...entity };
+      if (!Number.isFinite(next.start) || !Number.isFinite(next.end)) return next;
+      if (next.start >= pivot) {
+        next.start += delta;
+        next.end += delta;
+      }
+      return next;
+    });
+  }
+
+  function reconcileComposerEntities(text, entities) {
+    const safeText = String(text || '');
+    const dedupe = new Set();
+    return (Array.isArray(entities) ? entities : []).filter((entity) => {
+      if (!entity || entity.type !== 'mention') return false;
+      if (!Number.isFinite(entity.start) || !Number.isFinite(entity.end)) return false;
+      if (entity.start < 0 || entity.end <= entity.start || entity.end > safeText.length) return false;
+      const expected = String(entity.displayText || '');
+      if (!expected) return false;
+      const actual = safeText.slice(entity.start, entity.end);
+      if (actual !== expected) return false;
+      const key = `${entity.mentionType || 'user'}:${entity.targetId || expected}:${entity.start}:${entity.end}`;
+      if (dedupe.has(key)) return false;
+      dedupe.add(key);
+      return true;
+    });
   }
 
   function handleTabToggle(tab) {
@@ -1290,22 +1323,26 @@
     const wrap = root.querySelector('#utility-chat-suggestions');
     if (!wrap) return;
     if (!mentionMatch) {
+      composerUi.activeTokenRange = null;
       wrap.classList.add('hidden');
       wrap.innerHTML = '';
       return;
     }
     const marker = mentionMatch[2];
     const query = mentionMatch[3] || '';
+    const tokenStart = cursor - query.length - 1;
+    const tokenEnd = cursor;
     const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/suggestions?q=${encodeURIComponent(query)}`);
     const suggestions = marker === '#'
-      ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page' }))
+      ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page', slug: item.slug }))
       : [
-        ...(data.users || []).map((item) => ({ label: `@${item.nickname}`, insert: `@${item.nickname}`, type: 'user' })),
-        ...(data.roles || []).map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role' })),
-        ...(data.systemMentions || []).map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system' }))
+        ...(data.users || []).map((item) => ({ label: `@${item.nickname}`, insert: `@${item.nickname}`, type: 'user', targetId: item.userId })),
+        ...(data.roles || []).map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role', targetId: item.roleId })),
+        ...(data.systemMentions || []).map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system', mentionType: item.type }))
       ];
     composerUi.suggestions = suggestions.slice(0, 8);
     composerUi.suggestionIndex = 0;
+    composerUi.activeTokenRange = { start: tokenStart, end: tokenEnd };
     if (!composerUi.suggestions.length) {
       wrap.classList.add('hidden');
       wrap.innerHTML = '';
@@ -1343,6 +1380,8 @@
       state.selectedGroupId = groupId;
       ensureComposerUi(groupId);
       if (!Object.prototype.hasOwnProperty.call(state.draftByGroupId, groupId)) state.draftByGroupId[groupId] = '';
+      const composerUi = ensureComposerUi(groupId);
+      if (composerUi) composerUi.lastDraft = String(state.draftByGroupId[groupId] || '');
       if (shouldMarkRead) await api(`/api/group-chats/${encodeURIComponent(groupId)}/read`, { method: 'POST' });
       if (shouldRefreshList) await loadChats({ skipRender: true });
       render();
@@ -1457,17 +1496,39 @@
       const suggestion = composerUi?.suggestions?.[Number(event.target.dataset.index)];
       if (!composer || !suggestion) return;
       const cursor = composer.selectionStart || 0;
-      const head = composer.value.slice(0, cursor).replace(/([@#])[A-Za-z0-9_-]*$/, `${suggestion.insert} `);
-      composer.value = head + composer.value.slice(cursor);
+      const range = composerUi?.activeTokenRange && Number.isFinite(composerUi.activeTokenRange.start) && Number.isFinite(composerUi.activeTokenRange.end)
+        ? composerUi.activeTokenRange
+        : { start: cursor, end: cursor };
+      const before = composer.value.slice(0, Math.max(0, range.start));
+      const after = composer.value.slice(Math.max(0, range.end));
+      const replacement = `${suggestion.insert} `;
+      composer.value = before + replacement + after;
+      const replacementStart = before.length;
+      const replacementEnd = replacementStart + suggestion.insert.length;
+      const delta = replacement.length - (range.end - range.start);
+      composerUi.selectedEntities = shiftComposerEntities(composerUi.selectedEntities, range.end, delta);
+      if (suggestion.type === 'user' || suggestion.type === 'role' || suggestion.type === 'system') {
+        const mentionType = suggestion.type === 'system' ? (suggestion.mentionType || 'everyone') : suggestion.type;
+        composerUi.selectedEntities.push({
+          type: 'mention',
+          mentionType,
+          targetId: suggestion.targetId || null,
+          displayText: suggestion.insert,
+          start: replacementStart,
+          end: replacementEnd
+        });
+      }
       state.draftByGroupId[state.activeChatGroupId] = composer.value;
       composer.focus();
-      const pos = head.length;
+      const pos = replacementStart + replacement.length;
       composer.setSelectionRange(pos, pos);
       const wrap = root.querySelector('#utility-chat-suggestions');
       if (wrap) {
         wrap.classList.add('hidden');
         wrap.innerHTML = '';
       }
+      composerUi.activeTokenRange = null;
+      composerUi.selectedEntities = reconcileComposerEntities(composer.value, composerUi.selectedEntities);
       return;
     }
   });
@@ -1490,7 +1551,16 @@
     }
     render();
     const messageType = composerUi?.announcement ? 'leader_announcement' : 'user_message';
-    const payload = { content, rawText: rawDraft, messageType };
+    const selectedEntities = reconcileComposerEntities(rawDraft, composerUi?.selectedEntities || []);
+    if (composerUi) composerUi.selectedEntities = selectedEntities;
+    const selectedMentions = selectedEntities
+      .filter((entity) => entity.type === 'mention')
+      .map((entity) => ({
+        type: entity.mentionType,
+        targetId: entity.targetId || null,
+        displayText: entity.displayText
+      }));
+    const payload = { content, rawText: rawDraft, messageType, entities: selectedEntities, mentions: selectedMentions };
     chatDebug('submit-attempt', {
       groupId: state.activeChatGroupId,
       draft: rawDraft,
@@ -1504,6 +1574,11 @@
         body: JSON.stringify(payload)
       });
       state.draftByGroupId[state.activeChatGroupId] = '';
+      if (composerUi) {
+        composerUi.selectedEntities = [];
+        composerUi.sendError = '';
+        composerUi.lastDraft = '';
+      }
       await publishTyping(false);
       await openChat(state.activeChatGroupId);
     } catch (error) {
@@ -1515,9 +1590,17 @@
       });
       console.error('[utility-chat] send-failed', error?.status || '', error?.body || error);
       if (composerUi) composerUi.sendError = error?.message || 'Send failed. Draft kept.';
+      const textarea = root.querySelector('.utility-chat-composer textarea');
+      textarea?.focus();
     } finally {
       if (composerUi) composerUi.isSending = false;
       render();
+      if (composerUi?.sendError) {
+        window.setTimeout(() => {
+          const textarea = root.querySelector('.utility-chat-composer textarea');
+          textarea?.focus();
+        }, 0);
+      }
     }
   });
 
@@ -1538,7 +1621,11 @@
       return;
     }
     if (typingDebounce) window.clearTimeout(typingDebounce);
-    if (state.activeChatGroupId) state.draftByGroupId[state.activeChatGroupId] = textarea.value;
+    if (state.activeChatGroupId) {
+      state.draftByGroupId[state.activeChatGroupId] = textarea.value;
+      const composerUi = ensureComposerUi(state.activeChatGroupId);
+      if (composerUi) composerUi.lastDraft = textarea.value;
+    }
     publishTyping(true);
     typingDebounce = window.setTimeout(() => publishTyping(false), 4500);
     window.setTimeout(() => updateComposerSuggestions(textarea), 0);
@@ -1547,6 +1634,16 @@
   root.addEventListener('input', (event) => {
     const textarea = event.target.closest('.utility-chat-composer textarea');
     if (!textarea || !state.activeChatGroupId) return;
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    const previousValue = String(composerUi?.lastDraft || '');
+    const nextValue = textarea.value;
+    const delta = nextValue.length - previousValue.length;
+    const pivot = Math.max(0, (textarea.selectionStart || 0) - Math.max(0, delta));
+    if (composerUi) {
+      composerUi.selectedEntities = shiftComposerEntities(composerUi.selectedEntities, pivot, delta);
+      composerUi.selectedEntities = reconcileComposerEntities(nextValue, composerUi.selectedEntities);
+      composerUi.lastDraft = nextValue;
+    }
     state.draftByGroupId[state.activeChatGroupId] = textarea.value;
     window.setTimeout(() => updateComposerSuggestions(textarea), 0);
   });
