@@ -986,7 +986,44 @@ test('group chat mention pipeline sends user mentions and preserves unknown ment
   assert.equal(unread.data.notifications.some((item) => item.type === 'trade_group_chat_mention'), true);
 });
 
-test('group chat reserved mention permissions return explicit errors', async () => {
+test('group chat accepts structured selected role mentions from composer payload', async () => {
+  const groupId = await createAcceptedGroup();
+  const roleCreate = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/roles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Risk Team' })
+  });
+  assert.equal(roleCreate.res.status, 201);
+  const roleId = roleCreate.data.role.id;
+
+  const assign = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/roles/assignments`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId: member, roleIds: [roleId] })
+  });
+  assert.equal(assign.res.status, 200);
+
+  const content = '@Risk Team please review';
+  const sent = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content,
+      rawText: content,
+      messageType: 'user_message',
+      entities: [{ type: 'mention', mentionType: 'role', targetId: roleId, displayText: '@Risk Team', start: 0, end: 10 }],
+      mentions: [{ type: 'role', targetId: roleId, displayText: '@Risk Team' }]
+    })
+  });
+  assert.equal(sent.res.status, 201);
+  assert.equal(sent.data.message.mentions.some((item) => item.type === 'role' && item.targetId === roleId), true);
+
+  const unread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  assert.equal(unread.res.status, 200);
+  assert.equal(unread.data.notifications.some((item) => item.type === 'trade_group_chat_mention'), true);
+});
+
+test('group chat reserved mention permissions return explicit errors and @time degrades to plain text', async () => {
   const groupId = await createAcceptedGroup();
   const blockedEveryone = await authedFetch(tokens.member, `/api/group-chats/${groupId}/messages`, {
     method: 'POST',
@@ -996,13 +1033,15 @@ test('group chat reserved mention permissions return explicit errors', async () 
   assert.equal(blockedEveryone.res.status, 403);
   assert.equal(blockedEveryone.data.error, 'You do not have permission to mention @everyone.');
 
-  const blockedTime = await authedFetch(tokens.member, `/api/group-chats/${groupId}/messages`, {
+  const plainTime = await authedFetch(tokens.member, `/api/group-chats/${groupId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: '@time check this', messageType: 'user_message' })
   });
-  assert.equal(blockedTime.res.status, 403);
-  assert.equal(blockedTime.data.error, 'You do not have permission to mention @time.');
+  assert.equal(plainTime.res.status, 201);
+  assert.equal(plainTime.data.message.rawText, '@time check this');
+  assert.equal(Array.isArray(plainTime.data.message.mentions), true);
+  assert.equal(plainTime.data.message.mentions.length, 0);
 
   const allowedEveryone = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/messages`, {
     method: 'POST',

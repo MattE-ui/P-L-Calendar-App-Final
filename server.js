@@ -13974,11 +13974,7 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
         continue;
       }
       if (lower === 'time') {
-        mentionCandidates.push({ type: 'time', token, raw: '@time', start: symbolOffset, resolved: canMentionEveryone });
-        pushMention(
-          { type: 'mention', mentionType: 'time', displayText: '@time', start: symbolOffset, end: symbolOffset + token.length + 1 },
-          { type: 'time', displayText: '@time', targetId: null }
-        );
+        mentionCandidates.push({ type: 'time', token, raw: '@time', start: symbolOffset, resolved: false });
         continue;
       }
       const user = users.find((item) => {
@@ -14023,6 +14019,71 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
     return true;
   });
   return { rawText: text, entities, mentions: safeMentions, pageLinks, mentionCandidates };
+}
+
+function mergeProvidedStructuredContent(base, provided = {}, options = {}) {
+  const users = Array.isArray(options.users) ? options.users : [];
+  const roles = Array.isArray(options.roles) ? options.roles : [];
+  const canMentionEveryone = options.canMentionEveryone === true;
+  const rawText = String(base?.rawText || '');
+  const entities = Array.isArray(base?.entities) ? [...base.entities] : [];
+  const mentions = Array.isArray(base?.mentions) ? [...base.mentions] : [];
+  const providedEntities = Array.isArray(provided.entities) ? provided.entities : [];
+  const seenEntityKeys = new Set(entities.map((item) => `${item.type}:${item.mentionType || ''}:${item.targetId || ''}:${item.start || 0}:${item.end || 0}`));
+  const seenMentionKeys = new Set(mentions.map((item) => `${item.type}:${item.targetId || item.displayText || ''}`));
+
+  providedEntities.forEach((entity) => {
+    if (!entity || entity.type !== 'mention') return;
+    const mentionType = String(entity.mentionType || '').toLowerCase();
+    if (!['user', 'role', 'everyone', 'time'].includes(mentionType)) return;
+    const start = Number.isFinite(Number(entity.start)) ? Number(entity.start) : -1;
+    const end = Number.isFinite(Number(entity.end)) ? Number(entity.end) : -1;
+    if (start < 0 || end <= start || end > rawText.length) return;
+    const displayText = String(entity.displayText || rawText.slice(start, end) || '').trim();
+    if (!displayText.startsWith('@')) return;
+    if (rawText.slice(start, end) !== displayText) return;
+
+    let mention = null;
+    if (mentionType === 'user') {
+      const user = users.find((item) => item.userId === entity.targetId);
+      if (!user) return;
+      mention = { type: 'user', targetId: user.userId, displayText: `@${user.nickname}` };
+    } else if (mentionType === 'role') {
+      const role = roles.find((item) => item.id === entity.targetId);
+      if (!role) return;
+      mention = { type: 'role', targetId: role.id, displayText: `@${role.name}` };
+    } else if (mentionType === 'everyone') {
+      if (!canMentionEveryone) return;
+      mention = { type: 'everyone', targetId: null, displayText: '@everyone' };
+    } else if (mentionType === 'time') {
+      return;
+    }
+    if (!mention) return;
+    const normalizedEntity = {
+      type: 'mention',
+      mentionType,
+      targetId: mention.targetId || null,
+      displayText,
+      start,
+      end
+    };
+    const entityKey = `${normalizedEntity.type}:${normalizedEntity.mentionType}:${normalizedEntity.targetId || ''}:${start}:${end}`;
+    if (!seenEntityKeys.has(entityKey)) {
+      seenEntityKeys.add(entityKey);
+      entities.push(normalizedEntity);
+    }
+    const mentionKey = `${mention.type}:${mention.targetId || mention.displayText}`;
+    if (!seenMentionKeys.has(mentionKey)) {
+      seenMentionKeys.add(mentionKey);
+      mentions.push(mention);
+    }
+  });
+
+  return {
+    ...base,
+    entities,
+    mentions
+  };
 }
 
 app.post('/api/social/trade-groups', auth, (req, res) => {
@@ -14774,7 +14835,12 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
   });
   const roles = getGroupChatRoleRows(db, access.group.id);
   const permissions = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
-  const structured = parseStructuredChatContent(normalizedContent, {
+  let structured = parseStructuredChatContent(normalizedContent, {
+    users: members,
+    roles,
+    canMentionEveryone: permissions.canMentionEveryone === true
+  });
+  structured = mergeProvidedStructuredContent(structured, parsed.data, {
     users: members,
     roles,
     canMentionEveryone: permissions.canMentionEveryone === true
@@ -14787,10 +14853,9 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
       parsedCandidates: structured.mentionCandidates
     });
   }
-  const blockedReservedMention = (structured.mentionCandidates || []).find((item) => (item.type === 'everyone' || item.type === 'time') && item.resolved === false);
+  const blockedReservedMention = (structured.mentionCandidates || []).find((item) => item.type === 'everyone' && item.resolved === false);
   if (blockedReservedMention) {
-    const label = blockedReservedMention.type === 'everyone' ? '@everyone' : '@time';
-    return res.status(403).json({ error: `You do not have permission to mention ${label}.` });
+    return res.status(403).json({ error: 'You do not have permission to mention @everyone.' });
   }
   const identity = socialIdentityForUser(db, req.username);
   const nowIso = new Date().toISOString();
@@ -15048,8 +15113,7 @@ app.get('/api/group-chats/:groupId/suggestions', auth, (req, res) => {
     users: members,
     roles,
     systemMentions: [
-      { type: 'everyone', displayText: '@everyone' },
-      { type: 'time', displayText: '@time' }
+      { type: 'everyone', displayText: '@everyone' }
     ],
     pageTags
   });
