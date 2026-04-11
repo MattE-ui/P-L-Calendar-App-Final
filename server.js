@@ -102,6 +102,7 @@ const IBKR_CONNECTOR_WINDOWS_SHA256 = process.env.IBKR_CONNECTOR_WINDOWS_SHA256 
 const IBKR_CONNECTOR_WINDOWS_NOTES = process.env.IBKR_CONNECTOR_WINDOWS_NOTES || '';
 const IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL = process.env.IBKR_CONNECTOR_WINDOWS_RELEASE_NOTES_URL || '';
 const IBKR_INSTALLER_URL = process.env.IBKR_INSTALLER_URL || '';
+const BROKER_CREDENTIAL_SECRET = process.env.BROKER_CREDENTIAL_SECRET || process.env.SESSION_SECRET || '';
 const INVESTOR_TOKEN_SECRET = process.env.INVESTOR_TOKEN_SECRET || process.env.SESSION_SECRET || 'investor-dev-secret';
 const TWO_FACTOR_ENCRYPTION_KEY = process.env.TWO_FACTOR_ENCRYPTION_KEY || process.env.SESSION_SECRET || '';
 const TWO_FACTOR_ISSUER = process.env.TWO_FACTOR_ISSUER || 'Veracity Trading Suite';
@@ -4998,13 +4999,24 @@ function ensureTrading212Config(user) {
     .filter(account => account && typeof account === 'object')
     .map(account => ({
       id: typeof account.id === 'string' && account.id.trim() ? account.id.trim() : crypto.randomBytes(6).toString('hex'),
-      label: typeof account.label === 'string' ? account.label.trim() : '',
-      apiKey: typeof account.apiKey === 'string' ? account.apiKey.trim() : '',
-      apiSecret: typeof account.apiSecret === 'string' ? account.apiSecret.trim() : '',
+      label: typeof account.label === 'string' ? account.label.trim() : (typeof account.accountLabel === 'string' ? account.accountLabel.trim() : ''),
+      encryptedApiKey: typeof account.encryptedApiKey === 'string' ? account.encryptedApiKey : encryptBrokerCredential(account.apiKey),
+      encryptedApiSecret: typeof account.encryptedApiSecret === 'string' ? account.encryptedApiSecret : encryptBrokerCredential(account.apiSecret),
+      connectionStatus: typeof account.connectionStatus === 'string' ? account.connectionStatus : (account.apiKey && account.apiSecret ? 'connected' : 'disconnected'),
+      syncStatus: typeof account.syncStatus === 'string' ? account.syncStatus : 'idle',
+      lastSyncAt: typeof account.lastSyncAt === 'string' ? account.lastSyncAt : null,
+      automationEnabled: typeof account.automationEnabled === 'boolean' ? account.automationEnabled : true,
+      providerAccountType: typeof account.providerAccountType === 'string' ? account.providerAccountType : '',
+      providerMetadata: account.providerMetadata && typeof account.providerMetadata === 'object' && !Array.isArray(account.providerMetadata)
+        ? account.providerMetadata
+        : {},
+      createdAt: typeof account.createdAt === 'string' ? account.createdAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      active: typeof account.active === 'boolean' ? account.active : true,
       mode: typeof account.mode === 'string' && ['live', 'practice'].includes(account.mode) ? account.mode : undefined,
       baseUrl: typeof account.baseUrl === 'string' ? account.baseUrl.trim() : ''
     }))
-    .filter(account => account.apiKey || account.apiSecret || account.label);
+    .filter(account => account.encryptedApiKey || account.encryptedApiSecret || account.label);
   if (normalizedAccounts.length !== accounts.length) {
     cfg.accounts = normalizedAccounts;
     mutated = true;
@@ -5015,14 +5027,26 @@ function ensureTrading212Config(user) {
     cfg.accounts = [{
       id: 'primary',
       label: '',
-      apiKey: cfg.apiKey.trim(),
-      apiSecret: cfg.apiSecret.trim()
+      encryptedApiKey: encryptBrokerCredential(cfg.apiKey),
+      encryptedApiSecret: encryptBrokerCredential(cfg.apiSecret),
+      connectionStatus: cfg.apiKey && cfg.apiSecret ? 'connected' : 'disconnected',
+      syncStatus: 'idle',
+      lastSyncAt: cfg.lastSyncAt || null,
+      automationEnabled: true,
+      providerAccountType: '',
+      providerMetadata: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      active: true
     }];
     mutated = true;
   }
   if (cfg.accounts.length) {
-    cfg.apiKey = cfg.accounts[0].apiKey || '';
-    cfg.apiSecret = cfg.accounts[0].apiSecret || '';
+    if (cfg.apiKey || cfg.apiSecret) {
+      mutated = true;
+    }
+    cfg.apiKey = '';
+    cfg.apiSecret = '';
   }
   return { mutated, config: cfg };
 }
@@ -5030,7 +5054,20 @@ function ensureTrading212Config(user) {
 function getTrading212Accounts(cfg) {
   if (!cfg) return [];
   const accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
-  return accounts.filter(account => account?.apiKey && account?.apiSecret);
+  return accounts
+    .map((account, index) => {
+      const apiKey = decryptBrokerCredential(account?.encryptedApiKey || account?.apiKey || '');
+      const apiSecret = decryptBrokerCredential(account?.encryptedApiSecret || account?.apiSecret || '');
+      return {
+        ...account,
+        id: account?.id || `account-${index + 1}`,
+        label: account?.label || account?.accountLabel || '',
+        apiKey,
+        apiSecret,
+        active: account?.active !== false
+      };
+    })
+    .filter(account => account.active && account.apiKey && account.apiSecret);
 }
 
 function resolveTrading212AccountForTrade(cfg, trade) {
@@ -5042,6 +5079,39 @@ function resolveTrading212AccountForTrade(cfg, trade) {
     return matched || accounts[0];
   }
   return accounts[0];
+}
+
+function toBrokerAccountSummary(username, provider, account, integrationCfg = {}) {
+  const accountId = account?.id || crypto.randomBytes(6).toString('hex');
+  const syncState = integrationCfg?.syncState?.accounts?.[accountId] || {};
+  const accountLastStatus = syncState?.lastStatus || null;
+  return {
+    userId: username,
+    provider,
+    brokerAccountId: accountId,
+    accountLabel: account?.label || '',
+    hasApiKey: !!decryptBrokerCredential(account?.encryptedApiKey || account?.apiKey || ''),
+    hasApiSecret: !!decryptBrokerCredential(account?.encryptedApiSecret || account?.apiSecret || ''),
+    credentialsMasked: {
+      apiKey: account?.encryptedApiKey ? '••••••••' : '',
+      apiSecret: account?.encryptedApiSecret ? '••••••••' : ''
+    },
+    connectionStatus: account?.connectionStatus || (account?.active === false ? 'disconnected' : 'connected'),
+    accountType: account?.providerAccountType || '',
+    lastSyncAt: account?.lastSyncAt || syncState?.lastSuccessfulSyncAt || null,
+    syncStatus: account?.syncStatus || syncState?.status || 'idle',
+    syncDiagnostics: {
+      lastStatus: accountLastStatus,
+      cooldownUntil: syncState?.endpoints?.historyOrders?.cooldownUntil || syncState?.endpoints?.orders?.cooldownUntil || null,
+      lastFailureAt: syncState?.lastFailureAt || null,
+      lastSuccessAt: syncState?.lastSuccessfulSyncAt || null
+    },
+    automationEnabled: account?.automationEnabled !== false,
+    active: account?.active !== false,
+    createdAt: account?.createdAt || null,
+    updatedAt: account?.updatedAt || null,
+    providerMetadata: account?.providerMetadata && typeof account.providerMetadata === 'object' ? account.providerMetadata : {}
+  };
 }
 
 function ensureIbkrConfig(user) {
@@ -6750,6 +6820,42 @@ function decryptIbkrTokens(serialized) {
   decipher.setAuthTag(tag);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return JSON.parse(decrypted.toString('utf8'));
+}
+
+function getBrokerCredentialKey() {
+  if (!BROKER_CREDENTIAL_SECRET) return null;
+  return crypto.createHash('sha256').update(BROKER_CREDENTIAL_SECRET, 'utf8').digest();
+}
+
+function encryptBrokerCredential(value) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) return '';
+  const key = getBrokerCredentialKey();
+  if (!key) return normalized;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(normalized, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+}
+
+function decryptBrokerCredential(payload) {
+  if (!payload) return '';
+  const key = getBrokerCredentialKey();
+  if (!key) return String(payload || '');
+  try {
+    const raw = Buffer.from(payload, 'base64');
+    if (raw.length < 28) return '';
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const ciphertext = raw.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return decrypted.toString('utf8').trim();
+  } catch (error) {
+    return '';
+  }
 }
 
 function getTwoFactorEncryptionKey() {
@@ -10344,7 +10450,12 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     if (!user) return { skipped: true, reason: 'user_missing' };
     ensureUserShape(user, username);
     const cfg = user.trading212;
-    const accounts = getTrading212Accounts(cfg);
+    const requestedBrokerAccountId = typeof options?.brokerAccountId === 'string' ? options.brokerAccountId.trim() : '';
+    const forceSync = options?.force === true;
+    const accounts = getTrading212Accounts(cfg).filter(account => (
+      (!requestedBrokerAccountId || account.id === requestedBrokerAccountId)
+      && (forceSync || account.automationEnabled !== false)
+    ));
     if (!cfg || !cfg.enabled || !accounts.length) return { skipped: true, reason: 'integration_disabled' };
     if (lane === 'leader_alert' && !userLeadsTradeGroups(db, username)) {
       console.info(`[TradeGroup][LeaderSync] skipped leader=${username} reason=no_groups_led`);
@@ -10357,11 +10468,13 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     saveDB(db);
 
     const rates = await fetchRates();
+    const accountRecordById = new Map((Array.isArray(cfg.accounts) ? cfg.accounts : []).map((entry) => [entry.id, entry]));
     const now = Date.now();
     const accountResults = [];
 
     for (const [index, account] of accounts.entries()) {
       const accountId = account.id || `account-${index + 1}`;
+      const accountRecord = accountRecordById.get(accountId);
       const accountConfig = {
         ...cfg,
         apiKey: account.apiKey,
@@ -10407,6 +10520,11 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             retryAfter: Number.isFinite(error?.retryAfter) ? Number(error.retryAfter) : null
           }, now);
           accountResults.push({ status: 'rejected', reason: error, accountId });
+          if (accountRecord) {
+            accountRecord.syncStatus = 'error';
+            accountRecord.connectionStatus = 'error';
+            accountRecord.updatedAt = new Date().toISOString();
+          }
           continue;
         }
       } else if (shouldFetchSummary) {
@@ -10553,6 +10671,12 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
           leaderPositionByKey: isLeaderLane ? buildLeaderPositionQuantityMap(snapshot?.positions || [], accountId) : {}
         }
       });
+      if (accountRecord) {
+        accountRecord.syncStatus = 'idle';
+        accountRecord.connectionStatus = 'connected';
+        accountRecord.lastSyncAt = new Date().toISOString();
+        accountRecord.updatedAt = accountRecord.lastSyncAt;
+      }
     }
 
     const fulfilled = accountResults.filter(result => result.status === 'fulfilled').map(result => result.value);
@@ -16127,8 +16251,8 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     ? cfg.accounts.map((account, index) => ({
       id: account?.id || `account-${index + 1}`,
       label: account?.label || '',
-      hasApiKey: !!account?.apiKey,
-      hasApiSecret: !!account?.apiSecret,
+      hasApiKey: !!decryptBrokerCredential(account?.encryptedApiKey || account?.apiKey || ''),
+      hasApiSecret: !!decryptBrokerCredential(account?.encryptedApiSecret || account?.apiSecret || ''),
       mode: account?.mode || cfg.mode || 'live'
     }))
     : [];
@@ -16155,7 +16279,10 @@ app.get('/api/integrations/trading212', auth, (req, res) => {
     lastSyncError: cfg.lastSyncError || null,
     dataSource: cfg.lastDataSource || 'cached_db',
     lastSyncSkip: cfg.lastSyncSkip || null,
-    syncState: cfg.syncState || { accounts: {} }
+    syncState: cfg.syncState || { accounts: {} },
+    brokerAccounts: Array.isArray(cfg.accounts)
+      ? cfg.accounts.map(account => toBrokerAccountSummary(req.username, 'trading212', account, cfg))
+      : []
   });
 });
 
@@ -16802,6 +16929,120 @@ app.post('/api/integrations/ibkr/sync', auth, asyncHandler(async (req, res) => {
   });
 }));
 
+app.get('/api/broker-accounts', auth, (req, res) => {
+  const provider = typeof req.query?.provider === 'string' ? req.query.provider.trim().toLowerCase() : '';
+  const db = loadDB();
+  const user = db.users?.[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const out = [];
+  if (!provider || provider === 'trading212') {
+    const cfg = user.trading212 || {};
+    const t212Accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
+    t212Accounts.forEach((account) => {
+      out.push(toBrokerAccountSummary(req.username, 'trading212', account, cfg));
+    });
+  }
+  res.json({ accounts: out });
+});
+
+app.post('/api/broker-accounts', auth, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const provider = String(req.body?.provider || '').trim().toLowerCase();
+  if (provider !== 'trading212') return res.status(400).json({ error: 'Unsupported provider.' });
+  const accountLabel = typeof req.body?.accountLabel === 'string' ? req.body.accountLabel.trim() : '';
+  const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  const apiSecret = typeof req.body?.apiSecret === 'string' ? req.body.apiSecret.trim() : '';
+  if (!apiKey || !apiSecret) return res.status(400).json({ error: 'API key and API secret are required.' });
+  const db = loadDB();
+  const user = db.users?.[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.trading212;
+  const id = crypto.randomBytes(8).toString('hex');
+  const nowIso = new Date().toISOString();
+  cfg.accounts.push({
+    id,
+    label: accountLabel || `Trading 212 ${cfg.accounts.length + 1}`,
+    encryptedApiKey: encryptBrokerCredential(apiKey),
+    encryptedApiSecret: encryptBrokerCredential(apiSecret),
+    connectionStatus: 'connected',
+    syncStatus: 'idle',
+    lastSyncAt: null,
+    automationEnabled: true,
+    providerAccountType: '',
+    providerMetadata: {},
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    active: true
+  });
+  cfg.enabled = true;
+  saveDB(db);
+  scheduleTrading212Job(req.username, user);
+  const created = cfg.accounts.find((account) => account.id === id);
+  res.status(201).json({ account: toBrokerAccountSummary(req.username, 'trading212', created, cfg) });
+}));
+
+app.patch('/api/broker-accounts/:brokerAccountId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const brokerAccountId = String(req.params?.brokerAccountId || '').trim();
+  if (!brokerAccountId) return res.status(400).json({ error: 'Missing brokerAccountId.' });
+  const db = loadDB();
+  const user = db.users?.[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.trading212;
+  const account = (Array.isArray(cfg.accounts) ? cfg.accounts : []).find((entry) => entry?.id === brokerAccountId);
+  if (!account) return res.status(404).json({ error: 'Broker account not found.' });
+  const accountLabel = req.body?.accountLabel;
+  const apiKey = req.body?.apiKey;
+  const apiSecret = req.body?.apiSecret;
+  const automationEnabled = req.body?.automationEnabled;
+  const accountType = req.body?.accountType;
+  if (typeof accountLabel === 'string') account.label = accountLabel.trim();
+  if (typeof apiKey === 'string' && apiKey.trim()) account.encryptedApiKey = encryptBrokerCredential(apiKey);
+  if (typeof apiSecret === 'string' && apiSecret.trim()) account.encryptedApiSecret = encryptBrokerCredential(apiSecret);
+  if (typeof automationEnabled === 'boolean') account.automationEnabled = automationEnabled;
+  if (typeof accountType === 'string') account.providerAccountType = accountType.trim();
+  account.connectionStatus = (decryptBrokerCredential(account.encryptedApiKey) && decryptBrokerCredential(account.encryptedApiSecret)) ? 'connected' : 'disconnected';
+  account.updatedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ account: toBrokerAccountSummary(req.username, 'trading212', account, cfg) });
+});
+
+app.delete('/api/broker-accounts/:brokerAccountId', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const brokerAccountId = String(req.params?.brokerAccountId || '').trim();
+  const db = loadDB();
+  const user = db.users?.[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const cfg = user.trading212;
+  const account = (Array.isArray(cfg.accounts) ? cfg.accounts : []).find((entry) => entry?.id === brokerAccountId);
+  if (!account) return res.status(404).json({ error: 'Broker account not found.' });
+  account.active = false;
+  account.connectionStatus = 'disconnected';
+  account.updatedAt = new Date().toISOString();
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.post('/api/broker-accounts/:brokerAccountId/sync', auth, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const brokerAccountId = String(req.params?.brokerAccountId || '').trim();
+  const db = loadDB();
+  const user = db.users?.[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const account = (Array.isArray(user.trading212?.accounts) ? user.trading212.accounts : []).find((entry) => entry?.id === brokerAccountId && entry.active !== false);
+  if (!account) return res.status(404).json({ error: 'Broker account not found.' });
+  await syncTrading212ForUser(req.username, new Date(), { brokerAccountId, force: true });
+  const latest = loadDB();
+  const latestCfg = latest.users?.[req.username]?.trading212 || {};
+  const latestAccount = (Array.isArray(latestCfg.accounts) ? latestCfg.accounts : []).find((entry) => entry?.id === brokerAccountId);
+  res.json({ ok: true, account: latestAccount ? toBrokerAccountSummary(req.username, 'trading212', latestAccount, latestCfg) : null });
+}));
+
 app.post('/api/integrations/trading212', auth, async (req, res) => {
   const { enabled, apiKey, apiSecret, accounts, snapshotTime, mode, timezone, baseUrl, endpoint, runNow } = req.body || {};
   const db = loadDB();
@@ -16837,14 +17078,23 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
         const next = {
           id,
           label: typeof account.label === 'string' ? account.label.trim() : (previous?.label || ''),
-          apiKey: previous?.apiKey || '',
-          apiSecret: previous?.apiSecret || ''
+          encryptedApiKey: previous?.encryptedApiKey || encryptBrokerCredential(previous?.apiKey || ''),
+          encryptedApiSecret: previous?.encryptedApiSecret || encryptBrokerCredential(previous?.apiSecret || ''),
+          connectionStatus: previous?.connectionStatus || 'disconnected',
+          syncStatus: previous?.syncStatus || 'idle',
+          lastSyncAt: previous?.lastSyncAt || null,
+          automationEnabled: typeof previous?.automationEnabled === 'boolean' ? previous.automationEnabled : true,
+          providerAccountType: previous?.providerAccountType || '',
+          providerMetadata: previous?.providerMetadata && typeof previous.providerMetadata === 'object' ? previous.providerMetadata : {},
+          createdAt: previous?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          active: previous?.active !== false
         };
-        if (account.apiKey !== undefined) {
-          next.apiKey = typeof account.apiKey === 'string' ? account.apiKey.trim() : '';
+        if (account.apiKey !== undefined && typeof account.apiKey === 'string' && account.apiKey.trim()) {
+          next.encryptedApiKey = encryptBrokerCredential(account.apiKey);
         }
-        if (account.apiSecret !== undefined) {
-          next.apiSecret = typeof account.apiSecret === 'string' ? account.apiSecret.trim() : '';
+        if (account.apiSecret !== undefined && typeof account.apiSecret === 'string' && account.apiSecret.trim()) {
+          next.encryptedApiSecret = encryptBrokerCredential(account.apiSecret);
         }
         if (typeof account.mode === 'string' && ['live', 'practice'].includes(account.mode)) {
           next.mode = account.mode;
@@ -16854,7 +17104,7 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
         }
         return next;
       })
-      .filter(account => account.apiKey || account.apiSecret || account.label);
+      .filter(account => account.encryptedApiKey || account.encryptedApiSecret || account.label);
     cfg.accounts = normalized;
   }
   if (apiKey !== undefined) {
@@ -16863,15 +17113,15 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
         cfg.accounts = [{
           id: 'primary',
           label: '',
-          apiKey: apiKey.trim(),
-          apiSecret: cfg.apiSecret || ''
+          encryptedApiKey: encryptBrokerCredential(apiKey.trim()),
+          encryptedApiSecret: cfg.accounts?.[0]?.encryptedApiSecret || ''
         }];
       } else {
-        cfg.accounts[0].apiKey = apiKey.trim();
+        cfg.accounts[0].encryptedApiKey = encryptBrokerCredential(apiKey.trim());
       }
     } else if (apiKey === '') {
       if (Array.isArray(cfg.accounts) && cfg.accounts[0]) {
-        cfg.accounts[0].apiKey = '';
+        cfg.accounts[0].encryptedApiKey = '';
       }
     }
   }
@@ -16881,15 +17131,15 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
         cfg.accounts = [{
           id: 'primary',
           label: '',
-          apiKey: cfg.apiKey || '',
-          apiSecret: apiSecret.trim()
+          encryptedApiKey: cfg.accounts?.[0]?.encryptedApiKey || '',
+          encryptedApiSecret: encryptBrokerCredential(apiSecret.trim())
         }];
       } else {
-        cfg.accounts[0].apiSecret = apiSecret.trim();
+        cfg.accounts[0].encryptedApiSecret = encryptBrokerCredential(apiSecret.trim());
       }
     } else if (apiSecret === '') {
       if (Array.isArray(cfg.accounts) && cfg.accounts[0]) {
-        cfg.accounts[0].apiSecret = '';
+        cfg.accounts[0].encryptedApiSecret = '';
       }
     }
   }
@@ -16910,8 +17160,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
     delete cfg.cooldownUntil;
   }
   if (Array.isArray(cfg.accounts) && cfg.accounts.length) {
-    cfg.apiKey = cfg.accounts[0].apiKey || '';
-    cfg.apiSecret = cfg.accounts[0].apiSecret || '';
+    cfg.apiKey = '';
+    cfg.apiSecret = '';
   }
   saveDB(db);
   scheduleTrading212Job(req.username, user);
@@ -16932,8 +17182,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
       ? responseCfg.accounts.map(account => ({
         id: account.id,
         label: account.label || '',
-        hasApiKey: !!account.apiKey,
-        hasApiSecret: !!account.apiSecret,
+        hasApiKey: !!decryptBrokerCredential(account.encryptedApiKey || account.apiKey || ''),
+        hasApiSecret: !!decryptBrokerCredential(account.encryptedApiSecret || account.apiSecret || ''),
         mode: account.mode || responseCfg.mode || 'live'
       }))
       : [],

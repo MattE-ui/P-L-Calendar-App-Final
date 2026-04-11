@@ -1,264 +1,190 @@
 (async function initTradingAccountsPage() {
   const { api, setText } = window.AccountCenter;
 
-  const BROKERS = [
-    { id: 'trading212', name: 'Trading 212', typeHint: 'ISA / Invest' },
-    { id: 'ibkr', name: 'IBKR', typeHint: 'Margin / Cash' }
-  ];
-
-  const state = {
-    tradingAccounts: [],
-    trading212: {},
-    ibkr: {}
-  };
+  const state = { t212Accounts: [], ibkr: {} };
 
   function formatWhen(value) {
     if (!value) return '—';
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '—';
-    return date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
   }
 
-  function brokerEnabled(brokerId) {
-    return brokerId === 'trading212' ? !!state.trading212.enabled : !!state.ibkr.enabled;
+  function statusClass(status) {
+    if (status === 'connected' || status === 'active') return 'is-connected';
+    if (status === 'error') return 'is-warning';
+    return 'is-disconnected';
   }
 
-  function linkedAccountLabel(brokerId) {
-    const linked = state.tradingAccounts.find((account) => account.integrationEnabled && account.integrationProvider === brokerId);
-    return linked?.label || null;
-  }
-
-  function syncStatusFor(brokerId) {
-    if (brokerId === 'trading212') {
-      if (!state.trading212.enabled) return 'Disconnected';
-      if (state.trading212.lastStatus?.ok === false || state.trading212.lastSyncError) return 'Error';
-      if (state.trading212.syncInProgress) return 'Active';
-      return 'Idle';
-    }
-    if (!state.ibkr.enabled) return 'Disconnected';
-    if (state.ibkr.lastStatus?.ok === false) return 'Error';
-    if (state.ibkr.connectionStatus === 'online') return 'Active';
-    return 'Idle';
-  }
-
-  function accountTypeFor(brokerId, fallback) {
-    const label = linkedAccountLabel(brokerId);
-    return label || fallback;
-  }
-
-  function statusClass(isConnected) {
-    return isConnected ? 'is-connected' : 'is-disconnected';
-  }
-
-  function renderBrokerCards() {
+  function renderTrading212Cards() {
     const root = document.getElementById('broker-cards');
     if (!root) return;
     root.innerHTML = '';
 
-    BROKERS.forEach((broker) => {
-      const connected = brokerEnabled(broker.id);
-      const syncState = syncStatusFor(broker.id);
-      const lastSync = broker.id === 'trading212' ? state.trading212.lastSyncAt : state.ibkr.lastSyncAt;
+    const wrapper = document.createElement('section');
+    wrapper.className = 'broker-provider-section';
+    wrapper.innerHTML = `
+      <div class="trading-section-head">
+        <h3>Trading 212</h3>
+        <button type="button" class="primary small" data-action="add-t212">+ Add Trading 212 account</button>
+      </div>
+      <div class="broker-provider-list"></div>
+    `;
+    const list = wrapper.querySelector('.broker-provider-list');
+
+    if (!state.t212Accounts.length) {
+      const empty = document.createElement('p');
+      empty.className = 'helper';
+      empty.textContent = 'No linked Trading 212 accounts yet.';
+      list.appendChild(empty);
+    }
+
+    state.t212Accounts.forEach((account) => {
       const card = document.createElement('article');
-      card.className = `broker-card ${statusClass(connected)}`;
+      card.className = `broker-card ${statusClass(account.connectionStatus)}`;
       card.innerHTML = `
         <header class="broker-card__head">
-          <h3>${broker.name}</h3>
+          <h4>${account.accountLabel || 'Trading 212 account'}</h4>
+          <span class="broker-pill">${account.accountType || 'Trading account'}</span>
         </header>
         <dl class="broker-meta-grid">
-          <div><dt>Connection</dt><dd>${connected ? 'Connected' : 'Not connected'}</dd></div>
-          <div><dt>Account type</dt><dd>${accountTypeFor(broker.id, broker.typeHint)}</dd></div>
-          <div><dt>Sync status</dt><dd>${syncState}</dd></div>
-          <div><dt>Last sync</dt><dd>${formatWhen(lastSync)}</dd></div>
+          <div><dt>Connection</dt><dd>${account.connectionStatus || 'disconnected'}</dd></div>
+          <div><dt>Sync status</dt><dd>${account.syncStatus || 'idle'}</dd></div>
+          <div><dt>Last sync</dt><dd>${formatWhen(account.lastSyncAt)}</dd></div>
+          <div><dt>Automation</dt><dd>${account.automationEnabled ? 'Enabled' : 'Disabled'}</dd></div>
         </dl>
         <div class="broker-card__actions">
-          ${connected
-            ? `<button type="button" class="primary small" data-action="sync-now" data-broker="${broker.id}">Sync now</button>`
-            : `<button type="button" class="primary small" data-action="connect" data-broker="${broker.id}">Connect broker</button>`}
-          <a class="ghost small" href="/profile/settings">Manage</a>
-          ${connected
-            ? `<button type="button" class="danger small" data-action="disconnect" data-broker="${broker.id}">Disconnect</button>`
-            : ''}
+          <button type="button" class="primary small" data-action="sync-account" data-account-id="${account.brokerAccountId}">Sync now</button>
+          <button type="button" class="ghost small" data-action="edit-account" data-account-id="${account.brokerAccountId}">Edit credentials</button>
+          <button type="button" class="ghost small" data-action="toggle-automation" data-account-id="${account.brokerAccountId}">${account.automationEnabled ? 'Pause automation' : 'Enable automation'}</button>
+          <button type="button" class="danger small" data-action="disconnect-account" data-account-id="${account.brokerAccountId}">Disconnect</button>
         </div>
       `;
-      root.appendChild(card);
+      list.appendChild(card);
     });
+
+    root.appendChild(wrapper);
   }
 
-  function renderBrokerConnectOptions() {
+  function renderIbkrCard() {
     const root = document.getElementById('broker-connect-options');
     if (!root) return;
-    root.innerHTML = '';
-
-    BROKERS.forEach((broker) => {
-      const connected = brokerEnabled(broker.id);
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `broker-connect-option ${statusClass(connected)}`;
-      button.dataset.action = connected ? 'manage' : 'connect';
-      button.dataset.broker = broker.id;
-      button.innerHTML = `
+    const connected = !!state.ibkr.enabled;
+    root.innerHTML = `
+      <button type="button" class="broker-connect-option ${connected ? 'is-connected' : 'is-disconnected'}" data-action="${connected ? 'sync-ibkr' : 'connect-ibkr'}">
         <div class="broker-connect-option__head">
-          <strong>${broker.name}</strong>
+          <strong>IBKR</strong>
           <span class="broker-connect-option__status">${connected ? 'Connected' : 'Not connected'}</span>
         </div>
-        <span class="broker-connect-option__action">${connected ? 'Manage connection' : 'Connect broker'}</span>
-      `;
-      root.appendChild(button);
-    });
+        <span class="broker-connect-option__action">${connected ? 'Sync now' : 'Connect broker'}</span>
+      </button>
+    `;
   }
 
   function renderSyncPanel() {
     const panel = document.getElementById('trading-sync-status-panel');
     if (!panel) return;
-    panel.innerHTML = '';
-
-    const groups = [
-      {
-        title: 'Broker sync states',
-        rows: [
-          {
-            label: 'Trading 212',
-            value: `${syncStatusFor('trading212')} · Last sync ${formatWhen(state.trading212.lastSyncAt)}`
-          },
-          {
-            label: 'IBKR',
-            value: `${syncStatusFor('ibkr')} · Last sync ${formatWhen(state.ibkr.lastSyncAt)}`
-          }
-        ]
-      },
-      {
-        title: 'Auto-sync settings',
-        rows: [
-          {
-            label: 'Trading 212',
-            value: state.trading212.enabled ? 'Enabled' : 'Disabled'
-          },
-          {
-            label: 'IBKR',
-            value: state.ibkr.enabled ? 'Enabled' : 'Disabled'
-          }
-        ]
-      },
-      {
-        title: 'Schedule / next sync',
-        rows: [
-          {
-            label: 'Next scheduled sync',
-            value: state.trading212.enabled && state.trading212.snapshotTime
-              ? `Trading 212 daily ${state.trading212.snapshotTime} (${state.trading212.timezone || 'Europe/London'})`
-              : 'No scheduled sync'
-          }
-        ]
-      }
-    ];
-
-    groups.forEach((group) => {
-      const section = document.createElement('section');
-      section.className = 'status-kv-group';
-      const title = document.createElement('h3');
-      title.className = 'status-kv-group__title';
-      title.textContent = group.title;
-      section.appendChild(title);
-      group.rows.forEach((row) => {
-        const item = document.createElement('div');
-        item.className = 'status-kv-row';
-        item.innerHTML = `<span>${row.label}</span><strong>${row.value}</strong>`;
-        section.appendChild(item);
-      });
-      panel.appendChild(section);
-    });
-  }
-
-  function renderAll() {
-    renderBrokerCards();
-    renderBrokerConnectOptions();
-    renderSyncPanel();
+    const latestT212 = state.t212Accounts
+      .map((account) => Date.parse(account.lastSyncAt || ''))
+      .filter(Number.isFinite)
+      .sort((a, b) => b - a)[0];
+    panel.innerHTML = `
+      <div class="status-kv-group">
+        <h3 class="status-kv-group__title">Trading 212</h3>
+        <div class="status-kv-row"><span>Linked accounts</span><strong>${state.t212Accounts.length}</strong></div>
+        <div class="status-kv-row"><span>Latest sync</span><strong>${latestT212 ? new Date(latestT212).toLocaleString() : '—'}</strong></div>
+      </div>
+      <div class="status-kv-group">
+        <h3 class="status-kv-group__title">IBKR</h3>
+        <div class="status-kv-row"><span>Status</span><strong>${state.ibkr.enabled ? 'Connected' : 'Disconnected'}</strong></div>
+        <div class="status-kv-row"><span>Last sync</span><strong>${formatWhen(state.ibkr.lastSyncAt)}</strong></div>
+      </div>
+    `;
   }
 
   async function refreshData() {
-    const [accountsPayload, t212Payload, ibkrPayload] = await Promise.all([
-      api('/api/account/trading-accounts').catch(() => ({ accounts: [] })),
-      api('/api/integrations/trading212').catch(() => ({})),
+    const [brokerPayload, ibkrPayload] = await Promise.all([
+      api('/api/broker-accounts?provider=trading212').catch(() => ({ accounts: [] })),
       api('/api/integrations/ibkr').catch(() => ({}))
     ]);
-    state.tradingAccounts = Array.isArray(accountsPayload.accounts) ? accountsPayload.accounts : [];
-    state.trading212 = t212Payload || {};
+    state.t212Accounts = Array.isArray(brokerPayload.accounts)
+      ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
+      : [];
     state.ibkr = ibkrPayload || {};
-    renderAll();
+    renderTrading212Cards();
+    renderIbkrCard();
+    renderSyncPanel();
   }
 
-  async function connectBroker(broker) {
-    if (broker === 'trading212') {
-      return api('/api/integrations/trading212', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: true })
-      });
-    }
-    return api('/api/integrations/ibkr', {
+  async function addAccountFlow() {
+    const label = window.prompt('Account label (e.g. ISA, General, CFD):', '');
+    if (label === null) return;
+    const apiKey = window.prompt('Trading 212 API key:');
+    if (!apiKey) return;
+    const apiSecret = window.prompt('Trading 212 API secret:');
+    if (!apiSecret) return;
+    await api('/api/broker-accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: true })
+      body: JSON.stringify({ provider: 'trading212', accountLabel: label, apiKey, apiSecret })
     });
+    setText('trading-broker-action-status', 'Trading 212 account linked.');
   }
 
-  async function disconnectBroker(broker) {
-    if (broker === 'trading212') {
-      return api('/api/integrations/trading212', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: false })
-      });
-    }
-    return api('/api/integrations/ibkr', {
-      method: 'POST',
+  async function editAccountFlow(accountId) {
+    const account = state.t212Accounts.find((row) => row.brokerAccountId === accountId);
+    if (!account) return;
+    const accountLabel = window.prompt('Rename account label:', account.accountLabel || '');
+    if (accountLabel === null) return;
+    const apiKey = window.prompt('New API key (leave blank to keep current):', '');
+    const apiSecret = window.prompt('New API secret (leave blank to keep current):', '');
+    await api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false })
+      body: JSON.stringify({
+        accountLabel,
+        ...(apiKey ? { apiKey } : {}),
+        ...(apiSecret ? { apiSecret } : {})
+      })
     });
+    setText('trading-broker-action-status', 'Trading 212 account updated.');
   }
 
-  async function syncNow(broker) {
-    if (broker === 'trading212') {
-      return api('/api/integrations/trading212', {
-        method: 'POST',
+  async function handleAction(action, accountId) {
+    if (action === 'add-t212') return addAccountFlow();
+    if (action === 'sync-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
+    if (action === 'disconnect-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
+    if (action === 'edit-account') return editAccountFlow(accountId);
+    if (action === 'toggle-automation') {
+      const account = state.t212Accounts.find((row) => row.brokerAccountId === accountId);
+      return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !!state.trading212.enabled, runNow: true })
+        body: JSON.stringify({ automationEnabled: !(account?.automationEnabled) })
       });
     }
-    return api('/api/integrations/ibkr/sync', { method: 'POST' });
+    if (action === 'connect-ibkr') {
+      return api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
+    }
+    if (action === 'sync-ibkr') return api('/api/integrations/ibkr/sync', { method: 'POST' });
+    return null;
   }
 
-  function bindActions() {
-    document.body.addEventListener('click', async (event) => {
-      const target = event.target.closest('[data-action][data-broker]');
-      if (!target) return;
-      const action = target.dataset.action;
-      const broker = target.dataset.broker;
-      if (!action || !broker) return;
+  document.body.addEventListener('click', async (event) => {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+    const action = target.dataset.action;
+    const accountId = target.dataset.accountId || '';
+    try {
+      await handleAction(action, accountId);
+      await refreshData();
+      if (action === 'disconnect-account') setText('trading-broker-action-status', 'Trading 212 account disconnected.');
+      if (action === 'sync-account') setText('trading-broker-action-status', 'Trading 212 account sync requested.');
+      if (action === 'toggle-automation') setText('trading-broker-action-status', 'Automation setting updated.');
+    } catch (error) {
+      setText('trading-broker-action-status', error.message || 'Action failed.');
+    }
+  });
 
-      try {
-        if (action === 'connect') {
-          await connectBroker(broker);
-          setText('trading-broker-action-status', `${broker === 'ibkr' ? 'IBKR' : 'Trading 212'} connected.`);
-        } else if (action === 'disconnect') {
-          await disconnectBroker(broker);
-          setText('trading-broker-action-status', `${broker === 'ibkr' ? 'IBKR' : 'Trading 212'} disconnected.`);
-        } else if (action === 'sync-now') {
-          await syncNow(broker);
-          setText('trading-broker-action-status', `${broker === 'ibkr' ? 'IBKR' : 'Trading 212'} sync requested.`);
-        } else if (action === 'manage') {
-          window.location.href = '/profile/settings';
-          return;
-        }
-        await refreshData();
-      } catch (error) {
-        setText('trading-broker-action-status', error.message || 'Action failed.');
-      }
-    });
-  }
-
-  bindActions();
   try {
     await refreshData();
   } catch (error) {
