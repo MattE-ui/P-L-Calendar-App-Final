@@ -758,7 +758,10 @@
     activeChatByGroupId: {},
     draftByGroupId: {},
     composerUiByGroupId: {},
-    composerSelectionByGroupId: {},
+    chatDom: {
+      mountedGroupId: '',
+      textareaRef: null
+    },
     watchlists: [],
     selectedWatchlistId: '',
     selectedWatchlistRows: [],
@@ -774,6 +777,11 @@
   const body = root.querySelector('#utility-sidebar-body');
   const searchInput = root.querySelector('#utility-sidebar-search');
   const panelEl = root.querySelector('.utility-sidebar__panel');
+  const chatDebugEnabled = localStorage.getItem('plcChatDebug') === '1';
+  const chatDebug = (...args) => {
+    if (!chatDebugEnabled) return;
+    console.debug('[utility-chat]', ...args);
+  };
 
   async function api(path, opts = {}) {
     const res = await fetch(path, { credentials: 'include', ...opts });
@@ -893,32 +901,6 @@
       };
     }
     return state.composerUiByGroupId[groupId];
-  }
-
-  function captureComposerDraftFromDom() {
-    const groupId = state.activeChatGroupId;
-    if (!groupId) return;
-    const textarea = root.querySelector('.utility-chat-composer textarea');
-    if (!textarea) return;
-    state.draftByGroupId[groupId] = textarea.value || '';
-    state.composerSelectionByGroupId[groupId] = {
-      start: Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : (textarea.value || '').length,
-      end: Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : (textarea.value || '').length,
-      scrollTop: textarea.scrollTop || 0
-    };
-  }
-
-  function restoreComposerSelectionToDom() {
-    const groupId = state.activeChatGroupId;
-    if (!groupId) return;
-    const textarea = root.querySelector('.utility-chat-composer textarea');
-    const selection = state.composerSelectionByGroupId[groupId];
-    if (!textarea || !selection) return;
-    const limit = (textarea.value || '').length;
-    const start = Math.min(limit, Math.max(0, Number(selection.start) || 0));
-    const end = Math.min(limit, Math.max(start, Number(selection.end) || start));
-    if (!textarea.disabled) textarea.setSelectionRange(start, end);
-    textarea.scrollTop = Number(selection.scrollTop) || 0;
   }
 
   function handleTabToggle(tab) {
@@ -1050,67 +1032,59 @@
     return `${renderStructuredText(msg)}${renderAttachments(msg)}`;
   }
 
-  function renderChatRoom() {
-    const chat = getActiveChatData();
+  function buildChatMessagesHtml(chat) {
+    const messages = chat.messages || [];
+    if (!messages.length) return '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>';
+    return messages.map((msg, index) => {
+      const prev = messages[index - 1];
+      const type = getMessageType(msg);
+      const sameSender = prev && prev.senderNickname === msg.senderNickname;
+      const sameType = prev && getMessageType(prev) === type;
+      const isGrouped = !!(sameSender && sameType);
+      const createdAtMs = new Date(msg.createdAt).getTime();
+      const isFresh = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= 12000;
+      const avatar = msg.senderAvatarUrl
+        ? `<img src="${msg.senderAvatarUrl}" alt="${msg.senderNickname}" loading="lazy">`
+        : `<span>${(msg.senderAvatarInitials || msg.senderNickname || '?').slice(0, 2).toUpperCase()}</span>`;
+      const badges = Array.isArray(msg.senderRoleBadges) && msg.senderRoleBadges.length
+        ? `<div class="utility-chat-msg__badges">${msg.senderRoleBadges.map((badge) => `<span style="--role-color:${badge.color || '#3cb982'}">${badge.name}</span>`).join('')}</div>`
+        : '';
+      const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender"><div class="utility-chat-avatar">${avatar}</div><div><strong>${msg.senderNickname}</strong>${badges}</div></div>` : '';
+      return `
+      <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${type === 'trade_share' ? 'is-trade-share' : ''} ${type === 'trade_event_system' ? 'is-trade-event-system' : ''} ${isGrouped ? 'is-grouped' : 'is-group-break'} ${isFresh ? 'is-fresh' : ''}">
+        ${senderLabel}
+        <header><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
+        ${renderChatMessageBody(msg)}
+        ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
+      </article>
+    `;
+    }).join('');
+  }
+
+  function getTypingText(chat) {
+    const typingUsers = Array.isArray(chat.typingUsers) ? chat.typingUsers : [];
+    if (typingUsers.length === 1) return `${typingUsers[0].nickname} is typing…`;
+    if (typingUsers.length === 2) return `${typingUsers[0].nickname} and ${typingUsers[1].nickname} are typing…`;
+    return typingUsers.length > 2 ? 'Several people are typing…' : '';
+  }
+
+  function mountChatRoom(groupId) {
+    const chat = state.activeChatByGroupId[groupId];
     if (!chat) return;
-    const groupId = String(chat.chat?.groupId || '');
     const composerUi = ensureComposerUi(groupId);
     const draftValue = state.draftByGroupId[groupId] || '';
     const pinned = chat.pinnedMessage;
-    const messages = chat.messages || [];
-    const typingUsers = Array.isArray(chat.typingUsers) ? chat.typingUsers : [];
-    const typingText = typingUsers.length === 1
-      ? `${typingUsers[0].nickname} is typing…`
-      : (typingUsers.length === 2
-        ? `${typingUsers[0].nickname} and ${typingUsers[1].nickname} are typing…`
-        : (typingUsers.length > 2 ? 'Several people are typing…' : ''));
+    const typingText = getTypingText(chat);
     body.innerHTML = `
-      <div class="utility-chat-room">
-        <div class="utility-chat-room__header">
-          <button class="utility-link-btn" data-action="back" type="button">← Chats</button>
-          <div class="utility-chat-room__title-wrap">
-            <h4>${chat.chat.groupName}</h4>
-            <p>${chat.chat.participantCount || 0} participants${chat.chat.isLocked ? ' · Locked by leader' : ''}</p>
-          </div>
-          ${chat.chat.canModerate ? `<div class="utility-chat-room__mod"><button data-action="${chat.chat.isLocked ? 'unlock' : 'lock'}" type="button">${chat.chat.isLocked ? 'Unlock room' : 'Lock room'}</button>${chat.chat.pinnedMessageId ? '<button data-action="unpin" type="button">Unpin note</button>' : ''}</div>` : ''}
-        </div>
-        <div class="utility-chat-context-strip">
-          <span>${chat.chat.groupName}</span>
-          <span>${chat.chat.participantCount || 0} members</span>
-          ${chat.chat.latestTradeEvent ? `<span>${chat.chat.latestTradeEvent}</span>` : '<span>No recent trade event</span>'}
-          ${chat.chat.hasGroupWatchlist ? '<button data-action="open-group-watchlist" type="button">Open group watchlist</button>' : ''}
-        </div>
-        ${pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : ''}
-        <div class="utility-chat-feed" id="utility-chat-feed">
-          ${messages.length ? messages.map((msg, index) => {
-            const prev = messages[index - 1];
-            const type = getMessageType(msg);
-            const sameSender = prev && prev.senderNickname === msg.senderNickname;
-            const sameType = prev && getMessageType(prev) === type;
-            const isGrouped = !!(sameSender && sameType);
-            const createdAtMs = new Date(msg.createdAt).getTime();
-            const isFresh = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= 12000;
-            const avatar = msg.senderAvatarUrl
-              ? `<img src="${msg.senderAvatarUrl}" alt="${msg.senderNickname}" loading="lazy">`
-              : `<span>${(msg.senderAvatarInitials || msg.senderNickname || '?').slice(0, 2).toUpperCase()}</span>`;
-            const badges = Array.isArray(msg.senderRoleBadges) && msg.senderRoleBadges.length
-              ? `<div class="utility-chat-msg__badges">${msg.senderRoleBadges.map((badge) => `<span style="--role-color:${badge.color || '#3cb982'}">${badge.name}</span>`).join('')}</div>`
-              : '';
-            const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender"><div class="utility-chat-avatar">${avatar}</div><div><strong>${msg.senderNickname}</strong>${badges}</div></div>` : '';
-            return `
-            <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${type === 'trade_share' ? 'is-trade-share' : ''} ${type === 'trade_event_system' ? 'is-trade-event-system' : ''} ${isGrouped ? 'is-grouped' : 'is-group-break'} ${isFresh ? 'is-fresh' : ''}">
-              ${senderLabel}
-              <header><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
-              ${renderChatMessageBody(msg)}
-              ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
-            </article>
-          `;
-          }).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
-        </div>
-        ${typingText ? `<div class="utility-chat-typing">${typingText}</div>` : '<div class="utility-chat-typing" aria-hidden="true"></div>'}
-        <form class="utility-chat-composer" data-action="send">
+      <div class="utility-chat-room" data-chat-room-id="${groupId}">
+        <div class="utility-chat-room__header" id="utility-chat-room-header"></div>
+        <div class="utility-chat-context-strip" id="utility-chat-context-strip"></div>
+        <div id="utility-chat-pinned-slot"></div>
+        <div class="utility-chat-feed" id="utility-chat-feed"></div>
+        <div class="utility-chat-typing" id="utility-chat-typing" ${typingText ? '' : 'aria-hidden="true"'}></div>
+        <form class="utility-chat-composer" data-action="send" data-composer-group-id="${groupId}">
           ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
-          <textarea name="content" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${escapeHtml(draftValue)}</textarea>
+          <textarea name="content" data-composer-textarea-id="${groupId}" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${escapeHtml(draftValue)}</textarea>
           <div class="utility-chat-composer__suggestions hidden" id="utility-chat-suggestions"></div>
           ${composerUi.sendError ? `<div class="utility-chat-locked">${escapeHtml(composerUi.sendError)}</div>` : ''}
           <div>
@@ -1120,6 +1094,79 @@
         </form>
       </div>
     `;
+    state.chatDom.mountedGroupId = groupId;
+    state.chatDom.textareaRef = body.querySelector('.utility-chat-composer textarea');
+    chatDebug('composer-mount', { groupId, textareaId: state.chatDom.textareaRef?.dataset?.composerTextareaId });
+    patchActiveChatRoom(groupId);
+  }
+
+  function patchActiveChatRoom(groupId) {
+    const chat = state.activeChatByGroupId[groupId];
+    if (!chat) return;
+    const composerUi = ensureComposerUi(groupId);
+    const pinned = chat.pinnedMessage;
+    const typingText = getTypingText(chat);
+    const header = body.querySelector('#utility-chat-room-header');
+    const contextStrip = body.querySelector('#utility-chat-context-strip');
+    const pinnedSlot = body.querySelector('#utility-chat-pinned-slot');
+    const feed = body.querySelector('#utility-chat-feed');
+    const typing = body.querySelector('#utility-chat-typing');
+    const composer = body.querySelector('.utility-chat-composer');
+    if (header) {
+      header.innerHTML = `
+        <button class="utility-link-btn" data-action="back" type="button">← Chats</button>
+        <div class="utility-chat-room__title-wrap">
+          <h4>${chat.chat.groupName}</h4>
+          <p>${chat.chat.participantCount || 0} participants${chat.chat.isLocked ? ' · Locked by leader' : ''}</p>
+        </div>
+        ${chat.chat.canModerate ? `<div class="utility-chat-room__mod"><button data-action="${chat.chat.isLocked ? 'unlock' : 'lock'}" type="button">${chat.chat.isLocked ? 'Unlock room' : 'Lock room'}</button>${chat.chat.pinnedMessageId ? '<button data-action="unpin" type="button">Unpin note</button>' : ''}</div>` : ''}
+      `;
+    }
+    if (contextStrip) {
+      contextStrip.innerHTML = `
+        <span>${chat.chat.groupName}</span>
+        <span>${chat.chat.participantCount || 0} members</span>
+        ${chat.chat.latestTradeEvent ? `<span>${chat.chat.latestTradeEvent}</span>` : '<span>No recent trade event</span>'}
+        ${chat.chat.hasGroupWatchlist ? '<button data-action="open-group-watchlist" type="button">Open group watchlist</button>' : ''}
+      `;
+    }
+    if (pinnedSlot) pinnedSlot.innerHTML = pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : '';
+    if (feed) feed.innerHTML = buildChatMessagesHtml(chat);
+    if (typing) {
+      typing.textContent = typingText;
+      typing.setAttribute('aria-hidden', typingText ? 'false' : 'true');
+    }
+    if (composer) {
+      const sendButton = composer.querySelector('button[type="submit"]');
+      if (sendButton) {
+        sendButton.disabled = !chat.chat.canSend || composerUi.isSending;
+        sendButton.textContent = composerUi.isSending ? 'Sending…' : 'Send';
+      }
+      const announcement = composer.querySelector('input[name="announcement"]');
+      if (announcement) announcement.checked = !!composerUi.announcement;
+      const textarea = composer.querySelector('textarea[name="content"]');
+      if (textarea) {
+        if (state.chatDom.textareaRef && state.chatDom.textareaRef !== textarea) {
+          chatDebug('composer-replaced', { from: state.chatDom.textareaRef.dataset?.composerTextareaId, to: textarea.dataset?.composerTextareaId, groupId });
+        }
+        state.chatDom.textareaRef = textarea;
+        const shouldDisable = !chat.chat.canSend || composerUi.isSending;
+        if (textarea.disabled !== shouldDisable) textarea.disabled = shouldDisable;
+      }
+    }
+    chatDebug('chat-patch', { groupId, messages: (chat.messages || []).length, typing: !!typingText });
+  }
+
+  function renderChatRoom() {
+    const chat = getActiveChatData();
+    if (!chat) return;
+    const groupId = String(chat.chat?.groupId || '');
+    const mountedRoom = body.querySelector('.utility-chat-room');
+    if (!mountedRoom || state.chatDom.mountedGroupId !== groupId) {
+      mountChatRoom(groupId);
+      return;
+    }
+    patchActiveChatRoom(groupId);
   }
 
   function renderChats() {
@@ -1193,7 +1240,6 @@
   }
 
   function render() {
-    captureComposerDraftFromDom();
     root.querySelectorAll('[data-tab]').forEach((el) => {
       const tab = el.dataset.tab;
       const isActive = state.activeUtilitySidebarTab === tab;
@@ -1201,9 +1247,13 @@
       el.classList.toggle('is-active', shouldHighlight);
     });
     if (!state.isUtilitySidebarOpen) return renderUnread();
-    if (state.activeUtilitySidebarTab === 'chat') renderChats();
-    else renderWatchlists();
-    restoreComposerSelectionToDom();
+    if (state.activeUtilitySidebarTab === 'chat') {
+      renderChats();
+    } else {
+      state.chatDom.mountedGroupId = '';
+      state.chatDom.textareaRef = null;
+      renderWatchlists();
+    }
     renderUnread();
   }
 
@@ -1260,10 +1310,11 @@
     wrap.classList.remove('hidden');
   }
 
-  async function loadChats() {
+  async function loadChats(options = {}) {
+    const skipRender = !!options.skipRender;
     state.chatsLoading = true;
     state.chatError = '';
-    render();
+    if (!skipRender) render();
     try {
       const data = await api('/api/group-chats');
       state.chats = Array.isArray(data.chats) ? data.chats : [];
@@ -1271,12 +1322,14 @@
       state.chatError = error?.message || 'Unable to load chat rooms.';
     } finally {
       state.chatsLoading = false;
-      render();
+      if (!skipRender) render();
     }
   }
 
-  async function openChat(groupId) {
+  async function openChat(groupId, options = {}) {
     try {
+      const shouldMarkRead = options.markRead !== false;
+      const shouldRefreshList = options.refreshList !== false;
       const feed = root.querySelector('#utility-chat-feed');
       const wasNearBottom = feed ? (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < 100 : true;
       const data = await api(`/api/group-chats/${encodeURIComponent(groupId)}/messages`);
@@ -1285,8 +1338,8 @@
       state.selectedGroupId = groupId;
       ensureComposerUi(groupId);
       if (!Object.prototype.hasOwnProperty.call(state.draftByGroupId, groupId)) state.draftByGroupId[groupId] = '';
-      await api(`/api/group-chats/${encodeURIComponent(groupId)}/read`, { method: 'POST' });
-      await loadChats();
+      if (shouldMarkRead) await api(`/api/group-chats/${encodeURIComponent(groupId)}/read`, { method: 'POST' });
+      if (shouldRefreshList) await loadChats({ skipRender: true });
       render();
       maybeScrollChatToBottom(wasNearBottom);
     } catch (_) {}
@@ -1475,6 +1528,18 @@
     window.setTimeout(() => updateComposerSuggestions(textarea), 0);
   });
 
+  root.addEventListener('focusin', (event) => {
+    const textarea = event.target.closest('.utility-chat-composer textarea');
+    if (!textarea) return;
+    chatDebug('composer-focus', { groupId: state.activeChatGroupId });
+  });
+
+  root.addEventListener('focusout', (event) => {
+    const textarea = event.target.closest('.utility-chat-composer textarea');
+    if (!textarea) return;
+    chatDebug('composer-blur', { groupId: state.activeChatGroupId });
+  });
+
   root.addEventListener('change', (event) => {
     const announcement = event.target.closest('.utility-chat-composer input[name="announcement"]');
     if (!announcement || !state.activeChatGroupId) return;
@@ -1529,7 +1594,7 @@
   window.setInterval(loadChats, 15000);
   window.setInterval(() => {
     if (state.activeChatGroupId && state.isUtilitySidebarOpen && state.activeUtilitySidebarTab === 'chat') {
-      openChat(state.activeChatGroupId);
+      openChat(state.activeChatGroupId, { markRead: false, refreshList: false });
     }
   }, 5000);
 })();
