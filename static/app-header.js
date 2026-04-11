@@ -762,7 +762,11 @@
     chatsLoading: false,
     watchlistsLoading: false,
     chatError: '',
-    watchlistError: ''
+    watchlistError: '',
+    mentionSuggestions: [],
+    mentionQuery: '',
+    mentionKind: '',
+    mentionSelectedIndex: 0
   };
   const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
   const SHARE_TOAST_TIMEOUT_MS = 2600;
@@ -951,12 +955,56 @@
     `;
   }
 
+  function escapeHtml(value) {
+    return String(value || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
+  }
+
+  function renderStructuredText(msg) {
+    const text = String(msg?.rawText || msg?.content || '');
+    const entities = Array.isArray(msg?.entities) ? [...msg.entities] : [];
+    if (!entities.length) return `<p>${escapeHtml(text)}</p>`;
+    const ordered = entities
+      .filter((entity) => Number.isFinite(Number(entity?.start)) && Number.isFinite(Number(entity?.end)))
+      .sort((a, b) => Number(a.start) - Number(b.start));
+    let cursor = 0;
+    const chunks = [];
+    ordered.forEach((entity) => {
+      const start = Math.max(0, Number(entity.start));
+      const end = Math.max(start, Number(entity.end));
+      if (start > cursor) chunks.push(escapeHtml(text.slice(cursor, start)));
+      const raw = text.slice(start, end);
+      if (entity.type === 'mention') {
+        chunks.push(`<span class="utility-chat-token utility-chat-token--mention">${escapeHtml(raw || entity.displayText || '')}</span>`);
+      } else if (entity.type === 'page_link' && entity.route) {
+        chunks.push(`<a class="utility-chat-token utility-chat-token--page" href="${entity.route}">${escapeHtml(raw || entity.displayText || '')}</a>`);
+      } else {
+        chunks.push(escapeHtml(raw));
+      }
+      cursor = end;
+    });
+    if (cursor < text.length) chunks.push(escapeHtml(text.slice(cursor)));
+    return `<p>${chunks.join('')}</p>`;
+  }
+
+  function renderAttachments(msg) {
+    const attachments = Array.isArray(msg?.attachments) ? msg.attachments : [];
+    if (!attachments.length) return '';
+    return `<div class="utility-chat-attachments">${attachments.map((attachment) => `
+      <button class="utility-chat-attachment ${attachment.type === 'trade_card' ? 'is-trade-card' : ''}" data-action="open-attachment" data-url="${attachment.url}" type="button">
+        <img src="${attachment.url}" loading="lazy" alt="${attachment.type === 'trade_card' ? 'Trade card' : 'Attachment'}">
+      </button>
+    `).join('')}</div>`;
+  }
+
   function renderChatMessageBody(msg) {
     const type = getMessageType(msg);
     if (type === 'trade_share') return renderTradeShareMessage(msg);
     if (type === 'trade_event_system') return renderTradeEventSystemMessage(msg);
-    if (type === 'leader_announcement') return `<div class="utility-chat-msg__type">Leader announcement</div><p>${msg.content}</p>`;
-    return `<p>${msg.content}</p>`;
+    if (type === 'leader_announcement') return `<div class="utility-chat-msg__type">Leader announcement</div>${renderStructuredText(msg)}${renderAttachments(msg)}`;
+    return `${renderStructuredText(msg)}${renderAttachments(msg)}`;
   }
 
   function renderChatRoom() {
@@ -964,6 +1012,12 @@
     if (!chat) return;
     const pinned = chat.pinnedMessage;
     const messages = chat.messages || [];
+    const typingUsers = Array.isArray(chat.typingUsers) ? chat.typingUsers : [];
+    const typingText = typingUsers.length === 1
+      ? `${typingUsers[0].nickname} is typing…`
+      : (typingUsers.length === 2
+        ? `${typingUsers[0].nickname} and ${typingUsers[1].nickname} are typing…`
+        : (typingUsers.length > 2 ? 'Several people are typing…' : ''));
     body.innerHTML = `
       <div class="utility-chat-room">
         <div class="utility-chat-room__header">
@@ -981,7 +1035,7 @@
           ${chat.chat.hasGroupWatchlist ? '<button data-action="open-group-watchlist" type="button">Open group watchlist</button>' : ''}
         </div>
         ${pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : ''}
-        <div class="utility-chat-feed">
+        <div class="utility-chat-feed" id="utility-chat-feed">
           ${messages.length ? messages.map((msg, index) => {
             const prev = messages[index - 1];
             const type = getMessageType(msg);
@@ -990,22 +1044,30 @@
             const isGrouped = !!(sameSender && sameType);
             const createdAtMs = new Date(msg.createdAt).getTime();
             const isFresh = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= 12000;
-            const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender">${msg.senderNickname}</div>` : '';
+            const avatar = msg.senderAvatarUrl
+              ? `<img src="${msg.senderAvatarUrl}" alt="${msg.senderNickname}" loading="lazy">`
+              : `<span>${(msg.senderAvatarInitials || msg.senderNickname || '?').slice(0, 2).toUpperCase()}</span>`;
+            const badges = Array.isArray(msg.senderRoleBadges) && msg.senderRoleBadges.length
+              ? `<div class="utility-chat-msg__badges">${msg.senderRoleBadges.map((badge) => `<span style="--role-color:${badge.color || '#3cb982'}">${badge.name}</span>`).join('')}</div>`
+              : '';
+            const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender"><div class="utility-chat-avatar">${avatar}</div><div><strong>${msg.senderNickname}</strong>${badges}</div></div>` : '';
             return `
             <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${type === 'trade_share' ? 'is-trade-share' : ''} ${type === 'trade_event_system' ? 'is-trade-event-system' : ''} ${isGrouped ? 'is-grouped' : 'is-group-break'} ${isFresh ? 'is-fresh' : ''}">
               ${senderLabel}
-              <header><strong>${msg.senderNickname}</strong><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
+              <header><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
               ${renderChatMessageBody(msg)}
               ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
             </article>
           `;
           }).join('') : '<div class="utility-empty"><strong>No messages yet</strong><p>Start the desk conversation with the first update.</p></div>'}
         </div>
+        ${typingText ? `<div class="utility-chat-typing">${typingText}</div>` : '<div class="utility-chat-typing" aria-hidden="true"></div>'}
         <form class="utility-chat-composer" data-action="send">
           ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
           <textarea name="content" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend ? 'disabled' : ''}></textarea>
+          <div class="utility-chat-composer__suggestions hidden" id="utility-chat-suggestions"></div>
           <div>
-            ${chat.chat.canModerate ? '<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement"> Post as leader announcement</label>' : '<span></span>'}
+            <div class="utility-chat-composer__left">${chat.chat.canModerate ? '<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement"> Post as leader announcement</label>' : '<span></span>'}<button data-action="attach-trade-card" type="button">Share trade card</button></div>
             <button type="submit" ${!chat.chat.canSend ? 'disabled' : ''}>Send</button>
           </div>
         </form>
@@ -1096,6 +1158,58 @@
     renderUnread();
   }
 
+  function maybeScrollChatToBottom(force = false) {
+    const feed = root.querySelector('#utility-chat-feed');
+    if (!feed) return;
+    const distance = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    if (force || distance < 80) feed.scrollTop = feed.scrollHeight;
+  }
+
+  let typingDebounce = null;
+  async function publishTyping(isTyping = true) {
+    if (!state.activeChat?.chat?.groupId) return;
+    try {
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/typing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isTyping })
+      });
+    } catch (_) {}
+  }
+
+  async function updateComposerSuggestions(textarea) {
+    if (!textarea || !state.activeChat?.chat?.groupId) return;
+    const cursor = textarea.selectionStart || 0;
+    const textBefore = textarea.value.slice(0, cursor);
+    const mentionMatch = textBefore.match(/(^|\s)([@#])([A-Za-z0-9_-]{0,24})$/);
+    const wrap = root.querySelector('#utility-chat-suggestions');
+    if (!wrap) return;
+    if (!mentionMatch) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      return;
+    }
+    const marker = mentionMatch[2];
+    const query = mentionMatch[3] || '';
+    const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/suggestions?q=${encodeURIComponent(query)}`);
+    const suggestions = marker === '#'
+      ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page' }))
+      : [
+        ...(data.users || []).map((item) => ({ label: `@${item.nickname}`, insert: `@${item.nickname}`, type: 'user' })),
+        ...(data.roles || []).map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role' })),
+        ...(data.systemMentions || []).map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system' }))
+      ];
+    state.mentionSuggestions = suggestions.slice(0, 8);
+    state.mentionSelectedIndex = 0;
+    if (!state.mentionSuggestions.length) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.innerHTML = state.mentionSuggestions.map((item, idx) => `<button type="button" data-action="pick-suggestion" data-index="${idx}" class="${idx === state.mentionSelectedIndex ? 'is-active' : ''}"><span>${item.label}</span><small>${item.type}</small></button>`).join('');
+    wrap.classList.remove('hidden');
+  }
+
   async function loadChats() {
     state.chatsLoading = true;
     state.chatError = '';
@@ -1113,12 +1227,15 @@
 
   async function openChat(groupId) {
     try {
+      const feed = root.querySelector('#utility-chat-feed');
+      const wasNearBottom = feed ? (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < 100 : true;
       const data = await api(`/api/group-chats/${encodeURIComponent(groupId)}/messages`);
       state.activeChat = data;
       state.selectedGroupId = groupId;
       await api(`/api/group-chats/${encodeURIComponent(groupId)}/read`, { method: 'POST' });
       await loadChats();
       render();
+      maybeScrollChatToBottom(wasNearBottom);
     } catch (_) {}
   }
 
@@ -1211,6 +1328,34 @@
       await api(`/api/watchlists/${encodeURIComponent(state.selectedWatchlistId)}/items/${encodeURIComponent(event.target.dataset.itemId)}`, { method: 'DELETE' });
       return loadWatchlists();
     }
+    if (action === 'open-attachment' && event.target.dataset.url) {
+      window.open(event.target.dataset.url, '_blank', 'noopener');
+      return;
+    }
+    if (action === 'attach-trade-card') {
+      const tradeId = window.prompt('Enter trade ID to share as trade card:');
+      if (!tradeId || !state.activeChat?.chat?.groupId) return;
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/share-trade/${encodeURIComponent(tradeId.trim())}`, { method: 'POST' });
+      await openChat(state.activeChat.chat.groupId);
+      return;
+    }
+    if (action === 'pick-suggestion' && event.target.dataset.index !== undefined) {
+      const composer = root.querySelector('.utility-chat-composer textarea');
+      const suggestion = state.mentionSuggestions[Number(event.target.dataset.index)];
+      if (!composer || !suggestion) return;
+      const cursor = composer.selectionStart || 0;
+      const head = composer.value.slice(0, cursor).replace(/([@#])[A-Za-z0-9_-]*$/, `${suggestion.insert} `);
+      composer.value = head + composer.value.slice(cursor);
+      composer.focus();
+      const pos = head.length;
+      composer.setSelectionRange(pos, pos);
+      const wrap = root.querySelector('#utility-chat-suggestions');
+      if (wrap) {
+        wrap.classList.add('hidden');
+        wrap.innerHTML = '';
+      }
+      return;
+    }
   });
 
   root.addEventListener('submit', async (event) => {
@@ -1227,7 +1372,30 @@
       body: JSON.stringify({ content, messageType })
     });
     form.reset();
+    await publishTyping(false);
     await openChat(state.activeChat.chat.groupId);
+  });
+
+  root.addEventListener('keydown', async (event) => {
+    const textarea = event.target.closest('.utility-chat-composer textarea');
+    if (!textarea) return;
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      textarea.closest('form')?.requestSubmit();
+      return;
+    }
+    if (event.key === 'Escape') {
+      const wrap = root.querySelector('#utility-chat-suggestions');
+      if (wrap) {
+        wrap.classList.add('hidden');
+        wrap.innerHTML = '';
+      }
+      return;
+    }
+    if (typingDebounce) window.clearTimeout(typingDebounce);
+    publishTyping(true);
+    typingDebounce = window.setTimeout(() => publishTyping(false), 4500);
+    window.setTimeout(() => updateComposerSuggestions(textarea), 0);
   });
 
   searchInput.addEventListener('input', () => {
