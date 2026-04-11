@@ -6756,6 +6756,19 @@ textarea {
 .broker-card.is-disconnected {
   opacity: 0.92;
 }
+.broker-card.is-warning {
+  border-color: color-mix(in srgb, #f5b56a 60%, var(--border) 40%);
+}
+.broker-provider-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.broker-provider-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
 
 .broker-card:hover {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border) 66%);
@@ -6925,6 +6938,7 @@ textarea {
 @media (max-width: 980px) {
   .trading-dashboard-layout,
   .broker-cards-grid,
+  .broker-provider-list,
   .broker-connect-grid,
   .broker-meta-grid {
     grid-template-columns: 1fr;
