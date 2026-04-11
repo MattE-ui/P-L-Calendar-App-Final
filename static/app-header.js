@@ -905,7 +905,8 @@
         suggestionIndex: 0,
         selectedEntities: [],
         activeTokenRange: null,
-        lastDraft: ''
+        lastDraft: '',
+        suggestionsSeq: 0
       };
     }
     return state.composerUiByGroupId[groupId];
@@ -1170,6 +1171,11 @@
     }
     if (pinnedSlot) pinnedSlot.innerHTML = pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : '';
     if (feed) feed.innerHTML = buildChatMessagesHtml(chat);
+    chatDebug('rendered-message-data', {
+      groupId,
+      messageCount: Array.isArray(chat.messages) ? chat.messages.length : 0,
+      latestMessage: Array.isArray(chat.messages) && chat.messages.length ? chat.messages[chat.messages.length - 1] : null
+    });
     if (typing) {
       typing.textContent = typingText;
       typing.setAttribute('aria-hidden', typingText ? 'false' : 'true');
@@ -1193,6 +1199,69 @@
       }
     }
     chatDebug('chat-patch', { groupId, messages: (chat.messages || []).length, typing: !!typingText });
+  }
+
+  function focusComposer(groupId, options = {}) {
+    const chatGroupId = String(groupId || state.activeChatGroupId || '');
+    const textarea = root.querySelector(`.utility-chat-composer textarea[data-composer-textarea-id="${chatGroupId}"]`)
+      || root.querySelector('.utility-chat-composer textarea');
+    if (!textarea) return;
+    textarea.focus();
+    if (options.atEnd) {
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    }
+  }
+
+  function selectComposerSuggestion(index) {
+    if (!state.activeChatGroupId) return false;
+    const composer = root.querySelector('.utility-chat-composer textarea');
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    const suggestion = composerUi?.suggestions?.[Number(index)];
+    if (!composer || !suggestion) return false;
+    const cursor = composer.selectionStart || 0;
+    const range = composerUi?.activeTokenRange && Number.isFinite(composerUi.activeTokenRange.start) && Number.isFinite(composerUi.activeTokenRange.end)
+      ? composerUi.activeTokenRange
+      : { start: cursor, end: cursor };
+    const before = composer.value.slice(0, Math.max(0, range.start));
+    const after = composer.value.slice(Math.max(0, range.end));
+    const replacement = `${suggestion.insert} `;
+    composer.value = before + replacement + after;
+    const replacementStart = before.length;
+    const replacementEnd = replacementStart + suggestion.insert.length;
+    const delta = replacement.length - (range.end - range.start);
+    composerUi.selectedEntities = shiftComposerEntities(composerUi.selectedEntities, range.end, delta);
+    if (suggestion.type === 'user' || suggestion.type === 'role' || suggestion.type === 'system') {
+      const mentionType = suggestion.type === 'system' ? (suggestion.mentionType || 'everyone') : suggestion.type;
+      composerUi.selectedEntities.push({
+        type: 'mention',
+        mentionType,
+        targetId: suggestion.targetId || null,
+        displayText: suggestion.insert,
+        start: replacementStart,
+        end: replacementEnd
+      });
+    }
+    state.draftByGroupId[state.activeChatGroupId] = composer.value;
+    composerUi.lastDraft = composer.value;
+    composer.focus();
+    const pos = replacementStart + replacement.length;
+    composer.setSelectionRange(pos, pos);
+    const wrap = root.querySelector('#utility-chat-suggestions');
+    if (wrap) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+    }
+    composerUi.activeTokenRange = null;
+    composerUi.selectedEntities = reconcileComposerEntities(composer.value, composerUi.selectedEntities);
+    chatDebug('composer-suggestion-selected', {
+      groupId: state.activeChatGroupId,
+      index,
+      suggestion,
+      draft: composer.value,
+      entities: composerUi.selectedEntities
+    });
+    return true;
   }
 
   function renderChatRoom() {
@@ -1332,7 +1401,10 @@
     const query = mentionMatch[3] || '';
     const tokenStart = cursor - query.length - 1;
     const tokenEnd = cursor;
+    const requestSeq = (composerUi.suggestionsSeq || 0) + 1;
+    composerUi.suggestionsSeq = requestSeq;
     const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/suggestions?q=${encodeURIComponent(query)}`);
+    if (requestSeq !== composerUi.suggestionsSeq) return;
     const suggestions = marker === '#'
       ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page', slug: item.slug }))
       : [
@@ -1491,46 +1563,15 @@
       return;
     }
     if (action === 'pick-suggestion' && event.target.dataset.index !== undefined) {
-      const composer = root.querySelector('.utility-chat-composer textarea');
-      const composerUi = ensureComposerUi(state.activeChatGroupId);
-      const suggestion = composerUi?.suggestions?.[Number(event.target.dataset.index)];
-      if (!composer || !suggestion) return;
-      const cursor = composer.selectionStart || 0;
-      const range = composerUi?.activeTokenRange && Number.isFinite(composerUi.activeTokenRange.start) && Number.isFinite(composerUi.activeTokenRange.end)
-        ? composerUi.activeTokenRange
-        : { start: cursor, end: cursor };
-      const before = composer.value.slice(0, Math.max(0, range.start));
-      const after = composer.value.slice(Math.max(0, range.end));
-      const replacement = `${suggestion.insert} `;
-      composer.value = before + replacement + after;
-      const replacementStart = before.length;
-      const replacementEnd = replacementStart + suggestion.insert.length;
-      const delta = replacement.length - (range.end - range.start);
-      composerUi.selectedEntities = shiftComposerEntities(composerUi.selectedEntities, range.end, delta);
-      if (suggestion.type === 'user' || suggestion.type === 'role' || suggestion.type === 'system') {
-        const mentionType = suggestion.type === 'system' ? (suggestion.mentionType || 'everyone') : suggestion.type;
-        composerUi.selectedEntities.push({
-          type: 'mention',
-          mentionType,
-          targetId: suggestion.targetId || null,
-          displayText: suggestion.insert,
-          start: replacementStart,
-          end: replacementEnd
-        });
-      }
-      state.draftByGroupId[state.activeChatGroupId] = composer.value;
-      composer.focus();
-      const pos = replacementStart + replacement.length;
-      composer.setSelectionRange(pos, pos);
-      const wrap = root.querySelector('#utility-chat-suggestions');
-      if (wrap) {
-        wrap.classList.add('hidden');
-        wrap.innerHTML = '';
-      }
-      composerUi.activeTokenRange = null;
-      composerUi.selectedEntities = reconcileComposerEntities(composer.value, composerUi.selectedEntities);
+      selectComposerSuggestion(Number(event.target.dataset.index));
       return;
     }
+  });
+
+  root.addEventListener('mousedown', (event) => {
+    const suggestionButton = event.target.closest('[data-action="pick-suggestion"]');
+    if (!suggestionButton) return;
+    event.preventDefault();
   });
 
   root.addEventListener('submit', async (event) => {
@@ -1568,11 +1609,12 @@
       payload
     });
     try {
-      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/messages`, {
+      const sendResponse = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      chatDebug('submit-response', { groupId: state.activeChatGroupId, response: sendResponse });
       state.draftByGroupId[state.activeChatGroupId] = '';
       if (composerUi) {
         composerUi.selectedEntities = [];
@@ -1581,6 +1623,7 @@
       }
       await publishTyping(false);
       await openChat(state.activeChatGroupId);
+      window.setTimeout(() => focusComposer(state.activeChatGroupId, { atEnd: true }), 0);
     } catch (error) {
       chatDebug('submit-failed', {
         groupId: state.activeChatGroupId,
@@ -1607,6 +1650,26 @@
   root.addEventListener('keydown', async (event) => {
     const textarea = event.target.closest('.utility-chat-composer textarea');
     if (!textarea) return;
+    const suggestionsWrap = root.querySelector('#utility-chat-suggestions');
+    const suggestionsOpen = !!(suggestionsWrap && !suggestionsWrap.classList.contains('hidden'));
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    if (suggestionsOpen && composerUi?.suggestions?.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const max = composerUi.suggestions.length - 1;
+        const dir = event.key === 'ArrowDown' ? 1 : -1;
+        const nextIndex = Math.max(0, Math.min(max, Number(composerUi.suggestionIndex || 0) + dir));
+        composerUi.suggestionIndex = nextIndex;
+        suggestionsWrap.querySelectorAll('button[data-action="pick-suggestion"]').forEach((button, idx) => {
+          button.classList.toggle('is-active', idx === nextIndex);
+        });
+        return;
+      }
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+        event.preventDefault();
+        if (selectComposerSuggestion(Number(composerUi.suggestionIndex || 0))) return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       textarea.closest('form')?.requestSubmit();
