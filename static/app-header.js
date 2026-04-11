@@ -882,6 +882,106 @@
     });
   }
 
+  async function openChatTradeCardPicker(groupId) {
+    if (!groupId) return null;
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'trade-share-picker-overlay';
+      overlay.innerHTML = `
+        <section class="trade-share-picker trade-share-picker--trades" role="dialog" aria-modal="true" aria-labelledby="trade-card-picker-title">
+          <header class="trade-share-picker__head">
+            <h4 id="trade-card-picker-title">Share trade card</h4>
+            <button class="trade-share-picker__close" type="button" data-action="cancel" aria-label="Close trade picker">×</button>
+          </header>
+          <div class="trade-share-picker__filters">
+            <input type="search" id="trade-picker-search" placeholder="Search ticker">
+            <select id="trade-picker-status">
+              <option value="all">All statuses</option>
+              <option value="open">Open only</option>
+              <option value="closed">Closed only</option>
+            </select>
+            <select id="trade-picker-sort">
+              <option value="recent">Most recent</option>
+            </select>
+          </div>
+          <div class="trade-share-picker__list" id="trade-picker-list"><p class="trade-share-picker__sub">Loading trades…</p></div>
+          <footer class="trade-share-picker__footer">
+            <button type="button" data-action="cancel">Cancel</button>
+            <button type="button" data-action="confirm" disabled>Share selected trade</button>
+          </footer>
+        </section>
+      `;
+      let selectedTradeId = '';
+      let rows = [];
+      let done = false;
+      let searchDebounce = null;
+      const searchInput = overlay.querySelector('#trade-picker-search');
+      const statusInput = overlay.querySelector('#trade-picker-status');
+      const confirmBtn = overlay.querySelector('[data-action="confirm"]');
+      const listEl = overlay.querySelector('#trade-picker-list');
+      const finish = (value) => {
+        if (done) return;
+        done = true;
+        overlay.remove();
+        resolve(value);
+      };
+      const renderList = () => {
+        if (!listEl) return;
+        if (!rows.length) {
+          listEl.innerHTML = '<p class="trade-share-picker__sub">No matching trades found.</p>';
+          if (confirmBtn) confirmBtn.disabled = true;
+          return;
+        }
+        listEl.innerHTML = rows.map((trade) => `
+          <button type="button" data-action="pick-trade" data-trade-id="${trade.tradeId}" class="trade-share-picker__group ${selectedTradeId === trade.tradeId ? 'is-selected' : ''}">
+            <strong>${trade.ticker || '—'} · ${trade.direction === 'short' ? 'Short' : 'Long'}</strong>
+            <span>${trade.status === 'closed' ? 'Closed' : 'Open'} · ${trade.entryDate ? new Date(trade.entryDate).toLocaleDateString() : 'No entry date'}${trade.account ? ` · ${trade.account}` : ''}</span>
+          </button>
+        `).join('');
+        if (confirmBtn) confirmBtn.disabled = !selectedTradeId;
+      };
+      const loadTrades = async () => {
+        if (!listEl) return;
+        listEl.innerHTML = '<p class="trade-share-picker__sub">Loading trades…</p>';
+        const q = encodeURIComponent(String(searchInput?.value || '').trim());
+        const status = encodeURIComponent(String(statusInput?.value || 'all'));
+        try {
+          const result = await api(`/api/group-chats/${encodeURIComponent(groupId)}/shareable-trades?q=${q}&status=${status}`);
+          rows = Array.isArray(result?.trades) ? result.trades : [];
+        } catch (error) {
+          rows = [];
+          listEl.innerHTML = `<p class="trade-share-picker__sub">${escapeHtml(error?.message || 'Unable to load trades.')}</p>`;
+          return;
+        }
+        if (selectedTradeId && !rows.some((row) => row.tradeId === selectedTradeId)) selectedTradeId = '';
+        renderList();
+      };
+      overlay.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.dataset.action === 'cancel' || target === overlay) return finish(null);
+        if (target.dataset.action === 'confirm') {
+          if (!selectedTradeId) return;
+          const picked = rows.find((row) => row.tradeId === selectedTradeId) || null;
+          return finish(picked);
+        }
+        const pick = target.closest('[data-action="pick-trade"]');
+        if (pick instanceof HTMLElement && pick.dataset.tradeId) {
+          selectedTradeId = pick.dataset.tradeId;
+          renderList();
+        }
+      });
+      searchInput?.addEventListener('input', () => {
+        if (searchDebounce) window.clearTimeout(searchDebounce);
+        searchDebounce = window.setTimeout(loadTrades, 120);
+      });
+      statusInput?.addEventListener('change', loadTrades);
+      document.body.appendChild(overlay);
+      loadTrades();
+      searchInput?.focus();
+    });
+  }
+
   function setUtilitySidebarOpen(nextOpen) {
     state.isUtilitySidebarOpen = !!nextOpen;
     root.classList.toggle('is-open', state.isUtilitySidebarOpen);
@@ -900,13 +1000,20 @@
       state.composerUiByGroupId[groupId] = {
         announcement: false,
         isSending: false,
+        sendPhase: 'idle',
         sendError: '',
         suggestions: [],
         suggestionIndex: 0,
         selectedEntities: [],
         activeTokenRange: null,
         lastDraft: '',
-        suggestionsSeq: 0
+        suggestionsSeq: 0,
+        cachedSuggestions: {
+          users: [],
+          roles: [],
+          systemMentions: [],
+          pageTags: []
+        }
       };
     }
     return state.composerUiByGroupId[groupId];
@@ -1383,38 +1490,48 @@
     } catch (_) {}
   }
 
-  async function updateComposerSuggestions(textarea) {
-    if (!textarea || !state.activeChatGroupId) return;
-    const composerUi = ensureComposerUi(state.activeChatGroupId);
-    const cursor = textarea.selectionStart || 0;
-    const textBefore = textarea.value.slice(0, cursor);
-    const mentionMatch = textBefore.match(/(^|\s)([@#])([A-Za-z0-9_-]{0,24})$/);
-    const wrap = root.querySelector('#utility-chat-suggestions');
-    if (!wrap) return;
-    if (!mentionMatch) {
-      composerUi.activeTokenRange = null;
-      wrap.classList.add('hidden');
-      wrap.innerHTML = '';
-      return;
+  function hydrateComposerSuggestionCache(groupId, seed = {}) {
+    const composerUi = ensureComposerUi(groupId);
+    if (!composerUi) return;
+    composerUi.cachedSuggestions = {
+      users: Array.isArray(seed.users) ? seed.users : [],
+      roles: Array.isArray(seed.roles) ? seed.roles : [],
+      systemMentions: Array.isArray(seed.systemMentions) ? seed.systemMentions : [],
+      pageTags: Array.isArray(seed.pageTags) ? seed.pageTags : []
+    };
+    chatDebug('suggestions-cache-hydrated', {
+      groupId,
+      users: composerUi.cachedSuggestions.users.length,
+      roles: composerUi.cachedSuggestions.roles.length,
+      systemMentions: composerUi.cachedSuggestions.systemMentions.length,
+      pageTags: composerUi.cachedSuggestions.pageTags.length
+    });
+  }
+
+  function buildSuggestionsFromCache(cache = {}, marker = '@', query = '') {
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    if (marker === '#') {
+      return (cache.pageTags || [])
+        .filter((item) => !normalizedQuery || String(item.slug || '').toLowerCase().includes(normalizedQuery))
+        .map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page', slug: item.slug }))
+        .slice(0, 8);
     }
-    const marker = mentionMatch[2];
-    const query = mentionMatch[3] || '';
-    const tokenStart = cursor - query.length - 1;
-    const tokenEnd = cursor;
-    const requestSeq = (composerUi.suggestionsSeq || 0) + 1;
-    composerUi.suggestionsSeq = requestSeq;
-    const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/suggestions?q=${encodeURIComponent(query)}`);
-    if (requestSeq !== composerUi.suggestionsSeq) return;
-    const suggestions = marker === '#'
-      ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page', slug: item.slug }))
-      : [
-        ...(data.users || []).map((item) => ({ label: `@${item.nickname}`, insert: `@${item.nickname}`, type: 'user', targetId: item.userId })),
-        ...(data.roles || []).map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role', targetId: item.roleId })),
-        ...(data.systemMentions || []).map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system', mentionType: item.type }))
-      ];
-    composerUi.suggestions = suggestions.slice(0, 8);
-    composerUi.suggestionIndex = 0;
-    composerUi.activeTokenRange = { start: tokenStart, end: tokenEnd };
+    const users = (cache.users || [])
+      .filter((item) => !normalizedQuery || String(item.nickname || '').toLowerCase().includes(normalizedQuery))
+      .map((item) => ({ label: `@${item.nickname}`, insert: `@${item.nickname}`, type: 'user', targetId: item.userId }));
+    const roles = (cache.roles || [])
+      .filter((item) => !normalizedQuery || String(item.name || '').toLowerCase().includes(normalizedQuery))
+      .map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role', targetId: item.roleId }));
+    const systems = (cache.systemMentions || [])
+      .filter((item) => !normalizedQuery || String(item.displayText || '').toLowerCase().includes(normalizedQuery))
+      .map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system', mentionType: item.type }));
+    return [...users, ...roles, ...systems].slice(0, 8);
+  }
+
+  function renderComposerSuggestions(composerUi, tokenRange) {
+    const wrap = root.querySelector('#utility-chat-suggestions');
+    if (!wrap || !composerUi) return;
+    composerUi.activeTokenRange = tokenRange || null;
     if (!composerUi.suggestions.length) {
       wrap.classList.add('hidden');
       wrap.innerHTML = '';
@@ -1422,6 +1539,75 @@
     }
     wrap.innerHTML = composerUi.suggestions.map((item, idx) => `<button type="button" data-action="pick-suggestion" data-index="${idx}" class="${idx === composerUi.suggestionIndex ? 'is-active' : ''}"><span>${item.label}</span><small>${item.type}</small></button>`).join('');
     wrap.classList.remove('hidden');
+  }
+
+  async function updateComposerSuggestions(textarea) {
+    if (!textarea || !state.activeChatGroupId) return;
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    const cursor = textarea.selectionStart || 0;
+    const textBefore = textarea.value.slice(0, cursor);
+    const mentionMatch = textBefore.match(/(^|\s)([@#])([A-Za-z0-9_-]{0,24})$/);
+    if (!mentionMatch) {
+      composerUi.activeTokenRange = null;
+      composerUi.suggestions = [];
+      renderComposerSuggestions(composerUi, null);
+      return;
+    }
+    const marker = mentionMatch[2];
+    const query = mentionMatch[3] || '';
+    const tokenStart = cursor - query.length - 1;
+    const tokenEnd = cursor;
+    composerUi.suggestions = buildSuggestionsFromCache(composerUi.cachedSuggestions, marker, query);
+    composerUi.suggestionIndex = 0;
+    renderComposerSuggestions(composerUi, { start: tokenStart, end: tokenEnd });
+    chatDebug('suggestions-local-render', {
+      groupId: state.activeChatGroupId,
+      marker,
+      query,
+      count: composerUi.suggestions.length
+    });
+    const requestSeq = (composerUi.suggestionsSeq || 0) + 1;
+    composerUi.suggestionsSeq = requestSeq;
+    let data = null;
+    try {
+      data = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/suggestions?q=${encodeURIComponent(query)}`);
+    } catch (error) {
+      chatDebug('suggestions-refresh-failed', { groupId: state.activeChatGroupId, marker, query, error: error?.message || 'request failed' });
+      return;
+    }
+    if (requestSeq !== composerUi.suggestionsSeq) return;
+    hydrateComposerSuggestionCache(state.activeChatGroupId, data);
+    composerUi.suggestions = buildSuggestionsFromCache(composerUi.cachedSuggestions, marker, query);
+    composerUi.suggestionIndex = 0;
+    renderComposerSuggestions(composerUi, { start: tokenStart, end: tokenEnd });
+    chatDebug('suggestions-network-refresh', { groupId: state.activeChatGroupId, marker, query, count: composerUi.suggestions.length });
+  }
+
+  function classifySendError(error) {
+    const status = Number(error?.status || 0);
+    if (status === 400) return 'Validation failed. Please review your message and try again.';
+    if (status === 403) return String(error?.message || '').includes('@everyone')
+      ? 'You do not have permission to mention @everyone.'
+      : (error?.message || 'You do not have permission to send in this chat.');
+    if (status >= 500) return 'Server error while sending. Please retry.';
+    if (status > 0) return error?.message || 'Unable to send message.';
+    return 'Network error while sending. Please retry.';
+  }
+
+  function upsertMessageInActiveChat(groupId, message) {
+    if (!groupId || !message) return false;
+    const active = state.activeChatByGroupId[groupId];
+    if (!active) return false;
+    const list = Array.isArray(active.messages) ? active.messages : [];
+    const existingIndex = list.findIndex((item) => item.id === message.id);
+    if (existingIndex >= 0) {
+      list[existingIndex] = message;
+      active.messages = list;
+      return true;
+    }
+    active.messages = [...list, message].sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    active.chat = { ...(active.chat || {}), latestTradeEvent: active.chat?.latestTradeEvent || '' };
+    return true;
   }
 
   async function loadChats(options = {}) {
@@ -1451,6 +1637,7 @@
       state.activeChatGroupId = groupId;
       state.selectedGroupId = groupId;
       ensureComposerUi(groupId);
+      hydrateComposerSuggestionCache(groupId, data.suggestionsSeed || {});
       if (!Object.prototype.hasOwnProperty.call(state.draftByGroupId, groupId)) state.draftByGroupId[groupId] = '';
       const composerUi = ensureComposerUi(groupId);
       if (composerUi) composerUi.lastDraft = String(state.draftByGroupId[groupId] || '');
@@ -1556,9 +1743,9 @@
       return;
     }
     if (action === 'attach-trade-card') {
-      const tradeId = window.prompt('Enter trade ID to share as trade card:');
-      if (!tradeId || !state.activeChatGroupId) return;
-      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/share-trade/${encodeURIComponent(tradeId.trim())}`, { method: 'POST' });
+      const selectedTrade = await openChatTradeCardPicker(state.activeChatGroupId);
+      if (!selectedTrade?.tradeId || !state.activeChatGroupId) return;
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/share-trade/${encodeURIComponent(selectedTrade.tradeId)}`, { method: 'POST' });
       await openChat(state.activeChatGroupId);
       return;
     }
@@ -1587,6 +1774,7 @@
     }
     if (composerUi) {
       composerUi.isSending = true;
+      composerUi.sendPhase = 'sending';
       composerUi.sendError = '';
       composerUi.announcement = !!form.querySelector('input[name="announcement"]')?.checked;
     }
@@ -1609,20 +1797,31 @@
       payload
     });
     try {
+      chatDebug('submit-fetch-started', { groupId: state.activeChatGroupId, payload });
       const sendResponse = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       chatDebug('submit-response', { groupId: state.activeChatGroupId, response: sendResponse });
+      const appendResult = upsertMessageInActiveChat(state.activeChatGroupId, sendResponse?.message || null);
+      chatDebug('submit-ui-append', {
+        groupId: state.activeChatGroupId,
+        appended: appendResult,
+        messageId: sendResponse?.message?.id || null,
+        visibleCount: state.activeChatByGroupId[state.activeChatGroupId]?.messages?.length || 0
+      });
       state.draftByGroupId[state.activeChatGroupId] = '';
       if (composerUi) {
         composerUi.selectedEntities = [];
         composerUi.sendError = '';
         composerUi.lastDraft = '';
+        composerUi.sendPhase = 'success';
       }
       await publishTyping(false);
-      await openChat(state.activeChatGroupId);
+      render();
+      maybeScrollChatToBottom(true);
+      openChat(state.activeChatGroupId, { markRead: false, refreshList: false });
       window.setTimeout(() => focusComposer(state.activeChatGroupId, { atEnd: true }), 0);
     } catch (error) {
       chatDebug('submit-failed', {
@@ -1632,17 +1831,28 @@
         message: error?.message || 'Request failed'
       });
       console.error('[utility-chat] send-failed', error?.status || '', error?.body || error);
-      if (composerUi) composerUi.sendError = error?.message || 'Send failed. Draft kept.';
+      if (composerUi) {
+        composerUi.sendError = classifySendError(error);
+        composerUi.sendPhase = 'error';
+      }
       const textarea = root.querySelector('.utility-chat-composer textarea');
       textarea?.focus();
     } finally {
       if (composerUi) composerUi.isSending = false;
       render();
+      chatDebug('submit-final-state', {
+        groupId: state.activeChatGroupId,
+        phase: composerUi?.sendPhase || 'idle',
+        hasError: !!composerUi?.sendError,
+        draftLength: (state.draftByGroupId[state.activeChatGroupId] || '').length
+      });
       if (composerUi?.sendError) {
         window.setTimeout(() => {
           const textarea = root.querySelector('.utility-chat-composer textarea');
           textarea?.focus();
         }, 0);
+      } else if (composerUi) {
+        composerUi.sendPhase = 'idle';
       }
     }
   });

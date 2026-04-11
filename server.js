@@ -13892,8 +13892,9 @@ function getGroupChatRoleRows(db, groupId) {
 }
 
 function getGroupRoleAssignmentsForUser(db, groupId, userId) {
+  const normalizedUserId = String(userId || '').toLowerCase();
   return db.groupChatRoleAssignments
-    .filter((item) => item.group_id === groupId && item.user_id === userId)
+    .filter((item) => item.group_id === groupId && String(item.user_id || '').toLowerCase() === normalizedUserId)
     .map((item) => item.role_id);
 }
 
@@ -14758,6 +14759,12 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const participantCount = getTradeGroupMembers(db, access.group.id, { status: 'active' }).length;
+  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' })
+    .map((member) => {
+      const identity = socialIdentityForUser(db, member.user_id);
+      return { type: 'user', userId: member.user_id, nickname: identity.nickname || member.user_id, avatarUrl: identity.avatar_url, avatarInitials: identity.avatar_initials };
+    });
+  const roles = getGroupChatRoleRows(db, access.group.id);
   const permissions = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
   const typingUsers = db.groupChatTypingStates
     .filter((item) => item.group_chat_id === access.chat.id && item.user_id !== req.username && Number(item.expires_at_ms || 0) > Date.now())
@@ -14799,6 +14806,12 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
         return latestEvent?.content || '';
       })()
     },
+    suggestionsSeed: {
+      users: members,
+      roles: roles.map((role) => ({ roleId: role.id, name: role.name, color: role.color || '#3cb982' })),
+      systemMentions: permissions.canMentionEveryone ? [{ type: 'everyone', displayText: '@everyone' }] : [],
+      pageTags: Object.entries(GROUP_CHAT_PAGE_ROUTE_REGISTRY).map(([slug, route]) => ({ type: 'page', slug, route, displayText: `#${slug}` }))
+    },
     typingUsers,
     pageRegistry: Object.entries(GROUP_CHAT_PAGE_ROUTE_REGISTRY).map(([slug, route]) => ({ slug, route, displayText: `#${slug}` })),
     pinnedMessage,
@@ -14809,6 +14822,16 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
 app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
   if (rejectGuest(req, res)) return;
   const parsed = groupChatMessageCreateSchema.safeParse(req.body || {});
+  console.info('[group-chat] inbound-message-payload', {
+    groupId: req.params.groupId,
+    user: req.username,
+    hasBody: !!req.body,
+    contentLength: typeof req.body?.content === 'string' ? req.body.content.length : 0,
+    rawTextLength: typeof req.body?.rawText === 'string' ? req.body.rawText.length : 0,
+    mentionCount: Array.isArray(req.body?.mentions) ? req.body.mentions.length : 0,
+    entityCount: Array.isArray(req.body?.entities) ? req.body.entities.length : 0
+  });
+  console.info('[group-chat] validation-result', { groupId: req.params.groupId, user: req.username, success: parsed.success });
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const db = loadDB();
   const access = getGroupChatAccess(db, req.params.groupId, req.username);
@@ -14845,14 +14868,13 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     roles,
     canMentionEveryone: permissions.canMentionEveryone === true
   });
-  if (process.env.NODE_ENV !== 'production') {
-    console.debug('[group-chat] message-received', {
-      groupId: access.group.id,
-      user: req.username,
-      rawText: providedRawText,
-      parsedCandidates: structured.mentionCandidates
-    });
-  }
+  console.info('[group-chat] message-parse-result', {
+    groupId: access.group.id,
+    user: req.username,
+    rawText: providedRawText,
+    canMentionEveryone: permissions.canMentionEveryone === true,
+    parsedCandidates: structured.mentionCandidates
+  });
   const blockedReservedMention = (structured.mentionCandidates || []).find((item) => item.type === 'everyone' && item.resolved === false);
   if (blockedReservedMention) {
     return res.status(403).json({ error: 'You do not have permission to mention @everyone.' });
@@ -14902,18 +14924,14 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
       });
     }
   });
-  if (process.env.NODE_ENV !== 'production') {
-    console.debug('[group-chat] message-save-payload', {
-      groupId: access.group.id,
-      messageId: message.id,
-      rawText: message.raw_text,
-      entities: message.entities,
-      mentions: message.mentions,
-      attachments: message.attachments,
-      pageLinks: message.page_links,
-      recipientCount: recipients.size
-    });
-  }
+  console.info('[group-chat] message-save-result', {
+    groupId: access.group.id,
+    messageId: message.id,
+    messageType: message.message_type,
+    rawText: message.raw_text,
+    mentions: message.mentions,
+    recipientCount: recipients.size
+  });
   recipients.forEach((recipient) => {
     createTradeGroupNotification(db, {
       userId: recipient,
@@ -14924,7 +14942,58 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
   });
   access.chat.updated_at = nowIso;
   saveDB(db);
-  res.status(201).json({ message: sanitizeGroupChatMessageForViewer(db, message) });
+  const responsePayload = { message: sanitizeGroupChatMessageForViewer(db, message) };
+  console.info('[group-chat] message-response', {
+    groupId: access.group.id,
+    user: req.username,
+    messageId: responsePayload.message?.id || null
+  });
+  res.status(201).json(responsePayload);
+});
+
+app.get('/api/group-chats/:groupId/shareable-trades', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  normalizeTradeJournal(user);
+  const query = String(req.query.q || '').trim().toUpperCase();
+  const statusFilter = String(req.query.status || 'all').toLowerCase();
+  const isClosed = (trade) => trade?.status === 'closed' || trade?.isClosed === true || Number(trade?.remainingQty || trade?.quantity || 0) <= 0;
+  const rows = Array.isArray(user.trades) ? user.trades : [];
+  const trades = rows
+    .filter((trade) => trade && trade.id)
+    .filter((trade) => {
+      if (!query) return true;
+      return String(trade.ticker || '').toUpperCase().includes(query);
+    })
+    .filter((trade) => {
+      if (statusFilter === 'open') return !isClosed(trade);
+      if (statusFilter === 'closed') return isClosed(trade);
+      return true;
+    })
+    .map((trade) => {
+      const direction = String(trade.direction || trade.side || 'long').toLowerCase() === 'short' ? 'short' : 'long';
+      const entryDate = trade.entryDate || trade.createdAt || trade.openedAt || null;
+      const updatedAt = trade.updatedAt || trade.closedAt || trade.entryDate || trade.createdAt || new Date(0).toISOString();
+      return {
+        tradeId: trade.id,
+        ticker: String(trade.ticker || '').toUpperCase(),
+        direction,
+        status: isClosed(trade) ? 'closed' : 'open',
+        entryDate,
+        updatedAt,
+        account: trade.account || trade.broker || '',
+        pnl: Number.isFinite(Number(trade.pnl)) ? Number(trade.pnl) : null,
+        entryPrice: Number.isFinite(Number(trade.entryPrice)) ? Number(trade.entryPrice) : null
+      };
+    })
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    .slice(0, 200);
+  saveDB(db);
+  res.json({ trades });
 });
 
 app.post('/api/group-chats/:groupId/share-trade/:tradeId', auth, (req, res) => {
@@ -15094,6 +15163,7 @@ app.get('/api/group-chats/:groupId/suggestions', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const query = String(req.query.q || '').trim().toLowerCase();
+  const permissions = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
   const members = getTradeGroupMembers(db, access.group.id, { status: 'active' })
     .map((member) => {
       const identity = socialIdentityForUser(db, member.user_id);
@@ -15112,9 +15182,7 @@ app.get('/api/group-chats/:groupId/suggestions', auth, (req, res) => {
   res.json({
     users: members,
     roles,
-    systemMentions: [
-      { type: 'everyone', displayText: '@everyone' }
-    ],
+    systemMentions: permissions.canMentionEveryone ? [{ type: 'everyone', displayText: '@everyone' }] : [],
     pageTags
   });
 });
