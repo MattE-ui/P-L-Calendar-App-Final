@@ -754,7 +754,11 @@
     activeUtilitySidebarTab: 'chat',
     chats: [],
     selectedGroupId: '',
-    activeChat: null,
+    activeChatGroupId: '',
+    activeChatByGroupId: {},
+    draftByGroupId: {},
+    composerUiByGroupId: {},
+    composerSelectionByGroupId: {},
     watchlists: [],
     selectedWatchlistId: '',
     selectedWatchlistRows: [],
@@ -762,11 +766,7 @@
     chatsLoading: false,
     watchlistsLoading: false,
     chatError: '',
-    watchlistError: '',
-    mentionSuggestions: [],
-    mentionQuery: '',
-    mentionKind: '',
-    mentionSelectedIndex: 0
+    watchlistError: ''
   };
   const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
   const SHARE_TOAST_TIMEOUT_MS = 2600;
@@ -873,9 +873,52 @@
     state.isUtilitySidebarOpen = !!nextOpen;
     root.classList.toggle('is-open', state.isUtilitySidebarOpen);
     panelEl.setAttribute('aria-hidden', String(!state.isUtilitySidebarOpen));
-    if (!state.isUtilitySidebarOpen) {
-      state.activeChat = null;
+    if (!state.isUtilitySidebarOpen) state.activeChatGroupId = '';
+  }
+
+  function getActiveChatData() {
+    if (!state.activeChatGroupId) return null;
+    return state.activeChatByGroupId[state.activeChatGroupId] || null;
+  }
+
+  function ensureComposerUi(groupId) {
+    if (!groupId) return null;
+    if (!state.composerUiByGroupId[groupId]) {
+      state.composerUiByGroupId[groupId] = {
+        announcement: false,
+        isSending: false,
+        sendError: '',
+        suggestions: [],
+        suggestionIndex: 0
+      };
     }
+    return state.composerUiByGroupId[groupId];
+  }
+
+  function captureComposerDraftFromDom() {
+    const groupId = state.activeChatGroupId;
+    if (!groupId) return;
+    const textarea = root.querySelector('.utility-chat-composer textarea');
+    if (!textarea) return;
+    state.draftByGroupId[groupId] = textarea.value || '';
+    state.composerSelectionByGroupId[groupId] = {
+      start: Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : (textarea.value || '').length,
+      end: Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : (textarea.value || '').length,
+      scrollTop: textarea.scrollTop || 0
+    };
+  }
+
+  function restoreComposerSelectionToDom() {
+    const groupId = state.activeChatGroupId;
+    if (!groupId) return;
+    const textarea = root.querySelector('.utility-chat-composer textarea');
+    const selection = state.composerSelectionByGroupId[groupId];
+    if (!textarea || !selection) return;
+    const limit = (textarea.value || '').length;
+    const start = Math.min(limit, Math.max(0, Number(selection.start) || 0));
+    const end = Math.min(limit, Math.max(start, Number(selection.end) || start));
+    if (!textarea.disabled) textarea.setSelectionRange(start, end);
+    textarea.scrollTop = Number(selection.scrollTop) || 0;
   }
 
   function handleTabToggle(tab) {
@@ -1008,8 +1051,11 @@
   }
 
   function renderChatRoom() {
-    const chat = state.activeChat;
+    const chat = getActiveChatData();
     if (!chat) return;
+    const groupId = String(chat.chat?.groupId || '');
+    const composerUi = ensureComposerUi(groupId);
+    const draftValue = state.draftByGroupId[groupId] || '';
     const pinned = chat.pinnedMessage;
     const messages = chat.messages || [];
     const typingUsers = Array.isArray(chat.typingUsers) ? chat.typingUsers : [];
@@ -1064,11 +1110,12 @@
         ${typingText ? `<div class="utility-chat-typing">${typingText}</div>` : '<div class="utility-chat-typing" aria-hidden="true"></div>'}
         <form class="utility-chat-composer" data-action="send">
           ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
-          <textarea name="content" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend ? 'disabled' : ''}></textarea>
+          <textarea name="content" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${escapeHtml(draftValue)}</textarea>
           <div class="utility-chat-composer__suggestions hidden" id="utility-chat-suggestions"></div>
+          ${composerUi.sendError ? `<div class="utility-chat-locked">${escapeHtml(composerUi.sendError)}</div>` : ''}
           <div>
-            <div class="utility-chat-composer__left">${chat.chat.canModerate ? '<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement"> Post as leader announcement</label>' : '<span></span>'}<button data-action="attach-trade-card" type="button">Share trade card</button></div>
-            <button type="submit" ${!chat.chat.canSend ? 'disabled' : ''}>Send</button>
+            <div class="utility-chat-composer__left">${chat.chat.canModerate ? `<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement" ${composerUi.announcement ? 'checked' : ''}> Post as leader announcement</label>` : '<span></span>'}<button data-action="attach-trade-card" type="button">Share trade card</button></div>
+            <button type="submit" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${composerUi.isSending ? 'Sending…' : 'Send'}</button>
           </div>
         </form>
       </div>
@@ -1076,7 +1123,7 @@
   }
 
   function renderChats() {
-    if (state.activeChat) return renderChatRoom();
+    if (getActiveChatData()) return renderChatRoom();
     const filtered = state.chats.filter((chat) => `${chat.groupName} ${chat.latestMessage?.content || ''}`.toLowerCase().includes(state.query.toLowerCase()));
     if (state.chatsLoading) {
       body.innerHTML = '<div class="utility-empty utility-empty--loading"><strong>Loading chats</strong><p>Syncing your desk rooms…</p></div>';
@@ -1089,7 +1136,7 @@
     body.innerHTML = `
       <div class="utility-list">
         ${filtered.length ? filtered.map((chat) => `
-          <button class="utility-chat-row ${chat.unreadCount ? 'has-unread' : ''} ${state.activeChat?.chat?.groupId === chat.groupId ? 'is-active' : ''}" data-group-id="${chat.groupId}" type="button">
+          <button class="utility-chat-row ${chat.unreadCount ? 'has-unread' : ''} ${state.activeChatGroupId === chat.groupId ? 'is-active' : ''}" data-group-id="${chat.groupId}" type="button">
             <div class="utility-chat-row__top"><strong>${chat.groupName}</strong><span class="utility-chat-row__time">${chat.latestMessage?.createdAt ? new Date(chat.latestMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>
             <p title="${chat.latestMessage?.content || 'No messages yet'}">${chat.latestMessage?.content || 'No messages yet'}</p>
             <div class="utility-chat-row__meta">${chat.isLeaderOwned ? '<span class="utility-chat-row__leader">Leader</span>' : '<span></span>'}${chat.unreadCount ? `<span class="utility-pill">${chat.unreadCount > 99 ? '99+' : chat.unreadCount}</span>` : '<span class="utility-chat-row__read">Read</span>'}</div>
@@ -1146,6 +1193,7 @@
   }
 
   function render() {
+    captureComposerDraftFromDom();
     root.querySelectorAll('[data-tab]').forEach((el) => {
       const tab = el.dataset.tab;
       const isActive = state.activeUtilitySidebarTab === tab;
@@ -1155,6 +1203,7 @@
     if (!state.isUtilitySidebarOpen) return renderUnread();
     if (state.activeUtilitySidebarTab === 'chat') renderChats();
     else renderWatchlists();
+    restoreComposerSelectionToDom();
     renderUnread();
   }
 
@@ -1167,9 +1216,9 @@
 
   let typingDebounce = null;
   async function publishTyping(isTyping = true) {
-    if (!state.activeChat?.chat?.groupId) return;
+    if (!state.activeChatGroupId) return;
     try {
-      await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/typing`, {
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/typing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isTyping })
@@ -1178,7 +1227,8 @@
   }
 
   async function updateComposerSuggestions(textarea) {
-    if (!textarea || !state.activeChat?.chat?.groupId) return;
+    if (!textarea || !state.activeChatGroupId) return;
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
     const cursor = textarea.selectionStart || 0;
     const textBefore = textarea.value.slice(0, cursor);
     const mentionMatch = textBefore.match(/(^|\s)([@#])([A-Za-z0-9_-]{0,24})$/);
@@ -1191,7 +1241,7 @@
     }
     const marker = mentionMatch[2];
     const query = mentionMatch[3] || '';
-    const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/suggestions?q=${encodeURIComponent(query)}`);
+    const data = await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/suggestions?q=${encodeURIComponent(query)}`);
     const suggestions = marker === '#'
       ? (data.pageTags || []).map((item) => ({ label: `#${item.slug}`, insert: `#${item.slug}`, type: 'page' }))
       : [
@@ -1199,14 +1249,14 @@
         ...(data.roles || []).map((item) => ({ label: `@${item.name}`, insert: `@${item.name}`, type: 'role' })),
         ...(data.systemMentions || []).map((item) => ({ label: item.displayText, insert: item.displayText, type: 'system' }))
       ];
-    state.mentionSuggestions = suggestions.slice(0, 8);
-    state.mentionSelectedIndex = 0;
-    if (!state.mentionSuggestions.length) {
+    composerUi.suggestions = suggestions.slice(0, 8);
+    composerUi.suggestionIndex = 0;
+    if (!composerUi.suggestions.length) {
       wrap.classList.add('hidden');
       wrap.innerHTML = '';
       return;
     }
-    wrap.innerHTML = state.mentionSuggestions.map((item, idx) => `<button type="button" data-action="pick-suggestion" data-index="${idx}" class="${idx === state.mentionSelectedIndex ? 'is-active' : ''}"><span>${item.label}</span><small>${item.type}</small></button>`).join('');
+    wrap.innerHTML = composerUi.suggestions.map((item, idx) => `<button type="button" data-action="pick-suggestion" data-index="${idx}" class="${idx === composerUi.suggestionIndex ? 'is-active' : ''}"><span>${item.label}</span><small>${item.type}</small></button>`).join('');
     wrap.classList.remove('hidden');
   }
 
@@ -1230,8 +1280,11 @@
       const feed = root.querySelector('#utility-chat-feed');
       const wasNearBottom = feed ? (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < 100 : true;
       const data = await api(`/api/group-chats/${encodeURIComponent(groupId)}/messages`);
-      state.activeChat = data;
+      state.activeChatByGroupId[groupId] = data;
+      state.activeChatGroupId = groupId;
       state.selectedGroupId = groupId;
+      ensureComposerUi(groupId);
+      if (!Object.prototype.hasOwnProperty.call(state.draftByGroupId, groupId)) state.draftByGroupId[groupId] = '';
       await api(`/api/group-chats/${encodeURIComponent(groupId)}/read`, { method: 'POST' });
       await loadChats();
       render();
@@ -1274,10 +1327,10 @@
     if (chatRow) return openChat(chatRow.dataset.groupId);
 
     const action = event.target.dataset.action;
-    if (!action || !state.activeChat?.chat?.groupId) return;
-    const groupId = state.activeChat.chat.groupId;
+    if (!action || !state.activeChatGroupId) return;
+    const groupId = state.activeChatGroupId;
     if (action === 'back') {
-      state.activeChat = null;
+      state.activeChatGroupId = '';
       render();
       return;
     }
@@ -1297,8 +1350,8 @@
       await api(`/api/group-chats/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(event.target.dataset.mid)}`, { method: 'DELETE' });
       return openChat(groupId);
     }
-    if (action === 'open-group-watchlist' && state.activeChat?.chat?.groupId) {
-      const target = state.watchlists.find((item) => item.scope === 'group' && item.tradingGroupId === state.activeChat.chat.groupId);
+    if (action === 'open-group-watchlist' && state.activeChatGroupId) {
+      const target = state.watchlists.find((item) => item.scope === 'group' && item.tradingGroupId === state.activeChatGroupId);
       if (target) {
         state.activeUtilitySidebarTab = 'watchlist';
         state.selectedWatchlistId = target.id;
@@ -1307,13 +1360,14 @@
       }
       return;
     }
-    if (action === 'size-trade' && event.target.dataset.mid && state.activeChat?.messages?.length) {
-      const message = state.activeChat.messages.find((item) => item.id === event.target.dataset.mid);
+    const activeChat = getActiveChatData();
+    if (action === 'size-trade' && event.target.dataset.mid && activeChat?.messages?.length) {
+      const message = activeChat.messages.find((item) => item.id === event.target.dataset.mid);
       const meta = message?.metadata || {};
       if (!meta?.ticker || !Number.isFinite(Number(meta.entryPrice)) || !Number.isFinite(Number(meta.stopPrice))) return;
       const payload = {
         source: 'chat_trade_share',
-        groupId: state.activeChat.chat.groupId,
+        groupId: state.activeChatGroupId,
         ticker: String(meta.ticker || '').toUpperCase(),
         side: String(meta.direction || 'long').toUpperCase(),
         entryPrice: Number(meta.entryPrice),
@@ -1334,18 +1388,20 @@
     }
     if (action === 'attach-trade-card') {
       const tradeId = window.prompt('Enter trade ID to share as trade card:');
-      if (!tradeId || !state.activeChat?.chat?.groupId) return;
-      await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/share-trade/${encodeURIComponent(tradeId.trim())}`, { method: 'POST' });
-      await openChat(state.activeChat.chat.groupId);
+      if (!tradeId || !state.activeChatGroupId) return;
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/share-trade/${encodeURIComponent(tradeId.trim())}`, { method: 'POST' });
+      await openChat(state.activeChatGroupId);
       return;
     }
     if (action === 'pick-suggestion' && event.target.dataset.index !== undefined) {
       const composer = root.querySelector('.utility-chat-composer textarea');
-      const suggestion = state.mentionSuggestions[Number(event.target.dataset.index)];
+      const composerUi = ensureComposerUi(state.activeChatGroupId);
+      const suggestion = composerUi?.suggestions?.[Number(event.target.dataset.index)];
       if (!composer || !suggestion) return;
       const cursor = composer.selectionStart || 0;
       const head = composer.value.slice(0, cursor).replace(/([@#])[A-Za-z0-9_-]*$/, `${suggestion.insert} `);
       composer.value = head + composer.value.slice(cursor);
+      state.draftByGroupId[state.activeChatGroupId] = composer.value;
       composer.focus();
       const pos = head.length;
       composer.setSelectionRange(pos, pos);
@@ -1360,20 +1416,33 @@
 
   root.addEventListener('submit', async (event) => {
     const form = event.target.closest('form[data-action="send"]');
-    if (!form || !state.activeChat?.chat?.groupId) return;
+    if (!form || !state.activeChatGroupId) return;
     event.preventDefault();
-    const fd = new FormData(form);
-    const content = String(fd.get('content') || '').trim();
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    const content = String(state.draftByGroupId[state.activeChatGroupId] || '').trim();
     if (!content) return;
-    const messageType = fd.get('announcement') ? 'leader_announcement' : 'user_message';
-    await api(`/api/group-chats/${encodeURIComponent(state.activeChat.chat.groupId)}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, messageType })
-    });
-    form.reset();
-    await publishTyping(false);
-    await openChat(state.activeChat.chat.groupId);
+    if (composerUi) {
+      composerUi.isSending = true;
+      composerUi.sendError = '';
+      composerUi.announcement = !!form.querySelector('input[name="announcement"]')?.checked;
+    }
+    render();
+    const messageType = composerUi?.announcement ? 'leader_announcement' : 'user_message';
+    try {
+      await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, messageType })
+      });
+      state.draftByGroupId[state.activeChatGroupId] = '';
+      await publishTyping(false);
+      await openChat(state.activeChatGroupId);
+    } catch (error) {
+      if (composerUi) composerUi.sendError = error?.message || 'Send failed. Draft kept.';
+    } finally {
+      if (composerUi) composerUi.isSending = false;
+      render();
+    }
   });
 
   root.addEventListener('keydown', async (event) => {
@@ -1393,9 +1462,24 @@
       return;
     }
     if (typingDebounce) window.clearTimeout(typingDebounce);
+    if (state.activeChatGroupId) state.draftByGroupId[state.activeChatGroupId] = textarea.value;
     publishTyping(true);
     typingDebounce = window.setTimeout(() => publishTyping(false), 4500);
     window.setTimeout(() => updateComposerSuggestions(textarea), 0);
+  });
+
+  root.addEventListener('input', (event) => {
+    const textarea = event.target.closest('.utility-chat-composer textarea');
+    if (!textarea || !state.activeChatGroupId) return;
+    state.draftByGroupId[state.activeChatGroupId] = textarea.value;
+    window.setTimeout(() => updateComposerSuggestions(textarea), 0);
+  });
+
+  root.addEventListener('change', (event) => {
+    const announcement = event.target.closest('.utility-chat-composer input[name="announcement"]');
+    if (!announcement || !state.activeChatGroupId) return;
+    const composerUi = ensureComposerUi(state.activeChatGroupId);
+    if (composerUi) composerUi.announcement = !!announcement.checked;
   });
 
   searchInput.addEventListener('input', () => {
@@ -1444,8 +1528,8 @@
   render();
   window.setInterval(loadChats, 15000);
   window.setInterval(() => {
-    if (state.activeChat?.chat?.groupId && state.isUtilitySidebarOpen && state.activeUtilitySidebarTab === 'chat') {
-      openChat(state.activeChat.chat.groupId);
+    if (state.activeChatGroupId && state.isUtilitySidebarOpen && state.activeUtilitySidebarTab === 'chat') {
+      openChat(state.activeChatGroupId);
     }
   }, 5000);
 })();
