@@ -13259,10 +13259,30 @@ const groupWatchlistCreateSchema = z.object({
   customTitle: z.string().max(120).optional()
 });
 
+const groupChatMentionSchema = z.object({
+  type: z.enum(['user', 'role', 'everyone', 'time']),
+  targetId: z.string().nullable().optional(),
+  displayText: z.string().max(120).optional()
+});
+
+const groupChatEntitySchema = z.object({
+  type: z.string().max(32),
+  mentionType: z.string().max(32).optional(),
+  displayText: z.string().max(120).optional(),
+  targetId: z.string().nullable().optional(),
+  start: z.number().int().min(0).optional(),
+  end: z.number().int().min(0).optional(),
+  slug: z.string().max(64).optional(),
+  route: z.string().max(160).optional()
+});
+
 const groupChatMessageCreateSchema = z.object({
   content: z.string().min(0).max(2000).optional(),
+  rawText: z.string().min(0).max(2000).optional(),
   messageType: z.enum(GROUP_CHAT_MESSAGE_TYPES).optional(),
   metadata: z.object({}).optional(),
+  mentions: z.array(groupChatMentionSchema).max(32).optional(),
+  entities: z.array(groupChatEntitySchema).max(80).optional(),
   attachments: z.array(z.object({
     type: z.enum(['image', 'trade_card']),
     url: z.string().min(1),
@@ -13929,6 +13949,7 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
   const inUrl = (index) => urlRanges.some(([s, e]) => index >= s && index < e);
   const entities = [];
   const mentions = [];
+  const mentionCandidates = [];
   const pageLinks = [];
   const pushMention = (entity, mention) => {
     entities.push(entity);
@@ -13945,6 +13966,7 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
     if (sigil === '@') {
       const lower = token.toLowerCase();
       if (lower === 'everyone') {
+        mentionCandidates.push({ type: 'everyone', token, raw: '@everyone', start: symbolOffset, resolved: canMentionEveryone });
         pushMention(
           { type: 'mention', mentionType: 'everyone', displayText: '@everyone', start: symbolOffset, end: symbolOffset + token.length + 1 },
           { type: 'everyone', displayText: '@everyone', targetId: null }
@@ -13952,14 +13974,20 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
         continue;
       }
       if (lower === 'time') {
+        mentionCandidates.push({ type: 'time', token, raw: '@time', start: symbolOffset, resolved: canMentionEveryone });
         pushMention(
           { type: 'mention', mentionType: 'time', displayText: '@time', start: symbolOffset, end: symbolOffset + token.length + 1 },
           { type: 'time', displayText: '@time', targetId: null }
         );
         continue;
       }
-      const user = users.find((item) => String(item.nickname || '').toLowerCase() === lower);
+      const user = users.find((item) => {
+        const nicknameLower = String(item.nickname || '').toLowerCase();
+        const userIdLower = String(item.userId || '').toLowerCase();
+        return nicknameLower === lower || userIdLower === lower;
+      });
       if (user) {
+        mentionCandidates.push({ type: 'user', token, raw: `@${token}`, start: symbolOffset, resolved: true, targetId: user.userId });
         pushMention(
           { type: 'mention', mentionType: 'user', displayText: `@${user.nickname}`, targetId: user.userId, start: symbolOffset, end: symbolOffset + token.length + 1 },
           { type: 'user', displayText: `@${user.nickname}`, targetId: user.userId }
@@ -13968,11 +13996,13 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
       }
       const role = roles.find((item) => String(item.name || '').toLowerCase() === lower);
       if (role) {
+        mentionCandidates.push({ type: 'role', token, raw: `@${token}`, start: symbolOffset, resolved: true, targetId: role.id });
         pushMention(
           { type: 'mention', mentionType: 'role', displayText: `@${role.name}`, targetId: role.id, start: symbolOffset, end: symbolOffset + token.length + 1 },
           { type: 'role', displayText: `@${role.name}`, targetId: role.id }
         );
       }
+      mentionCandidates.push({ type: 'unknown', token, raw: `@${token}`, start: symbolOffset, resolved: false });
       continue;
     }
     const slug = token.toLowerCase();
@@ -13992,7 +14022,7 @@ function parseStructuredChatContent(content, { users = [], roles = [], canMentio
     dedup.add(key);
     return true;
   });
-  return { rawText: text, entities, mentions: safeMentions, pageLinks };
+  return { rawText: text, entities, mentions: safeMentions, pageLinks, mentionCandidates };
 }
 
 app.post('/api/social/trade-groups', auth, (req, res) => {
@@ -14732,7 +14762,8 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
   const messageType = requestedType === 'leader_announcement'
     ? (access.isLeader ? 'leader_announcement' : 'user_message')
     : (GROUP_CHAT_MESSAGE_TYPES.includes(requestedType) ? requestedType : 'user_message');
-  const normalizedContent = String(parsed.data.content || '').trim();
+  const providedRawText = String(parsed.data.rawText || parsed.data.content || '');
+  const normalizedContent = providedRawText.trim();
   const normalizedAttachments = Array.isArray(parsed.data.attachments) ? parsed.data.attachments : [];
   if (!normalizedContent && messageType === 'user_message' && !normalizedAttachments.length) {
     return res.status(400).json({ error: 'Message content is required.' });
@@ -14748,6 +14779,19 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     roles,
     canMentionEveryone: permissions.canMentionEveryone === true
   });
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[group-chat] message-received', {
+      groupId: access.group.id,
+      user: req.username,
+      rawText: providedRawText,
+      parsedCandidates: structured.mentionCandidates
+    });
+  }
+  const blockedReservedMention = (structured.mentionCandidates || []).find((item) => (item.type === 'everyone' || item.type === 'time') && item.resolved === false);
+  if (blockedReservedMention) {
+    const label = blockedReservedMention.type === 'everyone' ? '@everyone' : '@time';
+    return res.status(403).json({ error: `You do not have permission to mention ${label}.` });
+  }
   const identity = socialIdentityForUser(db, req.username);
   const nowIso = new Date().toISOString();
   const message = {
@@ -14793,6 +14837,18 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
       });
     }
   });
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[group-chat] message-save-payload', {
+      groupId: access.group.id,
+      messageId: message.id,
+      rawText: message.raw_text,
+      entities: message.entities,
+      mentions: message.mentions,
+      attachments: message.attachments,
+      pageLinks: message.page_links,
+      recipientCount: recipients.size
+    });
+  }
   recipients.forEach((recipient) => {
     createTradeGroupNotification(db, {
       userId: recipient,
