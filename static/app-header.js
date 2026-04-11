@@ -787,7 +787,12 @@
     const res = await fetch(path, { credentials: 'include', ...opts });
     if (res.status === 401) throw new Error('Unauthenticated');
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Request failed');
+    if (!res.ok) {
+      const error = new Error(data.error || 'Request failed');
+      error.status = res.status;
+      error.body = data;
+      throw error;
+    }
     return data;
   }
 
@@ -1086,7 +1091,7 @@
           ${chat.chat.canSend ? '' : '<div class="utility-chat-locked">Chat is locked. Only moderators can post right now.</div>'}
           <textarea name="content" data-composer-textarea-id="${groupId}" placeholder="Share market context, execution notes, or risk updates…" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${escapeHtml(draftValue)}</textarea>
           <div class="utility-chat-composer__suggestions hidden" id="utility-chat-suggestions"></div>
-          ${composerUi.sendError ? `<div class="utility-chat-locked">${escapeHtml(composerUi.sendError)}</div>` : ''}
+          ${composerUi.sendError ? `<div class="utility-chat-composer__error" role="status" aria-live="polite">${escapeHtml(composerUi.sendError)}</div>` : ''}
           <div>
             <div class="utility-chat-composer__left">${chat.chat.canModerate ? `<label class="utility-chat-composer__announcement"><input type="checkbox" name="announcement" ${composerUi.announcement ? 'checked' : ''}> Post as leader announcement</label>` : '<span></span>'}<button data-action="attach-trade-card" type="button">Share trade card</button></div>
             <button type="submit" ${!chat.chat.canSend || composerUi.isSending ? 'disabled' : ''}>${composerUi.isSending ? 'Sending…' : 'Send'}</button>
@@ -1472,8 +1477,12 @@
     if (!form || !state.activeChatGroupId) return;
     event.preventDefault();
     const composerUi = ensureComposerUi(state.activeChatGroupId);
-    const content = String(state.draftByGroupId[state.activeChatGroupId] || '').trim();
-    if (!content) return;
+    const rawDraft = String(state.draftByGroupId[state.activeChatGroupId] || '');
+    const content = rawDraft.trim();
+    if (!content) {
+      chatDebug('submit-blocked-empty', { groupId: state.activeChatGroupId, draft: rawDraft });
+      return;
+    }
     if (composerUi) {
       composerUi.isSending = true;
       composerUi.sendError = '';
@@ -1481,16 +1490,30 @@
     }
     render();
     const messageType = composerUi?.announcement ? 'leader_announcement' : 'user_message';
+    const payload = { content, rawText: rawDraft, messageType };
+    chatDebug('submit-attempt', {
+      groupId: state.activeChatGroupId,
+      draft: rawDraft,
+      hasSuggestionsOpen: !root.querySelector('#utility-chat-suggestions')?.classList.contains('hidden'),
+      payload
+    });
     try {
       await api(`/api/group-chats/${encodeURIComponent(state.activeChatGroupId)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, messageType })
+        body: JSON.stringify(payload)
       });
       state.draftByGroupId[state.activeChatGroupId] = '';
       await publishTyping(false);
       await openChat(state.activeChatGroupId);
     } catch (error) {
+      chatDebug('submit-failed', {
+        groupId: state.activeChatGroupId,
+        status: error?.status || null,
+        response: error?.body || null,
+        message: error?.message || 'Request failed'
+      });
+      console.error('[utility-chat] send-failed', error?.status || '', error?.body || error);
       if (composerUi) composerUi.sendError = error?.message || 'Send failed. Draft kept.';
     } finally {
       if (composerUi) composerUi.isSending = false;

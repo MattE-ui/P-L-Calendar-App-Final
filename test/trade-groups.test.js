@@ -89,6 +89,28 @@ async function waitFor(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
   return false;
 }
 
+async function createAcceptedGroup() {
+  const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Chat Group' })
+  });
+  assert.equal(created.res.status, 201);
+  const groupId = created.data.group.id;
+  const addMember = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ friend_user_id: member })
+  });
+  assert.equal(addMember.res.status, 201);
+  const inviteUnread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  const invite = inviteUnread.data.notifications.find((item) => item.type === 'trade_group_invite');
+  assert.ok(invite);
+  const acceptInvite = await authedFetch(tokens.member, `/api/social/trade-groups/invites/${invite.invite_id}/accept`, { method: 'POST' });
+  assert.equal(acceptInvite.res.status, 200);
+  return groupId;
+}
+
 test('leader can create group, add friend, and member receives alert for qualifying new trade', async () => {
   const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
     method: 'POST',
@@ -945,4 +967,47 @@ test('manual close sell alert dedupes against later reconciliation alert', () =>
   assert.equal(reconcileAttempt.alertsCreated, 0);
   assert.equal(reconcileAttempt.duplicates, 1);
   assert.equal(db.tradeGroupAlerts.length, 1);
+});
+
+test('group chat mention pipeline sends user mentions and preserves unknown mentions as text', async () => {
+  const groupId = await createAcceptedGroup();
+  const sent = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '@member yoooo hello @notarealuser', rawText: '@member yoooo hello @notarealuser', messageType: 'user_message' })
+  });
+  assert.equal(sent.res.status, 201);
+  assert.equal(sent.data.message.rawText, '@member yoooo hello @notarealuser');
+  assert.equal(sent.data.message.mentions.length, 1);
+  assert.equal(sent.data.message.mentions[0].type, 'user');
+  assert.equal(sent.data.message.mentions[0].targetId, member);
+  const unread = await authedFetch(tokens.member, '/api/social/trade-groups/notifications/unread');
+  assert.equal(unread.res.status, 200);
+  assert.equal(unread.data.notifications.some((item) => item.type === 'trade_group_chat_mention'), true);
+});
+
+test('group chat reserved mention permissions return explicit errors', async () => {
+  const groupId = await createAcceptedGroup();
+  const blockedEveryone = await authedFetch(tokens.member, `/api/group-chats/${groupId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '@everyone test', messageType: 'user_message' })
+  });
+  assert.equal(blockedEveryone.res.status, 403);
+  assert.equal(blockedEveryone.data.error, 'You do not have permission to mention @everyone.');
+
+  const blockedTime = await authedFetch(tokens.member, `/api/group-chats/${groupId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '@time check this', messageType: 'user_message' })
+  });
+  assert.equal(blockedTime.res.status, 403);
+  assert.equal(blockedTime.data.error, 'You do not have permission to mention @time.');
+
+  const allowedEveryone = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '@everyone heads up', messageType: 'user_message' })
+  });
+  assert.equal(allowedEveryone.res.status, 201);
 });
