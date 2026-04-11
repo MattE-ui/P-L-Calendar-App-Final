@@ -41,6 +41,9 @@ process.on('uncaughtException', (error) => {
 });
 
 const app = express();
+if (typeof app.patch !== 'function' && typeof app.post === 'function') {
+  app.patch = (...args) => app.post(...args);
+}
 const PORT = process.env.PORT || 3000;
 const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
 const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
@@ -657,6 +660,18 @@ function ensureSocialTables(db) {
     db.groupChatReadStates = [];
     mutated = true;
   }
+  if (!Array.isArray(db.groupChatRoles)) {
+    db.groupChatRoles = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.groupChatRoleAssignments)) {
+    db.groupChatRoleAssignments = [];
+    mutated = true;
+  }
+  if (!Array.isArray(db.groupChatTypingStates)) {
+    db.groupChatTypingStates = [];
+    mutated = true;
+  }
   return mutated;
 }
 
@@ -670,8 +685,17 @@ const LEADERBOARD_DATA_SOURCE_VALUES = ['auto', 'trading212', 'ibkr', 'manual'];
 const TRADE_GROUP_ROLE_VALUES = ['leader', 'member'];
 const TRADE_GROUP_MEMBER_STATUS_VALUES = ['active', 'pending', 'declined', 'removed'];
 const TRADE_GROUP_INVITE_STATUS_VALUES = ['pending', 'accepted', 'declined', 'cancelled'];
-const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined', 'trade_group_watchlist_posted'];
+const TRADE_GROUP_NOTIFICATION_TYPES = ['trade_group_alert', 'trade_group_invite', 'trade_group_announcement', 'trade_group_member_joined', 'trade_group_watchlist_posted', 'trade_group_chat_mention'];
 const GROUP_CHAT_MESSAGE_TYPES = ['user_message', 'system', 'leader_announcement', 'trade_share', 'trade_event_system'];
+const GROUP_CHAT_ROLE_PERMISSIONS = ['canMentionEveryone', 'canManageRoles', 'canDeleteMessages', 'canPinMessages', 'canModerateChat'];
+const GROUP_CHAT_PAGE_ROUTE_REGISTRY = {
+  dashboard: '/dashboard',
+  trades: '/trades',
+  calendar: '/calendar',
+  profile: '/profile',
+  leaderboard: '/social/leaderboard',
+  groups: '/social/groups'
+};
 const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, Number(process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS) || 30000);
 const pendingTradeGroupAlertTimers = new Map();
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
@@ -992,6 +1016,17 @@ function buildTradeGroupNotificationPushContext(db, notification, { group = null
         groupWatchlistId: groupWatchlist?.id || notification.group_watchlist_id || '',
         link: `/social/groups?group=${encodeURIComponent(resolvedGroup.id)}&tab=watchlists&watchlist=${encodeURIComponent(groupWatchlist?.id || notification.group_watchlist_id || '')}`,
         tag: `trade-group-watchlist:${resolvedGroup.id}:${groupWatchlist?.id || notification.id}`
+      }
+    };
+  }
+  if (normalizedType === 'trade_group_chat_mention') {
+    return {
+      eventType: 'trade_group_chat_mention',
+      context: {
+        groupId: resolvedGroup.id,
+        groupName: resolvedGroup.name,
+        link: `${fallbackLink}&chat=1`,
+        tag: `trade-group-chat-mention:${resolvedGroup.id}:${notification.id}`
       }
     };
   }
@@ -13227,7 +13262,41 @@ const groupWatchlistCreateSchema = z.object({
 const groupChatMessageCreateSchema = z.object({
   content: z.string().min(0).max(2000).optional(),
   messageType: z.enum(GROUP_CHAT_MESSAGE_TYPES).optional(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.object({}).optional(),
+  attachments: z.array(z.object({
+    type: z.enum(['image', 'trade_card']),
+    url: z.string().min(1),
+    mimeType: z.string().max(120).optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    tradeId: z.string().optional(),
+    metadata: z.object({}).optional()
+  })).max(4).optional(),
+  replyToMessageId: z.string().optional()
+});
+
+const groupChatTypingSchema = z.object({
+  isTyping: z.boolean().optional(),
+  cursor: z.number().optional()
+});
+
+const groupChatRoleCreateSchema = z.object({
+  name: z.string().min(1).max(40),
+  color: z.string().min(4).max(24).optional(),
+  description: z.string().max(240).optional(),
+  permissions: z.object({}).optional()
+});
+
+const groupChatRolePatchSchema = z.object({
+  name: z.string().min(1).max(40).optional(),
+  color: z.string().min(4).max(24).optional(),
+  description: z.string().max(240).optional(),
+  permissions: z.object({}).optional()
+});
+
+const groupChatRoleAssignmentSchema = z.object({
+  userId: z.string().min(1),
+  roleIds: z.array(z.string().min(1)).max(20)
 });
 
 
@@ -13398,7 +13467,7 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
   return rows;
 }
 
-const zRecord = typeof z.record === 'function' ? z.record.bind(z) : (() => z.any());
+const zRecord = typeof z.record === 'function' ? z.record.bind(z) : (() => z.string());
 
 const notificationDeviceRegisterSchema = z.object({
   deviceId: z.string().min(8).max(128),
@@ -13761,6 +13830,7 @@ function computeGroupChatUnreadCount(db, chatId, username) {
 
 function sanitizeGroupChatMessageForViewer(db, message) {
   const identity = socialIdentityForUser(db, message.sender_user_id || '');
+  const groupId = db.groupChats.find((item) => item.id === message.group_chat_id)?.trading_group_id || '';
   const rawType = String(message.message_type || '').trim();
   const normalizedType = rawType === 'user' ? 'user_message' : rawType;
   return {
@@ -13770,9 +13840,16 @@ function sanitizeGroupChatMessageForViewer(db, message) {
     senderNickname: message.sender_nickname || identity.nickname || message.sender_user_id || 'Unknown',
     senderAvatarUrl: identity.avatar_url,
     senderAvatarInitials: identity.avatar_initials,
+    senderRoleBadges: groupId ? getGroupRoleBadgesForUser(db, groupId, message.sender_user_id || '') : [],
     messageType: GROUP_CHAT_MESSAGE_TYPES.includes(normalizedType) ? normalizedType : 'user_message',
     content: message.content,
     metadata: message.metadata || {},
+    rawText: message.raw_text || message.content || '',
+    entities: Array.isArray(message.entities) ? message.entities : [],
+    mentions: Array.isArray(message.mentions) ? message.mentions : [],
+    pageLinks: Array.isArray(message.page_links) ? message.page_links : [],
+    attachments: Array.isArray(message.attachments) ? message.attachments : [],
+    replyToMessageId: message.reply_to_message_id || null,
     createdAt: message.created_at,
     updatedAt: message.updated_at,
     deletedAt: message.deleted_at || null
@@ -13785,6 +13862,137 @@ function getGroupChatAccess(db, groupId, username) {
   if (access.error) return access;
   const chat = getOrCreateGroupChat(db, access.group.id);
   return { ...access, chat };
+}
+
+function getGroupChatRoleRows(db, groupId) {
+  ensureSocialTables(db);
+  return db.groupChatRoles
+    .filter((item) => item.group_id === groupId)
+    .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+}
+
+function getGroupRoleAssignmentsForUser(db, groupId, userId) {
+  return db.groupChatRoleAssignments
+    .filter((item) => item.group_id === groupId && item.user_id === userId)
+    .map((item) => item.role_id);
+}
+
+function getGroupChatPermissionsForUser(db, groupId, userId, { isLeader = false } = {}) {
+  if (isLeader) {
+    return {
+      canMentionEveryone: true,
+      canManageRoles: true,
+      canDeleteMessages: true,
+      canPinMessages: true,
+      canModerateChat: true
+    };
+  }
+  const roles = getGroupChatRoleRows(db, groupId);
+  const roleIds = new Set(getGroupRoleAssignmentsForUser(db, groupId, userId));
+  const base = {
+    canMentionEveryone: false,
+    canManageRoles: false,
+    canDeleteMessages: false,
+    canPinMessages: false,
+    canModerateChat: false
+  };
+  roles.forEach((role) => {
+    if (!roleIds.has(role.id)) return;
+    const perms = role.permissions && typeof role.permissions === 'object' ? role.permissions : {};
+    GROUP_CHAT_ROLE_PERMISSIONS.forEach((perm) => {
+      if (perms[perm] === true) base[perm] = true;
+    });
+  });
+  return base;
+}
+
+function getGroupRoleBadgesForUser(db, groupId, userId) {
+  const roles = getGroupChatRoleRows(db, groupId);
+  const roleIds = new Set(getGroupRoleAssignmentsForUser(db, groupId, userId));
+  return roles
+    .filter((role) => roleIds.has(role.id))
+    .map((role) => ({
+      id: role.id,
+      name: role.name,
+      color: role.color || '#3cb982'
+    }));
+}
+
+function parseStructuredChatContent(content, { users = [], roles = [], canMentionEveryone = false } = {}) {
+  const text = String(content || '');
+  const urlRanges = [];
+  const urlRegex = /https?:\/\/[^\s]+/gi;
+  let match;
+  while ((match = urlRegex.exec(text))) {
+    urlRanges.push([match.index, match.index + match[0].length]);
+  }
+  const inUrl = (index) => urlRanges.some(([s, e]) => index >= s && index < e);
+  const entities = [];
+  const mentions = [];
+  const pageLinks = [];
+  const pushMention = (entity, mention) => {
+    entities.push(entity);
+    mentions.push(mention);
+  };
+  const tokenRegex = /(^|[\s(>])([@#])([A-Za-z0-9_/-]+)/g;
+  while ((match = tokenRegex.exec(text))) {
+    const symbolOffset = match.index + match[1].length;
+    if (symbolOffset > 0 && text[symbolOffset - 1] === '\\') continue;
+    if (inUrl(symbolOffset)) continue;
+    const sigil = match[2];
+    const token = String(match[3] || '');
+    if (!token) continue;
+    if (sigil === '@') {
+      const lower = token.toLowerCase();
+      if (lower === 'everyone') {
+        pushMention(
+          { type: 'mention', mentionType: 'everyone', displayText: '@everyone', start: symbolOffset, end: symbolOffset + token.length + 1 },
+          { type: 'everyone', displayText: '@everyone', targetId: null }
+        );
+        continue;
+      }
+      if (lower === 'time') {
+        pushMention(
+          { type: 'mention', mentionType: 'time', displayText: '@time', start: symbolOffset, end: symbolOffset + token.length + 1 },
+          { type: 'time', displayText: '@time', targetId: null }
+        );
+        continue;
+      }
+      const user = users.find((item) => String(item.nickname || '').toLowerCase() === lower);
+      if (user) {
+        pushMention(
+          { type: 'mention', mentionType: 'user', displayText: `@${user.nickname}`, targetId: user.userId, start: symbolOffset, end: symbolOffset + token.length + 1 },
+          { type: 'user', displayText: `@${user.nickname}`, targetId: user.userId }
+        );
+        continue;
+      }
+      const role = roles.find((item) => String(item.name || '').toLowerCase() === lower);
+      if (role) {
+        pushMention(
+          { type: 'mention', mentionType: 'role', displayText: `@${role.name}`, targetId: role.id, start: symbolOffset, end: symbolOffset + token.length + 1 },
+          { type: 'role', displayText: `@${role.name}`, targetId: role.id }
+        );
+      }
+      continue;
+    }
+    const slug = token.toLowerCase();
+    const route = GROUP_CHAT_PAGE_ROUTE_REGISTRY[slug];
+    if (route) {
+      const pageEntity = { type: 'page_link', slug, route, displayText: `#${slug}`, start: symbolOffset, end: symbolOffset + token.length + 1 };
+      entities.push(pageEntity);
+      pageLinks.push({ slug, route, displayText: `#${slug}` });
+    }
+  }
+
+  const dedup = new Set();
+  const safeMentions = mentions.filter((item) => {
+    if ((item.type === 'everyone' || item.type === 'time') && !canMentionEveryone) return false;
+    const key = `${item.type}:${item.targetId || item.displayText}`;
+    if (dedup.has(key)) return false;
+    dedup.add(key);
+    return true;
+  });
+  return { rawText: text, entities, mentions: safeMentions, pageLinks };
 }
 
 app.post('/api/social/trade-groups', auth, (req, res) => {
@@ -14357,6 +14565,17 @@ app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
         };
       }
 
+      if (normalizedType === 'trade_group_chat_mention') {
+        return {
+          notification_id: notification.id,
+          type: 'trade_group_chat_mention',
+          group_id: group.id,
+          group_name: group.name,
+          created_at: notification.created_at,
+          link: `/social/groups?group=${encodeURIComponent(group.id)}&chat=1`
+        };
+      }
+
       if (normalizedType !== 'trade_group_alert') return null;
       const alert = db.tradeGroupAlerts.find(item => item.id === notification.alert_id);
       if (!alert || alert.group_id !== group.id) return null;
@@ -14448,6 +14667,18 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const participantCount = getTradeGroupMembers(db, access.group.id, { status: 'active' }).length;
+  const permissions = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  const typingUsers = db.groupChatTypingStates
+    .filter((item) => item.group_chat_id === access.chat.id && item.user_id !== req.username && Number(item.expires_at_ms || 0) > Date.now())
+    .map((item) => {
+      const identity = socialIdentityForUser(db, item.user_id || '');
+      return {
+        userId: item.user_id,
+        nickname: identity.nickname || item.user_id,
+        avatarUrl: identity.avatar_url,
+        avatarInitials: identity.avatar_initials
+      };
+    });
   const messages = db.groupChatMessages
     .filter((item) => item.group_chat_id === access.chat.id)
     .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
@@ -14467,6 +14698,7 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
       pinnedMessageId: access.chat.pinned_message_id || null,
       participantCount,
       canModerate: access.isLeader,
+      permissions,
       canSend: !(access.chat.is_locked === true && !access.isLeader),
       hasGroupWatchlist: db.watchlists.some((item) => item.scope === 'group' && item.trading_group_id === access.group.id),
       latestTradeEvent: (() => {
@@ -14476,6 +14708,8 @@ app.get('/api/group-chats/:groupId/messages', auth, (req, res) => {
         return latestEvent?.content || '';
       })()
     },
+    typingUsers,
+    pageRegistry: Object.entries(GROUP_CHAT_PAGE_ROUTE_REGISTRY).map(([slug, route]) => ({ slug, route, displayText: `#${slug}` })),
     pinnedMessage,
     messages
   });
@@ -14499,9 +14733,21 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     ? (access.isLeader ? 'leader_announcement' : 'user_message')
     : (GROUP_CHAT_MESSAGE_TYPES.includes(requestedType) ? requestedType : 'user_message');
   const normalizedContent = String(parsed.data.content || '').trim();
-  if (!normalizedContent && messageType === 'user_message') {
+  const normalizedAttachments = Array.isArray(parsed.data.attachments) ? parsed.data.attachments : [];
+  if (!normalizedContent && messageType === 'user_message' && !normalizedAttachments.length) {
     return res.status(400).json({ error: 'Message content is required.' });
   }
+  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' }).map((member) => {
+    const identity = socialIdentityForUser(db, member.user_id);
+    return { userId: member.user_id, nickname: identity.nickname || member.user_id };
+  });
+  const roles = getGroupChatRoleRows(db, access.group.id);
+  const permissions = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  const structured = parseStructuredChatContent(normalizedContent, {
+    users: members,
+    roles,
+    canMentionEveryone: permissions.canMentionEveryone === true
+  });
   const identity = socialIdentityForUser(db, req.username);
   const nowIso = new Date().toISOString();
   const message = {
@@ -14511,12 +14757,50 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
     sender_nickname: identity.nickname || req.username,
     message_type: messageType,
     content: normalizedContent || '[structured message]',
+    raw_text: structured.rawText || normalizedContent || '',
+    entities: structured.entities || [],
+    mentions: structured.mentions || [],
+    page_links: structured.pageLinks || [],
+    attachments: normalizedAttachments.map((attachment) => ({
+      id: crypto.randomUUID(),
+      type: attachment.type === 'trade_card' ? 'trade_card' : 'image',
+      url: String(attachment.url || ''),
+      mime_type: attachment.mimeType || '',
+      width: Number.isFinite(Number(attachment.width)) ? Number(attachment.width) : null,
+      height: Number.isFinite(Number(attachment.height)) ? Number(attachment.height) : null,
+      trade_id: attachment.tradeId || null,
+      metadata: attachment.metadata || {}
+    })).filter((attachment) => attachment.url),
+    reply_to_message_id: parsed.data.replyToMessageId || null,
     metadata: parsed.data.metadata || {},
     created_at: nowIso,
     updated_at: nowIso,
     deleted_at: null
   };
   db.groupChatMessages.push(message);
+  const recipients = new Set();
+  const memberIds = new Set(members.map((item) => item.userId));
+  structured.mentions.forEach((mention) => {
+    if (mention.type === 'user' && mention.targetId && mention.targetId !== req.username && memberIds.has(mention.targetId)) {
+      recipients.add(mention.targetId);
+    } else if (mention.type === 'role' && mention.targetId) {
+      db.groupChatRoleAssignments
+        .filter((assignment) => assignment.group_id === access.group.id && assignment.role_id === mention.targetId && assignment.user_id !== req.username)
+        .forEach((assignment) => recipients.add(assignment.user_id));
+    } else if ((mention.type === 'everyone' || mention.type === 'time') && permissions.canMentionEveryone) {
+      members.forEach((member) => {
+        if (member.userId !== req.username) recipients.add(member.userId);
+      });
+    }
+  });
+  recipients.forEach((recipient) => {
+    createTradeGroupNotification(db, {
+      userId: recipient,
+      groupId: access.group.id,
+      type: 'trade_group_chat_mention',
+      dedupeKey: `chat-mention:${message.id}:${recipient}`
+    });
+  });
   access.chat.updated_at = nowIso;
   saveDB(db);
   res.status(201).json({ message: sanitizeGroupChatMessageForViewer(db, message) });
@@ -14548,6 +14832,25 @@ app.post('/api/group-chats/:groupId/share-trade/:tradeId', auth, (req, res) => {
     sender_nickname: identity.nickname || req.username,
     message_type: 'trade_share',
     content: `Shared trade · ${metadata.ticker}`,
+    raw_text: `Shared trade · ${metadata.ticker}`,
+    entities: [],
+    mentions: [],
+    page_links: [],
+    attachments: [{
+      id: crypto.randomUUID(),
+      type: 'trade_card',
+      url: `/static/Trade-Summary-Card-Template.png`,
+      mime_type: 'image/png',
+      width: 1200,
+      height: 675,
+      trade_id: trade.id,
+      metadata: {
+        ticker: metadata.ticker,
+        direction: metadata.direction,
+        entryPrice: metadata.entryPrice,
+        stopPrice: metadata.stopPrice
+      }
+    }],
     metadata,
     created_at: nowIso,
     updated_at: nowIso,
@@ -14662,6 +14965,187 @@ app.delete('/api/group-chats/:groupId/messages/:messageId', auth, (req, res) => 
   access.chat.updated_at = message.updated_at;
   saveDB(db);
   res.json({ ok: true });
+});
+
+app.get('/api/group-chats/:groupId/suggestions', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const query = String(req.query.q || '').trim().toLowerCase();
+  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' })
+    .map((member) => {
+      const identity = socialIdentityForUser(db, member.user_id);
+      return { type: 'user', userId: member.user_id, nickname: identity.nickname || member.user_id, avatarUrl: identity.avatar_url, avatarInitials: identity.avatar_initials };
+    })
+    .filter((item) => !query || item.nickname.toLowerCase().includes(query))
+    .slice(0, 12);
+  const roles = getGroupChatRoleRows(db, access.group.id)
+    .map((role) => ({ type: 'role', roleId: role.id, name: role.name, color: role.color || '#3cb982' }))
+    .filter((item) => !query || item.name.toLowerCase().includes(query))
+    .slice(0, 8);
+  const pageTags = Object.entries(GROUP_CHAT_PAGE_ROUTE_REGISTRY)
+    .map(([slug, route]) => ({ type: 'page', slug, route, displayText: `#${slug}` }))
+    .filter((item) => !query || item.slug.includes(query));
+  saveDB(db);
+  res.json({
+    users: members,
+    roles,
+    systemMentions: [
+      { type: 'everyone', displayText: '@everyone' },
+      { type: 'time', displayText: '@time' }
+    ],
+    pageTags
+  });
+});
+
+app.post('/api/group-chats/:groupId/typing', auth, (req, res) => {
+  const parsed = groupChatTypingSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const now = Date.now();
+  db.groupChatTypingStates = db.groupChatTypingStates.filter((item) => Number(item.expires_at_ms || 0) > now);
+  const existing = db.groupChatTypingStates.find((item) => item.group_chat_id === access.chat.id && item.user_id === req.username);
+  if (parsed.data.isTyping === false) {
+    db.groupChatTypingStates = db.groupChatTypingStates.filter((item) => !(item.group_chat_id === access.chat.id && item.user_id === req.username));
+  } else if (existing) {
+    existing.updated_at = new Date().toISOString();
+    existing.expires_at_ms = now + 7000;
+  } else {
+    db.groupChatTypingStates.push({
+      id: crypto.randomUUID(),
+      group_chat_id: access.chat.id,
+      user_id: req.username,
+      updated_at: new Date().toISOString(),
+      expires_at_ms: now + 7000
+    });
+  }
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.get('/api/group-chats/:groupId/roles', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const roles = getGroupChatRoleRows(db, access.group.id).map((role) => ({
+    id: role.id,
+    groupId: role.group_id,
+    name: role.name,
+    color: role.color || '#3cb982',
+    description: role.description || '',
+    permissions: role.permissions || {},
+    orderIndex: Number(role.order_index || 0),
+    createdAt: role.created_at,
+    updatedAt: role.updated_at
+  }));
+  const assignments = db.groupChatRoleAssignments
+    .filter((item) => item.group_id === access.group.id)
+    .map((item) => ({ id: item.id, groupId: item.group_id, roleId: item.role_id, userId: item.user_id }));
+  saveDB(db);
+  res.json({ roles, assignments });
+});
+
+app.post('/api/group-chats/:groupId/roles', auth, (req, res) => {
+  const parsed = groupChatRoleCreateSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const perms = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  if (!access.isLeader && !perms.canManageRoles) return res.status(403).json({ error: 'Role management permission required.' });
+  const nowIso = new Date().toISOString();
+  const orderIndex = getGroupChatRoleRows(db, access.group.id).length;
+  const permissions = {};
+  GROUP_CHAT_ROLE_PERMISSIONS.forEach((perm) => {
+    permissions[perm] = parsed.data.permissions?.[perm] === true;
+  });
+  const role = {
+    id: crypto.randomUUID(),
+    group_id: access.group.id,
+    name: parsed.data.name.trim(),
+    color: parsed.data.color || '#3cb982',
+    description: parsed.data.description || '',
+    permissions,
+    order_index: orderIndex,
+    created_at: nowIso,
+    updated_at: nowIso
+  };
+  db.groupChatRoles.push(role);
+  saveDB(db);
+  res.status(201).json({ role });
+});
+
+app.post('/api/group-chats/:groupId/roles/:roleId', auth, (req, res) => {
+  const parsed = groupChatRolePatchSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const perms = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  if (!access.isLeader && !perms.canManageRoles) return res.status(403).json({ error: 'Role management permission required.' });
+  const role = db.groupChatRoles.find((item) => item.id === req.params.roleId && item.group_id === access.group.id);
+  if (!role) return res.status(404).json({ error: 'Role not found.' });
+  if (parsed.data.name !== undefined) role.name = parsed.data.name.trim();
+  if (parsed.data.description !== undefined) role.description = parsed.data.description || '';
+  if (parsed.data.color !== undefined) role.color = parsed.data.color || '#3cb982';
+  if (parsed.data.permissions && typeof parsed.data.permissions === 'object') {
+    const next = { ...(role.permissions || {}) };
+    GROUP_CHAT_ROLE_PERMISSIONS.forEach((perm) => {
+      if (parsed.data.permissions[perm] !== undefined) next[perm] = parsed.data.permissions[perm] === true;
+    });
+    role.permissions = next;
+  }
+  role.updated_at = new Date().toISOString();
+  saveDB(db);
+  res.json({ role });
+});
+
+app.delete('/api/group-chats/:groupId/roles/:roleId', auth, (req, res) => {
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const perms = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  if (!access.isLeader && !perms.canManageRoles) return res.status(403).json({ error: 'Role management permission required.' });
+  const before = db.groupChatRoles.length;
+  db.groupChatRoles = db.groupChatRoles.filter((item) => !(item.id === req.params.roleId && item.group_id === access.group.id));
+  if (db.groupChatRoles.length === before) return res.status(404).json({ error: 'Role not found.' });
+  db.groupChatRoleAssignments = db.groupChatRoleAssignments.filter((item) => !(item.group_id === access.group.id && item.role_id === req.params.roleId));
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.put('/api/group-chats/:groupId/roles/assignments', auth, (req, res) => {
+  const parsed = groupChatRoleAssignmentSchema.safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const db = loadDB();
+  const access = getGroupChatAccess(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const perms = getGroupChatPermissionsForUser(db, access.group.id, req.username, { isLeader: access.isLeader });
+  if (!access.isLeader && !perms.canManageRoles) return res.status(403).json({ error: 'Role management permission required.' });
+  if (!isTradeGroupMember(db, access.group.id, parsed.data.userId)) return res.status(400).json({ error: 'User is not an active group member.' });
+  const validRoleIds = new Set(getGroupChatRoleRows(db, access.group.id).map((item) => item.id));
+  const nextRoleIds = Array.from(new Set(parsed.data.roleIds)).filter((id) => validRoleIds.has(id));
+  db.groupChatRoleAssignments = db.groupChatRoleAssignments.filter((item) => !(item.group_id === access.group.id && item.user_id === parsed.data.userId));
+  nextRoleIds.forEach((roleId) => {
+    db.groupChatRoleAssignments.push({
+      id: crypto.randomUUID(),
+      group_id: access.group.id,
+      role_id: roleId,
+      user_id: parsed.data.userId,
+      created_at: new Date().toISOString()
+    });
+  });
+  saveDB(db);
+  res.json({ ok: true, userId: parsed.data.userId, roleIds: nextRoleIds });
 });
 
 app.get('/api/watchlists', auth, (req, res) => {
