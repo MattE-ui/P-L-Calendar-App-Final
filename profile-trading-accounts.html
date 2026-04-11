@@ -52,6 +52,41 @@
     </section>
   </main>
 
+  <div id="t212-account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="t212-account-modal-title">
+    <div class="modal-card trading-account-modal-card">
+      <div class="modal-header trading-account-modal__header">
+        <div>
+          <p class="trading-account-modal__eyebrow">Trading 212</p>
+          <h3 id="t212-account-modal-title">Add account</h3>
+          <p id="t212-account-modal-subtitle" class="helper trading-account-modal__subtitle"></p>
+        </div>
+        <button type="button" class="ghost close-btn" data-action="close-account-modal" aria-label="Close account modal">✕</button>
+      </div>
+      <form id="t212-account-form" class="trading-account-modal__form">
+        <div class="modal-field">
+          <label for="t212-account-label-input">Account label</label>
+          <input id="t212-account-label-input" name="accountLabel" type="text" maxlength="80" required autocomplete="off" placeholder="e.g. ISA, General, CFD">
+          <p class="helper">This label is shown in your Broker Control Dashboard.</p>
+        </div>
+        <div class="modal-field">
+          <label for="t212-api-key-input">API key</label>
+          <input id="t212-api-key-input" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Trading 212 API key">
+          <p id="t212-api-key-helper" class="helper">Your API key is encrypted and only used for broker sync.</p>
+        </div>
+        <div class="modal-field">
+          <label for="t212-api-secret-input">API secret</label>
+          <input id="t212-api-secret-input" name="apiSecret" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste Trading 212 API secret">
+          <p id="t212-api-secret-helper" class="helper">Your API secret is stored securely and never shown in plain text.</p>
+        </div>
+        <p id="t212-account-modal-status" class="status-line is-hidden" aria-live="polite"></p>
+        <div class="modal-actions trading-account-modal__actions">
+          <button type="button" class="ghost" data-action="close-account-modal">Cancel</button>
+          <button id="t212-account-submit-btn" type="submit" class="primary">Save account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/static/theme-utils.js"></script>
   <script src="/static/app-header.js"></script>
   <script src="/static/guest.js"></script>

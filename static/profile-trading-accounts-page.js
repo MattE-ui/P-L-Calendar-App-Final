@@ -1,7 +1,25 @@
 (async function initTradingAccountsPage() {
-  const { api, setText } = window.AccountCenter;
+  const { api, setText, setStatus } = window.AccountCenter;
 
-  const state = { t212Accounts: [], ibkr: {} };
+  const state = {
+    t212Accounts: [],
+    ibkr: {},
+    modalMode: 'add',
+    modalAccountId: ''
+  };
+
+  const modalElements = {
+    root: document.getElementById('t212-account-modal'),
+    title: document.getElementById('t212-account-modal-title'),
+    subtitle: document.getElementById('t212-account-modal-subtitle'),
+    form: document.getElementById('t212-account-form'),
+    label: document.getElementById('t212-account-label-input'),
+    apiKey: document.getElementById('t212-api-key-input'),
+    apiSecret: document.getElementById('t212-api-secret-input'),
+    apiKeyHelper: document.getElementById('t212-api-key-helper'),
+    apiSecretHelper: document.getElementById('t212-api-secret-helper'),
+    submit: document.getElementById('t212-account-submit-btn')
+  };
 
   function formatWhen(value) {
     if (!value) return '—';
@@ -15,6 +33,33 @@
     return 'is-disconnected';
   }
 
+  function prettyStatus(status, fallback = 'Unknown') {
+    if (!status) return fallback;
+    return String(status)
+      .replace(/[_-]/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, (char) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' }[char] || char
+    ));
+  }
+
+  function renderProviderHeader() {
+    const count = state.t212Accounts.length;
+    return `
+      <div class="broker-provider-header">
+        <div class="broker-provider-header__copy">
+          <p class="broker-provider-header__eyebrow">Provider</p>
+          <h3>Trading 212</h3>
+          <p class="helper">${count ? `${count} linked account${count === 1 ? '' : 's'} with independent sync and automation state.` : 'Link multiple Trading 212 accounts to manage sync and automation independently.'}</p>
+        </div>
+        <button type="button" class="primary" data-action="add-t212">+ Add account</button>
+      </div>
+    `;
+  }
+
   function renderTrading212Cards() {
     const root = document.getElementById('broker-cards');
     if (!root) return;
@@ -23,10 +68,7 @@
     const wrapper = document.createElement('section');
     wrapper.className = 'broker-provider-section';
     wrapper.innerHTML = `
-      <div class="trading-section-head">
-        <h3>Trading 212</h3>
-        <button type="button" class="primary small" data-action="add-t212">+ Add Trading 212 account</button>
-      </div>
+      ${renderProviderHeader()}
       <div class="broker-provider-list"></div>
     `;
     const list = wrapper.querySelector('.broker-provider-list');
@@ -39,24 +81,33 @@
     }
 
     state.t212Accounts.forEach((account) => {
+      const connectionStatus = prettyStatus(account.connectionStatus, 'Disconnected');
+      const syncStatus = prettyStatus(account.syncStatus, 'Idle');
       const card = document.createElement('article');
-      card.className = `broker-card ${statusClass(account.connectionStatus)}`;
+      card.className = `broker-card broker-card--premium ${statusClass(account.connectionStatus)}`;
       card.innerHTML = `
         <header class="broker-card__head">
-          <h4>${account.accountLabel || 'Trading 212 account'}</h4>
-          <span class="broker-pill">${account.accountType || 'Trading account'}</span>
+          <div class="broker-card__title-wrap">
+            <h4>${escapeHtml(account.accountLabel || 'Trading 212 account')}</h4>
+            <div class="broker-card__badges">
+              <span class="broker-pill">Trading 212</span>
+              <span class="broker-pill">${escapeHtml(account.accountType || 'Trading account')}</span>
+              <span class="broker-pill ${statusClass(account.connectionStatus)}">${escapeHtml(connectionStatus)}</span>
+              <span class="broker-pill">${escapeHtml(syncStatus)}</span>
+            </div>
+          </div>
         </header>
         <dl class="broker-meta-grid">
-          <div><dt>Connection</dt><dd>${account.connectionStatus || 'disconnected'}</dd></div>
-          <div><dt>Sync status</dt><dd>${account.syncStatus || 'idle'}</dd></div>
+          <div><dt>Connection</dt><dd>${escapeHtml(connectionStatus)}</dd></div>
+          <div><dt>Sync status</dt><dd>${escapeHtml(syncStatus)}</dd></div>
           <div><dt>Last sync</dt><dd>${formatWhen(account.lastSyncAt)}</dd></div>
           <div><dt>Automation</dt><dd>${account.automationEnabled ? 'Enabled' : 'Disabled'}</dd></div>
         </dl>
         <div class="broker-card__actions">
-          <button type="button" class="primary small" data-action="sync-account" data-account-id="${account.brokerAccountId}">Sync now</button>
-          <button type="button" class="ghost small" data-action="edit-account" data-account-id="${account.brokerAccountId}">Edit credentials</button>
+          <button type="button" class="primary" data-action="sync-account" data-account-id="${account.brokerAccountId}">Sync now</button>
+          <button type="button" class="ghost" data-action="edit-account" data-account-id="${account.brokerAccountId}">Edit account</button>
           <button type="button" class="ghost small" data-action="toggle-automation" data-account-id="${account.brokerAccountId}">${account.automationEnabled ? 'Pause automation' : 'Enable automation'}</button>
-          <button type="button" class="danger small" data-action="disconnect-account" data-account-id="${account.brokerAccountId}">Disconnect</button>
+          <button type="button" class="danger" data-action="disconnect-account" data-account-id="${account.brokerAccountId}">Disconnect</button>
         </div>
       `;
       list.appendChild(card);
@@ -115,45 +166,85 @@
     renderSyncPanel();
   }
 
-  async function addAccountFlow() {
-    const label = window.prompt('Account label (e.g. ISA, General, CFD):', '');
-    if (label === null) return;
-    const apiKey = window.prompt('Trading 212 API key:');
-    if (!apiKey) return;
-    const apiSecret = window.prompt('Trading 212 API secret:');
-    if (!apiSecret) return;
+  function openAccountModal(mode, accountId = '') {
+    if (!modalElements.root) return;
+    const isEdit = mode === 'edit';
+    state.modalMode = mode;
+    state.modalAccountId = accountId;
+    const account = isEdit ? state.t212Accounts.find((row) => row.brokerAccountId === accountId) : null;
+    modalElements.title.textContent = isEdit ? 'Edit Trading 212 account' : 'Add Trading 212 account';
+    modalElements.subtitle.textContent = isEdit
+      ? 'Update label or replace credentials. Leave key/secret blank to keep current values.'
+      : 'Connect a Trading 212 account with secure API credentials.';
+    modalElements.submit.textContent = isEdit ? 'Save changes' : 'Save account';
+    modalElements.label.value = account?.accountLabel || '';
+    modalElements.apiKey.value = '';
+    modalElements.apiSecret.value = '';
+    modalElements.apiKey.placeholder = isEdit ? 'Leave blank to keep current API key' : 'Paste Trading 212 API key';
+    modalElements.apiSecret.placeholder = isEdit ? 'Leave blank to keep current API secret' : 'Paste Trading 212 API secret';
+    modalElements.apiKeyHelper.textContent = isEdit
+      ? 'Leave blank to keep your existing API key.'
+      : 'Your API key is encrypted and only used for broker sync.';
+    modalElements.apiSecretHelper.textContent = isEdit
+      ? 'Leave blank to keep your existing API secret.'
+      : 'Your API secret is stored securely and never shown in plain text.';
+    setStatus('t212-account-modal-status', '', false);
+    modalElements.root.classList.remove('hidden');
+    modalElements.label.focus();
+  }
+
+  function closeAccountModal() {
+    if (!modalElements.root) return;
+    modalElements.root.classList.add('hidden');
+    setStatus('t212-account-modal-status', '', false);
+  }
+
+  function validateModalPayload(payload, isEditMode) {
+    if (!payload.accountLabel) return 'Account label is required.';
+    if (!isEditMode && !payload.apiKey) return 'API key is required.';
+    if (!isEditMode && !payload.apiSecret) return 'API secret is required.';
+    return '';
+  }
+
+  async function submitAccountModal() {
+    const isEditMode = state.modalMode === 'edit';
+    const accountLabel = modalElements.label.value.trim();
+    const apiKey = modalElements.apiKey.value.trim();
+    const apiSecret = modalElements.apiSecret.value.trim();
+    const validationError = validateModalPayload({ accountLabel, apiKey, apiSecret }, isEditMode);
+    if (validationError) {
+      setStatus('t212-account-modal-status', validationError, true);
+      return;
+    }
+    if (isEditMode) {
+      await api(`/api/broker-accounts/${encodeURIComponent(state.modalAccountId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountLabel,
+          ...(apiKey ? { apiKey } : {}),
+          ...(apiSecret ? { apiSecret } : {})
+        })
+      });
+      closeAccountModal();
+      setText('trading-broker-action-status', 'Trading 212 account updated.');
+      return;
+    }
     await api('/api/broker-accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: 'trading212', accountLabel: label, apiKey, apiSecret })
+      body: JSON.stringify({ provider: 'trading212', accountLabel, apiKey, apiSecret })
     });
+    closeAccountModal();
     setText('trading-broker-action-status', 'Trading 212 account linked.');
   }
 
-  async function editAccountFlow(accountId) {
-    const account = state.t212Accounts.find((row) => row.brokerAccountId === accountId);
-    if (!account) return;
-    const accountLabel = window.prompt('Rename account label:', account.accountLabel || '');
-    if (accountLabel === null) return;
-    const apiKey = window.prompt('New API key (leave blank to keep current):', '');
-    const apiSecret = window.prompt('New API secret (leave blank to keep current):', '');
-    await api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        accountLabel,
-        ...(apiKey ? { apiKey } : {}),
-        ...(apiSecret ? { apiSecret } : {})
-      })
-    });
-    setText('trading-broker-action-status', 'Trading 212 account updated.');
-  }
-
   async function handleAction(action, accountId) {
-    if (action === 'add-t212') return addAccountFlow();
+    if (action === 'add-t212') return openAccountModal('add');
     if (action === 'sync-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
     if (action === 'disconnect-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
-    if (action === 'edit-account') return editAccountFlow(accountId);
+    if (action === 'edit-account') return openAccountModal('edit', accountId);
+    if (action === 'close-account-modal') return closeAccountModal();
     if (action === 'toggle-automation') {
       const account = state.t212Accounts.find((row) => row.brokerAccountId === accountId);
       return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, {
@@ -170,6 +261,10 @@
   }
 
   document.body.addEventListener('click', async (event) => {
+    if (event.target === modalElements.root) {
+      closeAccountModal();
+      return;
+    }
     const target = event.target.closest('[data-action]');
     if (!target) return;
     const action = target.dataset.action;
@@ -182,6 +277,22 @@
       if (action === 'toggle-automation') setText('trading-broker-action-status', 'Automation setting updated.');
     } catch (error) {
       setText('trading-broker-action-status', error.message || 'Action failed.');
+    }
+  });
+
+  modalElements.form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await submitAccountModal();
+      await refreshData();
+    } catch (error) {
+      setStatus('t212-account-modal-status', error.message || 'Unable to save account.', true);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modalElements.root && !modalElements.root.classList.contains('hidden')) {
+      closeAccountModal();
     }
   });
 

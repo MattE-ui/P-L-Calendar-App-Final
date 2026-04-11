@@ -6708,8 +6708,8 @@ textarea {
 
 .trading-dashboard-layout {
   display: grid;
-  grid-template-columns: 1.7fr 1fr;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -6717,7 +6717,7 @@ textarea {
 .trading-dashboard-side {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .trading-section-head h2 {
@@ -6730,8 +6730,8 @@ textarea {
 
 .broker-cards-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
 
 .broker-card {
@@ -6743,6 +6743,32 @@ textarea {
   flex-direction: column;
   gap: 8px;
   transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.broker-provider-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 4px 0 2px;
+}
+
+.broker-provider-header__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.broker-provider-header__copy h3 {
+  margin: 0;
+}
+
+.broker-provider-header__eyebrow {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .11em;
+  color: var(--text-dim);
 }
 
 .broker-card.is-connected {
@@ -6762,12 +6788,12 @@ textarea {
 .broker-provider-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 .broker-provider-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
 .broker-card:hover {
@@ -6778,14 +6804,38 @@ textarea {
 
 .broker-card__head {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .broker-card__head h3 {
   margin: 0;
   font-size: 16px;
+}
+
+.broker-card--premium {
+  border-radius: 14px;
+  padding: 14px;
+  gap: 12px;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--surface-2) 94%, #0f1715 6%), color-mix(in srgb, var(--surface-1) 90%, #0a1110 10%));
+}
+
+.broker-card__title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.broker-card__title-wrap h4 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.broker-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
 }
 
 .broker-pill {
@@ -6796,6 +6846,23 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border: 1px solid var(--border);
+}
+
+.broker-pill.is-connected {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border) 35%);
+  color: color-mix(in srgb, var(--accent) 80%, #eafff4 20%);
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+}
+
+.broker-pill.is-warning {
+  border-color: color-mix(in srgb, var(--warning) 70%, var(--border) 30%);
+  color: color-mix(in srgb, var(--warning) 84%, #fff4d5 16%);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.broker-pill.is-disconnected {
+  border-color: color-mix(in srgb, var(--border) 84%, #c7ccd7 16%);
+  color: var(--text-muted);
 }
 
 .broker-pill.is-on {
@@ -6813,7 +6880,11 @@ textarea {
   margin: 0;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 8px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  background: color-mix(in srgb, var(--surface-3) 76%, transparent);
 }
 
 .broker-meta-grid dt {
@@ -6832,13 +6903,17 @@ textarea {
 .broker-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  padding-top: 2px;
 }
 
-.broker-card__actions .small {
-  min-width: 110px;
+.broker-card__actions button {
+  min-width: 118px;
   text-align: center;
-  min-height: 32px;
+}
+
+.broker-card__actions .danger {
+  margin-left: auto;
 }
 
 .broker-connect-grid {
@@ -6935,13 +7010,49 @@ textarea {
   font-weight: 600;
 }
 
+.trading-account-modal-card {
+  width: min(620px, 100%);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border) 75%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 92%, #0c1513 8%), var(--surface-1));
+}
+
+.trading-account-modal__header {
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border) 80%);
+}
+
+.trading-account-modal__eyebrow {
+  margin: 0 0 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .11em;
+  color: color-mix(in srgb, var(--accent) 68%, #dbe9e3 32%);
+}
+
+.trading-account-modal__subtitle {
+  margin: 4px 0 0;
+}
+
+.trading-account-modal__form {
+  margin-top: 8px;
+}
+
+.trading-account-modal__actions {
+  margin-top: 16px;
+}
+
 @media (max-width: 980px) {
   .trading-dashboard-layout,
-  .broker-cards-grid,
   .broker-provider-list,
   .broker-connect-grid,
   .broker-meta-grid {
     grid-template-columns: 1fr;
+  }
+
+  .broker-provider-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
