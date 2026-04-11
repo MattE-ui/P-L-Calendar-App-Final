@@ -4143,6 +4143,45 @@ textarea {
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border) 50%);
   background: color-mix(in srgb, var(--accent) 15%, var(--surface-2) 85%);
 }
+.trade-share-picker__group.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border) 36%);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2) 82%);
+}
+.trade-share-picker--trades {
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 32px));
+}
+.trade-share-picker__filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+.trade-share-picker__filters input,
+.trade-share-picker__filters select {
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  color: var(--text);
+  padding: 0 10px;
+}
+.trade-share-picker__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.trade-share-picker__footer button {
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
+  color: var(--text);
+  height: 34px;
+  padding: 0 12px;
+}
+.trade-share-picker__footer button[data-action="confirm"] {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border) 50%);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-2) 78%);
+}
 
 
 
