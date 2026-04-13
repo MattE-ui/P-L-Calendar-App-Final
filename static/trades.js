@@ -40,7 +40,10 @@ async function api(path, opts = {}) {
   if (isGuest && typeof window.handleGuestRequest === 'function') {
     return window.handleGuestRequest(path, opts);
   }
-  const res = await fetch(path, { credentials: 'include', ...opts });
+  const fetchPromise = fetch(path, { credentials: 'include', ...opts });
+  const res = window.PerfDiagnostics
+    ? await window.PerfDiagnostics.trackApi(`trades-api:${method}:${path}`, fetchPromise)
+    : await fetchPromise;
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
     if (data?.error && data.error.includes('Guest session expired')) {
@@ -1101,6 +1104,7 @@ function bindForm() {
 }
 
 async function init() {
+  const pageStart = window.PerfDiagnostics?.mark('trades-page-init-start');
   bindNav();
   bindForm();
   loadHeroMetrics();
@@ -1131,7 +1135,9 @@ async function init() {
   if (openInput && !openInput.value) openInput.value = today;
   resetForm();
   await loadTrades();
+  window.PerfDiagnostics?.mark('trades-first-meaningful-data');
   await loadIbkrImportHistory();
+  if (pageStart) window.PerfDiagnostics?.measure('trades-page-ready', pageStart);
 }
 
 window.addEventListener('DOMContentLoaded', () => {

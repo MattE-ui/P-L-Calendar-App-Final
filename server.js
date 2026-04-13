@@ -169,6 +169,34 @@ const AVATAR_ALLOWED_TYPES = new Map([
   ['image/webp', 'webp']
 ]);
 const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
+const PERF_DIAGNOSTICS_ENV_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.PERF_DIAGNOSTICS || '').toLowerCase());
+const PERF_DIAGNOSTICS_QUERY_KEYS = ['perf', '__perf', 'debugPerf'];
+const PERF_DIAGNOSTICS_HEADER_KEY = 'x-perf-debug';
+const PERF_REQUEST_ID_HEADER = 'x-request-id';
+
+function estimatePayloadBytes(payload) {
+  if (payload === undefined || payload === null) return 0;
+  if (Buffer.isBuffer(payload)) return payload.length;
+  if (typeof payload === 'string') return Buffer.byteLength(payload, 'utf8');
+  try {
+    return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function shouldEnablePerfDiagnostics(req) {
+  if (!req) return PERF_DIAGNOSTICS_ENV_ENABLED;
+  if (PERF_DIAGNOSTICS_ENV_ENABLED) return true;
+  const headerValue = String(req.headers?.[PERF_DIAGNOSTICS_HEADER_KEY] || '').toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(headerValue)) return true;
+  const query = req.query || {};
+  return PERF_DIAGNOSTICS_QUERY_KEYS.some((key) => ['1', 'true', 'yes', 'on'].includes(String(query[key] || '').toLowerCase()));
+}
+
+function shouldCaptureApiPerf(pathname = '') {
+  return /^\/api\/(profile|portfolio|pl|trades|watchlists|account\/trading-accounts|account\/risk-settings|broker-accounts|integrations\/ibkr)/.test(pathname);
+}
 
 function ensureDataStore() {
   const dataDir = path.dirname(DB_PATH);
@@ -12299,6 +12327,87 @@ function bootstrapIbkrSchedules() {
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use((req, res, next) => {
+  const inboundId = String(req.headers?.[PERF_REQUEST_ID_HEADER] || '').trim();
+  const requestId = inboundId || `${INSTANCE_ID}-${crypto.randomUUID().slice(0, 8)}`;
+  req.requestId = requestId;
+  res.setHeader(PERF_REQUEST_ID_HEADER, requestId);
+  next();
+});
+app.use('/api', (req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  const enabled = shouldEnablePerfDiagnostics(req);
+  const routePath = req.path || req.originalUrl || '';
+  const shouldCapture = shouldCaptureApiPerf(routePath);
+  const sections = {};
+  const meta = {
+    cache: 'bypass',
+    externalProviderAttempted: false,
+    externalProviderDurationMs: 0,
+    dbReadDurationMs: 0,
+    transformDurationMs: 0,
+    resultCount: null,
+    accountCount: null
+  };
+  let responseBytes = 0;
+  const originalJson = res.json.bind(res);
+  const originalSend = res.send.bind(res);
+  res.json = (payload) => {
+    responseBytes = estimatePayloadBytes(payload);
+    return originalJson(payload);
+  };
+  res.send = (payload) => {
+    responseBytes = estimatePayloadBytes(payload);
+    return originalSend(payload);
+  };
+  req.perfDiag = {
+    enabled,
+    requestId: req.requestId,
+    setMeta: (patch = {}) => Object.assign(meta, patch || {}),
+    addSectionMs: (key, durationMs) => {
+      if (!key || !Number.isFinite(durationMs)) return;
+      sections[key] = Number(durationMs.toFixed(2));
+    },
+    timeSync: (key, fn) => {
+      const sectionStart = process.hrtime.bigint();
+      const result = fn();
+      const durationMs = Number(process.hrtime.bigint() - sectionStart) / 1e6;
+      req.perfDiag.addSectionMs(key, durationMs);
+      return result;
+    },
+    timeAsync: async (key, fn) => {
+      const sectionStart = process.hrtime.bigint();
+      const result = await fn();
+      const durationMs = Number(process.hrtime.bigint() - sectionStart) / 1e6;
+      req.perfDiag.addSectionMs(key, durationMs);
+      return result;
+    }
+  };
+  res.on('finish', () => {
+    if (!enabled || !shouldCapture) return;
+    const totalDurationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const contentLength = Number(res.getHeader('content-length')) || 0;
+    const payloadSizeBytes = contentLength || responseBytes || 0;
+    console.info('[perf][api]', {
+      requestId: req.requestId,
+      method: req.method,
+      route: req.originalUrl?.split('?')[0] || routePath,
+      statusCode: res.statusCode,
+      durationMs: Number(totalDurationMs.toFixed(2)),
+      userId: req.username || null,
+      accountCount: meta.accountCount,
+      resultCount: meta.resultCount,
+      payloadSizeBytes,
+      cache: meta.cache,
+      externalProviderAttempted: !!meta.externalProviderAttempted,
+      externalProviderDurationMs: Number((meta.externalProviderDurationMs || 0).toFixed(2)),
+      dbReadDurationMs: Number((meta.dbReadDurationMs || 0).toFixed(2)),
+      transformDurationMs: Number((meta.transformDurationMs || 0).toFixed(2)),
+      sections
+    });
+  });
+  next();
+});
 
 // static
 app.use(AVATAR_PUBLIC_PREFIX.replace(/\/$/, ''), express.static(AVATAR_STORAGE_DIR));
@@ -13095,15 +13204,18 @@ app.get('/api/master/investors/:id/preview-token', requireMasterAuth, requireMas
 
 // --- user data ---
 app.get('/api/portfolio', auth, async (req,res)=>{
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
-  const mutated = ensureUserShape(user, req.username);
-  const history = ensurePortfolioHistory(user);
-  const normalized = normalizePortfolioHistory(user);
-  const totals = computeNetDepositsTotals(user, history);
-  const anchors = refreshAnchors(user, history);
-  const rates = await fetchRates();
+  const mutated = req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username)) ?? ensureUserShape(user, req.username);
+  const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
+  const normalized = req.perfDiag?.timeSync('history_normalize', () => normalizePortfolioHistory(user)) ?? normalizePortfolioHistory(user);
+  const totals = req.perfDiag?.timeSync('compute_net_deposits', () => computeNetDepositsTotals(user, history)) || computeNetDepositsTotals(user, history);
+  const anchors = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
+  req.perfDiag?.setMeta({ externalProviderAttempted: true });
+  const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
+  const activeTradesStart = process.hrtime.bigint();
   const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
+  req.perfDiag?.setMeta({ externalProviderDurationMs: Number(process.hrtime.bigint() - activeTradesStart) / 1e6 });
   const portfolioSnapshot = getCurrentPortfolioValue(user);
   const staleDisplayedValue = req.query?.staleDisplayedValue;
   logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/portfolio', user: req.username, staleDisplayedValue });
@@ -13112,6 +13224,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
   }
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount });
   const riskCapital = getRiskCapitalBase(user, {
     user: req.username,
     logDiagnostics: process.env.NODE_ENV !== 'production'
@@ -13166,6 +13279,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     riskCapitalBase: riskCapital.riskCapitalBase,
     riskCapital
   };
+  req.perfDiag?.setMeta({ resultCount: trades.length, cache: 'bypass' });
   console.info('[trace][portfolio][response-payload-verification]', {
     endpoint: '/api/portfolio',
     computedTotalFromAccounts,
@@ -13279,7 +13393,7 @@ app.post('/api/portfolio', auth, (req,res)=>{
 });
 
 app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   const refreshIntegrations = ['1', 'true', 'yes'].includes(String(req.query?.refreshIntegrations || '').toLowerCase());
@@ -13288,12 +13402,12 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
       console.warn('[broker-sync] async profile-triggered refresh failed', error);
     });
   }
-  let mutated = ensureUserShape(user, req.username);
-  const history = ensurePortfolioHistory(user);
-  if (normalizePortfolioHistory(user)) mutated = true;
-  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
-  const { baseline, total } = computeNetDepositsTotals(user, history);
-  const { baseline: portfolioBaseline, mutated: anchorMutated } = refreshAnchors(user, history);
+  let mutated = req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username)) ?? ensureUserShape(user, req.username);
+  const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
+  if (req.perfDiag?.timeSync('history_normalize', () => normalizePortfolioHistory(user)) ?? normalizePortfolioHistory(user)) mutated = true;
+  if (req.perfDiag?.timeSync('trading_account_sync_from_history', () => syncIntegratedTradingAccountValuesFromHistory(user, history)) ?? syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
+  const { baseline, total } = req.perfDiag?.timeSync('compute_net_deposits', () => computeNetDepositsTotals(user, history)) || computeNetDepositsTotals(user, history);
+  const { baseline: portfolioBaseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
@@ -13306,6 +13420,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   }
   if (mutated) saveDB(db);
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount, cache: 'bypass' });
   const riskCapital = getRiskCapitalBase(user, {
     user: req.username,
     logDiagnostics: process.env.NODE_ENV !== 'production'
@@ -13396,6 +13511,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     investorPortalAvailable: true,
     profileSummary
   });
+  req.perfDiag?.setMeta({ resultCount: Array.isArray(user.tradingAccounts) ? user.tradingAccounts.length : 0 });
   console.info('[trace][portfolio][response]', {
     endpoint: '/api/profile',
     returnedFields: {
@@ -16315,8 +16431,8 @@ app.put('/api/group-chats/:groupId/roles/assignments', auth, (req, res) => {
 });
 
 app.get('/api/watchlists', auth, (req, res) => {
-  const db = loadDB();
-  ensureSocialTables(db);
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
+  req.perfDiag?.timeSync('social_tables_ensure', () => ensureSocialTables(db));
   const memberGroupIds = new Set(
     db.tradeGroupMembers
       .filter((member) => member.user_id === req.username && member.status === 'active')
@@ -16329,6 +16445,7 @@ app.get('/api/watchlists', auth, (req, res) => {
     ))
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0))
     .map((item) => sanitizeWatchlistRow(db, item, req.username));
+  req.perfDiag?.setMeta({ resultCount: watchlists.length, cache: 'bypass' });
   saveDB(db);
   res.json({ watchlists });
 });
@@ -17753,21 +17870,23 @@ app.post('/api/account/investor-accounts', auth, (req, res) => {
 });
 
 app.get('/api/account/trading-accounts', auth, (req, res) => {
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  let mutated = ensureUserShape(user, req.username);
-  const history = ensurePortfolioHistory(user);
-  if (normalizePortfolioHistory(user)) mutated = true;
-  if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
+  let mutated = req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username)) ?? ensureUserShape(user, req.username);
+  const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
+  if (req.perfDiag?.timeSync('history_normalize', () => normalizePortfolioHistory(user)) ?? normalizePortfolioHistory(user)) mutated = true;
+  if (req.perfDiag?.timeSync('sync_integrated_accounts', () => syncIntegratedTradingAccountValuesFromHistory(user, history)) ?? syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   if (mutated) saveDB(db);
+  const accounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  req.perfDiag?.setMeta({ accountCount: accounts.length, resultCount: accounts.length, cache: 'bypass' });
   logPortfolioAttribution('account_list_response', user, {
     user: req.username,
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled
   });
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
-    accounts: Array.isArray(user.tradingAccounts) ? user.tradingAccounts : []
+    accounts
   });
 });
 
@@ -19032,19 +19151,19 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
 // profits endpoints
 app.get('/api/pl', auth, (req,res)=>{
   const { year, month } = req.query;
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
-  ensureUserShape(user, req.username);
+  req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
   if (!user.profileComplete) {
     return res.status(409).json({ error: 'Profile incomplete', code: 'profile_incomplete' });
   }
-  const history = ensurePortfolioHistory(user);
+  const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
   let mutated = normalizePortfolioHistory(user);
-  const journal = ensureTradeJournal(user);
+  const journal = req.perfDiag?.timeSync('trade_journal_load', () => ensureTradeJournal(user)) || ensureTradeJournal(user);
   if (normalizeTradeJournal(user)) mutated = true;
-  const { baseline, mutated: anchorMutated } = refreshAnchors(user, history);
+  const { baseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
-  const snapshots = buildSnapshots(history, baseline, journal);
+  const snapshots = req.perfDiag?.timeSync('build_snapshots', () => buildSnapshots(history, baseline, journal)) || buildSnapshots(history, baseline, journal);
   Object.values(snapshots).forEach(month => {
     Object.values(month || {}).forEach(entry => {
       if (!entry || !Array.isArray(entry.trades)) return;
@@ -19054,8 +19173,10 @@ app.get('/api/pl', auth, (req,res)=>{
   if (mutated) saveDB(db);
   if (year && month) {
     const key = `${year}-${String(month).padStart(2,'0')}`;
+    req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots[key] || {}).length, cache: 'bypass' });
     return res.json(snapshots[key] || {});
   }
+  req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots || {}).length, cache: 'bypass' });
   res.json(snapshots);
 });
 
@@ -20940,19 +21061,22 @@ async function buildActiveTrades(user, rates = {}) {
 }
 
 app.get('/api/trades', auth, async (req, res) => {
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
-  ensureUserShape(user, req.username);
-  normalizeTradeJournal(user);
-  const rates = await fetchRates();
-  const trades = flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+  req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
+  req.perfDiag?.timeSync('trade_journal_normalize', () => normalizeTradeJournal(user));
+  req.perfDiag?.setMeta({ externalProviderAttempted: true });
+  const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
+  const trades = req.perfDiag?.timeSync('flatten_map_trades', () => flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username)))
+    || flattenTrades(user, rates).map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
   const filtered = filterTrades(trades, req.query || {})
     .sort((a, b) => {
       const aDate = a.openDate || '';
       const bDate = b.openDate || '';
       return bDate.localeCompare(aDate);
     });
+  req.perfDiag?.setMeta({ resultCount: filtered.length, cache: 'bypass' });
   res.json({ trades: filtered });
 });
 
@@ -22421,7 +22545,7 @@ app.get('/api/rates', auth, async (req,res)=>{
 });
 
 app.get('/api/trades/active', auth, async (req, res) => {
-  const db = loadDB();
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
@@ -22463,9 +22587,13 @@ app.get('/api/trades/active', auth, async (req, res) => {
       }
     }
   }
-  const rates = await fetchRates();
+  req.perfDiag?.setMeta({ externalProviderAttempted: true });
+  const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
+  const externalStart = process.hrtime.bigint();
   const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
+  req.perfDiag?.setMeta({ externalProviderDurationMs: Number(process.hrtime.bigint() - externalStart) / 1e6 });
   const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
+  req.perfDiag?.setMeta({ resultCount: mappedTrades.length, cache: 'bypass' });
   res.json({
     trades: mappedTrades,
     liveOpenPnl: liveOpenPnlGBP,

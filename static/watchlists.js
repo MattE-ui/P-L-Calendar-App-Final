@@ -14,7 +14,11 @@
   const WATCHLIST_DEBUG_TICKERS = new Set(['LWLG', 'NBIS', 'GLW']);
 
   async function api(path, opts = {}) {
-    const res = await fetch(path, { credentials: 'include', ...opts });
+    const method = (opts.method || 'GET').toUpperCase();
+    const fetchPromise = fetch(path, { credentials: 'include', ...opts });
+    const res = window.PerfDiagnostics
+      ? await window.PerfDiagnostics.trackApi(`watchlists-api:${method}:${path}`, fetchPromise)
+      : await fetchPromise;
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { window.location.href = '/login.html'; throw new Error('Unauthenticated'); }
     if (!res.ok) throw new Error(data.error || 'Request failed');
@@ -533,6 +537,7 @@
   }
 
   async function init() {
+    const pageStart = window.PerfDiagnostics?.mark('watchlists-page-init-start');
     el('watchlist-new-btn')?.addEventListener('click', () => openWatchlistModal('create'));
     el('watchlist-edit-btn')?.addEventListener('click', () => openWatchlistModal('edit'));
     el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((error) => setFeedback('watchlist-page-feedback', error.message, 'error')));
@@ -571,6 +576,8 @@
       });
     });
     await loadWatchlists();
+    window.PerfDiagnostics?.mark('watchlists-first-meaningful-data');
+    if (pageStart) window.PerfDiagnostics?.measure('watchlists-page-ready', pageStart);
   }
 
   init().catch((error) => setFeedback('watchlist-page-feedback', error.message || 'Unable to load watchlists.', 'error'));
