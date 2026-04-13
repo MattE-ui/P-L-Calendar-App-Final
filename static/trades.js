@@ -1,9 +1,17 @@
 const state = {
   trades: [],
   sortedTrades: [],
+  tradeDetailCache: new Map(),
   listSignature: '',
   rowSignatures: new Map(),
   rowCache: new Map(),
+  pagination: {
+    limit: 100,
+    offset: 0,
+    total: 0,
+    hasMore: false,
+    loadingMore: false
+  },
   filters: {
     from: '',
     to: '',
@@ -83,6 +91,7 @@ function setTrades(nextTrades = [], { source = 'api' } = {}) {
 
 function upsertTradeInState(trade, { source = 'action' } = {}) {
   if (!trade?.id) return false;
+  state.tradeDetailCache.set(trade.id, trade);
   const list = [...state.trades];
   const index = list.findIndex(item => item.id === trade.id);
   if (index >= 0) list[index] = trade;
@@ -96,6 +105,7 @@ function upsertTradeInState(trade, { source = 'action' } = {}) {
 
 function removeTradeFromState(tradeId, { source = 'action' } = {}) {
   if (!tradeId) return false;
+  state.tradeDetailCache.delete(tradeId);
   const next = state.trades.filter(item => item.id !== tradeId);
   const changed = setTrades(next, { source });
   if (changed) {
@@ -470,16 +480,92 @@ function toggleOptionsFields() {
 
 async function loadTrades() {
   readFilters();
-  const query = toQuery(state.filters);
+  const query = toQuery({
+    ...state.filters,
+    limit: state.pagination.limit,
+    offset: 0,
+    summaryMode: 1
+  });
   const startedAt = window.PerfDiagnostics?.mark('trades-load-start');
   const res = await api(`/api/trades${query}`);
+  state.pagination.offset = Number(res?.offset) || 0;
+  state.pagination.total = Number(res?.total) || 0;
+  state.pagination.hasMore = Boolean(res?.hasMore);
+  state.tradeDetailCache.clear();
   const changed = setTrades(Array.isArray(res.trades) ? res.trades : [], { source: 'api' });
   if (changed) {
     renderTrades();
   } else {
     window.PerfDiagnostics?.log('trades-list-reused', { count: state.trades.length });
   }
-  if (startedAt) window.PerfDiagnostics?.measure('trades-load-end', startedAt, { changed, count: state.trades.length });
+  window.PerfDiagnostics?.log('trades-summary-page-loaded', {
+    summaryModeUsed: Boolean(res?.summaryMode),
+    initialWindowSize: state.trades.length,
+    hasMore: state.pagination.hasMore,
+    total: state.pagination.total
+  });
+  if (startedAt) window.PerfDiagnostics?.measure('trades-load-end', startedAt, { changed, count: state.trades.length, hasMore: state.pagination.hasMore, total: state.pagination.total });
+}
+
+async function loadMoreTrades() {
+  if (state.pagination.loadingMore || !state.pagination.hasMore) return;
+  state.pagination.loadingMore = true;
+  updateLoadMoreUi();
+  try {
+    const query = toQuery({
+      ...state.filters,
+      limit: state.pagination.limit,
+      offset: state.trades.length,
+      summaryMode: 1
+    });
+    const res = await api(`/api/trades${query}`);
+    const nextChunk = Array.isArray(res?.trades) ? res.trades : [];
+    state.pagination.offset = Number(res?.offset) || state.trades.length;
+    state.pagination.total = Number(res?.total) || state.pagination.total;
+    state.pagination.hasMore = Boolean(res?.hasMore);
+    if (nextChunk.length) {
+      setTrades([...state.trades, ...nextChunk], { source: 'api:load-more' });
+      renderTrades();
+    }
+    window.PerfDiagnostics?.log('trades-pagination-load-more', { fetched: nextChunk.length, loadedRows: state.trades.length, hasMore: state.pagination.hasMore });
+  } finally {
+    state.pagination.loadingMore = false;
+    updateLoadMoreUi();
+  }
+}
+
+async function getTradeDetail(tradeId) {
+  if (!tradeId) return null;
+  if (state.tradeDetailCache.has(tradeId)) return state.tradeDetailCache.get(tradeId);
+  const result = await api(`/api/trades/${tradeId}`);
+  const trade = result?.trade || null;
+  if (trade) {
+    state.tradeDetailCache.set(tradeId, trade);
+    window.PerfDiagnostics?.log('trades-detail-loaded', { tradeId, detailLoadedOnDemand: true });
+  }
+  return trade;
+}
+
+async function withTradeDetail(trade, callback) {
+  if (!trade?.id) return;
+  const detail = await getTradeDetail(trade.id);
+  if (!detail) throw new Error('Unable to load trade details');
+  return callback(detail);
+}
+
+function updateLoadMoreUi() {
+  const button = document.querySelector('#trades-load-more-btn');
+  const status = document.querySelector('#trades-pagination-status');
+  if (button) {
+    button.classList.toggle('is-hidden', !state.pagination.hasMore);
+    button.disabled = state.pagination.loadingMore;
+    button.textContent = state.pagination.loadingMore ? 'Loading…' : 'Load older trades';
+  }
+  if (status) {
+    const loaded = state.trades.length;
+    const total = state.pagination.total || loaded;
+    status.textContent = `Showing ${loaded} of ${total} trades`;
+  }
 }
 
 async function shareTradeToGroupChat(trade) {
@@ -507,10 +593,11 @@ function renderTrades() {
     state.rowSignatures.clear();
     if (empty) empty.classList.remove('is-hidden');
     if (pill) pill.textContent = '0 trades';
+    updateLoadMoreUi();
     return;
   }
   if (empty) empty.classList.add('is-hidden');
-  if (pill) pill.textContent = `${state.sortedTrades.length} trades`;
+  if (pill) pill.textContent = `${state.sortedTrades.length} / ${state.pagination.total || state.sortedTrades.length} trades`;
   const fragment = document.createDocumentFragment();
   const nextCache = new Map();
   const nextSignatures = new Map();
@@ -591,7 +678,13 @@ function renderTrades() {
     const editBtn = document.createElement('button');
     editBtn.className = 'ghost';
     editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', () => populateForm(trade));
+    editBtn.addEventListener('click', async () => {
+      try {
+        await withTradeDetail(trade, populateForm);
+      } catch (error) {
+        alert(error?.message || 'Unable to load trade details');
+      }
+    });
     wrap.appendChild(editBtn);
 
     const deleteBtn = document.createElement('button');
@@ -621,7 +714,13 @@ function renderTrades() {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'primary';
       closeBtn.textContent = 'Close';
-      closeBtn.addEventListener('click', () => closeTradePrompt(trade));
+      closeBtn.addEventListener('click', async () => {
+        try {
+          await withTradeDetail(trade, closeTradePrompt);
+        } catch (error) {
+          alert(error?.message || 'Unable to load trade details');
+        }
+      });
       wrap.appendChild(closeBtn);
     }
     actionsCell.appendChild(wrap);
@@ -634,6 +733,7 @@ function renderTrades() {
   tbody.replaceChildren(fragment);
   state.rowCache = nextCache;
   state.rowSignatures = nextSignatures;
+  updateLoadMoreUi();
   if (renderStart) window.PerfDiagnostics?.measure('trades-full-render:end', renderStart, { count: state.sortedTrades.length });
 }
 
@@ -1143,6 +1243,11 @@ function bindForm() {
   document.querySelector('#apply-filters-btn')?.addEventListener('click', applyFilters);
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
   document.querySelector('#export-csv-btn')?.addEventListener('click', exportCsv);
+  document.querySelector('#trades-load-more-btn')?.addEventListener('click', () => {
+    loadMoreTrades().catch((error) => {
+      alert(error?.message || 'Unable to load older trades');
+    });
+  });
   document.querySelector('#import-ibkr-btn')?.addEventListener('click', () => {
     document.querySelector('#import-ibkr-file')?.click();
   });
