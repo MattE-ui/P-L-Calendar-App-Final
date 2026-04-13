@@ -51,7 +51,11 @@ const state = {
   hasPendingBackgroundRender: false,
   backgroundRefreshInFlight: false,
   weeklyRecapLast: null,
-  weeklyRecapOpenContext: null
+  weeklyRecapOpenContext: null,
+  portfolioDomWriteCount: 0,
+  portfolioDomWriteInProgress: false,
+  portfolioDomExpectedText: '',
+  portfolioDomObserver: null
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -3023,6 +3027,62 @@ function setMetricTrend(el, value) {
   window.ThemeUtils?.applyPnlColorClass(el, value);
 }
 
+function getRenderedPortfolioValue(value) {
+  return state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(value);
+}
+
+function setPortfolioValue(value, source = 'unknown') {
+  const normalizedValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+  state.portfolioGBP = normalizedValue;
+  const portfolioValueEl = document.getElementById('header-portfolio-value');
+  if (!portfolioValueEl) {
+    console.warn('[portfolio-single-writer] #header-portfolio-value not found', { source, value: normalizedValue });
+    return;
+  }
+
+  const renderedPortfolioValue = getRenderedPortfolioValue(normalizedValue);
+  portfolioValueEl.style.border = '2px solid red';
+  state.portfolioDomExpectedText = renderedPortfolioValue;
+  if (portfolioValueEl.textContent === renderedPortfolioValue) {
+    return;
+  }
+
+  state.portfolioDomWriteInProgress = true;
+  portfolioValueEl.textContent = renderedPortfolioValue;
+  state.portfolioDomWriteCount += 1;
+  console.info('[portfolio-single-writer] DOM write', {
+    source,
+    value: normalizedValue,
+    renderedValue: renderedPortfolioValue,
+    totalWrites: state.portfolioDomWriteCount
+  });
+  queueMicrotask(() => {
+    state.portfolioDomWriteInProgress = false;
+  });
+}
+
+function setupPortfolioValueMutationObserver() {
+  const portfolioValueEl = document.getElementById('header-portfolio-value');
+  if (!portfolioValueEl || typeof MutationObserver === 'undefined') return;
+  if (state.portfolioDomObserver) state.portfolioDomObserver.disconnect();
+
+  state.portfolioDomObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      if (state.portfolioDomWriteInProgress) return;
+      console.warn('[portfolio-dom-observer] unexpected mutation', {
+        type: mutation.type,
+        currentValue: portfolioValueEl.textContent,
+        expectedValue: state.portfolioDomExpectedText
+      });
+    });
+  });
+  state.portfolioDomObserver.observe(portfolioValueEl, {
+    childList: true,
+    characterData: true,
+    subtree: true
+  });
+}
+
 function renderMetrics() {
   const metrics = state.metrics || {};
   const latestGBP = Number.isFinite(state.portfolioGBP)
@@ -3040,19 +3100,7 @@ function renderMetrics() {
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
-  const portfolioValueEl = $('#header-portfolio-value');
-  if (portfolioValueEl) {
-    const renderedPortfolioValue = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
-    portfolioValueEl.textContent = renderedPortfolioValue;
-    console.info('RENDER CURRENT PORTFOLIO VALUE', {
-      sourceField: Number.isFinite(state.livePortfolioGBP) ? 'state.livePortfolioGBP' : 'state.portfolioGBP/state.metrics.latestGBP',
-      sourceEndpoint: '/api/portfolio',
-      sourceStore: 'state.livePortfolioGBP',
-      numericValue: liveGBP,
-      renderedValue: renderedPortfolioValue,
-      renderPath: 'renderMetrics -> #header-portfolio-value'
-    });
-  }
+  setPortfolioValue(liveGBP, 'renderMetrics');
   const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
@@ -3160,27 +3208,6 @@ function updateCurrencySelect() {
     state.currency = 'GBP';
   }
   sel.value = state.currency;
-}
-
-function updatePortfolioPill() {
-  if (!Number.isFinite(state.portfolioGBP)) {
-    console.warn('Skipping portfolio pill overwrite - no valid value');
-    return;
-  }
-
-  const value = state.portfolioGBP || 0;
-
-  console.log('PORTFOLIO PILL UPDATE:', {
-    value: state.portfolioGBP,
-    source: '/api/portfolio'
-  });
-
-  const headerPortfolioValue = document.getElementById('header-portfolio-value');
-  if (headerPortfolioValue) {
-    headerPortfolioValue.textContent = state.safeScreenshot
-      ? SAFE_SCREENSHOT_LABEL
-      : formatCurrency(value);
-  }
 }
 
 function updatePeriodSelect() {
@@ -3719,7 +3746,6 @@ function render() {
   const safeAlert = $('#safe-screenshot-alert');
   if (safeAlert) safeAlert.classList.toggle('hidden', !state.safeScreenshot);
   updateCurrencySelect();
-  updatePortfolioPill();
   setActiveView();
   updatePeriodSelect();
   renderTitle();
@@ -3881,6 +3907,7 @@ async function loadData() {
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
     state.livePortfolioGBP = state.portfolioGBP;
+    setPortfolioValue(state.portfolioGBP, 'loadData:/api/portfolio');
     state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
@@ -3930,7 +3957,6 @@ async function refreshActiveTrades() {
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
     if (!userIsActivelyInteracting()) {
       renderActiveTrades();
-      updatePortfolioPill();
       renderMetrics();
       state.hasPendingBackgroundRender = false;
     } else {
@@ -5220,6 +5246,7 @@ async function init() {
   await loadUiPrefs();
   await loadProfile();
   pruneLegacyMetricRenders();
+  setupPortfolioValueMutationObserver();
   bindControls();
   window.addEventListener(RISK_PREFILL_STORE_EVENT, (event) => {
     const payload = event?.detail;
