@@ -3864,7 +3864,7 @@ async function loadData() {
   }
   try {
     const res = await api('/api/portfolio');
-    const portfolioVal = Number(res?.portfolio);
+    const portfolioVal = Number(res?.portfolioValue ?? res?.portfolio);
     state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
     const baselineVal = Number(res?.initialNetDeposits);
     const totalVal = Number(res?.netDepositsTotal);

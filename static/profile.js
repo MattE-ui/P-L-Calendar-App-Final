@@ -298,7 +298,7 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
   try {
     const query = refreshIntegrations ? '?refreshIntegrations=1' : '';
     const data = await api(`/api/profile${query}`);
-    const portfolio = Number(data.portfolio);
+    const portfolio = Number(data.portfolioValue ?? data.portfolio);
     const netDepositsBaseline = Number(data.initialNetDeposits);
     const netDepositsTotal = Number(data.netDepositsTotal);
     profileState.complete = !!data.profileComplete;

@@ -4718,6 +4718,7 @@ function ensureTradingAccounts(user) {
     if (!id || seen.has(id)) return;
     seen.add(id);
     const currentValueRaw = Number(account.currentValue);
+    const portfolioValueRaw = Number(account.portfolioValue);
     const currentNetDepositsRaw = Number(account.currentNetDeposits);
     const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
     const integrationProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
@@ -4730,6 +4731,9 @@ function ensureTradingAccounts(user) {
       accountType: normalizeTradingAccountLabel(account.accountType, 'Trading account'),
       brokerDisplayLabel: normalizeTradingAccountLabel(account.brokerDisplayLabel, ''),
       currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
+      portfolioValue: Number.isFinite(portfolioValueRaw) && portfolioValueRaw >= 0
+        ? portfolioValueRaw
+        : (Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0),
       currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0,
       integrationProvider,
       integrationEnabled,
@@ -8661,7 +8665,7 @@ function getPortfolioGBPForRisk(user) {
 function getTradingAccountAggregationSnapshot(user) {
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
   const accounts = accountList.map((account) => {
-    const portfolioValue = Number(account?.currentValue);
+    const portfolioValue = Number(account?.portfolioValue ?? account?.currentValue ?? account?.liveValue);
     const netDeposits = Number(account?.currentNetDeposits);
     return {
       id: account?.id || '',
@@ -8684,6 +8688,13 @@ function getTradingAccountAggregationSnapshot(user) {
     netPerformance,
     performancePct
   };
+}
+
+function getCurrentPortfolioValueFromAccounts(accounts = []) {
+  return accounts.reduce((sum, acc) => {
+    const value = Number(acc?.portfolioValue ?? acc?.currentValue ?? acc?.liveValue ?? 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
 }
 
 function getLatestMergedEquityValue(user, history = ensurePortfolioHistory(user)) {
@@ -8790,44 +8801,22 @@ function getLatestMergedEquityValue(user, history = ensurePortfolioHistory(user)
 }
 
 function getCurrentPortfolioValue(user) {
-  const aggregation = getTradingAccountAggregationSnapshot(user);
-  if (aggregation.accountCount > 0) {
-    const history = ensurePortfolioHistory(user);
-    const latestMergedEquity = getLatestMergedEquityValue(user, history);
-    if (latestMergedEquity.found && Number.isFinite(latestMergedEquity.total)) {
-      const hasTrading212Contribution = latestMergedEquity.accountValues.some(account => account.provider === 'trading212');
-      console.info('[portfolio][aggregate][value][history]', {
-        accountCount: aggregation.accountCount,
-        latestEquityHistoryDate: latestMergedEquity.date,
-        latestDateAccountValues: latestMergedEquity.accountValues,
-        mergedTotal: latestMergedEquity.total,
-        currentPortfolioValueReturned: latestMergedEquity.total,
-        trading212ContributionDetected: hasTrading212Contribution
-      });
-      return {
-        value: latestMergedEquity.total,
-        currency: 'GBP',
-        source: 'account_equity_history',
-        lastUpdatedAt: latestMergedEquity.date
-      };
-    }
-    console.info('[portfolio][aggregate][value][fallback_accounts]', {
-      accountCount: aggregation.accountCount,
-      reason: 'missing_equity_history',
-      fallbackAggregatedPortfolioValue: aggregation.portfolioValue,
-      accounts: aggregation.accounts.map(account => ({
-        id: account.id,
-        label: account.label,
-        provider: account.provider,
-        integrationEnabled: account.integrationEnabled,
-        portfolioValue: account.portfolioValue
+  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  if (accounts.length > 0) {
+    const portfolioValue = getCurrentPortfolioValueFromAccounts(accounts);
+    console.log('PORTFOLIO DEBUG:', {
+      accountCount: accounts.length,
+      accounts: accounts.map(a => ({
+        name: a?.name || a?.label || '',
+        broker: a?.broker || a?.integrationProvider || '',
+        value: Number(a?.portfolioValue ?? a?.currentValue ?? 0) || 0
       })),
-      currentPortfolioValueReturned: aggregation.portfolioValue
+      total: portfolioValue
     });
     return {
-      value: aggregation.portfolioValue,
+      value: portfolioValue,
       currency: 'GBP',
-      source: 'accounts_fallback',
+      source: 'trading_accounts',
       lastUpdatedAt: typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null
     };
   }
@@ -11298,6 +11287,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
       applyAccountAggregatesToHistoryEntry(payload);
       integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
+      integratedAccount.portfolioValue = integratedAccount.currentValue;
       const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
       integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
     }
@@ -11954,6 +11944,7 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
     carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
     applyAccountAggregatesToHistoryEntry(payload);
     integratedAccount.currentValue = Number.isFinite(nextPortfolio) ? nextPortfolio : (Number(integratedAccount.currentValue) || 0);
+    integratedAccount.portfolioValue = integratedAccount.currentValue;
     const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
     integratedAccount.currentNetDeposits = Number.isFinite(accountNetDeposits) ? accountNetDeposits : (Number(integratedAccount.currentNetDeposits) || 0);
   }
@@ -12914,6 +12905,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   });
   res.json({
     portfolio: resolvedPortfolio,
+    portfolioValue: resolvedPortfolio,
     portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
@@ -12937,6 +12929,7 @@ app.get('/api/portfolio/snapshot', auth, (req, res) => {
   if (mutated) saveDB(db);
   res.json({
     portfolio: snapshot.value,
+    portfolioValue: snapshot.value,
     portfolioSource: snapshot.source,
     portfolioCurrency: snapshot.currency,
     portfolioLastUpdatedAt: snapshot.lastUpdatedAt
@@ -13048,6 +13041,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   res.json({
     profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
+    portfolioValue,
     portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
@@ -17356,6 +17350,7 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const label = normalizeTradingAccountLabel(account.label, `Account ${index + 1}`);
         const existing = existingById.get(id) || {};
         const currentValueRaw = Number(account.currentValue);
+        const portfolioValueRaw = Number(account.portfolioValue);
         const currentNetDepositsRaw = Number(account.currentNetDeposits);
         const accountType = normalizeTradingAccountLabel(account.accountType, normalizeTradingAccountLabel(existing.accountType, 'Trading account'));
         const brokerDisplayLabel = normalizeTradingAccountLabel(account.brokerDisplayLabel, normalizeTradingAccountLabel(existing.brokerDisplayLabel, ''));
@@ -17376,6 +17371,11 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
           currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0
             ? currentValueRaw
             : (Number(existing.currentValue) || 0),
+          portfolioValue: Number.isFinite(portfolioValueRaw) && portfolioValueRaw >= 0
+            ? portfolioValueRaw
+            : (Number.isFinite(currentValueRaw) && currentValueRaw >= 0
+              ? currentValueRaw
+              : (Number(existing.portfolioValue ?? existing.currentValue) || 0)),
           currentNetDeposits: Number.isFinite(currentNetDepositsRaw)
             ? currentNetDepositsRaw
             : (Number(existing.currentNetDeposits) || 0),
@@ -17481,6 +17481,7 @@ app.post('/api/account/trading-accounts/integration-toggle', auth, asyncHandler(
         return res.status(502).json({ error: 'Trading 212 did not return a valid portfolio value.' });
       }
       target.currentValue = value;
+      target.portfolioValue = value;
       target.integrationProvider = 'trading212';
       target.integrationEnabled = true;
       user.portfolioSource = 'trading212';
@@ -17501,6 +17502,7 @@ app.post('/api/account/trading-accounts/integration-toggle', auth, asyncHandler(
         return res.status(502).json({ error: 'IBKR sync did not return a valid portfolio value.' });
       }
       refreshedTarget.currentValue = syncedValue;
+      refreshedTarget.portfolioValue = syncedValue;
       refreshedTarget.integrationProvider = 'ibkr';
       refreshedTarget.integrationEnabled = true;
       refreshedUser.portfolioSource = 'ibkr';
