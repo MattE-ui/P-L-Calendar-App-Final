@@ -107,6 +107,14 @@ const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 const DASHBOARD_ROUTE = '/dashboard';
 
+function toStableWatchlistSectionId(watchlistId, section = {}, index = 0) {
+  const explicitId = String(section?.id || '').trim();
+  if (explicitId) return explicitId;
+  const normalizedTitle = String(section?.title || '').trim().toLowerCase();
+  if (normalizedTitle) return `${watchlistId || 'watchlist'}::${normalizedTitle}`;
+  return `${watchlistId || 'watchlist'}::section-${index + 1}`;
+}
+
 function isGuestSession() {
   return (sessionStorage.getItem('guestMode') === 'true' || localStorage.getItem('guestMode') === 'true')
     && typeof window.handleGuestRequest === 'function';
@@ -847,7 +855,7 @@ function renderGroupWatchlistsSection(isLeader = false) {
         const isUngrouped = String(section?.title || '').trim().toLowerCase() === 'ungrouped';
         if (isUngrouped && tickers.length === 0) return null;
         return {
-          id: String(section?.id || `${watchlistId || 'watchlist'}-section-${index + 1}`),
+          id: toStableWatchlistSectionId(watchlistId, section, index),
           title: section?.title || `Section ${index + 1}`,
           tickers
         };
@@ -856,10 +864,12 @@ function renderGroupWatchlistsSection(isLeader = false) {
 
     const totalTickerCount = visibleSections.reduce((sum, section) => sum + section.tickers.length, 0);
     const visibleSectionIds = new Set(visibleSections.map((section) => section.id));
-    const openSectionIds = new Set(
-      (socialState.expandedGroupWatchlistSections[watchlistId] || []).filter((sectionId) => visibleSectionIds.has(sectionId))
-    );
-    socialState.expandedGroupWatchlistSections[watchlistId] = [...openSectionIds];
+    const expandedSectionState = Object.entries(socialState.expandedGroupWatchlistSections[watchlistId] || {})
+      .reduce((acc, [sectionId, isExpanded]) => {
+        if (visibleSectionIds.has(sectionId) && Boolean(isExpanded)) acc[sectionId] = true;
+        return acc;
+      }, {});
+    socialState.expandedGroupWatchlistSections[watchlistId] = expandedSectionState;
     const isWatchlistExpanded = socialState.expandedGroupWatchlistIds.has(watchlistId);
 
     head.innerHTML = `
@@ -897,7 +907,7 @@ function renderGroupWatchlistsSection(isLeader = false) {
       const sectionCard = document.createElement('details');
       sectionCard.className = 'social-watchlist-section-card';
       sectionCard.dataset.sectionId = section.id;
-      sectionCard.open = openSectionIds.has(section.id);
+      sectionCard.open = Boolean(expandedSectionState[section.id]);
       const summary = document.createElement('summary');
       summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${section.tickers.length} tickers</span>`;
       sectionCard.appendChild(summary);
@@ -912,19 +922,16 @@ function renderGroupWatchlistsSection(isLeader = false) {
         sectionBody.appendChild(row);
       });
       sectionCard.appendChild(sectionBody);
+      sectionCard.addEventListener('toggle', () => {
+        if (!watchlistId || !section.id) return;
+        if (!socialState.expandedGroupWatchlistSections[watchlistId]) {
+          socialState.expandedGroupWatchlistSections[watchlistId] = {};
+        }
+        socialState.expandedGroupWatchlistSections[watchlistId][section.id] = sectionCard.open;
+      });
       details.appendChild(sectionCard);
     });
     card.appendChild(details);
-    details.addEventListener('toggle', (event) => {
-      const sectionCard = event.target.closest('.social-watchlist-section-card');
-      if (!sectionCard || !watchlistId) return;
-      const sectionId = sectionCard.dataset.sectionId;
-      if (!sectionId) return;
-      const expanded = new Set(socialState.expandedGroupWatchlistSections[watchlistId] || []);
-      if (sectionCard.open) expanded.add(sectionId);
-      else expanded.delete(sectionId);
-      socialState.expandedGroupWatchlistSections[watchlistId] = [...expanded];
-    });
 
     head.querySelector('[data-expand-watchlist]')?.addEventListener('click', (event) => {
       const isHidden = details.classList.toggle('hidden');
