@@ -116,11 +116,23 @@
           <p class="helper">This label is shown in your Trading Accounts page.</p>
         </div>
         <div class="modal-field">
+          <label for="t212-account-type-input">Account type</label>
+          <input id="t212-account-type-input" name="accountType" type="text" maxlength="40" autocomplete="off" placeholder="e.g. ISA">
+        </div>
+        <div class="modal-field">
+          <label for="t212-broker-label-input">Broker display label</label>
+          <input id="t212-broker-label-input" name="brokerDisplayLabel" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Trading 212">
+        </div>
+        <div id="t212-provider-status-wrap" class="modal-field hidden">
+          <label>Provider status</label>
+          <p id="t212-provider-status" class="helper">Connected</p>
+        </div>
+        <div id="t212-api-key-wrap" class="modal-field">
           <label for="t212-api-key-input">API key</label>
           <input id="t212-api-key-input" name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Trading 212 API key">
           <p id="t212-api-key-helper" class="helper">Your API key is encrypted and only used for broker sync.</p>
         </div>
-        <div class="modal-field">
+        <div id="t212-api-secret-wrap" class="modal-field">
           <label for="t212-api-secret-input">API secret</label>
           <input id="t212-api-secret-input" name="apiSecret" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste Trading 212 API secret">
           <p id="t212-api-secret-helper" class="helper">Your API secret is stored securely and never shown in plain text.</p>

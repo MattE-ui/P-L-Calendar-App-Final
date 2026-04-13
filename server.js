@@ -4700,7 +4700,7 @@ function normalizeTradingAccountLabel(value, fallback = '') {
 
 function ensureTradingAccounts(user) {
   if (!user || typeof user !== 'object') {
-    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }] };
+    return { mutated: false, accounts: [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }] };
   }
   let mutated = false;
   if (typeof user.multiTradingAccountsEnabled !== 'boolean') {
@@ -4726,17 +4726,21 @@ function ensureTradingAccounts(user) {
     normalized.push({
       id,
       label: normalizeTradingAccountLabel(account.label, index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      accountType: normalizeTradingAccountLabel(account.accountType, 'Trading account'),
+      brokerDisplayLabel: normalizeTradingAccountLabel(account.brokerDisplayLabel, ''),
       currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0 ? currentValueRaw : 0,
       currentNetDeposits: Number.isFinite(currentNetDepositsRaw) ? currentNetDepositsRaw : 0,
       integrationProvider,
-      integrationEnabled
+      integrationEnabled,
+      linkedBrokerAccountId: typeof account.linkedBrokerAccountId === 'string' ? account.linkedBrokerAccountId.trim() : '',
+      providerAccountId: typeof account.providerAccountId === 'string' ? account.providerAccountId.trim() : ''
     });
   });
   if (!normalized.length) {
-    normalized.push({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+    normalized.push({ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' });
   }
   if (!normalized.some(account => account.id === 'primary')) {
-    normalized.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+    normalized.unshift({ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' });
   }
   if (!Array.isArray(user.tradingAccounts) || JSON.stringify(existing) !== JSON.stringify(normalized)) {
     user.tradingAccounts = normalized;
@@ -12623,13 +12627,17 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     isAdmin: role === 'admin' || role === 'owner',
     isOwner: role === 'owner',
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
-    tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]).map(account => ({
+    tradingAccounts: (user.tradingAccounts || [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }]).map(account => ({
       id: account.id,
       label: account.label || '',
+      accountType: account.accountType || 'Trading account',
+      brokerDisplayLabel: account.brokerDisplayLabel || '',
       currentValue: Number(account.currentValue) || 0,
       currentNetDeposits: Number(account.currentNetDeposits) || 0,
       integrationProvider: account.integrationProvider || null,
-      integrationEnabled: !!account.integrationEnabled
+      integrationEnabled: !!account.integrationEnabled,
+      linkedBrokerAccountId: account.linkedBrokerAccountId || '',
+      providerAccountId: account.providerAccountId || ''
     })),
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true,
@@ -16838,7 +16846,7 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   });
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
-    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }]
   });
 });
 
@@ -16861,6 +16869,8 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         const existing = existingById.get(id) || {};
         const currentValueRaw = Number(account.currentValue);
         const currentNetDepositsRaw = Number(account.currentNetDeposits);
+        const accountType = normalizeTradingAccountLabel(account.accountType, normalizeTradingAccountLabel(existing.accountType, 'Trading account'));
+        const brokerDisplayLabel = normalizeTradingAccountLabel(account.brokerDisplayLabel, normalizeTradingAccountLabel(existing.brokerDisplayLabel, ''));
         const integrationProviderRaw = typeof account.integrationProvider === 'string' ? account.integrationProvider.trim().toLowerCase() : '';
         const submittedProvider = integrationProviderRaw === 'trading212' || integrationProviderRaw === 'ibkr'
           ? integrationProviderRaw
@@ -16873,6 +16883,8 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
         return {
           id,
           label,
+          accountType,
+          brokerDisplayLabel,
           currentValue: Number.isFinite(currentValueRaw) && currentValueRaw >= 0
             ? currentValueRaw
             : (Number(existing.currentValue) || 0),
@@ -16880,7 +16892,13 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
             ? currentNetDepositsRaw
             : (Number(existing.currentNetDeposits) || 0),
           integrationProvider,
-          integrationEnabled
+          integrationEnabled,
+          linkedBrokerAccountId: typeof account.linkedBrokerAccountId === 'string'
+            ? account.linkedBrokerAccountId.trim()
+            : (typeof existing.linkedBrokerAccountId === 'string' ? existing.linkedBrokerAccountId.trim() : ''),
+          providerAccountId: typeof account.providerAccountId === 'string'
+            ? account.providerAccountId.trim()
+            : (typeof existing.providerAccountId === 'string' ? existing.providerAccountId.trim() : '')
         };
       })
       .filter(account => account && account.id);
@@ -16892,9 +16910,9 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
       deduped.push(account);
     });
     if (!deduped.some(account => account.id === 'primary')) {
-      deduped.unshift({ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false });
+      deduped.unshift({ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' });
     }
-    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
+    user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }];
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;
@@ -16932,7 +16950,7 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
   res.json({
     ok: true,
     enabled: !!user.multiTradingAccountsEnabled,
-    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]
+    accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }]
   });
 });
 
