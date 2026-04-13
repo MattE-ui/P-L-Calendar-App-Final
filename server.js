@@ -13705,18 +13705,28 @@ async function fetchWatchlistTickerMetrics(ticker) {
     ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
     : null;
 
-  const currentPrice = Number(snapshot?.selectedPrice);
+  const currentPrice = Number(snapshot?.currentPrice);
   const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
-  const percentChangeToday = Number.isFinite(currentPrice) && Number.isFinite(dayOpenPrice) && dayOpenPrice > 0
-    ? ((currentPrice - dayOpenPrice) / dayOpenPrice) * 100
-    : null;
+  const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
+  const percentChangeToday = Number.isFinite(Number(snapshot?.displayChangePct)) ? Number(snapshot.displayChangePct) : null;
   const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
     ? volume * currentPrice
     : null;
 
   const payload = {
     ticker: normalized,
+    session: String(snapshot?.session || 'closed'),
     currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+    previousClose: Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null,
+    regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
+    preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
+    postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
+    displayPrice,
+    displayChangePct: percentChangeToday,
+    displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
+    asOf: snapshot?.asOf || null,
+    isDelayed: snapshot?.isDelayed === true,
+    isStale: snapshot?.isStale === true,
     dayOpenPrice,
     percentChangeToday,
     adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
@@ -13751,7 +13761,18 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         itemId: item.id,
         ticker: item.display_ticker || item.ticker,
         name: item.display_name || '',
+        session: 'closed',
         currentPrice: null,
+        previousClose: null,
+        regularOpen: null,
+        preMarketPrice: null,
+        postMarketPrice: null,
+        displayPrice: null,
+        displayChangePct: null,
+        displayChangeBasis: 'previousClose',
+        asOf: null,
+        isDelayed: false,
+        isStale: true,
         dayOpenPrice: null,
         percentChangeToday: null,
         adrPercent: null,
@@ -18553,22 +18574,84 @@ function marketStateIsOpen(marketStateRaw) {
   return marketState === 'regular' || marketState === 'pre' || marketState === 'post';
 }
 
+function getEtWallClockParts(dateInput = new Date()) {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour12: false,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  const parts = formatter.formatToParts(date);
+  const lookup = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  const hour = Number(lookup.hour);
+  const minute = Number(lookup.minute);
+  const weekday = String(lookup.weekday || '').toLowerCase();
+  return {
+    weekday,
+    totalMinutes: (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0)
+  };
+}
+
+function deriveUsSessionFromClock(dateInput = new Date()) {
+  const { weekday, totalMinutes } = getEtWallClockParts(dateInput);
+  const isWeekday = ['mon', 'tue', 'wed', 'thu', 'fri'].includes(weekday);
+  if (!isWeekday) return 'closed';
+  if (totalMinutes >= 4 * 60 && totalMinutes < (9 * 60 + 30)) return 'premarket';
+  if (totalMinutes >= (9 * 60 + 30) && totalMinutes < 16 * 60) return 'regular';
+  if (totalMinutes >= 16 * 60 && totalMinutes < 20 * 60) return 'afterhours';
+  return 'closed';
+}
+
+function deriveSessionFromQuoteMetadata(quote = {}) {
+  const state = String(quote?.marketState || '').trim().toLowerCase();
+  if (state.startsWith('pre')) return 'premarket';
+  if (state.startsWith('reg')) return 'regular';
+  if (state.startsWith('post')) return 'afterhours';
+  if (state && state !== 'closed') return deriveUsSessionFromClock();
+  return 'closed';
+}
+
 function normalizeQuoteSnapshot(symbol, quote = {}) {
   const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
-  const preferPre = marketState.startsWith('pre');
-  const preferPost = marketState.startsWith('post');
-  const preferredExtended = parsePositiveNumber(
-    preferPre ? quote?.preMarketPrice : null,
-    preferPost ? quote?.postMarketPrice : null,
-    quote?.extendedMarketPrice,
-    quote?.preMarketPrice,
-    quote?.postMarketPrice
-  );
-  const regularMarketPrice = parsePositiveNumber(
-    quote?.regularMarketPrice,
-    quote?.marketPrice,
-    quote?.price
-  );
+  const preMarketPrice = parsePositiveNumber(quote?.preMarketPrice);
+  const postMarketPrice = parsePositiveNumber(quote?.postMarketPrice);
+  const regularMarketPrice = parsePositiveNumber(quote?.regularMarketPrice, quote?.marketPrice, quote?.price);
+  const previousClose = parsePositiveNumber(quote?.regularMarketPreviousClose, quote?.previousClose, quote?.close);
+  const regularOpen = parsePositiveNumber(quote?.regularMarketOpen, quote?.open);
+  const currentPrice = parsePositiveNumber(regularMarketPrice, quote?.marketPrice, quote?.price);
+  const sessionFromClock = deriveUsSessionFromClock();
+  const sessionFromMetadata = deriveSessionFromQuoteMetadata(quote);
+  const session = sessionFromMetadata === 'closed' ? sessionFromClock : sessionFromMetadata;
+  const preferredDisplayPrice = session === 'premarket'
+    ? parsePositiveNumber(preMarketPrice, quote?.extendedMarketPrice)
+    : session === 'afterhours'
+      ? parsePositiveNumber(postMarketPrice, quote?.extendedMarketPrice)
+      : session === 'regular'
+        ? currentPrice
+        : null;
+  const displayPrice = parsePositiveNumber(preferredDisplayPrice, session === 'closed' ? previousClose : null);
+  const displayChangePct = Number.isFinite(displayPrice) && Number.isFinite(previousClose) && previousClose > 0
+    ? ((displayPrice - previousClose) / previousClose) * 100
+    : null;
+  const hasExpectedSessionPrice = session === 'premarket'
+    ? Number.isFinite(preMarketPrice)
+    : session === 'afterhours'
+      ? Number.isFinite(postMarketPrice)
+      : session === 'regular'
+        ? Number.isFinite(currentPrice)
+        : Number.isFinite(previousClose);
+  const asOfEpoch = session === 'premarket'
+    ? Number(quote?.preMarketTime)
+    : session === 'afterhours'
+      ? Number(quote?.postMarketTime)
+      : Number(quote?.regularMarketTime);
+  const asOf = Number.isFinite(asOfEpoch) && asOfEpoch > 0
+    ? new Date(asOfEpoch * 1000).toISOString()
+    : new Date().toISOString();
+  const isDelayed = Number.isFinite(Number(quote?.exchangeDataDelayedBy)) && Number(quote.exchangeDataDelayedBy) > 0;
+  const isStale = !hasExpectedSessionPrice;
   const mark = parsePositiveNumber(quote?.mark, quote?.markPrice, quote?.midPrice);
   const bid = parsePositiveNumber(quote?.bid, quote?.bidPrice);
   const ask = parsePositiveNumber(quote?.ask, quote?.askPrice);
@@ -18578,30 +18661,39 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     quote?.regularMarketLastPrice,
     regularMarketPrice
   );
-  const previousClose = parsePositiveNumber(
-    quote?.regularMarketPreviousClose,
-    quote?.previousClose,
-    quote?.close
-  );
   const marketOpen = marketStateIsOpen(marketState);
+  const preferredExtended = parsePositiveNumber(
+    preMarketPrice,
+    postMarketPrice,
+    quote?.extendedMarketPrice
+  );
   const live = parsePositiveNumber(
     preferredExtended,
     marketOpen ? regularMarketPrice : null
   );
-  const selectedPrice = parsePositiveNumber(live, last, previousClose);
-  const isExtended = Number.isFinite(preferredExtended) && preferredExtended > 0;
   return {
     symbol,
     currency: quote?.currency || 'GBP',
     marketState,
+    session,
     marketOpen,
-    isExtended,
+    isExtended: Number.isFinite(preMarketPrice) || Number.isFinite(postMarketPrice),
     live,
     mark,
     mid,
     last,
+    currentPrice,
+    regularOpen,
+    preMarketPrice,
+    postMarketPrice,
+    displayPrice,
+    displayChangePct,
+    displayChangeBasis: 'previousClose',
+    asOf,
+    isDelayed,
+    isStale,
     previousClose,
-    selectedPrice
+    selectedPrice: parsePositiveNumber(displayPrice, live, last, previousClose)
   };
 }
 
@@ -18795,12 +18887,25 @@ async function fetchMarketQuoteSnapshot(symbol) {
         symbol: trimmed,
         currency: yahooChart.currency || 'GBP',
         marketState: yahooChart.marketState || '',
+        session: deriveSessionFromQuoteMetadata({ marketState: yahooChart.marketState || '' }),
         marketOpen: marketStateIsOpen(yahooChart.marketState || ''),
         isExtended: true,
         live: yahooChart.price,
         mark: null,
         mid: null,
         last: yahooChart.price,
+        currentPrice: yahooChart.price,
+        regularOpen: null,
+        preMarketPrice: null,
+        postMarketPrice: null,
+        displayPrice: yahooChart.price,
+        displayChangePct: Number.isFinite(Number(yahooQuote?.previousClose)) && Number(yahooQuote.previousClose) > 0
+          ? ((yahooChart.price - Number(yahooQuote.previousClose)) / Number(yahooQuote.previousClose)) * 100
+          : null,
+        displayChangeBasis: 'previousClose',
+        asOf: new Date().toISOString(),
+        isDelayed: false,
+        isStale: true,
         previousClose: yahooQuote?.previousClose ?? null,
         selectedPrice: yahooChart.price
       };
@@ -18813,12 +18918,23 @@ async function fetchMarketQuoteSnapshot(symbol) {
         symbol: trimmed,
         currency: stooq.currency || 'GBP',
         marketState: '',
+        session: deriveUsSessionFromClock(),
         marketOpen: false,
         isExtended: false,
         live: null,
         mark: null,
         mid: null,
         last: stooq.price,
+        currentPrice: null,
+        regularOpen: null,
+        preMarketPrice: null,
+        postMarketPrice: null,
+        displayPrice: stooq.price,
+        displayChangePct: null,
+        displayChangeBasis: 'previousClose',
+        asOf: new Date().toISOString(),
+        isDelayed: true,
+        isStale: true,
         previousClose: null,
         selectedPrice: stooq.price
       };

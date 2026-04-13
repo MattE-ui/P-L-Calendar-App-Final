@@ -9425,6 +9425,12 @@ textarea {
 .social-watchlist-table tbody tr:last-child td { border-bottom: 0; }
 .social-watchlist-table .is-pos { color: #4dd48a; }
 .social-watchlist-table .is-neg { color: #ff6e6e; }
+.social-watchlist-session-badge { display: inline-flex; margin-left: 8px; padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); font-size: 10px; letter-spacing: .03em; text-transform: uppercase; }
+.social-watchlist-session-badge.is-live { color: #7ef2b3; border-color: rgba(74, 205, 132, 0.45); background: rgba(74, 205, 132, 0.15); }
+.social-watchlist-session-badge.is-premarket { color: #95d3ff; border-color: rgba(82, 177, 255, 0.4); background: rgba(82, 177, 255, 0.14); }
+.social-watchlist-session-badge.is-afterhours { color: #f8cb7c; border-color: rgba(255, 188, 94, 0.4); background: rgba(255, 188, 94, 0.14); }
+.social-watchlist-session-badge.is-closed { color: #d1d5db; border-color: rgba(180, 190, 210, 0.35); background: rgba(180, 190, 210, 0.12); }
+.social-watchlist-stale-indicator { display: inline-flex; margin-left: 6px; font-size: 10px; color: #ffb0b0; }
 .social-watchlist-groups-wrap { display: grid; gap: 8px; padding: 8px; background: rgba(4, 18, 13, 0.5); }
 .social-watchlist-groups-toolbar { display: flex; justify-content: flex-end; gap: 6px; }
 .social-watchlist-groups-btn { min-height: 24px; font-size: 11px; padding: 0 8px; }

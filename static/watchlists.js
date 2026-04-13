@@ -39,6 +39,29 @@
     return String(n);
   }
 
+  function sessionLabel(rawSession) {
+    const session = String(rawSession || '').trim().toLowerCase();
+    if (session === 'premarket') return 'Premarket';
+    if (session === 'afterhours') return 'After Hours';
+    if (session === 'regular') return 'Live';
+    return 'Closed';
+  }
+
+  function sessionClass(rawSession) {
+    const session = String(rawSession || '').trim().toLowerCase();
+    if (session === 'premarket') return 'is-premarket';
+    if (session === 'afterhours') return 'is-afterhours';
+    if (session === 'regular') return 'is-live';
+    return 'is-closed';
+  }
+
+  function fmtAsOf(value) {
+    if (!value) return 'As of —';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'As of —';
+    return `As of ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+
   function normalizeTicker(raw) {
     return String(raw || '').trim().toUpperCase();
   }
@@ -362,14 +385,20 @@
     return `
       <div class="social-watchlist-table-wrap social-watchlist-table-wrap--group">
         <table class="social-watchlist-table">
-          <thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead>
+          <thead><tr><th>Ticker</th><th>Display</th><th>Regular Open</th><th>% vs Prev Close</th><th>ADR%</th><th>$ Volume</th></tr></thead>
           <tbody>
             ${rows.map((row) => `
               <tr>
-                <td><strong>${escapeHtml(row.ticker || '—')}</strong>${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}</td>
-                <td>${fmt(row.currentPrice, 'price')}</td>
-                <td>${fmt(row.dayOpenPrice, 'price')}</td>
-                <td class="${Number(row.percentChangeToday) > 0 ? 'is-pos' : (Number(row.percentChangeToday) < 0 ? 'is-neg' : '')}">${fmt(row.percentChangeToday, 'pct')}</td>
+                <td>
+                  <strong>${escapeHtml(row.ticker || '—')}</strong>
+                  <span class="social-watchlist-session-badge ${sessionClass(row.session)}">${escapeHtml(sessionLabel(row.session))}</span>
+                  ${row.isStale ? '<span class="social-watchlist-stale-indicator">Stale</span>' : ''}
+                  ${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}
+                  <div class="helper">${escapeHtml(fmtAsOf(row.asOf))}${row.isDelayed ? ' • Delayed' : ''}</div>
+                </td>
+                <td>${fmt(row.displayPrice, 'price')}</td>
+                <td>${fmt(row.regularOpen ?? row.dayOpenPrice, 'price')}</td>
+                <td class="${Number(row.displayChangePct) > 0 ? 'is-pos' : (Number(row.displayChangePct) < 0 ? 'is-neg' : '')}">${fmt(row.displayChangePct ?? row.percentChangeToday, 'pct')}</td>
                 <td>${fmt(row.adrPercent, 'pct')}</td>
                 <td>${escapeHtml(row.dollarVolumeDisplay || '—')}</td>
               </tr>
