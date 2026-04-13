@@ -18574,43 +18574,30 @@ function marketStateIsOpen(marketStateRaw) {
   return marketState === 'regular' || marketState === 'pre' || marketState === 'post';
 }
 
-function getEtWallClockParts(dateInput = new Date()) {
-  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour12: false,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  const parts = formatter.formatToParts(date);
-  const lookup = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  const hour = Number(lookup.hour);
-  const minute = Number(lookup.minute);
-  const weekday = String(lookup.weekday || '').toLowerCase();
-  return {
-    weekday,
-    totalMinutes: (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0)
-  };
+function resolveDisplayPriceAndSession({ preMarketPrice, postMarketPrice, regularMarketPrice, previousClose }) {
+  if (Number.isFinite(preMarketPrice)) return { displayPrice: preMarketPrice, session: 'premarket', priceSource: 'preMarketPrice' };
+  if (Number.isFinite(postMarketPrice)) return { displayPrice: postMarketPrice, session: 'afterhours', priceSource: 'postMarketPrice' };
+  if (Number.isFinite(regularMarketPrice)) return { displayPrice: regularMarketPrice, session: 'regular', priceSource: 'regularMarketPrice' };
+  if (Number.isFinite(previousClose)) return { displayPrice: previousClose, session: 'closed', priceSource: 'previousClose' };
+  return { displayPrice: null, session: 'closed', priceSource: 'none' };
 }
 
-function deriveUsSessionFromClock(dateInput = new Date()) {
-  const { weekday, totalMinutes } = getEtWallClockParts(dateInput);
-  const isWeekday = ['mon', 'tue', 'wed', 'thu', 'fri'].includes(weekday);
-  if (!isWeekday) return 'closed';
-  if (totalMinutes >= 4 * 60 && totalMinutes < (9 * 60 + 30)) return 'premarket';
-  if (totalMinutes >= (9 * 60 + 30) && totalMinutes < 16 * 60) return 'regular';
-  if (totalMinutes >= 16 * 60 && totalMinutes < 20 * 60) return 'afterhours';
-  return 'closed';
+function quoteAsOfFromSource(quote = {}, priceSource = 'none') {
+  const asOfEpoch = priceSource === 'preMarketPrice'
+    ? Number(quote?.preMarketTime)
+    : priceSource === 'postMarketPrice'
+      ? Number(quote?.postMarketTime)
+      : Number(quote?.regularMarketTime);
+  if (Number.isFinite(asOfEpoch) && asOfEpoch > 0) return new Date(asOfEpoch * 1000).toISOString();
+  return new Date().toISOString();
 }
 
-function deriveSessionFromQuoteMetadata(quote = {}) {
-  const state = String(quote?.marketState || '').trim().toLowerCase();
-  if (state.startsWith('pre')) return 'premarket';
-  if (state.startsWith('reg')) return 'regular';
-  if (state.startsWith('post')) return 'afterhours';
-  if (state && state !== 'closed') return deriveUsSessionFromClock();
-  return 'closed';
+function isAsOfStale(asOf, { isDelayed = false } = {}) {
+  if (!asOf) return true;
+  const asOfMs = Date.parse(asOf);
+  if (!Number.isFinite(asOfMs)) return true;
+  const maxAgeMs = isDelayed ? 45 * 60 * 1000 : 20 * 60 * 1000;
+  return (Date.now() - asOfMs) > maxAgeMs;
 }
 
 function normalizeQuoteSnapshot(symbol, quote = {}) {
@@ -18621,37 +18608,18 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
   const previousClose = parsePositiveNumber(quote?.regularMarketPreviousClose, quote?.previousClose, quote?.close);
   const regularOpen = parsePositiveNumber(quote?.regularMarketOpen, quote?.open);
   const currentPrice = parsePositiveNumber(regularMarketPrice, quote?.marketPrice, quote?.price);
-  const sessionFromClock = deriveUsSessionFromClock();
-  const sessionFromMetadata = deriveSessionFromQuoteMetadata(quote);
-  const session = sessionFromMetadata === 'closed' ? sessionFromClock : sessionFromMetadata;
-  const preferredDisplayPrice = session === 'premarket'
-    ? parsePositiveNumber(preMarketPrice, quote?.extendedMarketPrice)
-    : session === 'afterhours'
-      ? parsePositiveNumber(postMarketPrice, quote?.extendedMarketPrice)
-      : session === 'regular'
-        ? currentPrice
-        : null;
-  const displayPrice = parsePositiveNumber(preferredDisplayPrice, session === 'closed' ? previousClose : null);
+  const { displayPrice, session, priceSource } = resolveDisplayPriceAndSession({
+    preMarketPrice,
+    postMarketPrice,
+    regularMarketPrice: currentPrice,
+    previousClose
+  });
   const displayChangePct = Number.isFinite(displayPrice) && Number.isFinite(previousClose) && previousClose > 0
     ? ((displayPrice - previousClose) / previousClose) * 100
     : null;
-  const hasExpectedSessionPrice = session === 'premarket'
-    ? Number.isFinite(preMarketPrice)
-    : session === 'afterhours'
-      ? Number.isFinite(postMarketPrice)
-      : session === 'regular'
-        ? Number.isFinite(currentPrice)
-        : Number.isFinite(previousClose);
-  const asOfEpoch = session === 'premarket'
-    ? Number(quote?.preMarketTime)
-    : session === 'afterhours'
-      ? Number(quote?.postMarketTime)
-      : Number(quote?.regularMarketTime);
-  const asOf = Number.isFinite(asOfEpoch) && asOfEpoch > 0
-    ? new Date(asOfEpoch * 1000).toISOString()
-    : new Date().toISOString();
   const isDelayed = Number.isFinite(Number(quote?.exchangeDataDelayedBy)) && Number(quote.exchangeDataDelayedBy) > 0;
-  const isStale = !hasExpectedSessionPrice;
+  const asOf = quoteAsOfFromSource(quote, priceSource);
+  const isStale = isAsOfStale(asOf, { isDelayed });
   const mark = parsePositiveNumber(quote?.mark, quote?.markPrice, quote?.midPrice);
   const bid = parsePositiveNumber(quote?.bid, quote?.bidPrice);
   const ask = parsePositiveNumber(quote?.ask, quote?.askPrice);
@@ -18887,7 +18855,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
         symbol: trimmed,
         currency: yahooChart.currency || 'GBP',
         marketState: yahooChart.marketState || '',
-        session: deriveSessionFromQuoteMetadata({ marketState: yahooChart.marketState || '' }),
+        session: Number.isFinite(yahooChart.price) ? 'regular' : 'closed',
         marketOpen: marketStateIsOpen(yahooChart.marketState || ''),
         isExtended: true,
         live: yahooChart.price,
@@ -18905,7 +18873,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
         displayChangeBasis: 'previousClose',
         asOf: new Date().toISOString(),
         isDelayed: false,
-        isStale: true,
+        isStale: false,
         previousClose: yahooQuote?.previousClose ?? null,
         selectedPrice: yahooChart.price
       };
@@ -18918,7 +18886,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
         symbol: trimmed,
         currency: stooq.currency || 'GBP',
         marketState: '',
-        session: deriveUsSessionFromClock(),
+        session: 'closed',
         marketOpen: false,
         isExtended: false,
         live: null,
