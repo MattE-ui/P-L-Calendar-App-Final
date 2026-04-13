@@ -14220,6 +14220,7 @@ const groupChatRoleAssignmentSchema = z.object({
 
 const WATCHLIST_MARKET_CACHE_TTL_MS = Number(process.env.WATCHLIST_MARKET_CACHE_TTL_MS) || 20 * 1000;
 const watchlistMarketDataCache = new Map();
+const watchlistMarketDataInFlight = new Map();
 
 function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -14354,190 +14355,214 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   const cached = watchlistMarketDataCache.get(normalized);
   const now = Date.now();
   if (cached && now - cached.at < WATCHLIST_MARKET_CACHE_TTL_MS) return cached.payload;
+  const inFlight = watchlistMarketDataInFlight.get(normalized);
+  if (inFlight) return inFlight;
 
-  const snapshot = await fetchMarketQuoteSnapshot(normalized);
-  const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?range=2mo&interval=1d&includePrePost=false`;
-  const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
-  if (!res.ok) throw new Error('Historical chart unavailable');
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  const quote = result?.indicators?.quote?.[0] || {};
-  const highs = Array.isArray(quote.high) ? quote.high : [];
-  const lows = Array.isArray(quote.low) ? quote.low : [];
-  const opens = Array.isArray(quote.open) ? quote.open : [];
-  const volumes = Array.isArray(quote.volume) ? quote.volume : [];
-  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const loader = (async () => {
+    const snapshot = await fetchMarketQuoteSnapshot(normalized);
+    const quoteUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(normalized)}?range=2mo&interval=1d&includePrePost=false`;
+    const res = await fetch(quoteUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json,text/plain,*/*' } });
+    if (!res.ok) throw new Error('Historical chart unavailable');
+    const data = await res.json();
+    const result = data?.chart?.result?.[0];
+    const quote = result?.indicators?.quote?.[0] || {};
+    const highs = Array.isArray(quote.high) ? quote.high : [];
+    const lows = Array.isArray(quote.low) ? quote.low : [];
+    const opens = Array.isArray(quote.open) ? quote.open : [];
+    const volumes = Array.isArray(quote.volume) ? quote.volume : [];
+    const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
 
-  let latestIndex = opens.length - 1;
-  while (latestIndex >= 0 && !Number.isFinite(Number(opens[latestIndex]))) latestIndex -= 1;
-  const open = latestIndex >= 0 ? Number(opens[latestIndex]) : null;
-  const volume = latestIndex >= 0 ? Number(volumes[latestIndex]) : null;
+    let latestIndex = opens.length - 1;
+    while (latestIndex >= 0 && !Number.isFinite(Number(opens[latestIndex]))) latestIndex -= 1;
+    const open = latestIndex >= 0 ? Number(opens[latestIndex]) : null;
+    const volume = latestIndex >= 0 ? Number(volumes[latestIndex]) : null;
 
-  // ADR% formula: average over lookback sessions of ((dailyHigh - dailyLow) / dailyLow) * 100.
-  const adrSeries = [];
-  for (let i = 0; i < highs.length; i += 1) {
-    const hi = Number(highs[i]);
-    const lo = Number(lows[i]);
-    if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
-    adrSeries.push(((hi - lo) / lo) * 100);
-  }
-  const adrLookback = adrSeries.slice(-20);
-  const adrPercent = adrLookback.length >= 5
-    ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
-    : null;
+    // ADR% formula: average over lookback sessions of ((dailyHigh - dailyLow) / dailyLow) * 100.
+    const adrSeries = [];
+    for (let i = 0; i < highs.length; i += 1) {
+      const hi = Number(highs[i]);
+      const lo = Number(lows[i]);
+      if (!Number.isFinite(hi) || !Number.isFinite(lo) || lo <= 0) continue;
+      adrSeries.push(((hi - lo) / lo) * 100);
+    }
+    const adrLookback = adrSeries.slice(-20);
+    const adrPercent = adrLookback.length >= 5
+      ? adrLookback.reduce((sum, value) => sum + value, 0) / adrLookback.length
+      : null;
 
-  const currentPrice = Number(snapshot?.currentPrice);
-  const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
-  const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
-  const regularMarketPrice = Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null;
-  const extendedHoursPrice = Number.isFinite(Number(snapshot?.extendedHoursPrice)) ? Number(snapshot.extendedHoursPrice) : null;
-  const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
-  const previousCloseTargetDate = getMostRecentCompletedUsTradingSessionDate(new Date());
-  let didMutatePreviousCloseRef = false;
-  let providerPreviousCloseFetchAttempted = false;
-  let providerPreviousCloseFetchSucceeded = false;
-  let providerPreviousCloseError = null;
-  try {
-    const ingested = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
-      snapshot,
-      marketDate: previousCloseTargetDate,
-      source: 'provider_previous_close'
-    });
-    providerPreviousCloseFetchAttempted = true;
-    providerPreviousCloseFetchSucceeded = Boolean(ingested?.hadProviderPreviousClose || ingested?.capturedRegularClose);
-    didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
-  } catch (error) {
-    providerPreviousCloseFetchAttempted = true;
-    providerPreviousCloseFetchSucceeded = false;
-    providerPreviousCloseError = formatProviderError(error);
-  }
-  if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
+    const currentPrice = Number(snapshot?.currentPrice);
+    const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
+    const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
+    const regularMarketPrice = Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null;
+    const extendedHoursPrice = Number.isFinite(Number(snapshot?.extendedHoursPrice)) ? Number(snapshot.extendedHoursPrice) : null;
+    const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
+    const previousCloseTargetDate = getMostRecentCompletedUsTradingSessionDate(new Date());
+    let didMutatePreviousCloseRef = false;
+    let providerPreviousCloseFetchAttempted = false;
+    let providerPreviousCloseFetchSucceeded = false;
+    let providerPreviousCloseError = null;
     try {
-      const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+      const ingested = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+        snapshot,
         marketDate: previousCloseTargetDate,
-        source: 'on_demand_provider_backfill'
+        source: 'provider_previous_close'
       });
       providerPreviousCloseFetchAttempted = true;
-      providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded
-        || Boolean(onDemandIngest?.hadProviderPreviousClose || onDemandIngest?.capturedRegularClose);
-      didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
+      providerPreviousCloseFetchSucceeded = Boolean(ingested?.hadProviderPreviousClose || ingested?.capturedRegularClose);
+      didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
     } catch (error) {
       providerPreviousCloseFetchAttempted = true;
       providerPreviousCloseFetchSucceeded = false;
-      providerPreviousCloseError = providerPreviousCloseError || formatProviderError(error);
+      providerPreviousCloseError = formatProviderError(error);
     }
-  }
-  if (didMutatePreviousCloseRef) {
-    try {
-      saveDB(db);
-    } catch (error) {
-      console.warn('[WATCHLIST_PREV_CLOSE_CALC] failed to persist previous-close reference store', {
-        ticker: normalized,
-        error: error?.message || error
-      });
+    if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
+      try {
+        const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+          marketDate: previousCloseTargetDate,
+          source: 'on_demand_provider_backfill'
+        });
+        providerPreviousCloseFetchAttempted = true;
+        providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded
+          || Boolean(onDemandIngest?.hadProviderPreviousClose || onDemandIngest?.capturedRegularClose);
+        didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
+      } catch (error) {
+        providerPreviousCloseFetchAttempted = true;
+        providerPreviousCloseFetchSucceeded = false;
+        providerPreviousCloseError = providerPreviousCloseError || formatProviderError(error);
+      }
     }
-  }
-  const previousCloseReference = resolveWatchlistPreviousCloseReference(db, normalized, previousCloseTargetDate);
-  const previousClose = previousCloseReference ? Number(previousCloseReference.previousClose) : null;
-  const previousCloseDate = previousCloseReference?.marketDate || null;
-  const sessionDateMatchesReferenceDate = Boolean(previousCloseDate && previousCloseDate === previousCloseTargetDate);
-  const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
-  const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate);
-  const isStale = snapshot?.isStale === true;
-  const resolvedSession = isStale
-    ? 'stale'
-    : priceSource === 'preMarketPrice'
-      ? 'premarket'
-    : priceSource === 'postMarketPrice'
+    if (didMutatePreviousCloseRef) {
+      try {
+        saveDB(db);
+      } catch (error) {
+        console.warn('[WATCHLIST_PREV_CLOSE_CALC] failed to persist previous-close reference store', {
+          ticker: normalized,
+          error: error?.message || error
+        });
+      }
+    }
+    const previousCloseReference = resolveWatchlistPreviousCloseReference(db, normalized, previousCloseTargetDate);
+    const previousClose = previousCloseReference ? Number(previousCloseReference.previousClose) : null;
+    const previousCloseDate = previousCloseReference?.marketDate || null;
+    const sessionDateMatchesReferenceDate = Boolean(previousCloseDate && previousCloseDate === previousCloseTargetDate);
+    const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
+    const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate);
+    const isStale = snapshot?.isStale === true;
+    const resolvedSession = isStale
+      ? 'stale'
+      : priceSource === 'preMarketPrice'
+        ? 'premarket'
+        : priceSource === 'postMarketPrice'
         ? 'afterhours'
         : priceSource === 'extendedHoursPrice'
           ? 'extended'
-        : priceSource === 'regularMarketPrice'
+          : priceSource === 'regularMarketPrice'
           ? 'regular'
           : 'closed';
-  const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
-    ? volume * currentPrice
-    : null;
+    const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
+      ? volume * currentPrice
+      : null;
 
-  const payload = {
-    ticker: normalized,
-    session: resolvedSession,
-    currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
-    previousClose,
-    regularMarketPrice,
-    regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
-    preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
-    postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
-    extendedHoursPrice,
-    displayPrice,
-    displayChangePct: percentChangeToday,
-    priceSource,
-    selectedPriceSource: priceSource,
-    displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
-    previousCloseDate,
-    previousCloseSource: previousCloseReference?.source || null,
-    previousCloseCapturedAt: previousCloseReference?.capturedAt || null,
-    asOf: snapshot?.asOf || null,
-    isDelayed: snapshot?.isDelayed === true,
-    isStale,
-    dayOpenPrice,
-    percentChangeToday,
-    adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
-    dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
-    dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
-    currency: snapshot?.currency || 'USD',
-    marketState: snapshot?.marketState || '',
-    lastUpdated: new Date().toISOString(),
-    dataStatus: 'ok',
-    asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
-  };
-
-  if (shouldDebugWatchlistQuoteSymbol(normalized)) {
-    console.info('[WATCHLIST_QUOTE_PIPELINE_NORMALIZED]', {
+    const payload = {
       ticker: normalized,
-      previousClose: payload.previousClose,
-      previousCloseDate: payload.previousCloseDate,
-      previousCloseSource: payload.previousCloseSource,
-      regularMarketPrice: payload.regularMarketPrice,
-      preMarketPrice: payload.preMarketPrice,
-      postMarketPrice: payload.postMarketPrice,
-      extendedHoursPrice: payload.extendedHoursPrice,
+      session: resolvedSession,
+      currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
+      previousClose,
+      regularMarketPrice,
+      regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
+      preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
+      postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
+      extendedHoursPrice,
+      displayPrice,
+      displayChangePct: percentChangeToday,
+      priceSource,
+      selectedPriceSource: priceSource,
+      displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
+      previousCloseDate,
+      previousCloseSource: previousCloseReference?.source || null,
+      previousCloseCapturedAt: previousCloseReference?.capturedAt || null,
+      asOf: snapshot?.asOf || null,
+      isDelayed: snapshot?.isDelayed === true,
+      isStale,
+      dayOpenPrice,
+      percentChangeToday,
+      adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
+      dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
+      dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
+      currency: snapshot?.currency || 'USD',
+      marketState: snapshot?.marketState || '',
+      lastUpdated: new Date().toISOString(),
+      dataStatus: 'ok',
+      asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
+    };
+
+    if (shouldDebugWatchlistQuoteSymbol(normalized)) {
+      console.info('[WATCHLIST_QUOTE_PIPELINE_NORMALIZED]', {
+        ticker: normalized,
+        previousClose: payload.previousClose,
+        previousCloseDate: payload.previousCloseDate,
+        previousCloseSource: payload.previousCloseSource,
+        regularMarketPrice: payload.regularMarketPrice,
+        preMarketPrice: payload.preMarketPrice,
+        postMarketPrice: payload.postMarketPrice,
+        extendedHoursPrice: payload.extendedHoursPrice,
+        displayPrice: payload.displayPrice,
+        displayChangePct: payload.displayChangePct,
+        session: payload.session,
+        asOf: payload.asOf,
+        selectedPriceSource: payload.selectedPriceSource
+      });
+    }
+
+    console.info('[WATCHLIST_PREV_CLOSE_CALC]', {
+      ticker: normalized,
+      targetSessionDate: previousCloseTargetDate,
+      hasReferenceForDate,
+      storedPreviousClose: previousClose,
+      storedReferenceDate: previousCloseDate,
+      sessionDateMatchesReferenceDate,
+      dateResolutionPair: `${previousCloseTargetDate} vs ${previousCloseDate || 'null'}`,
+      providerPreviousCloseFetchAttempted,
+      providerPreviousCloseFetchSucceeded,
+      providerPreviousCloseError: providerPreviousCloseError || (Array.isArray(snapshot?.providerErrors) && snapshot.providerErrors.length ? snapshot.providerErrors.join(' | ') : null),
       displayPrice: payload.displayPrice,
-      displayChangePct: payload.displayChangePct,
-      session: payload.session,
-      asOf: payload.asOf,
+      computedPercentRaw: percentChangeToday,
+      computedPercent: payload.displayChangePct,
       selectedPriceSource: payload.selectedPriceSource
     });
+
+    watchlistMarketDataCache.set(normalized, { at: now, payload });
+    return payload;
+  })();
+
+  watchlistMarketDataInFlight.set(normalized, loader);
+  try {
+    return await loader;
+  } finally {
+    watchlistMarketDataInFlight.delete(normalized);
   }
-
-  console.info('[WATCHLIST_PREV_CLOSE_CALC]', {
-    ticker: normalized,
-    targetSessionDate: previousCloseTargetDate,
-    hasReferenceForDate,
-    storedPreviousClose: previousClose,
-    storedReferenceDate: previousCloseDate,
-    sessionDateMatchesReferenceDate,
-    dateResolutionPair: `${previousCloseTargetDate} vs ${previousCloseDate || 'null'}`,
-    providerPreviousCloseFetchAttempted,
-    providerPreviousCloseFetchSucceeded,
-    providerPreviousCloseError: providerPreviousCloseError || (Array.isArray(snapshot?.providerErrors) && snapshot.providerErrors.length ? snapshot.providerErrors.join(' | ') : null),
-    displayPrice: payload.displayPrice,
-    computedPercentRaw: percentChangeToday,
-    computedPercent: payload.displayChangePct,
-    selectedPriceSource: payload.selectedPriceSource
-  });
-
-  watchlistMarketDataCache.set(normalized, { at: now, payload });
-  return payload;
 }
 
 async function buildWatchlistMarketDataRows(db, watchlist) {
   const items = db.watchlistItems
     .filter((item) => item.watchlist_id === watchlist.id)
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
-  const rows = await Promise.all(items.map(async (item) => {
+  const metricsByTicker = new Map();
+  const metricErrorsByTicker = new Map();
+  const uniqueTickers = Array.from(new Set(items.map((item) => normalizeWatchlistTicker(item.canonical_ticker || item.ticker)).filter(Boolean)));
+  await Promise.all(uniqueTickers.map(async (ticker) => {
     try {
-      const metrics = await fetchWatchlistTickerMetrics(db, item.canonical_ticker || item.ticker);
+      const metrics = await fetchWatchlistTickerMetrics(db, ticker);
+      metricsByTicker.set(ticker, metrics);
+    } catch (error) {
+      metricErrorsByTicker.set(ticker, error);
+    }
+  }));
+  const rows = await Promise.all(items.map(async (item) => {
+    const normalizedTicker = normalizeWatchlistTicker(item.canonical_ticker || item.ticker);
+    try {
+      const metrics = metricsByTicker.get(normalizedTicker);
+      if (!metrics) throw (metricErrorsByTicker.get(normalizedTicker) || new Error('Market data unavailable'));
       return {
         itemId: item.id,
         ticker: item.display_ticker || item.ticker,
@@ -14545,7 +14570,6 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         ...metrics
       };
     } catch (error) {
-      const normalizedTicker = normalizeWatchlistTicker(item.canonical_ticker || item.ticker);
       const targetSessionDate = getMostRecentCompletedUsTradingSessionDate(new Date());
       const storedReference = resolveWatchlistPreviousCloseReference(db, normalizedTicker, targetSessionDate);
       const storedReferenceDate = storedReference?.marketDate || null;
@@ -16650,6 +16674,11 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const watchlist = access.watchlist;
   const rows = await buildWatchlistMarketDataRows(db, watchlist);
+  req.perfDiag?.setMeta({
+    watchlistId: watchlist.id,
+    rowCount: rows.length,
+    uniqueSymbolCount: new Set(rows.map((row) => normalizeWatchlistTicker(row.ticker))).size
+  });
   res.json({ watchlistId: watchlist.id, lastUpdated: new Date().toISOString(), rows });
 }));
 

@@ -3,15 +3,21 @@
     watchlists: [],
     selectedId: '',
     marketRows: [],
+    marketRowsSignature: '',
+    sectionStructureSignature: '',
     editingId: '',
     builder: { ungrouped: [], groups: [] },
     sortableInstances: [],
-    detailAccordion: {}
+    detailAccordion: {},
+    refreshTimer: null,
+    refreshInFlight: false
   };
 
   const UNGROUPED_TITLE = 'Ungrouped';
   const TICKER_PATTERN = /^[A-Z0-9._-]{1,15}$/;
   const WATCHLIST_DEBUG_TICKERS = new Set(['LWLG', 'NBIS', 'GLW']);
+  const WATCHLIST_REFRESH_INTERVAL_MS = 15000;
+  const WATCHLIST_PERF_DEBUG = window.localStorage?.getItem('watchlistPerfDebug') === '1';
 
   async function api(path, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
@@ -23,6 +29,35 @@
     if (res.status === 401) { window.location.href = '/login.html'; throw new Error('Unauthenticated'); }
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
+  }
+
+  function debugPerf(marker, meta = null) {
+    if (!WATCHLIST_PERF_DEBUG) return;
+    window.PerfDiagnostics?.mark?.(marker);
+    if (meta) console.info(`[WATCHLIST_PERF] ${marker}`, meta);
+  }
+
+  function buildMarketRowsSignature(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        const ticker = normalizeTicker(row?.ticker);
+        return [
+          ticker,
+          row?.displayPrice ?? 'null',
+          row?.displayChangePct ?? row?.percentChangeToday ?? 'null',
+          row?.asOf || '',
+          row?.session || '',
+          row?.isStale === true ? 1 : 0,
+          row?.dollarVolumeDisplay || '—'
+        ].join('|');
+      })
+      .join('||');
+  }
+
+  function sectionStructureSignature(sections) {
+    return (Array.isArray(sections) ? sections : [])
+      .map((section) => `${section.key}:${section.tickers.join(',')}`)
+      .join('||');
   }
 
   function el(id) { return document.getElementById(id); }
@@ -278,19 +313,59 @@
   }
 
   async function loadWatchlists(selectId = '') {
+    clearTimeout(state.refreshTimer);
     const payload = await api('/api/watchlists');
     state.watchlists = Array.isArray(payload.watchlists) ? payload.watchlists : [];
     if (selectId) state.selectedId = selectId;
     if (!state.selectedId) state.selectedId = state.watchlists[0]?.id || '';
     if (!state.watchlists.some((w) => w.id === state.selectedId)) state.selectedId = state.watchlists[0]?.id || '';
     render();
-    if (state.selectedId) await loadMarketData(state.selectedId);
+    if (state.selectedId) await loadMarketData(state.selectedId, { reason: 'watchlist-load', forceRender: true });
+    scheduleWatchlistRefresh();
   }
 
-  async function loadMarketData(watchlistId) {
+  async function loadMarketData(watchlistId, { reason = 'manual', forceRender = false } = {}) {
+    const start = window.PerfDiagnostics?.mark('watchlist-marketdata-start');
     const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data`);
-    state.marketRows = Array.isArray(payload.rows) ? payload.rows : [];
-    renderTable();
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const nextSignature = buildMarketRowsSignature(rows);
+    const shouldSkip = !forceRender
+      && state.selectedId === watchlistId
+      && nextSignature
+      && nextSignature === state.marketRowsSignature;
+    state.marketRows = rows;
+    if (shouldSkip) {
+      debugPerf('watchlist-refresh-skipped', { reason, watchlistId, rowCount: rows.length });
+      return;
+    }
+    state.marketRowsSignature = nextSignature;
+    renderTable({ forceFullRender: forceRender, reason });
+    if (start) window.PerfDiagnostics?.measure('watchlist-marketdata-cycle', start);
+  }
+
+  function scheduleWatchlistRefresh() {
+    clearTimeout(state.refreshTimer);
+    if (!state.selectedId) return;
+    state.refreshTimer = window.setTimeout(() => {
+      refreshSelectedWatchlist('poll').catch((error) => {
+        debugPerf('watchlist-refresh-failed', { error: error?.message || error });
+      });
+    }, WATCHLIST_REFRESH_INTERVAL_MS);
+  }
+
+  async function refreshSelectedWatchlist(reason = 'manual') {
+    if (!state.selectedId || state.refreshInFlight) return;
+    if (document.visibilityState === 'hidden') {
+      scheduleWatchlistRefresh();
+      return;
+    }
+    state.refreshInFlight = true;
+    try {
+      await loadMarketData(state.selectedId, { reason, forceRender: false });
+    } finally {
+      state.refreshInFlight = false;
+      scheduleWatchlistRefresh();
+    }
   }
 
   function render() {
@@ -302,7 +377,15 @@
         const row = document.createElement('article');
         row.className = `social-list-row social-watchlist-tile ${watchlist.id === state.selectedId ? 'is-selected' : ''}`;
         row.innerHTML = `<div class="social-watchlist-tile-head"><strong>${watchlist.title || watchlist.name}</strong><span class="helper">${watchlist.sectionCount || 0} sections • ${watchlist.tickerCount || 0} tickers</span></div>`;
-        row.onclick = async () => { state.selectedId = watchlist.id; render(); await loadMarketData(watchlist.id); };
+        row.onclick = async () => {
+          if (state.selectedId === watchlist.id) return;
+          state.selectedId = watchlist.id;
+          state.marketRowsSignature = '';
+          state.sectionStructureSignature = '';
+          render();
+          await loadMarketData(watchlist.id, { reason: 'watchlist-select', forceRender: true });
+          scheduleWatchlistRefresh();
+        };
         sidebar.appendChild(row);
       });
     }
@@ -314,22 +397,37 @@
       : '';
   }
 
-  function renderTable() {
+  function renderTable({ forceFullRender = false, reason = 'render' } = {}) {
     const wrap = el('watchlist-table-wrap');
     const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     if (!wrap) return;
     if (!selected) {
+      state.sectionStructureSignature = '';
       wrap.innerHTML = '<div class="social-list-row">Select a watchlist.</div>';
       return;
     }
     const sections = buildDetailSections(selected);
     if (!sections.length) {
+      state.sectionStructureSignature = '';
       wrap.innerHTML = '<div class="social-list-row">No symbols in this watchlist.</div>';
       return;
     }
 
     const rowLookup = new Map((state.marketRows || []).map((row) => [normalizeTicker(row.ticker), row]));
     const accordionState = ensureAccordionState(selected.id, sections);
+    const structureSig = sectionStructureSignature(sections);
+    const canReuseStructure = !forceFullRender
+      && state.sectionStructureSignature === structureSig
+      && wrap.getAttribute('data-watchlist-id') === selected.id;
+
+    if (canReuseStructure) {
+      updateRenderedRows(wrap, sections, rowLookup);
+      debugPerf('watchlist-group-reused', { reason, groupCount: sections.length, rowCount: state.marketRows.length });
+      return;
+    }
+
+    wrap.setAttribute('data-watchlist-id', selected.id);
+    state.sectionStructureSignature = structureSig;
     wrap.innerHTML = `
       <div class="social-watchlist-groups-wrap">
         <div class="social-watchlist-groups-toolbar">
@@ -346,6 +444,7 @@
         </div>
       </div>
     `;
+    debugPerf('watchlist-full-render', { reason, groupCount: sections.length, rowCount: state.marketRows.length });
   }
 
   function buildDetailSections(selected) {
@@ -405,6 +504,25 @@
     `;
   }
 
+  function renderRowMarkup(row) {
+    const change = row.displayChangePct ?? row.percentChangeToday;
+    const changeClass = Number(change) > 0 ? 'is-pos' : (Number(change) < 0 ? 'is-neg' : '');
+    return `
+      <td>
+        <strong>${escapeHtml(row.ticker || '—')}</strong>
+        <span class="social-watchlist-session-badge ${sessionClass(row)}">${escapeHtml(sessionLabel(row))}</span>
+        ${row.isStale ? '<span class="social-watchlist-stale-indicator">Stale</span>' : ''}
+        ${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}
+        <div class="helper">${escapeHtml(fmtAsOf(row.asOf))}${row.isDelayed ? ' • Delayed' : ''}</div>
+      </td>
+      <td>${fmt(row.displayPrice, 'price')}</td>
+      <td>${Number.isFinite(Number(row.regularOpen ?? row.dayOpenPrice)) && Number(row.regularOpen ?? row.dayOpenPrice) > 0 ? fmt(row.regularOpen ?? row.dayOpenPrice, 'price') : '—'}</td>
+      <td class="${changeClass}">${fmt(change, 'pct')}</td>
+      <td>${fmt(row.adrPercent, 'pct')}</td>
+      <td>${escapeHtml(row.dollarVolumeDisplay || '—')}</td>
+    `;
+  }
+
   function renderSectionTable(section, rowLookup) {
     const rows = section.tickers.map((ticker) => rowLookup.get(ticker) || { ticker });
     rows.forEach((row) => {
@@ -429,25 +547,31 @@
           <thead><tr><th>Ticker</th><th>Display</th><th>Regular Open</th><th>% vs Prev Close</th><th>ADR%</th><th>$ Volume</th></tr></thead>
           <tbody>
             ${rows.map((row) => `
-              <tr>
-                <td>
-                  <strong>${escapeHtml(row.ticker || '—')}</strong>
-                  <span class="social-watchlist-session-badge ${sessionClass(row)}">${escapeHtml(sessionLabel(row))}</span>
-                  ${row.isStale ? '<span class="social-watchlist-stale-indicator">Stale</span>' : ''}
-                  ${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}
-                  <div class="helper">${escapeHtml(fmtAsOf(row.asOf))}${row.isDelayed ? ' • Delayed' : ''}</div>
-                </td>
-                <td>${fmt(row.displayPrice, 'price')}</td>
-                <td>${Number.isFinite(Number(row.regularOpen ?? row.dayOpenPrice)) && Number(row.regularOpen ?? row.dayOpenPrice) > 0 ? fmt(row.regularOpen ?? row.dayOpenPrice, 'price') : '—'}</td>
-                <td class="${Number(row.displayChangePct) > 0 ? 'is-pos' : (Number(row.displayChangePct) < 0 ? 'is-neg' : '')}">${fmt(row.displayChangePct ?? row.percentChangeToday, 'pct')}</td>
-                <td>${fmt(row.adrPercent, 'pct')}</td>
-                <td>${escapeHtml(row.dollarVolumeDisplay || '—')}</td>
+              <tr data-watchlist-ticker="${escapeHtml(normalizeTicker(row.ticker))}" data-row-sig="${escapeHtml(buildMarketRowsSignature([row]))}">
+                ${renderRowMarkup(row)}
               </tr>
             `).join('')}
           </tbody>
         </table>
       </div>
     `;
+  }
+
+  function updateRenderedRows(wrap, sections, rowLookup) {
+    sections.forEach((section) => {
+      section.tickers.forEach((ticker) => {
+        const normalizedTicker = normalizeTicker(ticker);
+        if (!normalizedTicker) return;
+        const row = rowLookup.get(normalizedTicker) || { ticker: normalizedTicker };
+        const nextSig = buildMarketRowsSignature([row]);
+        wrap.querySelectorAll(`tr[data-watchlist-ticker="${CSS.escape(normalizedTicker)}"]`).forEach((rowNode) => {
+          if (rowNode.getAttribute('data-row-sig') === nextSig) return;
+          rowNode.innerHTML = renderRowMarkup(row);
+          rowNode.setAttribute('data-row-sig', nextSig);
+          debugPerf('watchlist-row-updated', { ticker: normalizedTicker });
+        });
+      });
+    });
   }
 
   function openWatchlistModal(mode = 'create') {
@@ -574,6 +698,11 @@
         const chevron = card.querySelector('.social-watchlist-group-chevron');
         if (chevron) chevron.textContent = card.open ? '▾' : '▸';
       });
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        refreshSelectedWatchlist('visibility').catch(() => {});
+      }
     });
     await loadWatchlists();
     window.PerfDiagnostics?.mark('watchlists-first-meaningful-data');
