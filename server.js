@@ -14594,6 +14594,33 @@ function sanitizeWatchlistRow(db, watchlist, viewerUserId) {
   };
 }
 
+function sanitizeWatchlistSummaryRow(db, watchlist, viewerUserId) {
+  const structuredSections = normalizeWatchlistSections(watchlist.sections);
+  const tickerCount = structuredSections.reduce((sum, section) => sum + section.tickers.length, 0);
+  let canEdit = watchlist.owner_user_id === viewerUserId;
+  if (watchlist.scope === 'group' && watchlist.trading_group_id) {
+    const access = getTradeGroupIfAccessible(db, watchlist.trading_group_id, viewerUserId);
+    canEdit = !access.error && (access.isLeader || watchlist.can_members_edit === true);
+  }
+  return {
+    id: watchlist.id,
+    ownerUserId: watchlist.owner_user_id,
+    name: watchlist.name || watchlist.title || 'Watchlist',
+    title: watchlist.title || watchlist.name || 'Watchlist',
+    notes: String(watchlist.notes || ''),
+    scope: watchlist.scope === 'group' ? 'group' : 'personal',
+    tradingGroupId: watchlist.trading_group_id || null,
+    canMembersEdit: watchlist.can_members_edit === true,
+    createdAt: watchlist.created_at,
+    updatedAt: watchlist.updated_at,
+    orderIndex: Number.isFinite(Number(watchlist.order_index)) ? Number(watchlist.order_index) : 0,
+    tickerCount,
+    sectionCount: structuredSections.length,
+    isOwner: watchlist.owner_user_id === viewerUserId,
+    canEdit
+  };
+}
+
 function normalizeWatchlistSections(rawSections) {
   if (!Array.isArray(rawSections)) return [];
   return rawSections
@@ -14845,9 +14872,19 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   }
 }
 
-async function buildWatchlistMarketDataRows(db, watchlist) {
+async function buildWatchlistMarketDataRows(db, watchlist, options = {}) {
+  const requestedTickers = new Set(
+    (Array.isArray(options.tickers) ? options.tickers : [])
+      .map((ticker) => normalizeWatchlistTicker(ticker))
+      .filter(Boolean)
+  );
   const items = db.watchlistItems
     .filter((item) => item.watchlist_id === watchlist.id)
+    .filter((item) => {
+      if (!requestedTickers.size) return true;
+      const normalizedTicker = normalizeWatchlistTicker(item.canonical_ticker || item.ticker);
+      return requestedTickers.has(normalizedTicker);
+    })
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
   const metricsByTicker = new Map();
   const metricErrorsByTicker = new Map();
@@ -16790,6 +16827,8 @@ app.put('/api/group-chats/:groupId/roles/assignments', auth, (req, res) => {
 app.get('/api/watchlists', auth, (req, res) => {
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   req.perfDiag?.timeSync('social_tables_ensure', () => ensureSocialTables(db));
+  const viewMode = String(req.query?.view || '').trim().toLowerCase();
+  const isSummaryView = viewMode === 'summary';
   const memberGroupIds = new Set(
     db.tradeGroupMembers
       .filter((member) => member.user_id === req.username && member.status === 'active')
@@ -16801,10 +16840,28 @@ app.get('/api/watchlists', auth, (req, res) => {
       || ((item.scope !== 'group') && item.owner_user_id === req.username)
     ))
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0))
-    .map((item) => sanitizeWatchlistRow(db, item, req.username));
-  req.perfDiag?.setMeta({ resultCount: watchlists.length, cache: 'bypass' });
+    .map((item) => (isSummaryView
+      ? sanitizeWatchlistSummaryRow(db, item, req.username)
+      : sanitizeWatchlistRow(db, item, req.username)));
+  req.perfDiag?.setMeta({ resultCount: watchlists.length, cache: 'bypass', viewMode: isSummaryView ? 'summary' : 'full' });
   saveDB(db);
   res.json({ watchlists });
+});
+
+app.get('/api/watchlists/:watchlistId/detail', auth, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const access = getWatchlistAccess(db, req.params.watchlistId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const watchlist = access.watchlist;
+  const detail = sanitizeWatchlistRow(db, watchlist, req.username);
+  req.perfDiag?.setMeta({
+    watchlistId: watchlist.id,
+    sectionCount: detail.sectionCount || 0,
+    tickerCount: detail.tickerCount || 0
+  });
+  res.json({ watchlist: detail });
 });
 
 app.post('/api/watchlists', auth, (req, res) => {
@@ -16990,11 +17047,16 @@ app.get('/api/watchlists/:watchlistId/market-data', auth, asyncHandler(async (re
   if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const watchlist = access.watchlist;
-  const rows = await buildWatchlistMarketDataRows(db, watchlist);
+  const requestedTickers = String(req.query?.tickers || '')
+    .split(',')
+    .map((ticker) => normalizeWatchlistTicker(ticker))
+    .filter(Boolean);
+  const rows = await buildWatchlistMarketDataRows(db, watchlist, { tickers: requestedTickers });
   req.perfDiag?.setMeta({
     watchlistId: watchlist.id,
     rowCount: rows.length,
-    uniqueSymbolCount: new Set(rows.map((row) => normalizeWatchlistTicker(row.ticker))).size
+    uniqueSymbolCount: new Set(rows.map((row) => normalizeWatchlistTicker(row.ticker))).size,
+    requestedTickerCount: requestedTickers.length || null
   });
   res.json({ watchlistId: watchlist.id, lastUpdated: new Date().toISOString(), rows });
 }));

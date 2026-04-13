@@ -1976,7 +1976,7 @@
     state.watchlistError = '';
     render();
     try {
-      const data = await api('/api/watchlists');
+      const data = await api('/api/watchlists?view=summary');
       state.watchlists = Array.isArray(data.watchlists) ? data.watchlists : [];
       if (!state.selectedWatchlistId && state.watchlists[0]) state.selectedWatchlistId = state.watchlists[0].id;
       if (state.selectedWatchlistId) {
