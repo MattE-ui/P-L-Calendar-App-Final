@@ -1078,7 +1078,9 @@
     chatsLoading: false,
     watchlistsLoading: false,
     chatError: '',
-    watchlistError: ''
+    watchlistError: '',
+    chatsInitialized: false,
+    watchlistsInitialized: false
   };
   const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
   const SHARE_TOAST_TIMEOUT_MS = 2600;
@@ -1369,8 +1371,20 @@
       state.activeUtilitySidebarTab = tab;
       setUtilitySidebarOpen(true);
     }
-    if (state.activeUtilitySidebarTab === 'watchlist' && state.isUtilitySidebarOpen) {
-      loadWatchlists();
+    if (!state.isUtilitySidebarOpen) {
+      render();
+      return;
+    }
+    if (state.activeUtilitySidebarTab === 'watchlist') {
+      if (!state.watchlistsInitialized) {
+        state.watchlistsInitialized = true;
+        loadWatchlists();
+      }
+    } else if (state.activeUtilitySidebarTab === 'chat') {
+      if (!state.chatsInitialized) {
+        state.chatsInitialized = true;
+        loadChats();
+      }
     }
     render();
   }
@@ -2291,11 +2305,16 @@
     }
   };
 
-  loadChats();
   render();
+  window.setTimeout(() => {
+    if (state.chatsInitialized || document.hidden) return;
+    state.chatsInitialized = true;
+    loadChats({ skipRender: true }).finally(render);
+  }, 1200);
   const chatListRefreshChannel = window.AppRefreshCoordinator?.createChannel('utility-chat-list');
   const openChatRefreshChannel = window.AppRefreshCoordinator?.createChannel('utility-chat-open-group');
   window.setInterval(() => {
+    if (!state.chatsInitialized) return;
     if (chatListRefreshChannel) {
       chatListRefreshChannel.run(loadChats, { reason: 'chat-list-poll', minIntervalMs: 14000, allowWhenHidden: false }).catch(() => {});
       return;
@@ -2303,6 +2322,7 @@
     if (!document.hidden) loadChats();
   }, 15000);
   window.setInterval(() => {
+    if (!state.chatsInitialized) return;
     if (!state.activeChatGroupId || !state.isUtilitySidebarOpen || state.activeUtilitySidebarTab !== 'chat') return;
     if (openChatRefreshChannel) {
       openChatRefreshChannel.run(

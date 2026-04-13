@@ -15603,20 +15603,14 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
   const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const view = String(req.query?.view || '').toLowerCase() === 'summary' ? 'summary' : 'full';
+  const requestedFeedLimit = Number.parseInt(String(req.query?.feed_limit || ''), 10);
+  const defaultFeedLimit = view === 'summary' ? 8 : 50;
+  const maxFeedLimit = view === 'summary' ? 15 : 75;
+  const feedLimit = Number.isFinite(requestedFeedLimit)
+    ? Math.max(1, Math.min(maxFeedLimit, requestedFeedLimit))
+    : defaultFeedLimit;
   const leaderIdentity = socialIdentityForUser(db, access.group.leader_user_id);
-  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' }).map(member => sanitizeTradeGroupMemberRow(db, member));
-  const pendingInvites = db.tradeGroupInvites
-    .filter(invite => invite.group_id === access.group.id && invite.status === 'pending')
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .map(invite => ({
-      invite_id: invite.id,
-      ...sanitizeTradeGroupMemberRow(db, {
-        user_id: invite.invitee_user_id,
-        role: 'member',
-        status: invite.status,
-        joined_at: invite.created_at
-      })
-    }));
   const alerts = db.tradeGroupAlerts
     .filter(alert => alert.group_id === access.group.id)
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
@@ -15659,7 +15653,28 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
     }));
   const feed = [...alerts, ...announcements]
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, 50);
+    .slice(0, feedLimit);
+  if (view === 'summary') {
+    saveDB(db);
+    return res.json({
+      group: sanitizeTradeGroupForViewer(db, access.group, req.username),
+      feed,
+      feed_mode: 'summary'
+    });
+  }
+  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' }).map(member => sanitizeTradeGroupMemberRow(db, member));
+  const pendingInvites = db.tradeGroupInvites
+    .filter(invite => invite.group_id === access.group.id && invite.status === 'pending')
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .map(invite => ({
+      invite_id: invite.id,
+      ...sanitizeTradeGroupMemberRow(db, {
+        user_id: invite.invitee_user_id,
+        role: 'member',
+        status: invite.status,
+        joined_at: invite.created_at
+      })
+    }));
   const positions = buildGroupCurrentPositions(db, access.group);
   if (feed[0]) {
     console.info(`[TradeGroup][FrontendRefresh] group detail fetched user=${req.username} group=${access.group.id} topFeedId=${feed[0].id} topFeedType=${feed[0].type} topFeedCreatedAt=${feed[0].created_at || ''}`);
