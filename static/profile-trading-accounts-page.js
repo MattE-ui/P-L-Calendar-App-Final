@@ -5,6 +5,11 @@
     t212Accounts: [],
     tradingAccounts: [],
     ibkr: {},
+    riskSettings: {
+      useSelectedTradingAccountsForRisk: false,
+      selectedTradingAccountIdsForRisk: []
+    },
+    riskCapital: null,
     providerIntegrations: [],
     resolvedAccounts: [],
     modalMode: 'add',
@@ -576,6 +581,76 @@
     `;
   }
 
+  function maskIdentifier(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'ID unavailable';
+    if (raw.length <= 4) return `••${raw}`;
+    return `••••${raw.slice(-4)}`;
+  }
+
+  async function saveRiskSettings(patch = {}) {
+    const next = {
+      ...state.riskSettings,
+      ...patch
+    };
+    const payload = await api('/api/account/risk-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next)
+    });
+    state.riskSettings = payload?.riskSettings || state.riskSettings;
+    state.riskCapital = payload?.riskCapital || state.riskCapital;
+    renderRiskSelectionPanel();
+  }
+
+  function renderRiskSelectionPanel() {
+    const panel = document.getElementById('risk-account-selection-panel');
+    const list = document.getElementById('risk-account-selection-list');
+    const summary = document.getElementById('risk-account-selection-summary');
+    const toggle = document.getElementById('risk-account-selection-enabled');
+    if (!panel || !list || !summary || !toggle) return;
+    const riskCapital = state.riskCapital || {};
+    const eligible = Array.isArray(riskCapital.eligibleAccounts) ? riskCapital.eligibleAccounts : [];
+    const canShow = !!riskCapital.featureAvailable && eligible.length >= 2;
+    panel.classList.toggle('hidden', !canShow);
+    if (!canShow) return;
+    toggle.checked = !!state.riskSettings?.useSelectedTradingAccountsForRisk;
+    const selectedIds = new Set(Array.isArray(state.riskSettings?.selectedTradingAccountIdsForRisk)
+      ? state.riskSettings.selectedTradingAccountIdsForRisk
+      : []);
+    list.innerHTML = '';
+    eligible.forEach((account) => {
+      const row = document.createElement('label');
+      row.className = 'risk-account-selection-item';
+      const checked = selectedIds.has(account.id);
+      row.innerHTML = `
+        <div class="risk-account-selection-item__left">
+          <input type="checkbox" data-action="toggle-risk-account" data-account-id="${escapeHtml(account.id)}" ${checked ? 'checked' : ''} ${!toggle.checked ? 'disabled' : ''}>
+          <div class="risk-account-selection-item__meta">
+            <strong>${escapeHtml(account.label || 'Trading account')}</strong>
+            <small>${escapeHtml((account.provider || '').toUpperCase() || 'BROKER')} · ${escapeHtml(maskIdentifier(account.maskedIdentifier))}</small>
+          </div>
+        </div>
+        <strong>${formatMoney(account.usableValue)}</strong>
+      `;
+      list.appendChild(row);
+    });
+    const selectedCount = Array.isArray(riskCapital.selectedAccounts) ? riskCapital.selectedAccounts.length : 0;
+    const eligibleCount = eligible.length;
+    const selectedCapital = Number(riskCapital.selectedRiskCapital);
+    const totalCapital = Number(riskCapital.totalEligibleRiskCapital);
+    if (toggle.checked) {
+      summary.textContent = selectedCount === eligibleCount
+        ? `Risk calculations will use all linked eligible accounts (${formatMoney(selectedCapital)} across ${selectedCount} accounts).`
+        : `Risk calculations will use ${formatMoney(selectedCapital)} across ${selectedCount} selected accounts (out of ${eligibleCount}).`;
+    } else {
+      summary.textContent = `Risk calculations currently use your default portfolio capital path (${formatMoney(Number(riskCapital.riskCapitalBase))}).`;
+    }
+    if (!toggle.checked && Number.isFinite(totalCapital) && totalCapital > 0) {
+      summary.textContent += ` If enabled, linked-account risk capital available is ${formatMoney(totalCapital)}.`;
+    }
+  }
+
   function setActiveTab(tab) {
     state.activeTab = tab;
     document.querySelectorAll('.trading-page-tab').forEach((button) => {
@@ -589,16 +664,19 @@
   }
 
   async function refreshData() {
-    const [brokerPayload, ibkrPayload, tradingAccountsPayload] = await Promise.all([
+    const [brokerPayload, ibkrPayload, tradingAccountsPayload, riskSettingsPayload] = await Promise.all([
       api('/api/broker-accounts?provider=trading212').catch(() => ({ accounts: [] })),
       api('/api/integrations/ibkr').catch(() => ({})),
-      api('/api/account/trading-accounts').catch(() => ({ accounts: [] }))
+      api('/api/account/trading-accounts').catch(() => ({ accounts: [] })),
+      api('/api/account/risk-settings').catch(() => ({ riskSettings: {}, riskCapital: null }))
     ]);
     state.t212Accounts = Array.isArray(brokerPayload.accounts)
       ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
       : [];
     state.ibkr = ibkrPayload || {};
     state.tradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
+    state.riskSettings = riskSettingsPayload?.riskSettings || state.riskSettings;
+    state.riskCapital = riskSettingsPayload?.riskCapital || null;
 
     const staleFixed = await reconcileStaleLinkedState();
     const linkageFixed = await reconcileTrading212Linkage();
@@ -623,6 +701,7 @@
     renderTrading212Cards();
     renderIbkrCard();
     renderSyncPanel();
+    renderRiskSelectionPanel();
   }
 
   function openAccountModal(mode, accountId = '') {
@@ -820,6 +899,25 @@
   }
 
   async function handleAction(action, accountId) {
+    if (action === 'toggle-risk-selection-mode') {
+      const enabled = !!document.getElementById('risk-account-selection-enabled')?.checked;
+      await saveRiskSettings({ useSelectedTradingAccountsForRisk: enabled });
+      setText('risk-account-selection-status', 'Risk account selection updated.');
+      return;
+    }
+    if (action === 'toggle-risk-account') {
+      const selected = new Set(Array.isArray(state.riskSettings?.selectedTradingAccountIdsForRisk)
+        ? state.riskSettings.selectedTradingAccountIdsForRisk
+        : []);
+      if (selected.has(accountId)) selected.delete(accountId);
+      else selected.add(accountId);
+      await saveRiskSettings({
+        useSelectedTradingAccountsForRisk: true,
+        selectedTradingAccountIdsForRisk: Array.from(selected)
+      });
+      setText('risk-account-selection-status', 'Risk account list saved.');
+      return;
+    }
     if (action === 'open-add-account-modal') return openAddAccountModal();
     if (action === 'close-add-account-modal') return closeAddAccountModal();
     if (action === 'add-account-connect-broker') {
@@ -878,6 +976,15 @@
       await refreshData();
     } catch (error) {
       setText('trading-broker-action-status', error.message || 'Action failed.');
+    }
+  });
+
+  document.getElementById('risk-account-selection-enabled')?.addEventListener('change', async () => {
+    try {
+      await handleAction('toggle-risk-selection-mode', '');
+      await refreshData();
+    } catch (error) {
+      setText('risk-account-selection-status', error.message || 'Unable to update risk selection mode.');
     }
   });
 

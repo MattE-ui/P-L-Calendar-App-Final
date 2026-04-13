@@ -35,6 +35,20 @@
           <p class="helper">Manual, automated, and imported accounts in a single high-density view.</p>
         </div>
         <div id="trading-accounts-grid" class="trading-accounts-grid"></div>
+        <section id="risk-account-selection-panel" class="card profile-card risk-account-selection-panel hidden">
+          <div class="trading-section-head">
+            <h2>Risk capital account selection</h2>
+            <p class="helper">Choose which linked trading accounts are included in risk sizing workflows.</p>
+          </div>
+          <label class="risk-account-selection-toggle">
+            <input id="risk-account-selection-enabled" type="checkbox">
+            <span>Use selected linked trading accounts for risk calculations</span>
+          </label>
+          <div id="risk-account-selection-list" class="risk-account-selection-list"></div>
+          <p id="risk-account-selection-summary" class="helper"></p>
+          <p class="helper">This does not change your portfolio totals or account values. It only affects risk-based sizing.</p>
+          <p id="risk-account-selection-status" class="status-line" aria-live="polite"></p>
+        </section>
       </section>
 
       <section class="trading-tab-panel is-hidden" data-panel="integrations">
