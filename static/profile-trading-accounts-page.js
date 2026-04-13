@@ -53,7 +53,7 @@
         <div class="broker-provider-header__copy">
           <p class="broker-provider-header__eyebrow">Provider</p>
           <h3>Trading 212</h3>
-          <p class="helper">${count ? `${count} linked account${count === 1 ? '' : 's'} with independent sync and automation state.` : 'Link multiple Trading 212 accounts to manage sync and automation independently.'}</p>
+          <p class="helper">${count ? `${count} linked account${count === 1 ? '' : 's'} connected.` : 'Link multiple Trading 212 accounts.'}</p>
         </div>
         <button type="button" class="primary" data-action="add-t212">+ Add account</button>
       </div>
@@ -82,7 +82,7 @@
 
     state.t212Accounts.forEach((account) => {
       const connectionStatus = prettyStatus(account.connectionStatus, 'Disconnected');
-      const syncStatus = prettyStatus(account.syncStatus, 'Idle');
+      const dataStatus = prettyStatus(account.syncStatus, 'Idle');
       const card = document.createElement('article');
       card.className = `broker-card broker-card--premium ${statusClass(account.connectionStatus)}`;
       card.innerHTML = `
@@ -93,20 +93,19 @@
               <span class="broker-pill">Trading 212</span>
               <span class="broker-pill">${escapeHtml(account.accountType || 'Trading account')}</span>
               <span class="broker-pill ${statusClass(account.connectionStatus)}">${escapeHtml(connectionStatus)}</span>
-              <span class="broker-pill">${escapeHtml(syncStatus)}</span>
+              <span class="broker-pill">${escapeHtml(dataStatus)}</span>
             </div>
           </div>
         </header>
         <dl class="broker-meta-grid">
           <div><dt>Connection</dt><dd>${escapeHtml(connectionStatus)}</dd></div>
-          <div><dt>Sync status</dt><dd>${escapeHtml(syncStatus)}</dd></div>
-          <div><dt>Last sync</dt><dd>${formatWhen(account.lastSyncAt)}</dd></div>
-          <div><dt>Automation</dt><dd>${account.automationEnabled ? 'Enabled' : 'Disabled'}</dd></div>
+          <div><dt>Data status</dt><dd>${escapeHtml(dataStatus)}</dd></div>
+          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType || 'Trading account')}</dd></div>
+          <div><dt>Last update</dt><dd>${formatWhen(account.lastSyncAt)}</dd></div>
         </dl>
         <div class="broker-card__actions">
-          <button type="button" class="primary" data-action="sync-account" data-account-id="${account.brokerAccountId}">Sync now</button>
+          <button type="button" class="primary" data-action="sync-account" data-account-id="${account.brokerAccountId}">Refresh now</button>
           <button type="button" class="ghost" data-action="edit-account" data-account-id="${account.brokerAccountId}">Edit account</button>
-          <button type="button" class="ghost small" data-action="toggle-automation" data-account-id="${account.brokerAccountId}">${account.automationEnabled ? 'Pause automation' : 'Enable automation'}</button>
           <button type="button" class="danger" data-action="disconnect-account" data-account-id="${account.brokerAccountId}">Disconnect</button>
         </div>
       `;
@@ -142,12 +141,12 @@
       <div class="status-kv-group">
         <h3 class="status-kv-group__title">Trading 212</h3>
         <div class="status-kv-row"><span>Linked accounts</span><strong>${state.t212Accounts.length}</strong></div>
-        <div class="status-kv-row"><span>Latest sync</span><strong>${latestT212 ? new Date(latestT212).toLocaleString() : '—'}</strong></div>
+        <div class="status-kv-row"><span>Latest update</span><strong>${latestT212 ? new Date(latestT212).toLocaleString() : '—'}</strong></div>
       </div>
       <div class="status-kv-group">
         <h3 class="status-kv-group__title">IBKR</h3>
         <div class="status-kv-row"><span>Status</span><strong>${state.ibkr.enabled ? 'Connected' : 'Disconnected'}</strong></div>
-        <div class="status-kv-row"><span>Last sync</span><strong>${formatWhen(state.ibkr.lastSyncAt)}</strong></div>
+        <div class="status-kv-row"><span>Last update</span><strong>${formatWhen(state.ibkr.lastSyncAt)}</strong></div>
       </div>
     `;
   }
@@ -245,14 +244,6 @@
     if (action === 'disconnect-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
     if (action === 'edit-account') return openAccountModal('edit', accountId);
     if (action === 'close-account-modal') return closeAccountModal();
-    if (action === 'toggle-automation') {
-      const account = state.t212Accounts.find((row) => row.brokerAccountId === accountId);
-      return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ automationEnabled: !(account?.automationEnabled) })
-      });
-    }
     if (action === 'connect-ibkr') {
       return api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
     }
@@ -273,8 +264,7 @@
       await handleAction(action, accountId);
       await refreshData();
       if (action === 'disconnect-account') setText('trading-broker-action-status', 'Trading 212 account disconnected.');
-      if (action === 'sync-account') setText('trading-broker-action-status', 'Trading 212 account sync requested.');
-      if (action === 'toggle-automation') setText('trading-broker-action-status', 'Automation setting updated.');
+      if (action === 'sync-account') setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
     } catch (error) {
       setText('trading-broker-action-status', error.message || 'Action failed.');
     }

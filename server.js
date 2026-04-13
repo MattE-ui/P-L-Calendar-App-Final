@@ -5007,10 +5007,14 @@ function ensureTrading212Config(user) {
     delete cfg.lastNetDeposits;
     mutated = true;
   }
-  if (!Array.isArray(cfg.processedReferences)) {
-    cfg.processedReferences = [];
-    mutated = true;
-  }
+  // Legacy Trading 212 cashflow automation markers are intentionally removed.
+  // Historical cashflow rows are preserved as-is to avoid destructive migration.
+  ['processedReferences', 'lastTransactionAt', 'integrationEnabledAt'].forEach((legacyKey) => {
+    if (legacyKey in cfg) {
+      delete cfg[legacyKey];
+      mutated = true;
+    }
+  });
   if (!cfg.symbolOverrides || typeof cfg.symbolOverrides !== 'object' || Array.isArray(cfg.symbolOverrides)) {
     cfg.symbolOverrides = {};
     mutated = true;
@@ -5040,7 +5044,6 @@ function ensureTrading212Config(user) {
       connectionStatus: typeof account.connectionStatus === 'string' ? account.connectionStatus : (account.apiKey && account.apiSecret ? 'connected' : 'disconnected'),
       syncStatus: typeof account.syncStatus === 'string' ? account.syncStatus : 'idle',
       lastSyncAt: typeof account.lastSyncAt === 'string' ? account.lastSyncAt : null,
-      automationEnabled: typeof account.automationEnabled === 'boolean' ? account.automationEnabled : true,
       providerAccountType: typeof account.providerAccountType === 'string' ? account.providerAccountType : '',
       providerMetadata: account.providerMetadata && typeof account.providerMetadata === 'object' && !Array.isArray(account.providerMetadata)
         ? account.providerMetadata
@@ -5067,7 +5070,6 @@ function ensureTrading212Config(user) {
       connectionStatus: cfg.apiKey && cfg.apiSecret ? 'connected' : 'disconnected',
       syncStatus: 'idle',
       lastSyncAt: cfg.lastSyncAt || null,
-      automationEnabled: true,
       providerAccountType: '',
       providerMetadata: {},
       createdAt: new Date().toISOString(),
@@ -5141,7 +5143,6 @@ function toBrokerAccountSummary(username, provider, account, integrationCfg = {}
       lastFailureAt: syncState?.lastFailureAt || null,
       lastSuccessAt: syncState?.lastSuccessfulSyncAt || null
     },
-    automationEnabled: account?.automationEnabled !== false,
     active: account?.active !== false,
     createdAt: account?.createdAt || null,
     updatedAt: account?.updatedAt || null,
@@ -10486,10 +10487,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     ensureUserShape(user, username);
     const cfg = user.trading212;
     const requestedBrokerAccountId = typeof options?.brokerAccountId === 'string' ? options.brokerAccountId.trim() : '';
-    const forceSync = options?.force === true;
     const accounts = getTrading212Accounts(cfg).filter(account => (
-      (!requestedBrokerAccountId || account.id === requestedBrokerAccountId)
-      && (forceSync || account.automationEnabled !== false)
+      !requestedBrokerAccountId || account.id === requestedBrokerAccountId
     ));
     if (!cfg || !cfg.enabled || !accounts.length) return { skipped: true, reason: 'integration_disabled' };
     if (lane === 'leader_alert' && !userLeadsTradeGroups(db, username)) {
@@ -10796,124 +10795,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     const ym = dateKey.slice(0, 7);
     history[ym] ||= {};
     const existing = history[ym][dateKey] || {};
-    let cashIn = Number(existing.cashIn ?? 0);
-    let cashOut = Number(existing.cashOut ?? 0);
-    const combinedTransactions = fulfilled.flatMap(result => {
-      const snapshot = result.snapshot || {};
-      const inlineTransactions = Array.isArray(snapshot.raw?.transactions?.items)
-        ? snapshot.raw.transactions.items
-        : Array.isArray(snapshot.raw?.transactions?.records)
-          ? snapshot.raw.transactions.records
-          : Array.isArray(snapshot.raw?.transactions)
-            ? snapshot.raw.transactions
-            : null;
-      const effectiveTransactions = Array.isArray(snapshot.transactions)
-        ? snapshot.transactions
-        : Array.isArray(snapshot.transactionsRaw?.items)
-          ? snapshot.transactionsRaw.items
-          : Array.isArray(snapshot.transactionsRaw)
-            ? snapshot.transactionsRaw
-            : inlineTransactions;
-      if (!Array.isArray(effectiveTransactions)) return [];
-      return effectiveTransactions.map(tx => ({ tx, accountId: result.accountId }));
-    });
-    if (combinedTransactions.length) {
-      const enabledAtTs = cfg.integrationEnabledAt ? Date.parse(cfg.integrationEnabledAt) : null;
-      const lastTxAt = cfg.lastTransactionAt ? Date.parse(cfg.lastTransactionAt) : null;
-      const portfolioValue = fulfilled.reduce((sum, result) => {
-        const value = Number(result.snapshot?.portfolioValue);
-        return Number.isFinite(value) ? sum + value : sum;
-      }, 0);
-      const effectivePortfolioValue = Number.isFinite(portfolioValue) && portfolioValue > 0
-        ? portfolioValue
-        : (Number.isFinite(user.portfolio) ? Number(user.portfolio) : 0);
-      const minDeposit = Number.isFinite(effectivePortfolioValue) && effectivePortfolioValue > 0
-        ? effectivePortfolioValue * 0.00015
-        : 0;
-      const txs = combinedTransactions
-        .map(item => {
-          const ts = parseTransactionTimestamp(item.tx);
-          if (!Number.isFinite(ts)) return null;
-          const tx = item.tx || {};
-          const type = String(tx.type || tx.transactionType || tx.reason || '').toLowerCase();
-          const isDepositType = type.includes('deposit');
-          const isWithdrawalType = type.includes('withdraw');
-          if (!isDepositType && !isWithdrawalType) return null;
-          const amount = parseTradingNumber(
-            tx.amount?.value ??
-            tx.amount?.amount ??
-            tx.amount ??
-            tx.cash ??
-            tx.value ??
-            tx.money
-          );
-          if (!Number.isFinite(amount) || amount === 0) return null;
-          const txCurrency = tx.currency || tx.amount?.currency || tx.money?.currency || 'GBP';
-          const amountGBP = txCurrency && txCurrency !== 'GBP'
-            ? convertToGBP(Math.abs(amount), txCurrency, rates)
-            : Math.abs(amount);
-          if (!Number.isFinite(amountGBP) || amountGBP === 0) return null;
-          if (isDepositType && minDeposit > 0 && amountGBP < minDeposit) {
-            return null;
-          }
-          const date = dateKeyInTimezone(timezone, new Date(ts));
-          const reference = String(tx.reference || tx.id || tx.transactionId || '').trim();
-          const referenceKey = reference && item.accountId ? `${item.accountId}:${reference}` : reference;
-          return {
-            ...item,
-            tx,
-            ts,
-            date,
-            amountGBP,
-            isDepositType,
-            isWithdrawalType,
-            referenceKey
-          };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.ts - b.ts);
-      const todaysTotals = txs.reduce((totals, item) => {
-        if (item.date !== dateKey) return totals;
-        if (enabledAtTs && item.ts < enabledAtTs) return totals;
-        if (item.isDepositType) {
-          totals.cashIn += item.amountGBP;
-        } else if (item.isWithdrawalType) {
-          totals.cashOut += item.amountGBP;
-        }
-        return totals;
-      }, { cashIn: 0, cashOut: 0 });
-      cashIn = todaysTotals.cashIn;
-      cashOut = todaysTotals.cashOut;
-      let newest = lastTxAt;
-      for (const item of txs) {
-        if (lastTxAt && item.ts <= lastTxAt) continue;
-        if (enabledAtTs && item.ts < enabledAtTs) continue;
-        if (item.referenceKey && cfg.processedReferences.includes(item.referenceKey)) {
-          continue;
-        }
-        const monthKey = item.date.slice(0, 7);
-        history[monthKey] ||= {};
-        const entry = history[monthKey][item.date] || {};
-        const entryCashIn = Number(entry.cashIn ?? 0);
-        const entryCashOut = Number(entry.cashOut ?? 0);
-        if (item.isDepositType) {
-          entry.cashIn = entryCashIn + item.amountGBP;
-        } else if (item.isWithdrawalType) {
-          entry.cashOut = entryCashOut + item.amountGBP;
-        }
-        history[monthKey][item.date] = entry;
-        if (item.referenceKey) {
-          cfg.processedReferences.push(item.referenceKey);
-          if (cfg.processedReferences.length > 500) {
-            cfg.processedReferences = cfg.processedReferences.slice(-500);
-          }
-        }
-        if (!newest || item.ts > newest) newest = item.ts;
-      }
-      if (newest) {
-        cfg.lastTransactionAt = new Date(newest).toISOString();
-      }
-    }
+    const cashIn = Number(existing.cashIn ?? 0);
+    const cashOut = Number(existing.cashOut ?? 0);
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
@@ -11774,7 +11657,7 @@ app.get('/profile/investor-accounts', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-investor-accounts.html'));
 });
 app.get('/profile/automation', (req, res) => {
-  res.sendFile(path.join(__dirname, 'profile-automation.html'));
+  res.redirect('/profile/trading-accounts');
 });
 app.get('/profile/notifications', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-notifications.html'));
@@ -17641,7 +17524,6 @@ app.post('/api/broker-accounts', auth, asyncHandler(async (req, res) => {
     connectionStatus: 'connected',
     syncStatus: 'idle',
     lastSyncAt: null,
-    automationEnabled: true,
     providerAccountType: '',
     providerMetadata: {},
     createdAt: nowIso,
@@ -17669,12 +17551,10 @@ app.patch('/api/broker-accounts/:brokerAccountId', auth, (req, res) => {
   const accountLabel = req.body?.accountLabel;
   const apiKey = req.body?.apiKey;
   const apiSecret = req.body?.apiSecret;
-  const automationEnabled = req.body?.automationEnabled;
   const accountType = req.body?.accountType;
   if (typeof accountLabel === 'string') account.label = accountLabel.trim();
   if (typeof apiKey === 'string' && apiKey.trim()) account.encryptedApiKey = encryptBrokerCredential(apiKey);
   if (typeof apiSecret === 'string' && apiSecret.trim()) account.encryptedApiSecret = encryptBrokerCredential(apiSecret);
-  if (typeof automationEnabled === 'boolean') account.automationEnabled = automationEnabled;
   if (typeof accountType === 'string') account.providerAccountType = accountType.trim();
   account.connectionStatus = (decryptBrokerCredential(account.encryptedApiKey) && decryptBrokerCredential(account.encryptedApiSecret)) ? 'connected' : 'disconnected';
   account.updatedAt = new Date().toISOString();
@@ -17755,7 +17635,6 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
           connectionStatus: previous?.connectionStatus || 'disconnected',
           syncStatus: previous?.syncStatus || 'idle',
           lastSyncAt: previous?.lastSyncAt || null,
-          automationEnabled: typeof previous?.automationEnabled === 'boolean' ? previous.automationEnabled : true,
           providerAccountType: previous?.providerAccountType || '',
           providerMetadata: previous?.providerMetadata && typeof previous.providerMetadata === 'object' ? previous.providerMetadata : {},
           createdAt: previous?.createdAt || new Date().toISOString(),
@@ -17817,13 +17696,10 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
   }
   const savedAccounts = getTrading212Accounts(cfg);
   if (cfg.enabled && !savedAccounts.length) {
-    return res.status(400).json({ error: 'Provide your Trading 212 API key and secret to enable automation.' });
+    return res.status(400).json({ error: 'Provide your Trading 212 API key and secret to enable Trading 212.' });
   }
   if (cfg.enabled) {
     delete cfg.authoritativeSyncAt;
-    cfg.integrationEnabledAt = new Date().toISOString();
-    cfg.lastTransactionAt = null;
-    cfg.processedReferences = [];
   }
   if (cfg.enabled && cfg.lastNetDeposits === undefined) {
     cfg.lastNetDeposits = totals.total;
