@@ -1,5 +1,9 @@
 const state = {
   trades: [],
+  sortedTrades: [],
+  listSignature: '',
+  rowSignatures: new Map(),
+  rowCache: new Map(),
   filters: {
     from: '',
     to: '',
@@ -31,6 +35,74 @@ const state = {
     collapsedLimit: 4
   }
 };
+
+function buildTradeSignature(trade) {
+  return [
+    trade?.id || '',
+    trade?.openDate || '',
+    trade?.closeDate || '',
+    trade?.status || '',
+    trade?.displayTicker || trade?.displaySymbol || trade?.symbol || '',
+    trade?.brokerTicker || '',
+    trade?.mappingScope || '',
+    trade?.tradeType || '',
+    trade?.assetClass || '',
+    Number(trade?.guaranteedPnlGBP) || 0,
+    Number(trade?.realizedPnlGBP) || 0,
+    trade?.source || '',
+    trade?.strategyTag || '',
+    Array.isArray(trade?.setupTags) ? trade.setupTags.join('|') : '',
+    Array.isArray(trade?.emotionTags) ? trade.emotionTags.join('|') : ''
+  ].join('¦');
+}
+
+function buildTradeListSignature(trades = []) {
+  return trades.map(buildTradeSignature).join('||');
+}
+
+function sortTradesByOpenDate(trades = []) {
+  return [...trades].sort((a, b) => {
+    const aDate = Date.parse(a.openDate || '') || 0;
+    const bDate = Date.parse(b.openDate || '') || 0;
+    return bDate - aDate;
+  });
+}
+
+function setTrades(nextTrades = [], { source = 'api' } = {}) {
+  const normalized = Array.isArray(nextTrades) ? nextTrades : [];
+  const nextSignature = buildTradeListSignature(normalized);
+  if (nextSignature === state.listSignature) {
+    window.PerfDiagnostics?.log('trades-refresh-skipped', { source, reason: 'same-signature', count: normalized.length });
+    return false;
+  }
+  state.trades = normalized;
+  state.sortedTrades = sortTradesByOpenDate(normalized);
+  state.listSignature = nextSignature;
+  return true;
+}
+
+function upsertTradeInState(trade, { source = 'action' } = {}) {
+  if (!trade?.id) return false;
+  const list = [...state.trades];
+  const index = list.findIndex(item => item.id === trade.id);
+  if (index >= 0) list[index] = trade;
+  else list.push(trade);
+  const changed = setTrades(list, { source });
+  if (changed) {
+    window.PerfDiagnostics?.log('trades-action-patch-applied', { source, action: 'upsert', tradeId: trade.id });
+  }
+  return changed;
+}
+
+function removeTradeFromState(tradeId, { source = 'action' } = {}) {
+  if (!tradeId) return false;
+  const next = state.trades.filter(item => item.id !== tradeId);
+  const changed = setTrades(next, { source });
+  if (changed) {
+    window.PerfDiagnostics?.log('trades-action-patch-applied', { source, action: 'delete', tradeId });
+  }
+  return changed;
+}
 
 const currencySymbols = { GBP: '£', USD: '$', EUR: '€' };
 
@@ -399,9 +471,15 @@ function toggleOptionsFields() {
 async function loadTrades() {
   readFilters();
   const query = toQuery(state.filters);
+  const startedAt = window.PerfDiagnostics?.mark('trades-load-start');
   const res = await api(`/api/trades${query}`);
-  state.trades = Array.isArray(res.trades) ? res.trades : [];
-  renderTrades();
+  const changed = setTrades(Array.isArray(res.trades) ? res.trades : [], { source: 'api' });
+  if (changed) {
+    renderTrades();
+  } else {
+    window.PerfDiagnostics?.log('trades-list-reused', { count: state.trades.length });
+  }
+  if (startedAt) window.PerfDiagnostics?.measure('trades-load-end', startedAt, { changed, count: state.trades.length });
 }
 
 async function shareTradeToGroupChat(trade) {
@@ -422,20 +500,29 @@ function renderTrades() {
   const empty = document.querySelector('#trade-empty');
   const pill = document.querySelector('#trade-count-pill');
   if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!state.trades.length) {
+  const renderStart = window.PerfDiagnostics?.mark('trades-full-render');
+  if (!state.sortedTrades.length) {
+    tbody.innerHTML = '';
+    state.rowCache.clear();
+    state.rowSignatures.clear();
     if (empty) empty.classList.remove('is-hidden');
     if (pill) pill.textContent = '0 trades';
     return;
   }
   if (empty) empty.classList.add('is-hidden');
-  if (pill) pill.textContent = `${state.trades.length} trades`;
-  const sortedTrades = [...state.trades].sort((a, b) => {
-    const aDate = Date.parse(a.openDate || '') || 0;
-    const bDate = Date.parse(b.openDate || '') || 0;
-    return bDate - aDate;
-  });
-  sortedTrades.forEach(trade => {
+  if (pill) pill.textContent = `${state.sortedTrades.length} trades`;
+  const fragment = document.createDocumentFragment();
+  const nextCache = new Map();
+  const nextSignatures = new Map();
+  state.sortedTrades.forEach(trade => {
+    const signature = buildTradeSignature(trade);
+    const existingRow = state.rowCache.get(trade.id);
+    if (existingRow && state.rowSignatures.get(trade.id) === signature) {
+      fragment.appendChild(existingRow);
+      nextCache.set(trade.id, existingRow);
+      nextSignatures.set(trade.id, signature);
+      return;
+    }
     const tr = document.createElement('tr');
     const dateCell = document.createElement('td');
     dateCell.textContent = trade.openDate || '—';
@@ -516,7 +603,8 @@ function renderTrades() {
       }
       try {
         await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
-        await loadTrades();
+        removeTradeFromState(trade.id, { source: 'delete' });
+        renderTrades();
       } catch (e) {
         alert(e?.message || 'Unable to delete trade');
       }
@@ -539,8 +627,14 @@ function renderTrades() {
     actionsCell.appendChild(wrap);
     tr.appendChild(actionsCell);
 
-    tbody.appendChild(tr);
+    fragment.appendChild(tr);
+    nextCache.set(trade.id, tr);
+    nextSignatures.set(trade.id, signature);
   });
+  tbody.replaceChildren(fragment);
+  state.rowCache = nextCache;
+  state.rowSignatures = nextSignatures;
+  if (renderStart) window.PerfDiagnostics?.measure('trades-full-render:end', renderStart, { count: state.sortedTrades.length });
 }
 
 function populateForm(trade) {
@@ -733,23 +827,34 @@ async function saveTrade(event) {
       delete payload.displaySymbol;
     }
     if (state.editingId) {
-      await api(`/api/trades/${state.editingId}`, {
+      const result = await api(`/api/trades/${state.editingId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (result?.trade) {
+        upsertTradeInState(result.trade, { source: 'edit' });
+        renderTrades();
+      } else {
+        await loadTrades();
+      }
     } else {
-      await api('/api/trades', {
+      const result = await api('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (result?.trade) {
+        upsertTradeInState({ ...result.trade, openDate: result?.date || result.trade.openDate }, { source: 'create' });
+        renderTrades();
+      } else {
+        await loadTrades();
+      }
     }
     if (status) {
       status.textContent = 'Saved';
       status.classList.add('success');
     }
-    await loadTrades();
     resetForm();
     document.querySelector('#trade-form-modal')?.classList.add('hidden');
   } catch (e) {
@@ -767,12 +872,17 @@ async function closeTradePrompt(trade) {
   const payload = { id: trade.id, price: Number(price) };
   if (closeDate) payload.date = closeDate;
   try {
-    await api('/api/trades/close', {
+    const result = await api('/api/trades/close', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    await loadTrades();
+    if (result?.trade) {
+      upsertTradeInState(result.trade, { source: 'close' });
+      renderTrades();
+    } else {
+      await loadTrades();
+    }
   } catch (e) {
     alert(e?.message || 'Unable to close trade');
   }
