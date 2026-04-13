@@ -1,5 +1,15 @@
 (() => {
-  const state = { watchlists: [], selectedId: '', marketRows: [], editingId: '' };
+  const state = {
+    watchlists: [],
+    selectedId: '',
+    marketRows: [],
+    editingId: '',
+    builder: { ungrouped: [], groups: [] },
+    sortableInstances: []
+  };
+
+  const UNGROUPED_TITLE = 'Ungrouped';
+  const TICKER_PATTERN = /^[A-Z0-9._-]{1,15}$/;
 
   async function api(path, opts = {}) {
     const res = await fetch(path, { credentials: 'include', ...opts });
@@ -10,8 +20,10 @@
   }
 
   function el(id) { return document.getElementById(id); }
+
   function setFeedback(id, msg = '', type = 'muted') {
-    const node = el(id); if (!node) return;
+    const node = el(id);
+    if (!node) return;
     node.textContent = msg;
     node.classList.remove('is-error', 'is-success');
     if (type === 'error') node.classList.add('is-error');
@@ -26,24 +38,194 @@
     return String(n);
   }
 
-  function parseWatchlistPaste(rawText) {
-    const lines = String(rawText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    const title = lines[0] || '';
-    const sections = [];
-    lines.slice(1).forEach((line, index) => {
-      const sep = line.indexOf(':');
-      if (sep <= 0) return;
-      const sectionTitle = line.slice(0, sep).trim();
-      if (!sectionTitle) return;
-      const seen = new Set();
-      const tickers = line.slice(sep + 1).split(',').map((ticker) => ticker.trim().toUpperCase()).filter((ticker) => {
-        if (!ticker || seen.has(ticker)) return false;
-        seen.add(ticker);
-        return true;
+  function normalizeTicker(raw) {
+    return String(raw || '').trim().toUpperCase();
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function toBuilderModel(sections) {
+    const normalized = Array.isArray(sections) ? sections : [];
+    const seen = new Set();
+    const builder = { ungrouped: [], groups: [] };
+
+    normalized.forEach((section, index) => {
+      const name = String(section?.title || '').trim();
+      const tickers = Array.isArray(section?.tickers)
+        ? section.tickers.map(normalizeTicker).filter((ticker) => ticker && !seen.has(ticker) && seen.add(ticker))
+        : [];
+
+      if (!name || name.toLowerCase() === UNGROUPED_TITLE.toLowerCase()) {
+        builder.ungrouped.push(...tickers);
+        return;
+      }
+
+      builder.groups.push({
+        id: String(section?.id || `group-${index + 1}`),
+        name,
+        tickers
       });
-      sections.push({ id: `section-${index + 1}`, title: sectionTitle, tickers });
     });
-    return { title, sections };
+
+    return builder;
+  }
+
+  function toSectionsModel() {
+    syncBuilderFromDom();
+    const sections = [];
+    sections.push({ title: UNGROUPED_TITLE, tickers: [...state.builder.ungrouped] });
+    state.builder.groups.forEach((group) => {
+      sections.push({
+        id: group.id,
+        title: String(group.name || '').trim() || `Group ${group.id.slice(-4)}`,
+        tickers: [...group.tickers]
+      });
+    });
+    return sections;
+  }
+
+  function buildTickerPill(ticker, containerId, index) {
+    const safeTicker = escapeHtml(ticker);
+    return `
+      <div class="watchlist-builder-pill" data-ticker="${safeTicker}" tabindex="0" role="listitem" aria-label="Ticker ${safeTicker}">
+        <span>${safeTicker}</span>
+        <div class="watchlist-pill-actions">
+          <button type="button" class="watchlist-pill-btn" data-action="up" data-container-id="${containerId}" data-index="${index}" aria-label="Move ${safeTicker} up">↑</button>
+          <button type="button" class="watchlist-pill-btn" data-action="down" data-container-id="${containerId}" data-index="${index}" aria-label="Move ${safeTicker} down">↓</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderBuilder() {
+    const board = el('watchlist-builder-board');
+    if (!board) return;
+
+    destroySortables();
+
+    const groupsMarkup = state.builder.groups.map((group, groupIndex) => `
+      <section class="watchlist-dropzone-card" data-group-id="${group.id}">
+        <header class="watchlist-dropzone-head">
+          <input
+            type="text"
+            class="watchlist-group-name"
+            data-group-name="${group.id}"
+            value="${escapeHtml(group.name)}"
+            aria-label="Group name"
+            maxlength="80"
+          >
+          <button type="button" class="ghost watchlist-group-delete" data-delete-group="${group.id}">Delete</button>
+        </header>
+        <div class="watchlist-pill-zone" data-container="${group.id}" role="list" aria-label="${group.name || `Group ${groupIndex + 1}`} tickers">
+          ${group.tickers.map((ticker, index) => buildTickerPill(ticker, group.id, index)).join('')}
+        </div>
+      </section>
+    `).join('');
+
+    board.innerHTML = `
+      <section class="watchlist-dropzone-card watchlist-dropzone-card--ungrouped">
+        <header class="watchlist-dropzone-head">
+          <strong>${UNGROUPED_TITLE}</strong>
+          <span class="helper">Drop newly added tickers here</span>
+        </header>
+        <div class="watchlist-pill-zone" data-container="ungrouped" role="list" aria-label="Ungrouped tickers">
+          ${state.builder.ungrouped.map((ticker, index) => buildTickerPill(ticker, 'ungrouped', index)).join('')}
+        </div>
+      </section>
+      ${groupsMarkup || '<p class="helper">No groups yet. Add one when you are ready to organize.</p>'}
+    `;
+
+    attachSortables();
+  }
+
+  function attachSortables() {
+    if (!window.Sortable) return;
+    document.querySelectorAll('.watchlist-pill-zone').forEach((zone) => {
+      const sortable = new window.Sortable(zone, {
+        group: 'watchlist-tickers',
+        animation: 140,
+        easing: 'cubic-bezier(0.2, 0.6, 0.2, 1)',
+        ghostClass: 'watchlist-pill-ghost',
+        dragClass: 'watchlist-pill-drag',
+        onEnd: () => syncBuilderFromDom()
+      });
+      state.sortableInstances.push(sortable);
+    });
+  }
+
+  function destroySortables() {
+    state.sortableInstances.forEach((instance) => instance?.destroy?.());
+    state.sortableInstances = [];
+  }
+
+  function syncBuilderFromDom() {
+    const zones = document.querySelectorAll('.watchlist-pill-zone[data-container]');
+    const next = { ungrouped: [], groups: state.builder.groups.map((group) => ({ ...group, tickers: [] })) };
+    const groupById = new Map(next.groups.map((group) => [group.id, group]));
+
+    zones.forEach((zone) => {
+      const containerId = zone.getAttribute('data-container');
+      const tickers = [...zone.querySelectorAll('[data-ticker]')]
+        .map((node) => normalizeTicker(node.getAttribute('data-ticker')))
+        .filter(Boolean);
+      if (containerId === 'ungrouped') {
+        next.ungrouped = tickers;
+      } else if (groupById.has(containerId)) {
+        groupById.get(containerId).tickers = tickers;
+      }
+    });
+
+    state.builder = next;
+  }
+
+  function addTicker(raw) {
+    const ticker = normalizeTicker(raw);
+    if (!ticker) return;
+    if (!TICKER_PATTERN.test(ticker)) {
+      setFeedback('watchlist-modal-feedback', 'Use valid ticker characters only (A-Z, 0-9, ., _, -).', 'error');
+      return;
+    }
+    const allTickers = new Set([...state.builder.ungrouped, ...state.builder.groups.flatMap((group) => group.tickers)]);
+    if (allTickers.has(ticker)) {
+      setFeedback('watchlist-modal-feedback', `${ticker} is already in this watchlist.`, 'error');
+      return;
+    }
+    state.builder.ungrouped.push(ticker);
+    renderBuilder();
+    setFeedback('watchlist-modal-feedback', `Added ${ticker}.`, 'success');
+  }
+
+  function addGroup() {
+    const groupId = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    state.builder.groups.push({ id: groupId, name: `Group ${state.builder.groups.length + 1}`, tickers: [] });
+    renderBuilder();
+  }
+
+  function deleteGroup(groupId) {
+    const idx = state.builder.groups.findIndex((group) => group.id === groupId);
+    if (idx < 0) return;
+    const [removed] = state.builder.groups.splice(idx, 1);
+    state.builder.ungrouped.push(...(removed?.tickers || []));
+    renderBuilder();
+  }
+
+  function moveTickerWithin(containerId, index, direction) {
+    syncBuilderFromDom();
+    const list = containerId === 'ungrouped'
+      ? state.builder.ungrouped
+      : state.builder.groups.find((group) => group.id === containerId)?.tickers;
+    if (!Array.isArray(list)) return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= list.length) return;
+    [list[index], list[nextIndex]] = [list[nextIndex], list[index]];
+    renderBuilder();
   }
 
   async function loadWatchlists(selectId = '') {
@@ -67,15 +249,16 @@
     if (sidebar) {
       sidebar.innerHTML = '';
       if (!state.watchlists.length) sidebar.innerHTML = '<div class="social-list-row">No watchlists yet.</div>';
-      state.watchlists.forEach((w) => {
+      state.watchlists.forEach((watchlist) => {
         const row = document.createElement('article');
-        row.className = `social-list-row social-watchlist-tile ${w.id === state.selectedId ? 'is-selected' : ''}`;
-        row.innerHTML = `<div class="social-watchlist-tile-head"><strong>${w.title || w.name}</strong><span class="helper">${w.sectionCount || 0} sections • ${w.tickerCount || 0} tickers</span></div>`;
-        row.onclick = async () => { state.selectedId = w.id; render(); await loadMarketData(w.id); };
+        row.className = `social-list-row social-watchlist-tile ${watchlist.id === state.selectedId ? 'is-selected' : ''}`;
+        row.innerHTML = `<div class="social-watchlist-tile-head"><strong>${watchlist.title || watchlist.name}</strong><span class="helper">${watchlist.sectionCount || 0} sections • ${watchlist.tickerCount || 0} tickers</span></div>`;
+        row.onclick = async () => { state.selectedId = watchlist.id; render(); await loadMarketData(watchlist.id); };
         sidebar.appendChild(row);
       });
     }
-    const selected = state.watchlists.find((w) => w.id === state.selectedId);
+
+    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     el('watchlist-detail-title').textContent = selected ? (selected.title || selected.name) : 'Select a watchlist';
     el('watchlist-detail-meta').textContent = selected
       ? `${selected.sectionCount || 0} sections • ${selected.tickerCount || 0} tickers • Updated ${selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : 'Recently'}`
@@ -84,10 +267,17 @@
 
   function renderTable() {
     const wrap = el('watchlist-table-wrap');
-    const selected = state.watchlists.find((w) => w.id === state.selectedId);
+    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     if (!wrap) return;
-    if (!selected) { wrap.innerHTML = '<div class="social-list-row">Select a watchlist.</div>'; return; }
-    if (!state.marketRows.length) { wrap.innerHTML = '<div class="social-list-row">No symbols in this watchlist.</div>'; return; }
+    if (!selected) {
+      wrap.innerHTML = '<div class="social-list-row">Select a watchlist.</div>';
+      return;
+    }
+    if (!state.marketRows.length) {
+      wrap.innerHTML = '<div class="social-list-row">No symbols in this watchlist.</div>';
+      return;
+    }
+
     wrap.innerHTML = '<table class="social-watchlist-table"><thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead><tbody></tbody></table>';
     const body = wrap.querySelector('tbody');
     state.marketRows.forEach((row) => {
@@ -105,43 +295,33 @@
   function openWatchlistModal(mode = 'create') {
     const modal = el('watchlist-modal');
     if (!modal) return;
-    const selected = state.watchlists.find((w) => w.id === state.selectedId);
+    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     state.editingId = mode === 'edit' ? selected?.id || '' : '';
     el('watchlist-modal-title').textContent = mode === 'edit' ? 'Edit watchlist' : 'Create watchlist';
     el('watchlist-modal-name').value = mode === 'edit' ? (selected?.title || selected?.name || '') : '';
     el('watchlist-modal-notes').value = mode === 'edit' ? String(selected?.notes || '') : '';
-    el('watchlist-modal-sections').value = mode === 'edit' ? JSON.stringify(selected?.sections || [], null, 2) : '';
-    el('watchlist-modal-paste').value = '';
+    el('watchlist-modal-ticker-input').value = '';
+    state.builder = mode === 'edit' ? toBuilderModel(selected?.sections || []) : { ungrouped: [], groups: [] };
     setFeedback('watchlist-modal-feedback', '', 'muted');
+    renderBuilder();
     modal.showModal();
   }
 
   function closeWatchlistModal() {
+    destroySortables();
     el('watchlist-modal')?.close();
-  }
-
-  function onParsePaste() {
-    const parsed = parseWatchlistPaste(el('watchlist-modal-paste')?.value || '');
-    if (!parsed.title) return setFeedback('watchlist-modal-feedback', 'Paste content is empty.', 'error');
-    el('watchlist-modal-name').value = parsed.title;
-    el('watchlist-modal-sections').value = JSON.stringify(parsed.sections, null, 2);
-    setFeedback('watchlist-modal-feedback', `Parsed ${parsed.sections.length} sections.`, 'success');
   }
 
   async function onSaveModal() {
     const title = String(el('watchlist-modal-name')?.value || '').trim();
     if (!title) return setFeedback('watchlist-modal-feedback', 'Title is required.', 'error');
-    let sections = [];
-    try {
-      sections = JSON.parse(el('watchlist-modal-sections')?.value || '[]');
-    } catch (_error) {
-      return setFeedback('watchlist-modal-feedback', 'Sections JSON is invalid.', 'error');
-    }
+
     const payload = {
       title,
       notes: String(el('watchlist-modal-notes')?.value || '').trim(),
-      sections
+      sections: toSectionsModel()
     };
+
     if (state.editingId) {
       await api(`/api/watchlists/${encodeURIComponent(state.editingId)}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -159,20 +339,53 @@
   }
 
   async function onDelete() {
-    const selected = state.watchlists.find((w) => w.id === state.selectedId); if (!selected) return;
+    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+    if (!selected) return;
     await api(`/api/watchlists/${encodeURIComponent(selected.id)}`, { method: 'DELETE' });
     state.selectedId = '';
     await loadWatchlists();
     setFeedback('watchlist-page-feedback', 'Watchlist deleted.', 'success');
   }
 
+  function bindBuilderEvents() {
+    el('watchlist-modal-add-group')?.addEventListener('click', addGroup);
+    el('watchlist-modal-ticker-input')?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addTicker(event.currentTarget.value);
+      event.currentTarget.value = '';
+    });
+
+    el('watchlist-builder-board')?.addEventListener('click', (event) => {
+      const deleteBtn = event.target.closest('[data-delete-group]');
+      if (deleteBtn) {
+        deleteGroup(deleteBtn.getAttribute('data-delete-group'));
+        return;
+      }
+
+      const moveBtn = event.target.closest('[data-action][data-container-id][data-index]');
+      if (moveBtn) {
+        const direction = moveBtn.getAttribute('data-action') === 'up' ? -1 : 1;
+        moveTickerWithin(moveBtn.getAttribute('data-container-id'), Number(moveBtn.getAttribute('data-index')), direction);
+      }
+    });
+
+    el('watchlist-builder-board')?.addEventListener('input', (event) => {
+      const input = event.target.closest('[data-group-name]');
+      if (!input) return;
+      const group = state.builder.groups.find((item) => item.id === input.getAttribute('data-group-name'));
+      if (group) group.name = String(input.value || '').slice(0, 80);
+    });
+  }
+
   async function init() {
     el('watchlist-new-btn')?.addEventListener('click', () => openWatchlistModal('create'));
     el('watchlist-edit-btn')?.addEventListener('click', () => openWatchlistModal('edit'));
-    el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((e) => setFeedback('watchlist-page-feedback', e.message, 'error')));
+    el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((error) => setFeedback('watchlist-page-feedback', error.message, 'error')));
     el('watchlist-modal-close')?.addEventListener('click', closeWatchlistModal);
-    el('watchlist-modal-parse')?.addEventListener('click', onParsePaste);
-    el('watchlist-modal-save')?.addEventListener('click', () => onSaveModal().catch((e) => setFeedback('watchlist-modal-feedback', e.message, 'error')));
+    el('watchlist-modal-save')?.addEventListener('click', () => onSaveModal().catch((error) => setFeedback('watchlist-modal-feedback', error.message, 'error')));
+
+    bindBuilderEvents();
     await loadWatchlists();
   }
 

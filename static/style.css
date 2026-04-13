@@ -9427,6 +9427,23 @@ textarea {
 .watchlist-builder-modal { max-width: 760px; width: min(92vw, 760px); border: 1px solid rgba(255,255,255,0.2); border-radius: 14px; background: #06150f; color: #e3f1eb; }
 .watchlist-builder-modal .social-modal-card { display: grid; gap: 10px; }
 .watchlist-builder-modal input, .watchlist-builder-modal textarea { width: 100%; background: rgba(255,255,255,0.04); color: inherit; border: 1px solid rgba(255,255,255,0.16); border-radius: 8px; padding: 8px; }
+.watchlist-builder-shell { border: 1px solid rgba(68, 184, 126, 0.2); border-radius: 12px; background: rgba(7, 26, 19, 0.65); padding: 10px; display: grid; gap: 10px; }
+.watchlist-builder-shell__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.watchlist-builder-shell__header h4 { margin: 0; font-size: 13px; color: #cceadd; letter-spacing: 0.02em; }
+.watchlist-builder-board { display: grid; gap: 10px; max-height: 52vh; overflow: auto; padding-right: 4px; }
+.watchlist-dropzone-card { border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; background: rgba(9, 30, 22, 0.75); padding: 10px; display: grid; gap: 8px; }
+.watchlist-dropzone-card--ungrouped { border-color: rgba(68, 184, 126, 0.45); background: rgba(9, 39, 28, 0.7); }
+.watchlist-dropzone-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.watchlist-group-name { font-weight: 600; }
+.watchlist-group-delete { min-height: 28px; padding: 0 10px; font-size: 11px; }
+.watchlist-pill-zone { min-height: 42px; border: 1px dashed rgba(255,255,255,0.12); border-radius: 10px; padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
+.watchlist-builder-pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(68, 184, 126, 0.45); background: linear-gradient(180deg, rgba(20, 70, 50, 0.9), rgba(14, 52, 39, 0.92)); color: #dcf8e9; border-radius: 999px; padding: 4px 8px; font-size: 11px; letter-spacing: 0.03em; }
+.watchlist-builder-pill:focus-visible { outline: 2px solid rgba(88, 227, 160, 0.55); outline-offset: 2px; }
+.watchlist-pill-actions { display: inline-flex; gap: 3px; }
+.watchlist-pill-btn { border: 0; width: 18px; height: 18px; border-radius: 6px; background: rgba(0,0,0,0.2); color: #bde9d0; font-size: 10px; line-height: 1; padding: 0; cursor: pointer; }
+.watchlist-pill-btn:hover { background: rgba(88, 227, 160, 0.2); }
+.watchlist-pill-ghost { opacity: 0.45; }
+.watchlist-pill-drag { transform: rotate(2deg); box-shadow: 0 10px 24px rgba(0,0,0,0.35); }
 
 @media (max-width: 980px) {
   .watchlists-layout { grid-template-columns: 1fr; }

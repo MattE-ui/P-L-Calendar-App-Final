@@ -49,12 +49,19 @@
       </header>
       <label>Title<input id="watchlist-modal-name" type="text" maxlength="120" placeholder="Key Stocks to Watch Next Week"></label>
       <label>Notes<textarea id="watchlist-modal-notes" rows="3" maxlength="1200" placeholder="Optional research notes"></textarea></label>
-      <label>Paste parser mode<textarea id="watchlist-modal-paste" rows="7" placeholder="Title\nSection: TICK1, TICK2"></textarea></label>
-      <label>Sections JSON preview<textarea id="watchlist-modal-sections" rows="8" placeholder='[{"title":"Momentum","tickers":["NVDA","AMD"]}]'></textarea></label>
-      <p class="helper">Paste mode: first non-empty line = title, each next <code>Section: ticker, ticker</code> line becomes an ordered section.</p>
+      <section class="watchlist-builder-shell" aria-label="Watchlist builder">
+        <header class="watchlist-builder-shell__header">
+          <h4>Add tickers, then organize visually</h4>
+          <button type="button" id="watchlist-modal-add-group" class="ghost">Add Group</button>
+        </header>
+        <label>
+          Add ticker
+          <input id="watchlist-modal-ticker-input" type="text" placeholder="Type ticker and press Enter" autocomplete="off" spellcheck="false">
+        </label>
+        <div id="watchlist-builder-board" class="watchlist-builder-board"></div>
+      </section>
       <p id="watchlist-modal-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
       <footer class="social-row-actions">
-        <button type="button" id="watchlist-modal-parse" class="ghost">Parse Paste</button>
         <button type="button" id="watchlist-modal-save" class="primary">Save Watchlist</button>
       </footer>
     </form>
@@ -63,6 +70,7 @@
   <script src="/static/theme-utils.js"></script>
   <script src="/static/app-header.js"></script>
   <script src="/static/guest.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js" crossorigin="anonymous"></script>
   <script src="/static/watchlists.js"></script>
 </body>
 </html>
