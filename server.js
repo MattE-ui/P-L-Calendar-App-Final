@@ -13438,10 +13438,56 @@ function prepareUserPortfolioRouteState(req, user) {
   return { mutated, history, netDeposits, anchors };
 }
 
+function buildSharedBootstrapSummary(req, user, options = {}) {
+  const endpoint = options.endpoint || 'unknown';
+  const staleDisplayedValue = options.staleDisplayedValue;
+  const summaryUsername = options.username || req.username;
+  const refresh = prepareUserPortfolioRouteState(req, user);
+  let mutated = !!refresh.mutated;
+  const netDeposits = refresh.netDeposits || { baseline: 0, total: 0 };
+  const portfolioSnapshot = getCurrentPortfolioValue(user);
+
+  logPortfolioBootstrapDiagnostics(user, { endpoint, user: summaryUsername, staleDisplayedValue });
+  const clearedManualPortfolioBaseline = clearStaleManualPortfolioBaseline(user, { reason: endpoint });
+  if (clearedManualPortfolioBaseline) {
+    portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
+    mutated = true;
+  }
+
+  const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  const riskCapital = getRiskCapitalBase(user, {
+    user: summaryUsername,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+  const portfolioValue = Number.isFinite(portfolioSnapshot.value)
+    ? portfolioSnapshot.value
+    : (netDeposits.baseline || 0);
+
+  req.perfDiag?.setMeta({
+    accountCount: accountAggregation.accountCount,
+    requestScopedReuse: true
+  });
+
+  return {
+    mutated,
+    netDeposits,
+    portfolioSnapshot,
+    accountAggregation,
+    riskCapital,
+    portfolioValue
+  };
+}
+
 app.get('/api/portfolio', auth, async (req,res)=>{
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
-  let { mutated, netDeposits: totals } = prepareUserPortfolioRouteState(req, user);
+  const sharedSummary = buildSharedBootstrapSummary(req, user, {
+    endpoint: '/api/portfolio',
+    username: req.username,
+    staleDisplayedValue: req.query?.staleDisplayedValue
+  });
+  let { mutated } = sharedSummary;
+  const totals = sharedSummary.netDeposits;
   const includeActiveTrades = req.query?.includeActiveTrades !== '0';
   let trades = [];
   let liveOpenPnlGBP = 0;
@@ -13462,19 +13508,9 @@ app.get('/api/portfolio', auth, async (req,res)=>{
       activeTradesSkipped: true
     });
   }
-  const portfolioSnapshot = getCurrentPortfolioValue(user);
-  const staleDisplayedValue = req.query?.staleDisplayedValue;
-  logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/portfolio', user: req.username, staleDisplayedValue });
-  const clearedManualPortfolioBaseline = clearStaleManualPortfolioBaseline(user, { reason: '/api/portfolio' });
-  if (clearedManualPortfolioBaseline) {
-    portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
-  }
-  const accountAggregation = getTradingAccountAggregationSnapshot(user);
-  req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount, requestScopedReuse: true });
-  const riskCapital = getRiskCapitalBase(user, {
-    user: req.username,
-    logDiagnostics: process.env.NODE_ENV !== 'production'
-  });
+  const portfolioSnapshot = sharedSummary.portfolioSnapshot;
+  const accountAggregation = sharedSummary.accountAggregation;
+  const riskCapital = sharedSummary.riskCapital;
   const computedTotalFromAccounts = accountAggregation.portfolioValue;
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13490,7 +13526,6 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     portfolioSourceField: hasManualPortfolioBaseline ? 'manualPortfolioBaseline' : 'getCurrentPortfolioValue.value',
     sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
   });
-  if (clearedManualPortfolioBaseline) mutated = true;
   if (mutated) saveDB(db);
   console.info('[baseline][resolve][portfolio]', {
     user: req.username,
@@ -13650,23 +13685,18 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
       console.warn('[broker-sync] async profile-triggered refresh failed', error);
     });
   }
-  let { mutated, netDeposits } = prepareUserPortfolioRouteState(req, user);
-  const { baseline, total } = netDeposits;
-  const portfolioSnapshot = getCurrentPortfolioValue(user);
-  const staleDisplayedValue = req.query?.staleDisplayedValue;
-  logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/profile', user: req.username, staleDisplayedValue });
-  const clearedManualPortfolioBaseline = clearStaleManualPortfolioBaseline(user, { reason: '/api/profile' });
-  if (clearedManualPortfolioBaseline) {
-    portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
-    mutated = true;
-  }
-  if (mutated) saveDB(db);
-  const accountAggregation = getTradingAccountAggregationSnapshot(user);
-  req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount, cache: 'bypass', requestScopedReuse: true });
-  const riskCapital = getRiskCapitalBase(user, {
-    user: req.username,
-    logDiagnostics: process.env.NODE_ENV !== 'production'
+  const sharedSummary = buildSharedBootstrapSummary(req, user, {
+    endpoint: '/api/profile',
+    username: req.username,
+    staleDisplayedValue: req.query?.staleDisplayedValue
   });
+  let { mutated } = sharedSummary;
+  const { baseline, total } = sharedSummary.netDeposits;
+  const portfolioSnapshot = sharedSummary.portfolioSnapshot;
+  if (mutated) saveDB(db);
+  const accountAggregation = sharedSummary.accountAggregation;
+  req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount, cache: 'bypass', requestScopedReuse: true });
+  const riskCapital = sharedSummary.riskCapital;
   const { settings: riskSettings } = ensureRiskSettings(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13674,9 +13704,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     && manualPortfolioRaw !== undefined
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
-  const portfolioValue = Number.isFinite(portfolioSnapshot.value)
-    ? portfolioSnapshot.value
-    : (baseline || 0);
+  const portfolioValue = sharedSummary.portfolioValue;
   console.info('[trace][portfolio][endpoint-hit]', {
     endpoint: '/api/profile',
     user: req.username,
@@ -13767,6 +13795,53 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
       mode: 'none'
     }
   });
+}));
+
+app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const sharedSummary = buildSharedBootstrapSummary(req, user, {
+    endpoint: '/api/profile/bootstrap',
+    username: req.username,
+    staleDisplayedValue: req.query?.staleDisplayedValue
+  });
+  if (sharedSummary.mutated) saveDB(db);
+  const role = getUserRole(user, req.username);
+  const avatar = socialAvatarForUser(user);
+  const completion = buildProfileCompletionSummary(user, sharedSummary.portfolioValue, sharedSummary.netDeposits.total);
+  const payload = {
+    profileComplete: completion.profileCompletionPercent === 100,
+    portfolio: sharedSummary.portfolioValue,
+    portfolioValue: sharedSummary.portfolioValue,
+    portfolioSource: sharedSummary.portfolioSnapshot.source,
+    portfolioCurrency: sharedSummary.portfolioSnapshot.currency,
+    portfolioLastUpdatedAt: sharedSummary.portfolioSnapshot.lastUpdatedAt,
+    initialNetDeposits: sharedSummary.netDeposits.baseline,
+    netDepositsTotal: sharedSummary.netDeposits.total,
+    today: currentDateKey(),
+    username: user.username || req.username,
+    displayName: user.displayName || user.username || req.username,
+    nickname: user.nickname || user.displayName || user.username || req.username,
+    avatarUrl: avatar.avatar_url,
+    avatarInitials: avatar.avatar_initials,
+    isGuest: !!user.guest,
+    role,
+    isAdmin: role === 'admin' || role === 'owner',
+    isOwner: role === 'owner',
+    multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
+    investorAccountsEnabled: !!user.investorAccountsEnabled,
+    investorPortalAvailable: true,
+    riskCapitalBase: sharedSummary.riskCapital.riskCapitalBase
+  };
+  req.perfDiag?.setMeta({
+    accountCount: sharedSummary.accountAggregation.accountCount,
+    resultCount: 1,
+    requestScopedReuse: true,
+    payloadTrimmed: true,
+    payloadBytes: Buffer.byteLength(JSON.stringify(payload))
+  });
+  res.json(payload);
 }));
 
 app.get('/api/site-announcements/active', auth, (req, res) => {

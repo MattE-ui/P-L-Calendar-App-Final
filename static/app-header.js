@@ -146,9 +146,9 @@
   if (window.AppBootstrap?.getProfile) return;
 
   const PROFILE_CACHE_TTL_MS = 15000;
+  const PROFILE_SESSION_CACHE_KEY = 'appBootstrap:profileCache:v2';
   const profileState = {
-    value: null,
-    fetchedAt: 0,
+    recordsByUrl: new Map(),
     listeners: new Set(),
     inFlightByUrl: new Map()
   };
@@ -163,12 +163,47 @@
     });
   }
 
-  function isFreshProfile() {
-    return profileState.value && (Date.now() - profileState.fetchedAt) <= PROFILE_CACHE_TTL_MS;
+  function readSessionCache() {
+    try {
+      const raw = window.sessionStorage?.getItem(PROFILE_SESSION_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (_error) {
+      return null;
+    }
   }
 
-  function buildProfileUrl({ refreshIntegrations = false } = {}) {
-    return refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+  function writeSessionCache(url, value, fetchedAt) {
+    try {
+      const cache = readSessionCache() || {};
+      cache[url] = { value, fetchedAt };
+      window.sessionStorage?.setItem(PROFILE_SESSION_CACHE_KEY, JSON.stringify(cache));
+    } catch (_error) {
+      // noop
+    }
+  }
+
+  function getFreshRecord(url) {
+    const inMemory = profileState.recordsByUrl.get(url);
+    if (inMemory?.value && (Date.now() - inMemory.fetchedAt) <= PROFILE_CACHE_TTL_MS) {
+      return { ...inMemory, source: 'memory' };
+    }
+    const persisted = readSessionCache()?.[url];
+    if (persisted?.value && (Date.now() - Number(persisted.fetchedAt || 0)) <= PROFILE_CACHE_TTL_MS) {
+      const restored = { value: persisted.value, fetchedAt: Number(persisted.fetchedAt || Date.now()) };
+      profileState.recordsByUrl.set(url, restored);
+      return { ...restored, source: 'session' };
+    }
+    return null;
+  }
+
+  function buildProfileUrl({ refreshIntegrations = false, detail = 'shell' } = {}) {
+    if (detail === 'full') {
+      return refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+    }
+    return '/api/profile/bootstrap';
   }
 
   async function fetchProfile(url) {
@@ -183,12 +218,26 @@
   }
 
   async function getProfile(options = {}) {
-    const { forceRefresh = false, refreshIntegrations = false, consumer = 'unknown' } = options;
-    const url = buildProfileUrl({ refreshIntegrations });
+    const {
+      forceRefresh = false,
+      refreshIntegrations = false,
+      consumer = 'unknown',
+      detail = 'shell'
+    } = options;
+    const url = buildProfileUrl({ refreshIntegrations, detail });
 
-    if (!forceRefresh && !refreshIntegrations && isFreshProfile()) {
-      window.PerfDiagnostics?.log('bootstrap-profile-cache-hit', { consumer, url });
-      return profileState.value;
+    if (!forceRefresh && !refreshIntegrations) {
+      const fresh = getFreshRecord(url);
+      if (fresh?.value) {
+        window.PerfDiagnostics?.log('bootstrap-profile-cache-hit', {
+          consumer,
+          url,
+          cacheSource: fresh.source,
+          shellBootstrapUsed: detail !== 'full',
+          sharedSummaryReused: true
+        });
+        return fresh.value;
+      }
     }
 
     if (profileState.inFlightByUrl.has(url)) {
@@ -198,26 +247,43 @@
 
     const requestPromise = fetchProfile(url)
       .then((profile) => {
-        if (!refreshIntegrations) {
-          profileState.value = profile || null;
-          profileState.fetchedAt = Date.now();
-          notifyProfile(profileState.value);
+        const normalized = profile || null;
+        if (!refreshIntegrations && normalized) {
+          const fetchedAt = Date.now();
+          profileState.recordsByUrl.set(url, { value: normalized, fetchedAt });
+          writeSessionCache(url, normalized, fetchedAt);
+          notifyProfile(normalized);
         }
-        return profile;
+        window.PerfDiagnostics?.log('bootstrap-profile-response', {
+          consumer,
+          url,
+          shellBootstrapUsed: detail !== 'full',
+          profileDetailDeferred: detail !== 'full',
+          payloadTrimmed: detail !== 'full'
+        });
+        return normalized;
       })
       .finally(() => {
         profileState.inFlightByUrl.delete(url);
       });
 
     profileState.inFlightByUrl.set(url, requestPromise);
-    window.PerfDiagnostics?.log('bootstrap-profile-request', { consumer, url, forceRefresh: !!forceRefresh });
+    window.PerfDiagnostics?.log('bootstrap-profile-request', {
+      consumer,
+      url,
+      forceRefresh: !!forceRefresh,
+      shellBootstrapUsed: detail !== 'full'
+    });
     return requestPromise;
   }
 
   window.AppBootstrap = {
     ...(window.AppBootstrap || {}),
     getProfile,
-    peekProfile: () => profileState.value,
+    peekProfile: (options = {}) => {
+      const url = buildProfileUrl({ detail: options.detail === 'full' ? 'full' : 'shell' });
+      return profileState.recordsByUrl.get(url)?.value || null;
+    },
     subscribeProfile: (listener) => {
       if (typeof listener !== 'function') return () => {};
       profileState.listeners.add(listener);

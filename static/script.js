@@ -5552,11 +5552,18 @@ function bindControls() {
 }
 
 
-async function getBootstrapProfile({ refreshIntegrations = false, forceRefresh = false, consumer = 'dashboard' } = {}) {
+async function getBootstrapProfile({
+  refreshIntegrations = false,
+  forceRefresh = false,
+  consumer = 'dashboard',
+  detail = 'shell'
+} = {}) {
   if (window.AppBootstrap?.getProfile) {
-    return window.AppBootstrap.getProfile({ refreshIntegrations, forceRefresh, consumer });
+    return window.AppBootstrap.getProfile({ refreshIntegrations, forceRefresh, consumer, detail });
   }
-  const profileUrl = refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+  const profileUrl = detail === 'full'
+    ? (refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile')
+    : '/api/profile/bootstrap';
   return api(profileUrl);
 }
 
@@ -5576,7 +5583,7 @@ if (typeof module !== 'undefined') {
 
 async function loadProfile({ refreshIntegrations = false } = {}) {
   try {
-    const profile = await getBootstrapProfile({ refreshIntegrations, consumer: 'dashboard-load-profile' });
+    const profile = await getBootstrapProfile({ refreshIntegrations, consumer: 'dashboard-load-profile', detail: 'full' });
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
     const accounts = Array.isArray(profile?.tradingAccounts)
