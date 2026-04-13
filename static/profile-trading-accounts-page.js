@@ -93,13 +93,39 @@
     const localAccounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
     const integrationAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
     const merged = new Map();
+    const consumedIntegrationKeys = new Set();
+    const localAutomatedTrading212Count = localAccounts.filter((account) => account?.integrationProvider === 'trading212' && account?.integrationEnabled).length;
     const stats = {
       localCount: localAccounts.length,
       integrationCount: integrationAccounts.length,
       mergeMatches: 0,
       unmatchedLocal: 0,
-      unmatchedIntegration: 0
+      unmatchedIntegration: 0,
+      consumedIntegration: 0,
+      filteredFallbackShells: 0
     };
+    console.debug('[TradingAccounts][pipeline][trading212][local-raw]', localAccounts
+      .filter((account) => account?.integrationProvider === 'trading212' || normalizeLabel(account?.brokerDisplayLabel) === 'trading 212')
+      .map((account) => ({
+        id: account.id,
+        name: account.label || null,
+        broker: account.brokerDisplayLabel || null,
+        dataSourceType: normalizeDataSource(account),
+        providerAccountId: account.providerAccountId || null,
+        linkedBrokerAccountId: account.linkedBrokerAccountId || null,
+        connectionId: account.linkedBrokerAccountId || null,
+        portfolioValue: Number.isFinite(Number(account.currentValue)) ? Number(account.currentValue) : null
+      })));
+    console.debug('[TradingAccounts][pipeline][trading212][integration-raw]', integrationAccounts.map((account) => ({
+      id: account.brokerAccountId || null,
+      name: account.accountLabel || null,
+      broker: 'Trading 212',
+      dataSourceType: 'automated',
+      providerAccountId: account.providerAccountId || account.brokerAccountId || null,
+      linkedBrokerAccountId: account.linkedTradingAccountId || account.providerMetadata?.linkedTradingAccountId || null,
+      connectionId: account.brokerAccountId || null,
+      portfolioValue: normalizeIntegrationPortfolioValue(account, null)
+    })));
 
     localAccounts.forEach((local) => {
       const provider = local.integrationProvider === 'trading212' ? 'Trading 212' : local.integrationProvider === 'ibkr' ? 'IBKR' : (local.brokerDisplayLabel || 'Manual');
@@ -129,11 +155,14 @@
           canEdit: true,
           canSync: dataSource === 'automated',
           canDisconnect: dataSource === 'automated',
-          canImport: dataSource !== 'automated'
+          canImport: dataSource !== 'automated',
+          canDelete: dataSource !== 'automated'
         },
         localAccountId: local.id,
         brokerAccountId: local.linkedBrokerAccountId || null,
-        connectionStatus: null
+        connectionStatus: null,
+        linkedBrokerAccountId: local.linkedBrokerAccountId || null,
+        renderOrigin: 'local'
       });
     });
 
@@ -179,12 +208,15 @@
       const resolvedMatchKey = matchKey || (forceMatchKey && merged.has(forceMatchKey) ? forceMatchKey : null);
       if (resolvedMatchKey) {
         stats.mergeMatches += 1;
+        const consumedKey = integration.brokerAccountId || integration.providerAccountId;
+        if (consumedKey) consumedIntegrationKeys.add(consumedKey);
         const current = merged.get(resolvedMatchKey);
+        const hydratedValue = normalizeIntegrationPortfolioValue(integration, current.portfolioValue);
         merged.set(resolvedMatchKey, {
           ...current,
-          broker: 'Trading 212',
+          broker: current.broker || 'Trading 212',
           accountType: current.accountType || integration.accountType || 'Trading account',
-          portfolioValue: normalizeIntegrationPortfolioValue(integration, current.portfolioValue),
+          portfolioValue: hydratedValue,
           lastUpdated: integration.lastSyncAt || current.lastUpdated,
           dataSource: {
             type: 'automated',
@@ -197,10 +229,13 @@
             canEdit: true,
             canSync: true,
             canDisconnect: true,
-            canImport: false
+            canImport: false,
+            canDelete: false
           },
           brokerAccountId: integration.brokerAccountId || current.brokerAccountId,
-          providerConnectionStatus: integration.connectionStatus || null
+          providerConnectionStatus: integration.connectionStatus || null,
+          linkedBrokerAccountId: current.linkedBrokerAccountId || integration.linkedTradingAccountId || integration.providerMetadata?.linkedTradingAccountId || null,
+          renderOrigin: current.renderOrigin === 'local' ? 'merged' : current.renderOrigin
         });
         return;
       }
@@ -224,11 +259,14 @@
           canEdit: true,
           canSync: true,
           canDisconnect: true,
-          canImport: false
+          canImport: false,
+          canDelete: false
         },
         localAccountId: null,
         brokerAccountId: integration.brokerAccountId,
-        providerConnectionStatus: integration.connectionStatus || null
+        providerConnectionStatus: integration.connectionStatus || null,
+        linkedBrokerAccountId: integration.linkedTradingAccountId || integration.providerMetadata?.linkedTradingAccountId || null,
+        renderOrigin: 'fallback'
       });
       stats.unmatchedIntegration += 1;
     });
@@ -239,7 +277,33 @@
       }
     });
 
-    const resolved = Array.from(merged.values());
+    const canonicalPreFilter = Array.from(merged.values());
+    console.debug('[TradingAccounts][pipeline][trading212][canonical-pre-filter]', canonicalPreFilter
+      .filter((account) => account.dataSource?.provider === 'trading212' || normalizeLabel(account.broker) === 'trading 212')
+      .map((account) => ({
+        id: account.id,
+        name: account.name || null,
+        broker: account.broker || null,
+        dataSourceType: account.dataSource?.type || null,
+        providerAccountId: account.dataSource?.providerAccountId || null,
+        linkedBrokerAccountId: account.linkedBrokerAccountId || null,
+        connectionId: account.dataSource?.connectionId || null,
+        portfolioValue: Number.isFinite(Number(account.portfolioValue)) ? Number(account.portfolioValue) : null,
+        renderOrigin: account.renderOrigin || 'local'
+      })));
+    const resolved = canonicalPreFilter.filter((account) => {
+      if (account.renderOrigin !== 'fallback') return true;
+      if (account.dataSource?.provider !== 'trading212') return true;
+      const hasIndependentIdentity = Boolean(account.localAccountId || normalizeLabel(account.name) !== 'trading 212');
+      const hasMatchedAutomatedTrading212 = canonicalPreFilter.some((candidate) => candidate !== account
+        && candidate.dataSource?.provider === 'trading212'
+        && candidate.dataSource?.type === 'automated'
+        && candidate.localAccountId);
+      const shouldFilter = hasMatchedAutomatedTrading212 && !hasIndependentIdentity && localAutomatedTrading212Count > 0;
+      if (shouldFilter) stats.filteredFallbackShells += 1;
+      return !shouldFilter;
+    });
+    stats.consumedIntegration = consumedIntegrationKeys.size;
     console.debug('[TradingAccounts][resolve]', {
       localAccountCount: stats.localCount,
       integrationAccountCount: stats.integrationCount,
@@ -248,7 +312,9 @@
       mergeMatchesFound: stats.mergeMatches,
       forcedSingleMatchUsed: useForcedSingleMatch,
       unmatchedLocalRecords: stats.unmatchedLocal,
-      unmatchedIntegrationRecords: stats.unmatchedIntegration
+      unmatchedIntegrationRecords: stats.unmatchedIntegration,
+      consumedIntegrationRecords: stats.consumedIntegration,
+      filteredFallbackShellRecords: stats.filteredFallbackShells
     });
     resolved.forEach((account) => {
       const summary = {
@@ -258,9 +324,12 @@
         accountType: account.accountType || null,
         dataSourceType: account.dataSource?.type || null,
         providerAccountId: account.dataSource?.providerAccountId || null,
-        connectionId: account.dataSource?.connectionId || null
+        linkedBrokerAccountId: account.linkedBrokerAccountId || null,
+        connectionId: account.dataSource?.connectionId || null,
+        portfolioValue: Number.isFinite(Number(account.portfolioValue)) ? Number(account.portfolioValue) : null,
+        renderOrigin: account.renderOrigin || 'local'
       };
-      console.debug('[TradingAccounts][resolve][account]', summary);
+      console.debug('[TradingAccounts][resolve][account][diagnostic]', summary);
       if (!account.broker || !account.accountType) {
         console.warn('[TradingAccounts][resolve][missing-fields]', summary);
       }
@@ -432,6 +501,7 @@
           ${account.actions.canSync ? `<button type="button" class="primary" data-action="sync-unified-account" data-account-id="${escapeHtml(account.id)}">Sync</button>` : ''}
           ${account.actions.canImport ? `<button type="button" class="ghost" data-action="import-unified-account" data-account-id="${escapeHtml(account.id)}">Import</button>` : ''}
           ${account.actions.canDisconnect ? `<button type="button" class="danger" data-action="disconnect-unified-account" data-account-id="${escapeHtml(account.id)}">Disconnect</button>` : ''}
+          ${account.actions.canDelete ? `<button type="button" class="danger" data-action="delete-unified-account" data-account-id="${escapeHtml(account.id)}">Delete</button>` : ''}
         </div>
       `;
       root.appendChild(card);
@@ -707,6 +777,15 @@
     }
   }
 
+  async function deleteResolvedAccount(account) {
+    if (!account?.localAccountId) return;
+    const shouldDelete = window.confirm(`Delete "${account.name || 'this account'}"? This cannot be undone.`);
+    if (!shouldDelete) return;
+    const accounts = Array.isArray(state.tradingAccounts) ? [...state.tradingAccounts] : [];
+    const next = accounts.filter((item) => item.id !== account.localAccountId);
+    await persistTradingAccounts(next);
+  }
+
   async function handleUnifiedAction(action, accountId) {
     const account = state.resolvedAccounts.find((item) => item.id === accountId);
     if (!account) return;
@@ -730,6 +809,10 @@
     if (action === 'disconnect-unified-account') {
       await disconnectResolvedAccount(account);
       return setText('trading-broker-action-status', 'Account disconnected and reconciled.');
+    }
+    if (action === 'delete-unified-account') {
+      await deleteResolvedAccount(account);
+      return setText('trading-broker-action-status', 'Account deleted.');
     }
     if (action === 'import-unified-account') {
       window.location.href = '/trades.html';
@@ -773,7 +856,7 @@
       return api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
     }
     if (action === 'sync-ibkr') return api('/api/integrations/ibkr/sync', { method: 'POST' });
-    if (['manage-account', 'edit-unified-account', 'sync-unified-account', 'import-unified-account', 'disconnect-unified-account'].includes(action)) {
+    if (['manage-account', 'edit-unified-account', 'sync-unified-account', 'import-unified-account', 'disconnect-unified-account', 'delete-unified-account'].includes(action)) {
       return handleUnifiedAction(action, accountId);
     }
     return null;
