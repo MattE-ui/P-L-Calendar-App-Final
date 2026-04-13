@@ -5809,6 +5809,8 @@ function ensureUserShape(user, identifier) {
     user.ibkrSnapshots = [];
     mutated = true;
   }
+  const { mutated: riskSettingsMutated } = ensureRiskSettings(user);
+  if (riskSettingsMutated) mutated = true;
   return mutated;
 }
 
@@ -8656,10 +8658,125 @@ function isFreshTimestamp(value, windowMs) {
   return (Date.now() - ts) <= windowMs;
 }
 
-function getPortfolioGBPForRisk(user) {
+function ensureRiskSettings(user) {
+  if (!user || typeof user !== 'object') {
+    return { settings: { useSelectedTradingAccountsForRisk: false, selectedTradingAccountIdsForRisk: [] }, mutated: false };
+  }
+  let mutated = false;
+  if (!user.riskSettings || typeof user.riskSettings !== 'object') {
+    user.riskSettings = {};
+    mutated = true;
+  }
+  if (typeof user.riskSettings.useSelectedTradingAccountsForRisk !== 'boolean') {
+    user.riskSettings.useSelectedTradingAccountsForRisk = false;
+    mutated = true;
+  }
+  const selectedIds = Array.isArray(user.riskSettings.selectedTradingAccountIdsForRisk)
+    ? user.riskSettings.selectedTradingAccountIdsForRisk
+      .map(id => String(id || '').trim())
+      .filter(Boolean)
+    : [];
+  if (!Array.isArray(user.riskSettings.selectedTradingAccountIdsForRisk)
+    || selectedIds.length !== user.riskSettings.selectedTradingAccountIdsForRisk.length) {
+    user.riskSettings.selectedTradingAccountIdsForRisk = selectedIds;
+    mutated = true;
+  }
+  return {
+    settings: user.riskSettings,
+    mutated
+  };
+}
+
+function getEligibleRiskAccounts(user) {
+  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  return accounts
+    .filter((account) => {
+      const id = String(account?.id || '').trim();
+      const provider = String(account?.integrationProvider || '').trim().toLowerCase();
+      const enabled = account?.integrationEnabled !== false;
+      return Boolean(id && enabled && (provider === 'trading212' || provider === 'ibkr'));
+    })
+    .map((account) => {
+      const valueRaw = Number(account?.currentValue ?? account?.portfolioValue ?? account?.liveValue);
+      const usableValue = Number.isFinite(valueRaw) && valueRaw >= 0 ? valueRaw : null;
+      return {
+        id: String(account.id).trim(),
+        provider: String(account.integrationProvider || '').trim().toLowerCase() || 'unknown',
+        label: account.label || account.accountType || 'Trading account',
+        accountType: account.accountType || 'Trading account',
+        brokerDisplayLabel: account.brokerDisplayLabel || '',
+        maskedIdentifier: String(account.providerAccountId || account.linkedBrokerAccountId || '').trim(),
+        usableValue
+      };
+    })
+    .filter(account => Number.isFinite(account.usableValue));
+}
+
+function getRiskCapitalBase(user, options = {}) {
   const snapshot = getCurrentPortfolioValue(user);
-  const portfolioGBP = Number(snapshot?.value);
-  return Number.isFinite(portfolioGBP) && portfolioGBP >= 0 ? portfolioGBP : 0;
+  const defaultRiskCapital = Number(snapshot?.value);
+  const fallbackCapital = Number.isFinite(defaultRiskCapital) && defaultRiskCapital >= 0 ? defaultRiskCapital : 0;
+  const { settings } = ensureRiskSettings(user);
+  const eligibleAccounts = getEligibleRiskAccounts(user);
+  const totalEligibleRiskCapital = eligibleAccounts.reduce((sum, account) => sum + (Number(account.usableValue) || 0), 0);
+  const featureAvailable = !!user?.multiTradingAccountsEnabled && eligibleAccounts.length >= 2;
+  const selectedSet = new Set((settings?.selectedTradingAccountIdsForRisk || []).map(id => String(id || '').trim()).filter(Boolean));
+  const selectedAccounts = eligibleAccounts.filter(account => selectedSet.has(account.id));
+  const excludedAccounts = eligibleAccounts.filter(account => !selectedSet.has(account.id));
+  const selectedRiskCapital = selectedAccounts.reduce((sum, account) => sum + (Number(account.usableValue) || 0), 0);
+  let resolvedCapital = fallbackCapital;
+  let appliedSelection = false;
+  let fallbackReason = 'default_risk_capital_path';
+  if (featureAvailable && settings?.useSelectedTradingAccountsForRisk === true) {
+    if (selectedAccounts.length > 0) {
+      resolvedCapital = selectedRiskCapital;
+      appliedSelection = true;
+      fallbackReason = 'selection_applied';
+    } else {
+      fallbackReason = 'selection_empty_after_filter_fallback';
+    }
+  } else if (!featureAvailable) {
+    fallbackReason = 'feature_unavailable';
+  } else if (settings?.useSelectedTradingAccountsForRisk !== true) {
+    fallbackReason = 'selection_disabled';
+  }
+  const result = {
+    riskCapitalBase: resolvedCapital,
+    fallbackCapital,
+    featureAvailable,
+    eligibleAccounts,
+    selectedAccounts,
+    excludedAccounts,
+    totalEligibleRiskCapital,
+    selectedRiskCapital,
+    selectionMode: settings?.useSelectedTradingAccountsForRisk ? 'selected_accounts' : 'default_portfolio',
+    appliedSelection,
+    fallbackReason,
+    selectedAccountIds: selectedAccounts.map(account => account.id),
+    eligibleAccountIds: eligibleAccounts.map(account => account.id)
+  };
+  if (options.logDiagnostics) {
+    console.debug('[risk-capital][resolver]', {
+      user: options.user || user?.username || null,
+      featureAvailable: result.featureAvailable,
+      useSelectedTradingAccountsForRisk: !!settings?.useSelectedTradingAccountsForRisk,
+      eligibleAccountIds: result.eligibleAccountIds,
+      selectedAccountIds: (settings?.selectedTradingAccountIdsForRisk || []).map(id => String(id || '').trim()).filter(Boolean),
+      resolvedRiskCapitalBase: result.riskCapitalBase,
+      fallbackReason: result.fallbackReason
+    });
+  }
+  return result;
+}
+
+function getPortfolioGBPForRisk(user) {
+  const riskCapital = getRiskCapitalBase(user, {
+    user: user?.username || null,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+  return Number.isFinite(riskCapital.riskCapitalBase) && riskCapital.riskCapitalBase >= 0
+    ? riskCapital.riskCapitalBase
+    : 0;
 }
 
 function getTradingAccountAggregationSnapshot(user) {
@@ -12982,6 +13099,10 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
   }
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  const riskCapital = getRiskCapitalBase(user, {
+    user: req.username,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
   const computedTotalFromAccounts = accountAggregation.portfolioValue;
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13028,7 +13149,9 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     liveOpenPnl: liveOpenPnlGBP,
     openLossPotential: openLossPotentialGBP,
     activeTrades: trades.length,
-    isGuest: !!user.guest
+    isGuest: !!user.guest,
+    riskCapitalBase: riskCapital.riskCapitalBase,
+    riskCapital
   };
   console.info('[trace][portfolio][response-payload-verification]', {
     endpoint: '/api/portfolio',
@@ -13170,6 +13293,11 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   }
   if (mutated) saveDB(db);
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  const riskCapital = getRiskCapitalBase(user, {
+    user: req.username,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+  const { settings: riskSettings } = ensureRiskSettings(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
   const hasManualPortfolioBaseline = manualPortfolioRaw !== null
@@ -13233,6 +13361,12 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     isAdmin: role === 'admin' || role === 'owner',
     isOwner: role === 'owner',
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
+    riskSettings: {
+      useSelectedTradingAccountsForRisk: !!riskSettings.useSelectedTradingAccountsForRisk,
+      selectedTradingAccountIdsForRisk: riskSettings.selectedTradingAccountIdsForRisk || []
+    },
+    riskCapitalBase: riskCapital.riskCapitalBase,
+    riskCapital,
     tradingAccounts: (Array.isArray(user.tradingAccounts) ? user.tradingAccounts : []).map(account => ({
       id: account.id,
       label: account.label || '',
@@ -17514,6 +17648,76 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
     accounts: Array.isArray(user.tradingAccounts) ? user.tradingAccounts : []
+  });
+});
+
+app.get('/api/account/risk-settings', auth, (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  let mutated = ensureUserShape(user, req.username);
+  const { settings, mutated: riskMutated } = ensureRiskSettings(user);
+  if (riskMutated) mutated = true;
+  const riskCapital = getRiskCapitalBase(user, {
+    user: req.username,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+  if (riskCapital.featureAvailable && (!settings.selectedTradingAccountIdsForRisk || !settings.selectedTradingAccountIdsForRisk.length)) {
+    settings.selectedTradingAccountIdsForRisk = [...riskCapital.eligibleAccountIds];
+    mutated = true;
+  }
+  const validEligibleIds = new Set(riskCapital.eligibleAccountIds);
+  const sanitizedSelectedIds = (settings.selectedTradingAccountIdsForRisk || []).filter(id => validEligibleIds.has(id));
+  if (sanitizedSelectedIds.length !== (settings.selectedTradingAccountIdsForRisk || []).length) {
+    settings.selectedTradingAccountIdsForRisk = sanitizedSelectedIds;
+    mutated = true;
+  }
+  if (mutated) saveDB(db);
+  res.json({
+    riskSettings: {
+      useSelectedTradingAccountsForRisk: !!settings.useSelectedTradingAccountsForRisk,
+      selectedTradingAccountIdsForRisk: settings.selectedTradingAccountIdsForRisk || []
+    },
+    riskCapital
+  });
+});
+
+app.post('/api/account/risk-settings', auth, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  const { settings } = ensureRiskSettings(user);
+  if (typeof req.body?.useSelectedTradingAccountsForRisk === 'boolean') {
+    settings.useSelectedTradingAccountsForRisk = req.body.useSelectedTradingAccountsForRisk;
+  }
+  if (Array.isArray(req.body?.selectedTradingAccountIdsForRisk)) {
+    settings.selectedTradingAccountIdsForRisk = req.body.selectedTradingAccountIdsForRisk
+      .map(id => String(id || '').trim())
+      .filter(Boolean);
+  }
+  const riskCapital = getRiskCapitalBase(user, {
+    user: req.username,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+  if (riskCapital.featureAvailable && (!settings.selectedTradingAccountIdsForRisk || !settings.selectedTradingAccountIdsForRisk.length)) {
+    settings.selectedTradingAccountIdsForRisk = [...riskCapital.eligibleAccountIds];
+  }
+  const validEligibleIds = new Set(riskCapital.eligibleAccountIds);
+  settings.selectedTradingAccountIdsForRisk = (settings.selectedTradingAccountIdsForRisk || [])
+    .filter(id => validEligibleIds.has(id));
+  saveDB(db);
+  res.json({
+    ok: true,
+    riskSettings: {
+      useSelectedTradingAccountsForRisk: !!settings.useSelectedTradingAccountsForRisk,
+      selectedTradingAccountIdsForRisk: settings.selectedTradingAccountIdsForRisk || []
+    },
+    riskCapital: getRiskCapitalBase(user, {
+      user: req.username,
+      logDiagnostics: process.env.NODE_ENV !== 'production'
+    })
   });
 });
 

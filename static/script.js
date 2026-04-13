@@ -3,6 +3,8 @@ const state = {
   selected: new Date(),
   data: {},
   portfolioGBP: 0,
+  riskCapitalGBP: 0,
+  riskCapitalMeta: null,
   netDepositsBaselineGBP: 0,
   netDepositsTotalGBP: 0,
   firstEntryKey: null,
@@ -779,7 +781,7 @@ function formatShares(value) {
 }
 
 function getPortfolioInRiskCurrency() {
-  const portfolioGBP = getLatestPortfolioGBP();
+  const portfolioGBP = getLatestRiskCapitalGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
   return currencyAmount(portfolioGBP, riskCurrency);
 }
@@ -1498,6 +1500,12 @@ function getLatestPortfolioGBP() {
   return Number.isFinite(portfolioVal) && portfolioVal > 0 ? portfolioVal : 0;
 }
 
+function getLatestRiskCapitalGBP() {
+  const riskCapital = Number(state.riskCapitalGBP);
+  if (Number.isFinite(riskCapital) && riskCapital > 0) return riskCapital;
+  return getLatestPortfolioGBP();
+}
+
 function setRiskOutputs(values = null) {
   const riskAmountEl = $('#risk-amount-display');
   const positionEl = $('#risk-position-display');
@@ -1563,7 +1571,7 @@ function calculateRiskPosition(showErrors = false) {
     syncRiskLinkedInputs(state.riskInputSource || 'percent');
   }
   const riskPct = Number(state.riskPct ?? riskPctInput.value);
-  const portfolioGBP = getLatestPortfolioGBP();
+  const portfolioGBP = getLatestRiskCapitalGBP();
   const riskCurrency = state.riskCurrency || 'GBP';
   const direction = state.direction || 'long';
   const fees = 0;
@@ -1650,7 +1658,7 @@ function renderRiskCalculator() {
   const stopInput = $('#risk-stop-input');
   if (stopInput) stopInput.placeholder = symbol;
   const portfolioEl = $('#risk-portfolio-display');
-  if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestPortfolioGBP(), state.riskCurrency);
+  if (portfolioEl) portfolioEl.textContent = formatCurrency(getLatestRiskCapitalGBP(), state.riskCurrency);
   const pctInput = $('#risk-percent-input');
   const amountInput = $('#risk-amount-input');
   if (pctInput) {
@@ -4123,6 +4131,7 @@ async function loadData() {
     });
     const baselineVal = Number(res?.initialNetDeposits);
     const totalVal = Number(res?.netDepositsTotal);
+    const riskCapitalVal = Number(res?.riskCapitalBase);
     state.netDepositsBaselineGBP = Number.isFinite(baselineVal) ? baselineVal : 0;
     state.netDepositsTotalGBP = Number.isFinite(totalVal)
       ? totalVal
@@ -4150,6 +4159,10 @@ async function loadData() {
       valuePassedToSetter: chosenPortfolioValue
     });
     setPortfolioValue(chosenPortfolioValue, 'loadData:/api/portfolio');
+    state.riskCapitalGBP = Number.isFinite(riskCapitalVal) && riskCapitalVal >= 0
+      ? riskCapitalVal
+      : state.portfolioGBP;
+    state.riskCapitalMeta = res?.riskCapital || null;
     state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
@@ -4159,6 +4172,8 @@ async function loadData() {
   } catch (e) {
     console.error('Failed to load portfolio', e);
     assignPortfolioStateField('portfolioGBP', 0, 'loadData:/api/portfolio:catch');
+    state.riskCapitalGBP = 0;
+    state.riskCapitalMeta = null;
     assignPortfolioStateField('currentPortfolioValueGBP', 0, 'loadData:/api/portfolio:catch');
     state.netDepositsBaselineGBP = 0;
     state.netDepositsTotalGBP = 0;
@@ -5335,11 +5350,16 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
       : [];
     state.tradingAccounts = accounts;
     state.multiTradingAccountsEnabled = !!profile?.multiTradingAccountsEnabled;
+    if (Number.isFinite(Number(profile?.riskCapitalBase))) {
+      state.riskCapitalGBP = Number(profile.riskCapitalBase);
+    }
+    state.riskCapitalMeta = profile?.riskCapital || null;
   } catch (e) {
     state.isAdmin = false;
     state.profile = null;
     state.tradingAccounts = [];
     state.multiTradingAccountsEnabled = false;
+    state.riskCapitalMeta = null;
   }
 }
 
