@@ -198,7 +198,7 @@ window.handleGuestRequest = (path, opts = {}) => {
   if (path.startsWith('/api/profile')) {
     if (method === 'POST') {
       const payload = opts.body ? JSON.parse(opts.body) : {};
-      const portfolio = Number(payload.portfolio);
+      const portfolio = Number(payload.portfolioValue ?? payload.portfolio);
       const netDeposits = Number(payload.netDeposits);
       if (!Number.isFinite(portfolio) || portfolio < 0) {
         return { ok: false, error: 'Invalid portfolio value' };
@@ -232,7 +232,7 @@ window.handleGuestRequest = (path, opts = {}) => {
   if (path.startsWith('/api/portfolio')) {
     if (method === 'GET') return data.portfolio;
     const payload = opts.body ? JSON.parse(opts.body) : {};
-    data.portfolio.portfolio = Number(payload.portfolio) || data.portfolio.portfolio;
+    data.portfolio.portfolio = Number(payload.portfolioValue ?? payload.portfolio) || data.portfolio.portfolio;
     saveGuestData(data);
     return { ok: true, portfolio: data.portfolio.portfolio };
   }

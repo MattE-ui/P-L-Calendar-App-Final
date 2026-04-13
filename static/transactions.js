@@ -814,7 +814,7 @@ function sumNetDepositsAfter(dateMs) {
 async function loadHeroMetrics() {
   try {
     const res = await api('/api/portfolio');
-    const portfolio = Number(res?.portfolio);
+    const portfolio = Number(res?.portfolioValue ?? res?.portfolio);
     const netDeposits = Number(res?.netDepositsTotal);
     const portfolioValue = Number.isFinite(portfolio) ? portfolio : 0;
     const netDepositsValue = Number.isFinite(netDeposits) ? netDeposits : 0;
