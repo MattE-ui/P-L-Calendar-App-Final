@@ -56,14 +56,7 @@ const profileState = {
   currency: 'GBP',
   rates: { GBP: 1 },
   multiTradingAccountsEnabled: false,
-  tradingAccounts: [{
-    id: 'primary',
-    label: 'Primary account',
-    currentValue: 0,
-    currentNetDeposits: 0,
-    integrationProvider: null,
-    integrationEnabled: false
-  }],
+  tradingAccounts: [],
   investorAccountsEnabled: false,
   investorPortalAvailable: false
 };
@@ -321,7 +314,7 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
     }
     profileState.isGuest = !!data.isGuest;
     profileState.multiTradingAccountsEnabled = !!data.multiTradingAccountsEnabled;
-    profileState.tradingAccounts = Array.isArray(data.tradingAccounts) && data.tradingAccounts.length
+    profileState.tradingAccounts = Array.isArray(data.tradingAccounts)
       ? data.tradingAccounts.map(account => ({
         id: account.id,
         label: account.label || '',
@@ -330,7 +323,7 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
         integrationProvider: account.integrationProvider || null,
         integrationEnabled: !!account.integrationEnabled
       }))
-      : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
+      : [];
     profileState.investorPortalAvailable = !!data.investorPortalAvailable;
     await loadMasterSettings();
     const portfolioInput = document.getElementById('profile-portfolio');
@@ -974,9 +967,11 @@ function renderTradingAccounts() {
     toggle.disabled = profileState.isGuest;
   }
   if (!list) return;
-  const accounts = Array.isArray(profileState.tradingAccounts) && profileState.tradingAccounts.length
-    ? profileState.tradingAccounts
-    : [{ id: 'primary', label: 'Primary account' }];
+  const accounts = Array.isArray(profileState.tradingAccounts) ? profileState.tradingAccounts : [];
+  if (!accounts.length) {
+    list.innerHTML = '<p class="helper">No trading accounts yet. Add one to start tracking account-level balances.</p>';
+    return;
+  }
   list.innerHTML = '';
   accounts.forEach((account, index) => {
     const provider = account.integrationEnabled ? account.integrationProvider : null;
@@ -985,7 +980,7 @@ function renderTradingAccounts() {
     const row = document.createElement('div');
     row.className = 'profile-field';
     row.innerHTML = `
-      <label>${index === 0 ? 'Primary account label' : `Account ${index + 1} label`}</label>
+      <label>Account ${index + 1} label</label>
       <input type="text" data-account-id="${account.id}" data-account-field="label" value="${account.label || ''}" maxlength="40">
       <div class="profile-field two-col trading-account-metrics-row">
         <div class="trading-account-metric-field">
@@ -1086,7 +1081,7 @@ async function handleTradingAccountIntegrationToggle(accountId, provider) {
     profileState.tradingAccounts = Array.isArray(payload.accounts) && payload.accounts.length
       ? payload.accounts.map((item, index) => ({
         id: item.id,
-        label: item.label || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+        label: item.label || `Account ${index + 1}`,
         currentValue: Number(item.currentValue) || 0,
         currentNetDeposits: Number(item.currentNetDeposits) || 0,
         integrationProvider: item.integrationProvider || null,
@@ -1824,7 +1819,7 @@ async function saveProfile() {
   const accountPayload = multiEnabled
     ? profileState.tradingAccounts.map((account, index) => ({
       id: account.id,
-      label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      label: (account.label || '').trim() || `Account ${index + 1}`,
       currentValue: Number(account.currentValue) || 0,
       currentNetDeposits: Number(account.currentNetDeposits) || 0,
       integrationProvider: account.integrationProvider || null,
@@ -3259,7 +3254,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (error) error.textContent = '';
     const accounts = profileState.tradingAccounts.map((account, index) => ({
       id: account.id,
-      label: (account.label || '').trim() || (index === 0 ? 'Primary account' : `Account ${index + 1}`),
+      label: (account.label || '').trim() || `Account ${index + 1}`,
       currentValue: Number(account.currentValue) || 0,
       currentNetDeposits: Number(account.currentNetDeposits) || 0,
       integrationProvider: account.integrationProvider || null,
@@ -3284,7 +3279,7 @@ window.addEventListener('DOMContentLoaded', () => {
           integrationProvider: account.integrationProvider || null,
           integrationEnabled: !!account.integrationEnabled
         }))
-        : [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }];
+        : [];
       await loadProfile();
       if (status) {
         status.textContent = 'Trading accounts saved and combined totals updated.';
