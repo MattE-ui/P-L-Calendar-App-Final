@@ -481,6 +481,60 @@ test('active trades endpoint excludes fully closed manual trades using canonical
   assert.equal(data.trades.some(item => item.id === tradeId), false);
 });
 
+test('active trades endpoint de-duplicates duplicate trade identities after trim across refreshes', async () => {
+  const create = await authedFetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol: 'SNDK',
+      entry: 10,
+      stop: 9,
+      sizeUnits: 100,
+      date: '2026-03-01'
+    })
+  });
+  assert.equal(create.res.status, 200);
+  const tradeId = create.data.trade.id;
+
+  const trim = await authedFetch(`/api/trades/${tradeId}/trim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      units: 10,
+      price: 11,
+      date: '2026-03-02'
+    })
+  });
+  assert.equal(trim.res.status, 200);
+  assert.equal(trim.data.trade.sizeUnits, 90);
+
+  const db = loadDB();
+  const duplicate = {
+    ...trim.data.trade,
+    sizeUnits: 100,
+    openQuantity: 100,
+    totalEnteredQuantity: 100,
+    totalExitedQuantity: 0,
+    executions: [
+      { side: 'entry', quantity: 100, price: 10, date: '2026-03-01' }
+    ]
+  };
+  db.users[username].tradeJournal['2026-03-03'] = [duplicate];
+  saveDB(db);
+
+  const first = await authedFetch('/api/trades/active');
+  assert.equal(first.res.status, 200);
+  const firstMatches = first.data.trades.filter(item => item.id === tradeId);
+  assert.equal(firstMatches.length, 1);
+  assert.equal(firstMatches[0].openQuantity, 90);
+
+  const second = await authedFetch('/api/trades/active');
+  assert.equal(second.res.status, 200);
+  const secondMatches = second.data.trades.filter(item => item.id === tradeId);
+  assert.equal(secondMatches.length, 1);
+  assert.equal(secondMatches[0].openQuantity, 90);
+});
+
 test('persists and lists fully closed execution-leg trades', async () => {
   const create = await authedFetch('/api/trades', {
     method: 'POST',
