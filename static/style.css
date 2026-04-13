@@ -9422,6 +9422,19 @@ textarea {
 .social-watchlist-table tbody tr:last-child td { border-bottom: 0; }
 .social-watchlist-table .is-pos { color: #4dd48a; }
 .social-watchlist-table .is-neg { color: #ff6e6e; }
+.social-watchlist-groups-wrap { display: grid; gap: 8px; padding: 8px; background: rgba(4, 18, 13, 0.5); }
+.social-watchlist-groups-toolbar { display: flex; justify-content: flex-end; gap: 6px; }
+.social-watchlist-groups-btn { min-height: 24px; font-size: 11px; padding: 0 8px; }
+.social-watchlist-groups-list { display: grid; gap: 8px; }
+.social-watchlist-group-card { border: 1px solid rgba(101, 186, 146, 0.22); border-radius: 10px; background: linear-gradient(180deg, rgba(8, 30, 23, 0.86), rgba(7, 24, 18, 0.86)); overflow: hidden; }
+.social-watchlist-group-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; padding: 8px 10px; }
+.social-watchlist-group-summary::-webkit-details-marker { display: none; }
+.social-watchlist-group-heading { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.social-watchlist-group-chevron { font-size: 11px; color: #95d9b8; width: 10px; text-align: center; }
+.social-watchlist-group-name { font-size: 12px; font-weight: 600; color: #d4f4e6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.social-watchlist-group-count { font-size: 11px; color: #9fcdb7; background: rgba(74, 166, 124, 0.14); border: 1px solid rgba(74, 166, 124, 0.35); border-radius: 999px; padding: 2px 7px; }
+.social-watchlist-group-body { padding: 0 8px 8px; }
+.social-watchlist-table-wrap--group { border-color: rgba(255,255,255,0.08); background: rgba(5, 17, 13, 0.72); border-radius: 8px; }
 .social-watchlist-tile { cursor: pointer; }
 .social-watchlist-tile-head { display: flex; flex-direction: column; gap: 4px; }
 .watchlist-builder-modal { max-width: 760px; width: min(92vw, 760px); border: 1px solid rgba(255,255,255,0.2); border-radius: 14px; background: #06150f; color: #e3f1eb; }
