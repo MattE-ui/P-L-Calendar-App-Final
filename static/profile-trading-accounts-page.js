@@ -68,6 +68,27 @@
     return `fallback:${normalizeLabel(broker)}|${normalizeLabel(accountName)}|${normalizeLabel(accountType || 'trading account')}`;
   }
 
+  function strictIntegrationMatchKey(local, integration) {
+    const localProviderId = String(local?.providerAccountId || '').trim();
+    const localLinkedId = String(local?.linkedBrokerAccountId || '').trim();
+    const integrationProviderId = String(integration?.providerAccountId || integration?.brokerAccountId || '').trim();
+    const integrationLinkedId = String(integration?.linkedTradingAccountId || integration?.providerMetadata?.linkedTradingAccountId || '').trim();
+    if (localProviderId && integrationProviderId && localProviderId === integrationProviderId) return 'providerAccountId';
+    if (localLinkedId && integration?.brokerAccountId && localLinkedId === integration.brokerAccountId) return 'connectionId';
+    if (integrationLinkedId && local?.id && integrationLinkedId === local.id) return 'linkedTradingAccountId';
+    return '';
+  }
+
+  function normalizeIntegrationPortfolioValue(integration, fallbackValue = null) {
+    const integrationValue = Number(
+      integration?.portfolioValue
+      ?? integration?.currentValue
+      ?? integration?.lastPortfolioValue
+    );
+    if (Number.isFinite(integrationValue)) return integrationValue;
+    return Number.isFinite(Number(fallbackValue)) ? Number(fallbackValue) : null;
+  }
+
   function resolveAccountsForView() {
     const localAccounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
     const integrationAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
@@ -116,6 +137,10 @@
       });
     });
 
+    const trading212LocalAccounts = localAccounts.filter((account) => account?.integrationProvider === 'trading212' && account?.integrationEnabled);
+    const useForcedSingleMatch = trading212LocalAccounts.length === 1 && integrationAccounts.length === 1
+      && !strictIntegrationMatchKey(trading212LocalAccounts[0], integrationAccounts[0]);
+
     integrationAccounts.forEach((integration) => {
       const keyCandidates = [
         accountIdentityKey({
@@ -142,14 +167,24 @@
       ];
 
       const matchKey = keyCandidates.find((candidate) => merged.has(candidate));
-      if (matchKey) {
+      const forceMatchKey = useForcedSingleMatch
+        ? accountIdentityKey({
+          providerAccountId: trading212LocalAccounts[0].providerAccountId || trading212LocalAccounts[0].linkedBrokerAccountId,
+          linkedLocalAccountId: trading212LocalAccounts[0].id,
+          broker: 'Trading 212',
+          accountName: trading212LocalAccounts[0].label,
+          accountType: trading212LocalAccounts[0].accountType || 'Trading account'
+        })
+        : null;
+      const resolvedMatchKey = matchKey || (forceMatchKey && merged.has(forceMatchKey) ? forceMatchKey : null);
+      if (resolvedMatchKey) {
         stats.mergeMatches += 1;
-        const current = merged.get(matchKey);
-        merged.set(matchKey, {
+        const current = merged.get(resolvedMatchKey);
+        merged.set(resolvedMatchKey, {
           ...current,
           broker: 'Trading 212',
           accountType: current.accountType || integration.accountType || 'Trading account',
-          portfolioValue: current.portfolioValue,
+          portfolioValue: normalizeIntegrationPortfolioValue(integration, current.portfolioValue),
           lastUpdated: integration.lastSyncAt || current.lastUpdated,
           dataSource: {
             type: 'automated',
@@ -208,8 +243,10 @@
     console.debug('[TradingAccounts][resolve]', {
       localAccountCount: stats.localCount,
       integrationAccountCount: stats.integrationCount,
+      trading212LocalCount: trading212LocalAccounts.length,
       resolvedAccountCount: resolved.length,
       mergeMatchesFound: stats.mergeMatches,
+      forcedSingleMatchUsed: useForcedSingleMatch,
       unmatchedLocalRecords: stats.unmatchedLocal,
       unmatchedIntegrationRecords: stats.unmatchedIntegration
     });
@@ -299,6 +336,65 @@
     });
     if (!changed) return false;
     console.debug('[TradingAccounts][reconcile] removing stale linked-provider state from local records');
+    await persistTradingAccounts(repaired);
+    return true;
+  }
+
+  async function reconcileTrading212Linkage() {
+    const localAccounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
+    const integrationAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
+    const trading212LocalAccounts = localAccounts.filter((account) => account?.integrationProvider === 'trading212' && account?.integrationEnabled);
+    const strictMatches = trading212LocalAccounts.filter((local) => integrationAccounts.some((integration) => strictIntegrationMatchKey(local, integration)));
+    const shouldForceSingleMatch = strictMatches.length === 0 && trading212LocalAccounts.length === 1 && integrationAccounts.length === 1;
+    const fallbackDuplicates = localAccounts.filter((account) => {
+      if (!(account?.integrationProvider === 'trading212' && account?.integrationEnabled)) return false;
+      if (normalizeLabel(account?.label) !== 'trading 212') return false;
+      if (String(account?.linkedBrokerAccountId || '').trim()) return false;
+      if (String(account?.providerAccountId || '').trim()) return false;
+      return localAccounts.some((other) => other?.id !== account?.id && other?.integrationProvider === 'trading212' && other?.integrationEnabled);
+    });
+    const shouldRemoveFallback = fallbackDuplicates.length > 0;
+
+    if (!shouldForceSingleMatch && !shouldRemoveFallback) return false;
+
+    const onlyIntegration = integrationAccounts[0];
+    let changed = false;
+    let repaired = [...localAccounts];
+
+    if (shouldForceSingleMatch) {
+      repaired = repaired.map((account) => {
+        if (account.id !== trading212LocalAccounts[0].id) return account;
+        const nextLinkedId = onlyIntegration?.brokerAccountId || account.linkedBrokerAccountId || '';
+        const nextProviderId = onlyIntegration?.providerAccountId || onlyIntegration?.brokerAccountId || account.providerAccountId || '';
+        const next = {
+          ...account,
+          integrationProvider: 'trading212',
+          integrationEnabled: true,
+          linkedBrokerAccountId: nextLinkedId,
+          providerAccountId: nextProviderId
+        };
+        changed = changed
+          || next.linkedBrokerAccountId !== account.linkedBrokerAccountId
+          || next.providerAccountId !== account.providerAccountId
+          || account.integrationProvider !== 'trading212'
+          || account.integrationEnabled !== true;
+        return next;
+      });
+    }
+
+    if (shouldRemoveFallback) {
+      const dropIds = new Set(fallbackDuplicates.map((account) => account.id));
+      repaired = repaired.filter((account) => !dropIds.has(account.id));
+      changed = true;
+    }
+
+    if (!changed) return false;
+    console.debug('[TradingAccounts][linkage][reconcile]', {
+      trading212LocalCount: trading212LocalAccounts.length,
+      trading212IntegrationCount: integrationAccounts.length,
+      forcedSingleMatchUsed: shouldForceSingleMatch,
+      removedFallbackLocalAccounts: fallbackDuplicates.length
+    });
     await persistTradingAccounts(repaired);
     return true;
   }
@@ -435,7 +531,8 @@
     state.tradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
 
     const staleFixed = await reconcileStaleLinkedState();
-    if (staleFixed) {
+    const linkageFixed = await reconcileTrading212Linkage();
+    if (staleFixed || linkageFixed) {
       const refreshed = await api('/api/account/trading-accounts').catch(() => ({ accounts: [] }));
       state.tradingAccounts = Array.isArray(refreshed.accounts) ? refreshed.accounts : [];
     }
