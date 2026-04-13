@@ -476,7 +476,7 @@ function applyGuestRestrictions() {
       }
     }
   });
-  const sections = ['account-profile-section', 'security-section', 'profile-reset-card', 'automation-card'];
+  const sections = ['account-profile-section', 'security-section', 'profile-reset-card'];
   sections.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('guest-disabled', disable);
@@ -494,18 +494,13 @@ const profileSubsectionRouteConfig = {
   },
   '/profile/trading-accounts': {
     title: 'Trading Accounts',
-    description: 'Manage linked broker accounts, connection controls, and broker sync status from one place.',
-    sectionIds: ['trading-accounts-section', 'automation-card', 'ibkr-card']
+    description: 'Manage linked broker accounts, connection controls, and broker status from one place.',
+    sectionIds: ['trading-accounts-section', 'ibkr-card']
   },
   '/profile/investor-accounts': {
     title: 'Investor Accounts',
     description: 'Control investor access, profit splits, NAV updates, and investor reporting operations.',
     sectionIds: ['investor-section']
-  },
-  '/profile/automation': {
-    title: 'Automation',
-    description: 'Manage background sync workflows and automation behavior for your account.',
-    sectionIds: ['automation-overview-section']
   },
   '/profile/notifications': {
     title: 'Notifications',
@@ -999,7 +994,7 @@ function renderTradingAccounts() {
         </div>
         <div class="trading-account-metric-field">
           <label>Net deposits (£)</label>
-          <input type="number" step="0.01" ${provider ? 'disabled' : ''} data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
+          <input type="number" step="0.01" data-account-id="${account.id}" data-account-field="currentNetDeposits" value="${Number(account.currentNetDeposits || 0).toFixed(2)}">
         </div>
       </div>
       <div class="profile-actions trading-account-integration-actions">
@@ -1007,8 +1002,8 @@ function renderTradingAccounts() {
         <button type="button" class="ghost small" data-account-id="${account.id}" data-account-action="integration-toggle" data-provider="ibkr">${useIbkr ? 'Turn off IBKR integration' : 'Use IBKR integration'}</button>
       </div>
       <p class="helper trading-account-integration-note">${provider
-    ? 'Integration active: manual portfolio and net deposit edits are disabled for this account.'
-    : 'Enable an integration to auto-populate this account. Only one account can use Trading 212 and only one can use IBKR at a time.'}</p>
+    ? 'Integration active for broker market data. Log deposits and withdrawals manually for this account.'
+    : 'Connect a broker for market data. Cashflows are managed manually on every account.'}</p>
     `;
     row.querySelectorAll('[data-account-action="integration-toggle"]').forEach(btn => {
       if (!(btn instanceof HTMLButtonElement)) return;
@@ -1398,7 +1393,7 @@ function renderIntegrationStatus(data) {
     const hostDetail = data.lastBaseUrl ? ` via ${data.lastBaseUrl}${data.lastEndpoint || ''}` : '';
     statusEl.textContent = `Sync pending${statusCode}: ${data.lastStatus.message}${hostDetail}`;
   } else {
-    statusEl.textContent = 'No automated Trading 212 sync has run yet.';
+    statusEl.textContent = 'No Trading 212 data refresh has run yet.';
   }
 }
 

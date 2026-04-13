@@ -57,7 +57,6 @@ async function loadHubData() {
     setText('status-investor', 'Status unavailable');
   }
 
-  setText('status-automation', 'Manage sync and alert automation');
 
   const notificationPermission = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
   const notificationStatusMap = {
