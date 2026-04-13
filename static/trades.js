@@ -137,6 +137,14 @@ async function loadRates() {
   }
 }
 
+
+async function getBootstrapProfile({ consumer = 'trades' } = {}) {
+  if (window.AppBootstrap?.getProfile) {
+    return window.AppBootstrap.getProfile({ consumer });
+  }
+  return api('/api/profile');
+}
+
 function setupNavDrawer() {
   const navToggle = document.querySelector('#nav-toggle-btn');
   const navDrawer = document.querySelector('#nav-drawer');
@@ -999,7 +1007,7 @@ function bindNav() {
     closeNav?.(false);
     document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
   });
-  api('/api/profile')
+  getBootstrapProfile({ consumer: 'trades-nav-bootstrap' })
     .then(profile => {
       state.isAdmin = !!profile?.isAdmin;
       const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';

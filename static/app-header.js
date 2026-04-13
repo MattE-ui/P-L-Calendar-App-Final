@@ -141,25 +141,114 @@
   }
 })();
 
+
+(function initAppBootstrapStore() {
+  if (window.AppBootstrap?.getProfile) return;
+
+  const PROFILE_CACHE_TTL_MS = 15000;
+  const profileState = {
+    value: null,
+    fetchedAt: 0,
+    listeners: new Set(),
+    inFlightByUrl: new Map()
+  };
+
+  function notifyProfile(payload) {
+    profileState.listeners.forEach((listener) => {
+      try {
+        listener(payload);
+      } catch (_error) {
+        // noop
+      }
+    });
+  }
+
+  function isFreshProfile() {
+    return profileState.value && (Date.now() - profileState.fetchedAt) <= PROFILE_CACHE_TTL_MS;
+  }
+
+  function buildProfileUrl({ refreshIntegrations = false } = {}) {
+    return refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+  }
+
+  async function fetchProfile(url) {
+    const fetchPromise = fetch(url, { credentials: 'include' });
+    const response = window.PerfDiagnostics
+      ? await window.PerfDiagnostics.trackApi(`app-bootstrap-api:GET:${url}`, fetchPromise)
+      : await fetchPromise;
+    if (!response.ok) {
+      throw new Error('Request failed');
+    }
+    return response.json();
+  }
+
+  async function getProfile(options = {}) {
+    const { forceRefresh = false, refreshIntegrations = false, consumer = 'unknown' } = options;
+    const url = buildProfileUrl({ refreshIntegrations });
+
+    if (!forceRefresh && !refreshIntegrations && isFreshProfile()) {
+      window.PerfDiagnostics?.log('bootstrap-profile-cache-hit', { consumer, url });
+      return profileState.value;
+    }
+
+    if (profileState.inFlightByUrl.has(url)) {
+      window.PerfDiagnostics?.log('bootstrap-profile-coalesced', { consumer, url });
+      return profileState.inFlightByUrl.get(url);
+    }
+
+    const requestPromise = fetchProfile(url)
+      .then((profile) => {
+        if (!refreshIntegrations) {
+          profileState.value = profile || null;
+          profileState.fetchedAt = Date.now();
+          notifyProfile(profileState.value);
+        }
+        return profile;
+      })
+      .finally(() => {
+        profileState.inFlightByUrl.delete(url);
+      });
+
+    profileState.inFlightByUrl.set(url, requestPromise);
+    window.PerfDiagnostics?.log('bootstrap-profile-request', { consumer, url, forceRefresh: !!forceRefresh });
+    return requestPromise;
+  }
+
+  window.AppBootstrap = {
+    ...(window.AppBootstrap || {}),
+    getProfile,
+    peekProfile: () => profileState.value,
+    subscribeProfile: (listener) => {
+      if (typeof listener !== 'function') return () => {};
+      profileState.listeners.add(listener);
+      return () => profileState.listeners.delete(listener);
+    }
+  };
+})();
+
 (function initOwnerActions() {
   const adminBtn = document.getElementById('site-announcements-admin-btn');
   const devtoolsBtn = document.getElementById('devtools-btn');
   const ownerGroup = document.getElementById('app-shell-owner-tools');
   if (!adminBtn || !devtoolsBtn || !ownerGroup) return;
+
+  let lastOwnerVisibility = null;
+  const setOwnerVisibility = (showOwnerTools) => {
+    if (lastOwnerVisibility === showOwnerTools) return;
+    lastOwnerVisibility = showOwnerTools;
+    adminBtn.classList.toggle('is-hidden', !showOwnerTools);
+    devtoolsBtn.classList.toggle('is-hidden', !showOwnerTools);
+    ownerGroup.classList.toggle('is-hidden', !showOwnerTools);
+  };
+
   const startedAt = window.PerfDiagnostics?.mark('app-header-profile-bootstrap-start');
-  fetch('/api/profile', { credentials: 'include' })
-    .then((res) => (res.ok ? res.json() : null))
+  window.AppBootstrap.getProfile({ consumer: 'app-header-owner-tools' })
     .then((profile) => {
       if (startedAt) window.PerfDiagnostics?.measure('app-header-profile-bootstrap-end', startedAt, { owner: !!profile?.isOwner });
-      const showOwnerTools = !!profile?.isOwner;
-      adminBtn.classList.toggle('is-hidden', !showOwnerTools);
-      devtoolsBtn.classList.toggle('is-hidden', !showOwnerTools);
-      ownerGroup.classList.toggle('is-hidden', !showOwnerTools);
+      setOwnerVisibility(!!profile?.isOwner);
     })
     .catch(() => {
-      adminBtn.classList.add('is-hidden');
-      devtoolsBtn.classList.add('is-hidden');
-      ownerGroup.classList.add('is-hidden');
+      setOwnerVisibility(false);
     });
 })();
 
