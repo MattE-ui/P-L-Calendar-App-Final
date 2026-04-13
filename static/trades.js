@@ -222,9 +222,9 @@ async function loadRates() {
 
 async function getBootstrapProfile({ consumer = 'trades' } = {}) {
   if (window.AppBootstrap?.getProfile) {
-    return window.AppBootstrap.getProfile({ consumer });
+    return window.AppBootstrap.getProfile({ consumer, detail: 'shell' });
   }
-  return api('/api/profile');
+  return api('/api/profile/bootstrap');
 }
 
 function setupNavDrawer() {
