@@ -8686,11 +8686,135 @@ function getTradingAccountAggregationSnapshot(user) {
   };
 }
 
+function getLatestMergedEquityValue(user, history = ensurePortfolioHistory(user)) {
+  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const accountMeta = new Map(
+    accountList.map((account) => [
+      account?.id || '',
+      {
+        id: account?.id || '',
+        label: account?.label || '',
+        provider: account?.integrationProvider || null,
+        integrationEnabled: !!account?.integrationEnabled
+      }
+    ]).filter(([id]) => !!id)
+  );
+
+  const updatesByDate = new Map();
+  for (const [monthKey, days] of Object.entries(history || {})) {
+    if (!days || typeof days !== 'object') continue;
+    for (const [dateKey, record] of Object.entries(days || {})) {
+      if (!record || typeof record !== 'object') continue;
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      const normalizedDate = typeof dateKey === 'string' && dateKey ? dateKey : monthKey;
+      const dayUpdates = updatesByDate.get(normalizedDate) || new Map();
+      Object.entries(accountMap).forEach(([accountId, accountRecord]) => {
+        if (!accountRecord || typeof accountRecord !== 'object') return;
+        const end = Number(accountRecord.end);
+        if (!Number.isFinite(end) || end < 0) return;
+        dayUpdates.set(accountId, end);
+      });
+      if (dayUpdates.size > 0) {
+        updatesByDate.set(normalizedDate, dayUpdates);
+      }
+    }
+  }
+
+  if (!updatesByDate.size) {
+    return {
+      found: false,
+      date: null,
+      total: null,
+      accountValues: []
+    };
+  }
+
+  const latestByAccount = new Map();
+  const mergedByDate = new Map();
+  const orderedDates = Array.from(updatesByDate.keys()).sort();
+  orderedDates.forEach((dateKey) => {
+    const updates = updatesByDate.get(dateKey);
+    updates?.forEach((value, accountId) => {
+      latestByAccount.set(accountId, value);
+    });
+    const total = Array.from(latestByAccount.values()).reduce((sum, value) => sum + value, 0);
+    if (latestByAccount.size > 0 && Number.isFinite(total)) {
+      mergedByDate.set(dateKey, {
+        total,
+        accountValues: new Map(latestByAccount)
+      });
+    }
+  });
+
+  const latestDate = Array.from(mergedByDate.keys()).sort().at(-1) || null;
+  const latestRecord = latestDate ? mergedByDate.get(latestDate) : null;
+  if (!latestRecord || !Number.isFinite(latestRecord.total) || latestRecord.accountValues.size === 0) {
+    return {
+      found: false,
+      date: latestDate,
+      total: null,
+      accountValues: []
+    };
+  }
+
+  let total = latestRecord.total;
+  const finalAccountValues = new Map(latestRecord.accountValues);
+  accountList.forEach((account) => {
+    const accountId = account?.id || '';
+    if (!accountId || finalAccountValues.has(accountId)) return;
+    const fallbackValue = Number(account?.currentValue);
+    if (!Number.isFinite(fallbackValue) || fallbackValue < 0) return;
+    finalAccountValues.set(accountId, fallbackValue);
+    total += fallbackValue;
+  });
+
+  const accountValues = Array.from(finalAccountValues.entries()).map(([id, value]) => {
+    const meta = accountMeta.get(id);
+    return {
+      id,
+      value,
+      label: meta?.label || '',
+      provider: meta?.provider || null,
+      integrationEnabled: !!meta?.integrationEnabled,
+      source: latestRecord.accountValues.has(id) ? 'equity_history' : 'account_current_value_fallback'
+    };
+  });
+
+  return {
+    found: true,
+    date: latestDate,
+    total,
+    accountValues
+  };
+}
+
 function getCurrentPortfolioValue(user) {
   const aggregation = getTradingAccountAggregationSnapshot(user);
   if (aggregation.accountCount > 0) {
-    console.info('[portfolio][aggregate][value]', {
+    const history = ensurePortfolioHistory(user);
+    const latestMergedEquity = getLatestMergedEquityValue(user, history);
+    if (latestMergedEquity.found && Number.isFinite(latestMergedEquity.total)) {
+      const hasTrading212Contribution = latestMergedEquity.accountValues.some(account => account.provider === 'trading212');
+      console.info('[portfolio][aggregate][value][history]', {
+        accountCount: aggregation.accountCount,
+        latestEquityHistoryDate: latestMergedEquity.date,
+        latestDateAccountValues: latestMergedEquity.accountValues,
+        mergedTotal: latestMergedEquity.total,
+        currentPortfolioValueReturned: latestMergedEquity.total,
+        trading212ContributionDetected: hasTrading212Contribution
+      });
+      return {
+        value: latestMergedEquity.total,
+        currency: 'GBP',
+        source: 'account_equity_history',
+        lastUpdatedAt: latestMergedEquity.date
+      };
+    }
+    console.info('[portfolio][aggregate][value][fallback_accounts]', {
       accountCount: aggregation.accountCount,
+      reason: 'missing_equity_history',
+      fallbackAggregatedPortfolioValue: aggregation.portfolioValue,
       accounts: aggregation.accounts.map(account => ({
         id: account.id,
         label: account.label,
@@ -8698,12 +8822,12 @@ function getCurrentPortfolioValue(user) {
         integrationEnabled: account.integrationEnabled,
         portfolioValue: account.portfolioValue
       })),
-      aggregatedPortfolioValue: aggregation.portfolioValue
+      currentPortfolioValueReturned: aggregation.portfolioValue
     });
     return {
       value: aggregation.portfolioValue,
       currency: 'GBP',
-      source: 'manual',
+      source: 'accounts_fallback',
       lastUpdatedAt: typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null
     };
   }
