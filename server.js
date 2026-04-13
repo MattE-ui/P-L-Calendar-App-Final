@@ -14264,23 +14264,36 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   let didMutatePreviousCloseRef = false;
   let providerPreviousCloseFetchAttempted = false;
   let providerPreviousCloseFetchSucceeded = false;
-  const ingested = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
-    snapshot,
-    marketDate: previousCloseTargetDate,
-    source: 'provider_previous_close'
-  });
-  providerPreviousCloseFetchAttempted = true;
-  providerPreviousCloseFetchSucceeded = Boolean(ingested?.hadProviderPreviousClose || ingested?.capturedRegularClose);
-  didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
-  if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
-    const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+  let providerPreviousCloseError = null;
+  try {
+    const ingested = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+      snapshot,
       marketDate: previousCloseTargetDate,
-      source: 'on_demand_provider_backfill'
+      source: 'provider_previous_close'
     });
     providerPreviousCloseFetchAttempted = true;
-    providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded
-      || Boolean(onDemandIngest?.hadProviderPreviousClose || onDemandIngest?.capturedRegularClose);
-    didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
+    providerPreviousCloseFetchSucceeded = Boolean(ingested?.hadProviderPreviousClose || ingested?.capturedRegularClose);
+    didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
+  } catch (error) {
+    providerPreviousCloseFetchAttempted = true;
+    providerPreviousCloseFetchSucceeded = false;
+    providerPreviousCloseError = formatProviderError(error);
+  }
+  if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
+    try {
+      const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
+        marketDate: previousCloseTargetDate,
+        source: 'on_demand_provider_backfill'
+      });
+      providerPreviousCloseFetchAttempted = true;
+      providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded
+        || Boolean(onDemandIngest?.hadProviderPreviousClose || onDemandIngest?.capturedRegularClose);
+      didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
+    } catch (error) {
+      providerPreviousCloseFetchAttempted = true;
+      providerPreviousCloseFetchSucceeded = false;
+      providerPreviousCloseError = providerPreviousCloseError || formatProviderError(error);
+    }
   }
   if (didMutatePreviousCloseRef) {
     try {
@@ -14375,6 +14388,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
     dateResolutionPair: `${previousCloseTargetDate} vs ${previousCloseDate || 'null'}`,
     providerPreviousCloseFetchAttempted,
     providerPreviousCloseFetchSucceeded,
+    providerPreviousCloseError: providerPreviousCloseError || (Array.isArray(snapshot?.providerErrors) && snapshot.providerErrors.length ? snapshot.providerErrors.join(' | ') : null),
     displayPrice: payload.displayPrice,
     computedPercentRaw: percentChangeToday,
     computedPercent: payload.displayChangePct,
@@ -14404,6 +14418,7 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
       const storedReference = resolveWatchlistPreviousCloseReference(db, normalizedTicker, targetSessionDate);
       const storedReferenceDate = storedReference?.marketDate || null;
       const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalizedTicker, targetSessionDate);
+      const fallbackPreviousClose = Number.isFinite(Number(storedReference?.previousClose)) ? Number(storedReference.previousClose) : null;
       if (shouldDebugWatchlistQuoteSymbol(normalizedTicker)) {
         console.warn('[WATCHLIST_PREV_CLOSE_CALC_FALLBACK]', {
           ticker: normalizedTicker,
@@ -14411,9 +14426,10 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
           storedReferenceDate,
           sessionDateMatchesReferenceDate: Boolean(storedReferenceDate && storedReferenceDate === targetSessionDate),
           hasReferenceForDate,
+          dateResolutionPair: `${targetSessionDate} vs ${storedReferenceDate || 'null'}`,
           providerPreviousCloseFetchAttempted: true,
           providerPreviousCloseFetchSucceeded: false,
-          error: error?.message || error
+          providerPreviousCloseError: formatProviderError(error)
         });
       }
       return {
@@ -14422,7 +14438,7 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         name: item.display_name || '',
         session: 'closed',
         currentPrice: null,
-        previousClose: null,
+        previousClose: fallbackPreviousClose,
         regularOpen: null,
         preMarketPrice: null,
         postMarketPrice: null,
@@ -19571,6 +19587,16 @@ function parsePositiveNumber(...values) {
   return null;
 }
 
+function formatProviderError(error) {
+  if (!error) return null;
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const message = typeof error?.message === 'string'
+    ? error.message
+    : String(error);
+  if (code) return `${code}: ${message}`;
+  return message;
+}
+
 const WATCHLIST_QUOTE_DEBUG_SYMBOLS = new Set(['LWLG', 'NBIS', 'GLW']);
 
 function shouldDebugWatchlistQuoteSymbol(symbol) {
@@ -19944,6 +19970,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
   let snapshot = null;
   let yahooQuote = null;
   let yahooChart = null;
+  const providerErrors = [];
   if (process.env.MARKET_DATA_URL) {
     const url = `${process.env.MARKET_DATA_URL}?symbols=${encodeURIComponent(trimmed)}&includePrePost=true`;
     const res = await fetch(url);
@@ -19961,12 +19988,13 @@ async function fetchMarketQuoteSnapshot(symbol) {
   if (!snapshot) {
     try {
       yahooQuote = await fetchYahooQuoteSnapshot(trimmed);
-    } catch (e) {
+    } catch (error) {
+      providerErrors.push(`yahoo_quote: ${formatProviderError(error)}`);
     }
     try {
       yahooChart = await fetchYahooChartQuote(trimmed);
-    } catch (e) {
-      // ignore chart failures
+    } catch (error) {
+      providerErrors.push(`yahoo_chart: ${formatProviderError(error)}`);
     }
     if (yahooQuote?.isExtended) {
       snapshot = yahooQuote;
@@ -20013,7 +20041,13 @@ async function fetchMarketQuoteSnapshot(symbol) {
       snapshot = yahooQuote;
     }
     if (!snapshot) {
-      const stooq = await fetchStooqQuote(trimmed);
+      let stooq = null;
+      try {
+        stooq = await fetchStooqQuote(trimmed);
+      } catch (error) {
+        providerErrors.push(`stooq_quote: ${formatProviderError(error)}`);
+        throw error;
+      }
       snapshot = {
         symbol: trimmed,
         currency: stooq.currency || 'GBP',
@@ -20042,6 +20076,9 @@ async function fetchMarketQuoteSnapshot(symbol) {
         selectedPrice: stooq.price
       };
     }
+  }
+  if (snapshot && providerErrors.length) {
+    snapshot.providerErrors = providerErrors;
   }
   marketCache.set(cacheKey, { snapshot, at: now });
   return snapshot;
