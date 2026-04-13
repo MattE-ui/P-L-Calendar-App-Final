@@ -32,6 +32,7 @@
     lastIbkrRenderSignature: '',
     lastSyncPanelRenderSignature: '',
     lastRiskRenderSignature: '',
+    lastRiskStateSignature: '',
     lastTradingAccountsSignature: '',
     lastBrokerAccountsSignature: '',
     hasRunLinkageReconcile: false
@@ -72,6 +73,19 @@
       next.selectedAccounts = patch.selectedAccounts.map(normalizeRiskAccount).filter(Boolean);
     }
 
+    const riskSignature = stableStringify({
+      loading: !!next.loading,
+      hasLoaded: !!next.hasLoaded,
+      eligibleAccounts: next.eligibleAccounts,
+      selectedAccounts: next.selectedAccounts,
+      riskSettings: next.riskSettings,
+      riskCapital: next.riskCapital
+    });
+    if (riskSignature === state.lastRiskStateSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-eligibility-reused', { source: `${source}-state-signature` });
+      return false;
+    }
+    state.lastRiskStateSignature = riskSignature;
     state.riskSettingsState = next;
 
     if (next.eligibleAccounts.length >= 2) {
@@ -84,6 +98,7 @@
       nextEligibleCount: next.eligibleAccounts.length,
       nextEligibleIds: next.eligibleAccounts.map((account) => account.id)
     });
+    return true;
   }
 
   const modalElements = {
@@ -824,6 +839,59 @@
     });
   }
 
+  function applyResolvedState(reason = 'apply-resolved-state') {
+    state.resolvedAccounts = resolveAccountsForView();
+    state.providerIntegrations = resolveProviderIntegrationsForView();
+    renderAccountsList();
+    renderTrading212Cards();
+    renderIbkrCard();
+    renderSyncPanel();
+    renderRiskSelectionPanel();
+    window.PerfDiagnostics?.log('trading-accounts-action-patch-applied', { reason });
+  }
+
+  function applyCorePayload({ brokerPayload, tradingAccountsPayload, riskSettingsPayload, ibkrPayload }) {
+    const nextT212Accounts = Array.isArray(brokerPayload?.accounts)
+      ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
+      : [];
+    const nextTradingAccounts = Array.isArray(tradingAccountsPayload?.accounts) ? tradingAccountsPayload.accounts : [];
+    const brokerSignature = stableStringify(nextT212Accounts);
+    const tradingSignature = stableStringify(nextTradingAccounts);
+    const hasCoreDataChanged = brokerSignature !== state.lastBrokerAccountsSignature
+      || tradingSignature !== state.lastTradingAccountsSignature;
+    state.t212Accounts = nextT212Accounts;
+    state.tradingAccounts = nextTradingAccounts;
+    state.lastBrokerAccountsSignature = brokerSignature;
+    state.lastTradingAccountsSignature = tradingSignature;
+
+    if (riskSettingsPayload) {
+      writeRiskSettingsState('risk-settings-fetch', {
+        loading: false,
+        hasLoaded: true,
+        riskSettings: riskSettingsPayload?.riskSettings || state.riskSettingsState.riskSettings,
+        eligibleAccounts: Array.isArray(riskSettingsPayload?.eligibleAccounts) ? riskSettingsPayload.eligibleAccounts : undefined,
+        selectedAccounts: Array.isArray(riskSettingsPayload?.selectedAccounts) ? riskSettingsPayload.selectedAccounts : undefined,
+        riskCapital: riskSettingsPayload?.riskCapital ?? state.riskSettingsState?.riskCapital ?? null
+      });
+    } else {
+      writeRiskSettingsState('risk-settings-fetch', { loading: false, hasLoaded: true });
+    }
+
+    if (ibkrPayload && typeof ibkrPayload === 'object') state.ibkr = ibkrPayload;
+    return hasCoreDataChanged;
+  }
+
+  async function fetchBootstrapPayload() {
+    const payload = await api('/api/account/trading-accounts/bootstrap').catch(() => null);
+    if (!payload) return null;
+    return {
+      brokerPayload: payload?.brokerAccounts || { accounts: [] },
+      tradingAccountsPayload: payload?.tradingAccounts || { accounts: [] },
+      riskSettingsPayload: payload?.riskSettings || null,
+      ibkrPayload: payload?.ibkr || {}
+    };
+  }
+
   async function refreshData(reason = 'manual-refresh') {
     if (state.refreshInFlight) {
       state.refreshQueued = true;
@@ -837,40 +905,19 @@
       loading: true
     });
     renderRiskSelectionPanel();
-    const [brokerPayload, tradingAccountsPayload, riskSettingsPayload] = await Promise.all([
+    const bootstrapPayload = await fetchBootstrapPayload();
+    const fallbackPayload = bootstrapPayload || await Promise.all([
       api('/api/broker-accounts?provider=trading212').catch(() => ({ accounts: [] })),
       api('/api/account/trading-accounts').catch(() => ({ accounts: [] })),
-      api('/api/account/risk-settings').catch(() => null)
-    ]);
-    const nextT212Accounts = Array.isArray(brokerPayload.accounts)
-      ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
-      : [];
-    const nextTradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
-    const brokerSignature = stableStringify(nextT212Accounts);
-    const tradingSignature = stableStringify(nextTradingAccounts);
-    const hasCoreDataChanged = brokerSignature !== state.lastBrokerAccountsSignature
-      || tradingSignature !== state.lastTradingAccountsSignature;
-    state.t212Accounts = Array.isArray(brokerPayload.accounts)
-      ? nextT212Accounts
-      : [];
-    state.tradingAccounts = nextTradingAccounts;
-    state.lastBrokerAccountsSignature = brokerSignature;
-    state.lastTradingAccountsSignature = tradingSignature;
-    if (riskSettingsPayload) {
-      writeRiskSettingsState('risk-settings-fetch', {
-        loading: false,
-        hasLoaded: true,
-        riskSettings: riskSettingsPayload?.riskSettings || state.riskSettingsState.riskSettings,
-        eligibleAccounts: Array.isArray(riskSettingsPayload?.eligibleAccounts) ? riskSettingsPayload.eligibleAccounts : undefined,
-        selectedAccounts: Array.isArray(riskSettingsPayload?.selectedAccounts) ? riskSettingsPayload.selectedAccounts : undefined,
-        riskCapital: riskSettingsPayload?.riskCapital ?? state.riskSettingsState?.riskCapital ?? null
-      });
-    } else {
-      writeRiskSettingsState('risk-settings-fetch', {
-        loading: false,
-        hasLoaded: true
-      });
-    }
+      api('/api/account/risk-settings').catch(() => null),
+      api('/api/integrations/ibkr').catch(() => ({}))
+    ]).then(([brokerPayload, tradingAccountsPayload, riskSettingsPayload, ibkrPayload]) => ({
+      brokerPayload,
+      tradingAccountsPayload,
+      riskSettingsPayload,
+      ibkrPayload
+    }));
+    const hasCoreDataChanged = applyCorePayload(fallbackPayload);
 
     let staleFixed = false;
     let linkageFixed = false;
@@ -897,38 +944,8 @@
       ibkrProviderConnectionCount: state.ibkr?.enabled ? 1 : 0
     });
 
-    state.resolvedAccounts = resolveAccountsForView();
-    state.providerIntegrations = resolveProviderIntegrationsForView();
-    renderAccountsList();
-    renderTrading212Cards();
-    renderSyncPanel();
-    renderRiskSelectionPanel();
+    applyResolvedState('refresh-data');
     window.PerfDiagnostics?.mark('trading-accounts-full-render');
-
-    api('/api/integrations/ibkr')
-      .then((ibkrPayload) => {
-        const nextIbkr = ibkrPayload || {};
-        const ibkrSignature = stableStringify({
-          enabled: !!nextIbkr.enabled,
-          lastSyncAt: nextIbkr.lastSyncAt || null,
-          connectionStatus: nextIbkr.connectionStatus || null
-        });
-        const previousSignature = stableStringify({
-          enabled: !!state.ibkr?.enabled,
-          lastSyncAt: state.ibkr?.lastSyncAt || null,
-          connectionStatus: state.ibkr?.connectionStatus || null
-        });
-        state.ibkr = nextIbkr;
-        if (ibkrSignature !== previousSignature) {
-          state.providerIntegrations = resolveProviderIntegrationsForView();
-          renderTrading212Cards();
-          renderIbkrCard();
-          renderSyncPanel();
-        } else {
-          window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'ibkr-secondary-load' });
-        }
-      })
-      .catch(() => {});
     return true;
     };
     state.refreshInFlight = refreshChannel
@@ -1017,6 +1034,23 @@
     });
     await persistTradingAccounts(accounts);
     setText('trading-broker-action-status', 'Manual account created.');
+    state.tradingAccounts = accounts;
+    state.lastTradingAccountsSignature = stableStringify(accounts);
+    applyResolvedState('manual-account-created');
+    await api('/api/account/risk-settings')
+      .then((riskSettingsPayload) => {
+        writeRiskSettingsState('manual-account-risk-refresh', {
+          loading: false,
+          hasLoaded: true,
+          riskSettings: riskSettingsPayload?.riskSettings || state.riskSettingsState.riskSettings,
+          eligibleAccounts: Array.isArray(riskSettingsPayload?.eligibleAccounts) ? riskSettingsPayload.eligibleAccounts : undefined,
+          selectedAccounts: Array.isArray(riskSettingsPayload?.selectedAccounts) ? riskSettingsPayload.selectedAccounts : undefined,
+          riskCapital: riskSettingsPayload?.riskCapital ?? state.riskSettingsState?.riskCapital ?? null
+        });
+        renderRiskSelectionPanel();
+      })
+      .catch(() => {});
+    return false;
   }
 
   async function updateLocalAccount(accountId, patch) {
@@ -1057,7 +1091,8 @@
       }
       closeAccountModal();
       setText('trading-broker-action-status', 'Account updated.');
-      return;
+      await refreshData('submit-account-modal-edit');
+      return false;
     }
 
     if (!apiKey) return setStatus('t212-account-modal-status', 'API key is required.', true);
@@ -1086,6 +1121,7 @@
 
     closeAccountModal();
     setText('trading-broker-action-status', 'Trading 212 account linked.');
+    return true;
   }
 
   async function disconnectResolvedAccount(account) {
@@ -1250,8 +1286,8 @@
   modalElements.form?.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
-      await submitAccountModal();
-      await refreshData('submit-account-modal');
+      const shouldRefresh = await submitAccountModal();
+      if (shouldRefresh !== false) await refreshData('submit-account-modal');
     } catch (error) {
       setStatus('t212-account-modal-status', error.message || 'Unable to save account.', true);
     }

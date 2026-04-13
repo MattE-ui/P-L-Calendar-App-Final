@@ -8855,6 +8855,91 @@ function getPortfolioGBPForRisk(user) {
     : 0;
 }
 
+function buildTradingAccountsBootstrapPayload(user, username, db) {
+  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const cfg = user?.trading212 || {};
+  const t212Accounts = Array.isArray(cfg.accounts) ? cfg.accounts : [];
+  const brokerAccounts = t212Accounts
+    .filter((account) => account?.active !== false)
+    .map((account) => toBrokerAccountSummary(username, 'trading212', account, cfg));
+
+  const hadExplicitToggle = typeof user?.riskSettings?.useSelectedTradingAccountsForRisk === 'boolean';
+  const { settings } = ensureRiskSettings(user);
+  const riskCapital = getRiskCapitalBase(user, {
+    user: username,
+    logDiagnostics: process.env.NODE_ENV !== 'production'
+  });
+
+  let riskMutated = false;
+  if (riskCapital.featureAvailable && !hadExplicitToggle) {
+    settings.useSelectedTradingAccountsForRisk = true;
+    riskMutated = true;
+  }
+  if (riskCapital.featureAvailable && (!settings.selectedTradingAccountIdsForRisk || !settings.selectedTradingAccountIdsForRisk.length)) {
+    settings.selectedTradingAccountIdsForRisk = [...riskCapital.eligibleAccountIds];
+    riskMutated = true;
+  }
+  const validEligibleIds = new Set(riskCapital.eligibleAccountIds);
+  const sanitizedSelectedIds = (settings.selectedTradingAccountIdsForRisk || []).filter((id) => validEligibleIds.has(id));
+  if (sanitizedSelectedIds.length !== (settings.selectedTradingAccountIdsForRisk || []).length) {
+    settings.selectedTradingAccountIdsForRisk = sanitizedSelectedIds;
+    riskMutated = true;
+  }
+
+  const resolvedRiskCapital = riskMutated
+    ? getRiskCapitalBase(user, {
+      user: username,
+      logDiagnostics: process.env.NODE_ENV !== 'production'
+    })
+    : riskCapital;
+
+  const ibkrCfg = user?.ibkr || {};
+  if (ibkrCfg.mode === 'connector') updateIbkrConnectorStatus(ibkrCfg);
+  const scopedDb = db || loadDB();
+  const activeToken = getActiveIbkrConnectorToken(scopedDb, username);
+  const activeKey = getActiveIbkrConnectorKey(scopedDb, username);
+  const connectorOnline = ibkrCfg.connectionStatus === 'online';
+
+  return {
+    mutatesUser: riskMutated,
+    payload: {
+      tradingAccounts: {
+        enabled: !!user.multiTradingAccountsEnabled,
+        accounts
+      },
+      brokerAccounts: {
+        accounts: brokerAccounts
+      },
+      riskSettings: {
+        eligibleAccounts: resolvedRiskCapital.eligibleAccounts || [],
+        selectedAccounts: resolvedRiskCapital.selectedAccounts || [],
+        riskSettings: {
+          useSelectedTradingAccountsForRisk: !!settings.useSelectedTradingAccountsForRisk,
+          selectedTradingAccountIdsForRisk: settings.selectedTradingAccountIdsForRisk || []
+        },
+        riskCapital: resolvedRiskCapital
+      },
+      ibkr: {
+        enabled: !!ibkrCfg.enabled,
+        mode: ibkrCfg.mode || 'connector',
+        accountId: ibkrCfg.accountId || '',
+        connectionStatus: ibkrCfg.connectionStatus || 'disconnected',
+        lastHeartbeatAt: ibkrCfg.lastHeartbeatAt || null,
+        lastSnapshotAt: ibkrCfg.lastSnapshotAt || null,
+        lastSyncAt: ibkrCfg.lastSyncAt || null,
+        lastStatus: ibkrCfg.lastStatus || null,
+        lastSessionCheckAt: ibkrCfg.lastSessionCheckAt || null,
+        lastPortfolioValue: Number.isFinite(Number(ibkrCfg.lastPortfolioValue)) ? Number(ibkrCfg.lastPortfolioValue) : null,
+        lastPortfolioCurrency: ibkrCfg.lastPortfolioCurrency || null,
+        lastConnectorStatus: ibkrCfg.lastConnectorStatus || null,
+        connectorOnline,
+        lastDisconnectReason: ibkrCfg.lastConnectorStatus?.reason || null,
+        connectorConfigured: !!activeToken || !!activeKey
+      }
+    }
+  };
+}
+
 function getTradingAccountAggregationSnapshot(user) {
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
   const accounts = accountList.map((account) => {
@@ -18072,6 +18157,22 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
     enabled: !!user.multiTradingAccountsEnabled,
     accounts
   });
+});
+
+app.get('/api/account/trading-accounts/bootstrap', auth, (req, res) => {
+  const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const userMutated = prepareUserPortfolioRouteState(req, user).mutated || ensureUserShape(user, req.username);
+  const { mutatesUser, payload } = buildTradingAccountsBootstrapPayload(user, req.username, db);
+  if (userMutated || mutatesUser) saveDB(db);
+  req.perfDiag?.setMeta({
+    accountCount: Array.isArray(payload?.tradingAccounts?.accounts) ? payload.tradingAccounts.accounts.length : 0,
+    brokerAccountCount: Array.isArray(payload?.brokerAccounts?.accounts) ? payload.brokerAccounts.accounts.length : 0,
+    eligibleRiskAccountCount: Array.isArray(payload?.riskSettings?.eligibleAccounts) ? payload.riskSettings.eligibleAccounts.length : 0,
+    requestScopedReuse: true
+  });
+  res.json(payload);
 });
 
 app.get('/api/account/risk-settings', auth, (req, res) => {
