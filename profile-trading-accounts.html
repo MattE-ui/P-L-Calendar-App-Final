@@ -10,44 +10,94 @@
   <main class="container profile-hub-container trading-dashboard-page">
     <section class="card profile-subsection-card trading-dashboard-header">
       <p class="profile-hub-summary__eyebrow">Account center</p>
-      <h1>Broker Control Dashboard</h1>
-      <p class="helper">Monitor broker connectivity and manage multiple linked accounts from one dashboard.</p>
+      <h1>Trading Accounts</h1>
+      <p class="helper">Manage every account in one account-centric workspace across manual, automated, and imported sources.</p>
       <div class="profile-actions">
         <a class="ghost account-center-back-link" href="/profile.html"><span aria-hidden="true">←</span> Back to Account Center</a>
       </div>
     </section>
 
-    <section class="trading-dashboard-layout">
-      <div class="trading-dashboard-main">
-        <section class="card profile-card">
-          <div class="trading-section-head">
-            <h2>Connected Brokers &amp; Accounts</h2>
-            <p class="helper">Trading 212 supports multiple linked accounts with independent credentials.</p>
-          </div>
-          <div id="broker-cards" class="broker-cards-grid"></div>
-          <p id="trading-broker-action-status" class="status-line"></p>
-        </section>
-
-        <section class="card profile-card">
-          <div class="trading-section-head">
-            <h2>Add / Connect Broker</h2>
-            <p class="helper">Choose a broker to start or complete its connection flow.</p>
-          </div>
-          <div id="broker-connect-options" class="broker-connect-grid"></div>
-        </section>
+    <section class="card profile-card trading-accounts-shell">
+      <div class="trading-top-actions">
+        <button type="button" class="primary" data-action="open-add-account-modal">Add Account</button>
+        <button type="button" class="ghost" data-action="import-account">Import Account</button>
+        <button type="button" class="ghost" data-action="open-integrations-tab">Connect Broker</button>
       </div>
 
-      <aside class="trading-dashboard-side">
-        <section class="card profile-card trading-status-panel">
-          <div class="trading-section-head">
-          <h2>Connection Status</h2>
-          <p class="helper">Compact telemetry for all broker integrations.</p>
+      <div class="trading-page-tabs" role="tablist" aria-label="Trading account sections">
+        <button type="button" class="trading-page-tab is-active" role="tab" aria-selected="true" data-tab="accounts">Accounts</button>
+        <button type="button" class="trading-page-tab" role="tab" aria-selected="false" data-tab="integrations">Integrations</button>
+      </div>
+
+      <section class="trading-tab-panel" data-panel="accounts">
+        <div class="trading-section-head">
+          <h2>All Trading Accounts</h2>
+          <p class="helper">Manual, automated, and imported accounts in a single high-density view.</p>
+        </div>
+        <div id="trading-accounts-grid" class="trading-accounts-grid"></div>
+      </section>
+
+      <section class="trading-tab-panel is-hidden" data-panel="integrations">
+        <div class="trading-dashboard-layout">
+          <div class="trading-dashboard-main">
+            <section class="card profile-card">
+              <div class="trading-section-head">
+                <h2>Broker Integrations</h2>
+                <p class="helper">Configure and maintain provider-level connections.</p>
+              </div>
+              <div id="broker-cards" class="broker-cards-grid"></div>
+              <p id="trading-broker-action-status" class="status-line"></p>
+            </section>
+
+            <section class="card profile-card">
+              <div class="trading-section-head">
+                <h2>Add / Connect Broker</h2>
+                <p class="helper">Choose a broker to start or complete its connection flow.</p>
+              </div>
+              <div id="broker-connect-options" class="broker-connect-grid"></div>
+            </section>
           </div>
-          <div id="trading-sync-status-panel" class="status-kv-list"></div>
-        </section>
-      </aside>
+
+          <aside class="trading-dashboard-side">
+            <section class="card profile-card trading-status-panel">
+              <div class="trading-section-head">
+                <h2>Connection Status</h2>
+                <p class="helper">Compact telemetry for all broker integrations.</p>
+              </div>
+              <div id="trading-sync-status-panel" class="status-kv-list"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
     </section>
   </main>
+
+  <div id="add-account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="add-account-modal-title">
+    <div class="modal-card trading-account-modal-card">
+      <div class="modal-header trading-account-modal__header">
+        <div>
+          <p class="trading-account-modal__eyebrow">Add account</p>
+          <h3 id="add-account-modal-title">Choose account setup type</h3>
+          <p class="helper trading-account-modal__subtitle">Select how you want to add your account.</p>
+        </div>
+        <button type="button" class="ghost close-btn" data-action="close-add-account-modal" aria-label="Close add account modal">✕</button>
+      </div>
+      <div class="add-account-options">
+        <button type="button" class="add-account-option" data-action="add-account-connect-broker">
+          <strong>Connect broker (API)</strong>
+          <span>Set up automated sync and live updates.</span>
+        </button>
+        <button type="button" class="add-account-option" data-action="add-account-manual">
+          <strong>Create manual account</strong>
+          <span>Add and track a broker account manually.</span>
+        </button>
+        <button type="button" class="add-account-option" data-action="add-account-import">
+          <strong>Import CSV</strong>
+          <span>Import account data from statements or exports.</span>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <div id="t212-account-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="t212-account-modal-title">
     <div class="modal-card trading-account-modal-card">
@@ -63,7 +113,7 @@
         <div class="modal-field">
           <label for="t212-account-label-input">Account label</label>
           <input id="t212-account-label-input" name="accountLabel" type="text" maxlength="80" required autocomplete="off" placeholder="e.g. ISA, General, CFD">
-          <p class="helper">This label is shown in your Broker Control Dashboard.</p>
+          <p class="helper">This label is shown in your Trading Accounts page.</p>
         </div>
         <div class="modal-field">
           <label for="t212-api-key-input">API key</label>
