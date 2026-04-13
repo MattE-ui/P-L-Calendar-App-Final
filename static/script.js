@@ -3163,47 +3163,23 @@ function updateCurrencySelect() {
 }
 
 function updatePortfolioPill() {
-  const el = $('#portfolio-display');
-  const heroVal = $('#header-portfolio-value');
-  const heroSub = $('#header-portfolio-sub');
-  const latestGBP = Number.isFinite(state.livePortfolioGBP)
-    ? state.livePortfolioGBP
-    : (Number.isFinite(state.portfolioGBP)
-      ? state.portfolioGBP
-      : (Number.isFinite(state.metrics?.latestGBP) ? state.metrics.latestGBP : 0));
-  const base = formatCurrency(latestGBP);
-  const alt = state.currency === 'USD'
-    ? formatCurrency(latestGBP, 'GBP')
-    : state.currency === 'EUR'
-      ? formatCurrency(latestGBP, 'GBP')
-      : (state.rates.USD ? formatCurrency(latestGBP, 'USD') : null);
-  if (el) {
-    if (state.safeScreenshot) {
-      el.textContent = `Portfolio: ${SAFE_SCREENSHOT_LABEL}`;
-    } else if (state.currency === 'USD') {
-      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-    } else if (state.rates.USD) {
-      el.innerHTML = `Portfolio: ${base} <span>≈ ${alt}</span>`;
-    } else {
-      el.textContent = `Portfolio: ${base}`;
-    }
+  if (!Number.isFinite(state.portfolioGBP)) {
+    console.warn('Skipping portfolio pill overwrite - no valid value');
+    return;
   }
-  if (heroVal) {
-    const nextValue = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : base;
-    const previousValue = heroVal.textContent;
-    heroVal.textContent = nextValue;
-    if (previousValue !== nextValue) {
-      console.info('[trace][frontend][portfolio-overwrite]', {
-        element: '#header-portfolio-value',
-        previousValue,
-        nextValue,
-        overwritePath: 'updatePortfolioPill',
-        sourceField: 'state.livePortfolioGBP || state.portfolioGBP || state.metrics.latestGBP'
-      });
-    }
-  }
-  if (heroSub) {
-    heroSub.textContent = state.safeScreenshot ? '' : (alt ? `≈ ${alt}` : '');
+
+  const value = state.portfolioGBP || 0;
+
+  console.log('PORTFOLIO PILL UPDATE:', {
+    value: state.portfolioGBP,
+    source: '/api/portfolio'
+  });
+
+  const headerPortfolioValue = document.getElementById('header-portfolio-value');
+  if (headerPortfolioValue) {
+    headerPortfolioValue.textContent = state.safeScreenshot
+      ? SAFE_SCREENSHOT_LABEL
+      : formatCurrency(value);
   }
 }
 
