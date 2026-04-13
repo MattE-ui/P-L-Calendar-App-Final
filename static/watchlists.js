@@ -5,7 +5,8 @@
     marketRows: [],
     editingId: '',
     builder: { ungrouped: [], groups: [] },
-    sortableInstances: []
+    sortableInstances: [],
+    detailAccordion: {}
   };
 
   const UNGROUPED_TITLE = 'Ungrouped';
@@ -273,23 +274,110 @@
       wrap.innerHTML = '<div class="social-list-row">Select a watchlist.</div>';
       return;
     }
-    if (!state.marketRows.length) {
+    const sections = buildDetailSections(selected);
+    if (!sections.length) {
       wrap.innerHTML = '<div class="social-list-row">No symbols in this watchlist.</div>';
       return;
     }
 
-    wrap.innerHTML = '<table class="social-watchlist-table"><thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead><tbody></tbody></table>';
-    const body = wrap.querySelector('tbody');
-    state.marketRows.forEach((row) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td><strong>${row.ticker || '—'}</strong>${row.name ? `<div class="helper">${row.name}</div>` : ''}</td>
-        <td>${fmt(row.currentPrice, 'price')}</td>
-        <td>${fmt(row.dayOpenPrice, 'price')}</td>
-        <td class="${Number(row.percentChangeToday) > 0 ? 'is-pos' : (Number(row.percentChangeToday) < 0 ? 'is-neg' : '')}">${fmt(row.percentChangeToday, 'pct')}</td>
-        <td>${fmt(row.adrPercent, 'pct')}</td>
-        <td>${row.dollarVolumeDisplay || '—'}</td>`;
-      body.appendChild(tr);
-    });
+    const rowLookup = new Map((state.marketRows || []).map((row) => [normalizeTicker(row.ticker), row]));
+    const accordionState = ensureAccordionState(selected.id, sections);
+    wrap.innerHTML = `
+      <div class="social-watchlist-groups-wrap">
+        <div class="social-watchlist-groups-toolbar">
+          <button type="button" class="ghost social-watchlist-groups-btn" data-watchlist-accordion="expand-all">Expand all</button>
+          <button type="button" class="ghost social-watchlist-groups-btn" data-watchlist-accordion="collapse-all">Collapse all</button>
+        </div>
+        <div class="social-watchlist-groups-list">
+          ${sections.map((section, index) => renderSectionCard({
+            section,
+            index,
+            isOpen: accordionState.has(section.key),
+            rowLookup
+          })).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function buildDetailSections(selected) {
+    const rawSections = Array.isArray(selected?.sections) ? selected.sections : [];
+    const normalized = rawSections
+      .map((section, index) => ({
+        key: String(section?.id || `${selected?.id || 'watchlist'}-${index + 1}`),
+        title: String(section?.title || '').trim() || `Section ${index + 1}`,
+        tickers: Array.isArray(section?.tickers) ? section.tickers.map(normalizeTicker).filter(Boolean) : []
+      }))
+      .filter((section) => section.tickers.length);
+
+    if (!normalized.length) return [];
+
+    const grouped = normalized.filter((section) => section.title.toLowerCase() !== UNGROUPED_TITLE.toLowerCase());
+    if (!grouped.length) return normalized.map((section) => ({ ...section, isUngrouped: false }));
+
+    return normalized.map((section) => ({
+      ...section,
+      title: section.title.toLowerCase() === UNGROUPED_TITLE.toLowerCase() ? UNGROUPED_TITLE : section.title,
+      isUngrouped: section.title.toLowerCase() === UNGROUPED_TITLE.toLowerCase()
+    }));
+  }
+
+  function ensureAccordionState(watchlistId, sections) {
+    const allKeys = sections.map((section) => section.key);
+    const existing = state.detailAccordion[watchlistId];
+    if (!existing || !Array.isArray(existing.openKeys)) {
+      state.detailAccordion[watchlistId] = { openKeys: allKeys.length ? [allKeys[0]] : [] };
+      return new Set(state.detailAccordion[watchlistId].openKeys);
+    }
+    const sanitized = existing.openKeys.filter((key) => allKeys.includes(key));
+    if (!sanitized.length && allKeys.length) sanitized.push(allKeys[0]);
+    state.detailAccordion[watchlistId].openKeys = sanitized;
+    return new Set(sanitized);
+  }
+
+  function setAccordionState(watchlistId, openKeys) {
+    state.detailAccordion[watchlistId] = { openKeys: [...new Set(openKeys)] };
+  }
+
+  function renderSectionCard({ section, index, isOpen, rowLookup }) {
+    const chevron = isOpen ? '▾' : '▸';
+    return `
+      <details class="social-watchlist-group-card" data-group-key="${escapeHtml(section.key)}" ${isOpen ? 'open' : ''}>
+        <summary class="social-watchlist-group-summary">
+          <span class="social-watchlist-group-heading">
+            <span class="social-watchlist-group-chevron" aria-hidden="true">${chevron}</span>
+            <span class="social-watchlist-group-name">${escapeHtml(section.title || `Group ${index + 1}`)}</span>
+          </span>
+          <span class="social-watchlist-group-count">${section.tickers.length}</span>
+        </summary>
+        <div class="social-watchlist-group-body">
+          ${renderSectionTable(section, rowLookup)}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderSectionTable(section, rowLookup) {
+    const rows = section.tickers.map((ticker) => rowLookup.get(ticker) || { ticker });
+    return `
+      <div class="social-watchlist-table-wrap social-watchlist-table-wrap--group">
+        <table class="social-watchlist-table">
+          <thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead>
+          <tbody>
+            ${rows.map((row) => `
+              <tr>
+                <td><strong>${escapeHtml(row.ticker || '—')}</strong>${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}</td>
+                <td>${fmt(row.currentPrice, 'price')}</td>
+                <td>${fmt(row.dayOpenPrice, 'price')}</td>
+                <td class="${Number(row.percentChangeToday) > 0 ? 'is-pos' : (Number(row.percentChangeToday) < 0 ? 'is-neg' : '')}">${fmt(row.percentChangeToday, 'pct')}</td>
+                <td>${fmt(row.adrPercent, 'pct')}</td>
+                <td>${escapeHtml(row.dollarVolumeDisplay || '—')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
   }
 
   function openWatchlistModal(mode = 'create') {
@@ -386,6 +474,36 @@
     el('watchlist-modal-save')?.addEventListener('click', () => onSaveModal().catch((error) => setFeedback('watchlist-modal-feedback', error.message, 'error')));
 
     bindBuilderEvents();
+    el('watchlist-table-wrap')?.addEventListener('toggle', (event) => {
+      const details = event.target.closest('.social-watchlist-group-card');
+      if (!details) return;
+      const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+      if (!selected) return;
+      const groupKeys = [...el('watchlist-table-wrap').querySelectorAll('.social-watchlist-group-card')]
+        .map((node) => node.getAttribute('data-group-key'))
+        .filter(Boolean);
+      const openKeys = groupKeys.filter((key) => el('watchlist-table-wrap').querySelector(`.social-watchlist-group-card[data-group-key="${CSS.escape(key)}"]`)?.open);
+      setAccordionState(selected.id, openKeys.length ? openKeys : [groupKeys[0]].filter(Boolean));
+      const chevron = details.querySelector('.social-watchlist-group-chevron');
+      if (chevron) chevron.textContent = details.open ? '▾' : '▸';
+    }, true);
+    el('watchlist-table-wrap')?.addEventListener('click', (event) => {
+      const actionBtn = event.target.closest('[data-watchlist-accordion]');
+      if (!actionBtn) return;
+      const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+      if (!selected) return;
+      const detailCards = [...el('watchlist-table-wrap').querySelectorAll('.social-watchlist-group-card')];
+      if (!detailCards.length) return;
+      const mode = actionBtn.getAttribute('data-watchlist-accordion');
+      if (mode === 'expand-all') detailCards.forEach((card) => { card.open = true; });
+      if (mode === 'collapse-all') detailCards.forEach((card) => { card.open = false; });
+      const openKeys = detailCards.filter((card) => card.open).map((card) => card.getAttribute('data-group-key')).filter(Boolean);
+      setAccordionState(selected.id, openKeys.length ? openKeys : [detailCards[0]?.getAttribute('data-group-key')].filter(Boolean));
+      detailCards.forEach((card) => {
+        const chevron = card.querySelector('.social-watchlist-group-chevron');
+        if (chevron) chevron.textContent = card.open ? '▾' : '▸';
+      });
+    });
     await loadWatchlists();
   }
 
