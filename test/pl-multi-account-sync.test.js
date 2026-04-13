@@ -32,8 +32,8 @@ function seedDatabase() {
         tradeJournal: {},
         multiTradingAccountsEnabled: true,
         tradingAccounts: [
-          { id: 'primary', label: 'Primary', currentValue: 4000, currentNetDeposits: 3000 },
-          { id: 'ibkr', label: 'IBKR', currentValue: 6500, currentNetDeposits: 4500 }
+          { id: 'primary', label: 'Trading 212', currentValue: 4000, currentNetDeposits: 3000, integrationProvider: 'trading212', integrationEnabled: true },
+          { id: 'ibkr', label: 'IBKR', currentValue: 6500, currentNetDeposits: 4500, integrationProvider: 'ibkr', integrationEnabled: true }
         ]
       }
     },
@@ -147,10 +147,47 @@ test('manual baseline save remains canonical in multi-account mode across profil
   assert.equal(profile.data.netDepositsTotal, 18000);
   assert.equal(profile.data.initialNetDeposits, 18000);
   assert.equal(profile.data.portfolio, 12000);
+  const primary = profile.data.tradingAccounts.find(account => account.id === 'primary');
+  const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(primary);
+  assert.ok(ibkr);
+  assert.equal(primary.currentValue, 4000);
+  assert.equal(ibkr.currentValue, 6500);
 
   const portfolio = await authedFetch('/api/portfolio');
   assert.equal(portfolio.res.status, 200);
   assert.equal(portfolio.data.netDepositsTotal, 18000);
   assert.equal(portfolio.data.initialNetDeposits, 18000);
   assert.equal(portfolio.data.portfolio, 12000);
+});
+
+test('manual baseline save does not collapse multi-account attribution in profile and trading account APIs', async () => {
+  const saveBaseline = await authedFetch('/api/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      portfolio: 15000,
+      netDeposits: 18000
+    })
+  });
+  assert.equal(saveBaseline.res.status, 200);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  assert.equal(profile.data.portfolio, 15000);
+  const primary = profile.data.tradingAccounts.find(account => account.id === 'primary');
+  const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
+  assert.ok(primary);
+  assert.ok(ibkr);
+  assert.equal(primary.currentValue, 4000);
+  assert.equal(ibkr.currentValue, 6500);
+
+  const tradingAccounts = await authedFetch('/api/account/trading-accounts');
+  assert.equal(tradingAccounts.res.status, 200);
+  const primaryFromAccountApi = tradingAccounts.data.accounts.find(account => account.id === 'primary');
+  const ibkrFromAccountApi = tradingAccounts.data.accounts.find(account => account.id === 'ibkr');
+  assert.ok(primaryFromAccountApi);
+  assert.ok(ibkrFromAccountApi);
+  assert.equal(primaryFromAccountApi.currentValue, 4000);
+  assert.equal(ibkrFromAccountApi.currentValue, 6500);
 });

@@ -4901,6 +4901,27 @@ function syncIntegratedTradingAccountValuesFromHistory(user, history = ensurePor
   return mutated;
 }
 
+function logPortfolioAttribution(stage, user, extra = {}) {
+  try {
+    const accounts = Array.isArray(user?.tradingAccounts)
+      ? user.tradingAccounts.map(account => ({
+        id: account?.id || '',
+        provider: account?.integrationProvider || null,
+        integrationEnabled: !!account?.integrationEnabled,
+        currentValue: Number(account?.currentValue) || 0
+      }))
+      : [];
+    const aggregateFromAccounts = accounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
+    console.info(`[portfolio][attribution][${stage}]`, {
+      aggregateFromAccounts,
+      accounts,
+      ...extra
+    });
+  } catch (error) {
+    console.warn('[portfolio][attribution] failed to serialize attribution log', error);
+  }
+}
+
 
 function buildProfileCompletionSummary(user, portfolioValue, netDepositsTotal) {
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
@@ -12576,6 +12597,11 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   });
   const role = getUserRole(user, req.username);
   const profileSummary = buildProfileCompletionSummary(user, portfolioValue, total);
+  logPortfolioAttribution('profile_response', user, {
+    user: req.username,
+    resolvedProfilePortfolio: portfolioValue,
+    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source
+  });
   res.json({
     profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
@@ -16293,11 +16319,14 @@ app.post('/api/profile', auth, (req,res)=>{
   };
   const accountRecords = {};
   const normalizedAccounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
-  if (tradingAccountsProvided && normalizedAccounts.length && (user.multiTradingAccountsEnabled || normalizedAccounts.length > 1)) {
+  const hasMultiAccounts = normalizedAccounts.length && (user.multiTradingAccountsEnabled || normalizedAccounts.length > 1);
+  if (hasMultiAccounts) {
     const combinedPortfolio = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
     const combinedNetDeposits = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
-    portfolioNumber = combinedPortfolio;
-    netDepositsNumber = combinedNetDeposits;
+    if (tradingAccountsProvided) {
+      portfolioNumber = combinedPortfolio;
+      netDepositsNumber = combinedNetDeposits;
+    }
     const netScale = combinedNetDeposits !== 0 ? (cashIn - cashOut) / combinedNetDeposits : 0;
     normalizedAccounts.forEach(account => {
       const accountNet = Number(account.currentNetDeposits) || 0;
@@ -16317,6 +16346,19 @@ app.post('/api/profile', auth, (req,res)=>{
   }
   history[ym][targetDate].end = portfolioNumber;
   history[ym][targetDate].accounts = accountRecords;
+  logPortfolioAttribution('profile_save_before_persist', user, {
+    user: req.username,
+    targetDate,
+    tradingAccountsProvided,
+    resolvedProfilePortfolio: portfolioNumber,
+    resolvedNetDeposits: netDepositsNumber,
+    serializedAccountRows: Object.entries(accountRecords).map(([accountId, record]) => ({
+      accountId,
+      end: Number(record?.end) || 0,
+      cashIn: Number(record?.cashIn) || 0,
+      cashOut: Number(record?.cashOut) || 0
+    }))
+  });
   user.manualPortfolioBaseline = portfolioNumber;
   user.manualNetDepositsBaseline = netDepositsNumber;
   user.manualBaselineUpdatedAt = new Date().toISOString();
@@ -16679,6 +16721,10 @@ app.get('/api/account/trading-accounts', auth, (req, res) => {
   if (normalizePortfolioHistory(user)) mutated = true;
   if (syncIntegratedTradingAccountValuesFromHistory(user, history)) mutated = true;
   if (mutated) saveDB(db);
+  logPortfolioAttribution('account_list_response', user, {
+    user: req.username,
+    multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled
+  });
   res.json({
     enabled: !!user.multiTradingAccountsEnabled,
     accounts: user.tradingAccounts || [{ id: 'primary', label: 'Primary account', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false }]
