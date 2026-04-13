@@ -64,6 +64,7 @@ const state = {
   activeTradesLastStructureSignature: '',
   activeTradesLastRealtimeSignature: '',
   activeTradesLastRenderSort: '',
+  activeTradesLastExpandedTradeId: null,
   activeTradesRenderCount: 0,
   activeTradesIncrementalUpdateCount: 0,
   tradeHeadlineMetricsCache: {
@@ -1799,6 +1800,7 @@ function renderActiveTrades() {
     list.childElementCount > 0
     && state.activeTradesLastStructureSignature === structureSignature
     && state.activeTradesLastRenderSort === state.activeTradeSort
+    && state.activeTradesLastExpandedTradeId === state.expandedActiveTradeId
   );
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
@@ -1818,6 +1820,7 @@ function renderActiveTrades() {
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
     state.activeTradesLastRealtimeSignature = realtimeSignature;
+    state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
     state.activeTradesIncrementalUpdateCount += 1;
     return;
   }
@@ -1828,6 +1831,7 @@ function renderActiveTrades() {
     }
     updateActiveTradesOverflow();
     state.activeTradesLastRealtimeSignature = realtimeSignature;
+    state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
     if (window.PerfDiagnostics) {
       window.PerfDiagnostics.log('dashboard-active-trades-dom-reused', {
         sort: state.activeTradeSort,
@@ -1865,6 +1869,7 @@ function renderActiveTrades() {
     state.activeTradesLastStructureSignature = structureSignature;
     state.activeTradesLastRealtimeSignature = realtimeSignature;
     state.activeTradesLastRenderSort = state.activeTradeSort;
+    state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
     return;
   }
   if (empty) empty.classList.add('is-hidden');
@@ -1880,6 +1885,11 @@ function renderActiveTrades() {
 
   const validExpandedId = sortedTrades.some(trade => getActiveTradeUiId(trade) === state.expandedActiveTradeId);
   if (!validExpandedId) state.expandedActiveTradeId = null;
+  if (validExpandedId && state.expandedActiveTradeId) {
+    window.PerfDiagnostics?.log('active-trade-expand-state-restored', {
+      tradeId: state.expandedActiveTradeId
+    });
+  }
 
   groupedTrades.forEach(group => {
     if (group.trades.length === 1) {
@@ -1924,6 +1934,7 @@ function renderActiveTrades() {
   state.activeTradesLastStructureSignature = structureSignature;
   state.activeTradesLastRealtimeSignature = realtimeSignature;
   state.activeTradesLastRenderSort = state.activeTradeSort;
+  state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
   state.activeTradesRenderCount += 1;
   window.PerfDiagnostics?.log('dashboard-active-trades-full-render', {
     sort: state.activeTradeSort,
@@ -2165,7 +2176,12 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   compactRow.append(compactLeft, compactMetrics, compactChevron);
   compactRow.addEventListener('click', () => {
     if (!tradeId) return;
-    state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    const nextExpandedTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    window.PerfDiagnostics?.log('active-trade-expand-click', {
+      tradeId,
+      expanded: nextExpandedTradeId === tradeId
+    });
+    state.expandedActiveTradeId = nextExpandedTradeId;
     renderActiveTrades();
   });
   return compactRow;
@@ -2198,7 +2214,12 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   row.append(connector, compactLeftPlaceholder, compactMetrics, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
-    state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    const nextExpandedTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    window.PerfDiagnostics?.log('active-trade-expand-click', {
+      tradeId,
+      expanded: nextExpandedTradeId === tradeId
+    });
+    state.expandedActiveTradeId = nextExpandedTradeId;
     renderActiveTrades();
   });
 
@@ -2231,7 +2252,12 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   row.append(compactLeft, compactMetrics, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
-    state.expandedActiveTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    const nextExpandedTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
+    window.PerfDiagnostics?.log('active-trade-expand-click', {
+      tradeId,
+      expanded: nextExpandedTradeId === tradeId
+    });
+    state.expandedActiveTradeId = nextExpandedTradeId;
     renderActiveTrades();
   });
   return row;
