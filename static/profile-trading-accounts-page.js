@@ -9,6 +9,9 @@
       useSelectedTradingAccountsForRisk: false,
       selectedTradingAccountIdsForRisk: []
     },
+    eligibleRiskAccounts: [],
+    selectedRiskAccounts: [],
+    riskSettingsLoading: true,
     riskCapital: null,
     providerIntegrations: [],
     resolvedAccounts: [],
@@ -599,7 +602,10 @@
       body: JSON.stringify(next)
     });
     state.riskSettings = payload?.riskSettings || state.riskSettings;
+    state.eligibleRiskAccounts = Array.isArray(payload?.eligibleAccounts) ? payload.eligibleAccounts : state.eligibleRiskAccounts;
+    state.selectedRiskAccounts = Array.isArray(payload?.selectedAccounts) ? payload.selectedAccounts : state.selectedRiskAccounts;
     state.riskCapital = payload?.riskCapital || state.riskCapital;
+    state.riskSettingsLoading = false;
     renderRiskSelectionPanel();
   }
 
@@ -610,10 +616,23 @@
     const toggle = document.getElementById('risk-account-selection-enabled');
     if (!panel || !list || !summary || !toggle) return;
     const riskCapital = state.riskCapital || {};
-    const eligible = Array.isArray(riskCapital.eligibleAccounts) ? riskCapital.eligibleAccounts : [];
-    const canShow = !!riskCapital.featureAvailable && eligible.length >= 2;
+    const eligible = Array.isArray(state.eligibleRiskAccounts) ? state.eligibleRiskAccounts : [];
+    console.log('[risk-ui]', {
+      eligibleCount: eligible?.length,
+      selectedIds: state.riskSettings?.selectedTradingAccountIdsForRisk,
+      toggle: state.riskSettings?.useSelectedTradingAccountsForRisk
+    });
+    if (state.riskSettingsLoading) {
+      panel.classList.remove('hidden');
+      toggle.disabled = true;
+      list.innerHTML = '<p class="helper">Loading risk account settings…</p>';
+      summary.textContent = 'Loading risk account settings…';
+      return;
+    }
+    const canShow = eligible.length >= 2;
     panel.classList.toggle('hidden', !canShow);
     if (!canShow) return;
+    toggle.disabled = false;
     toggle.checked = !!state.riskSettings?.useSelectedTradingAccountsForRisk;
     const selectedIds = new Set(Array.isArray(state.riskSettings?.selectedTradingAccountIdsForRisk)
       ? state.riskSettings.selectedTradingAccountIdsForRisk
@@ -635,7 +654,7 @@
       `;
       list.appendChild(row);
     });
-    const selectedCount = Array.isArray(riskCapital.selectedAccounts) ? riskCapital.selectedAccounts.length : 0;
+    const selectedCount = Array.isArray(state.selectedRiskAccounts) ? state.selectedRiskAccounts.length : 0;
     const eligibleCount = eligible.length;
     const selectedCapital = Number(riskCapital.selectedRiskCapital);
     const totalCapital = Number(riskCapital.totalEligibleRiskCapital);
@@ -664,11 +683,13 @@
   }
 
   async function refreshData() {
+    state.riskSettingsLoading = true;
+    renderRiskSelectionPanel();
     const [brokerPayload, ibkrPayload, tradingAccountsPayload, riskSettingsPayload] = await Promise.all([
       api('/api/broker-accounts?provider=trading212').catch(() => ({ accounts: [] })),
       api('/api/integrations/ibkr').catch(() => ({})),
       api('/api/account/trading-accounts').catch(() => ({ accounts: [] })),
-      api('/api/account/risk-settings').catch(() => ({ riskSettings: {}, riskCapital: null }))
+      api('/api/account/risk-settings').catch(() => ({ riskSettings: {}, riskCapital: null, eligibleAccounts: [], selectedAccounts: [] }))
     ]);
     state.t212Accounts = Array.isArray(brokerPayload.accounts)
       ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
@@ -676,7 +697,10 @@
     state.ibkr = ibkrPayload || {};
     state.tradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
     state.riskSettings = riskSettingsPayload?.riskSettings || state.riskSettings;
+    state.eligibleRiskAccounts = Array.isArray(riskSettingsPayload?.eligibleAccounts) ? riskSettingsPayload.eligibleAccounts : [];
+    state.selectedRiskAccounts = Array.isArray(riskSettingsPayload?.selectedAccounts) ? riskSettingsPayload.selectedAccounts : [];
     state.riskCapital = riskSettingsPayload?.riskCapital || null;
+    state.riskSettingsLoading = false;
 
     const staleFixed = await reconcileStaleLinkedState();
     const linkageFixed = await reconcileTrading212Linkage();
