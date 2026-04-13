@@ -8692,26 +8692,37 @@ function ensureRiskSettings(user) {
 }
 
 function getEligibleRiskAccounts(user) {
-  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
-  return accounts
-    .filter((account) => {
-      const id = String(account?.id || '').trim();
-      const provider = String(account?.integrationProvider || '').trim().toLowerCase();
-      return Boolean(id && (provider === 'trading212' || provider === 'ibkr'));
-    })
+  const allAccounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const eligibleAccounts = allAccounts
     .map((account) => {
-      const valueRaw = Number(account?.currentValue ?? account?.portfolioValue ?? account?.liveValue);
-      const usableValue = Number.isFinite(valueRaw) && valueRaw >= 0 ? valueRaw : 0;
+      if (!account || typeof account !== 'object') return null;
+      const id = String(account?.id || account?._id || account?.accountId || '').trim();
+      if (!id) return null;
+      const rawProvider = account?.provider ?? account?.integrationProvider;
+      const provider = String(rawProvider || '').trim().toLowerCase() || 'manual';
+      const numericValue = Number(account?.value ?? account?.currentValue ?? account?.portfolioValue ?? account?.liveValue);
+      const value = Number.isFinite(numericValue) ? numericValue : 0;
       return {
-        id: String(account.id).trim(),
-        provider: String(account.integrationProvider || '').trim().toLowerCase() || 'unknown',
+        id,
+        provider,
+        value,
+        usableValue: value,
         label: account.label || account.accountType || 'Trading account',
         accountType: account.accountType || 'Trading account',
         brokerDisplayLabel: account.brokerDisplayLabel || '',
-        maskedIdentifier: String(account.providerAccountId || account.linkedBrokerAccountId || '').trim(),
-        usableValue
+        maskedIdentifier: String(account.providerAccountId || account.linkedBrokerAccountId || '').trim()
       };
-    });
+    })
+    .filter(Boolean);
+  console.log('[risk-resolver]', {
+    totalAccounts: allAccounts.length,
+    eligibleAccounts: eligibleAccounts.map(a => ({
+      id: a.id,
+      provider: a.provider,
+      value: a.value
+    }))
+  });
+  return eligibleAccounts;
 }
 
 function getRiskCapitalBase(user, options = {}) {
