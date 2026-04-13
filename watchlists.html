@@ -14,7 +14,9 @@
           <p class="tool-overline">Trading workflow</p>
           <h1 id="watchlists-title">Personal Watchlists</h1>
         </div>
-        <div class="social-add-friend-row"><input id="watchlist-new-name" type="text" maxlength="64" placeholder="New watchlist name"><button id="watchlist-new-btn" class="primary" type="button">New Watchlist</button></div>
+        <div class="social-row-actions">
+          <button id="watchlist-new-btn" class="primary" type="button">Create Watchlist</button>
+        </div>
       </header>
       <p id="watchlist-page-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
       <div class="watchlists-layout">
@@ -23,15 +25,14 @@
         </aside>
         <section>
           <div class="watchlist-detail-head">
-            <div><h3 id="watchlist-detail-title">Select a watchlist</h3><input id="watchlist-rename-input" type="text" maxlength="64" placeholder="Rename selected watchlist"></div>
+            <div>
+              <h3 id="watchlist-detail-title">Select a watchlist</h3>
+              <p id="watchlist-detail-meta" class="helper"></p>
+            </div>
             <div class="social-row-actions">
-              <button id="watchlist-rename-btn" class="ghost" type="button">Save Name</button>
+              <button id="watchlist-edit-btn" class="ghost" type="button">Edit</button>
               <button id="watchlist-delete-btn" class="danger outline" type="button">Delete</button>
             </div>
-          </div>
-          <div class="social-add-friend-row">
-            <input id="watchlist-add-ticker-input" type="text" maxlength="24" placeholder="Add ticker (AAPL)">
-            <button id="watchlist-add-ticker-btn" class="ghost" type="button">Add</button>
           </div>
           <p id="watchlist-detail-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
           <div id="watchlist-table-wrap" class="social-watchlist-table-wrap"></div>
@@ -39,6 +40,26 @@
       </div>
     </section>
   </main>
+
+  <dialog id="watchlist-modal" class="social-modal watchlist-builder-modal">
+    <form method="dialog" class="social-modal-card" id="watchlist-modal-form">
+      <header class="social-modal-header">
+        <h3 id="watchlist-modal-title">Create watchlist</h3>
+        <button type="button" id="watchlist-modal-close" class="ghost">Close</button>
+      </header>
+      <label>Title<input id="watchlist-modal-name" type="text" maxlength="120" placeholder="Key Stocks to Watch Next Week"></label>
+      <label>Notes<textarea id="watchlist-modal-notes" rows="3" maxlength="1200" placeholder="Optional research notes"></textarea></label>
+      <label>Paste parser mode<textarea id="watchlist-modal-paste" rows="7" placeholder="Title\nSection: TICK1, TICK2"></textarea></label>
+      <label>Sections JSON preview<textarea id="watchlist-modal-sections" rows="8" placeholder='[{"title":"Momentum","tickers":["NVDA","AMD"]}]'></textarea></label>
+      <p class="helper">Paste mode: first non-empty line = title, each next <code>Section: ticker, ticker</code> line becomes an ordered section.</p>
+      <p id="watchlist-modal-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+      <footer class="social-row-actions">
+        <button type="button" id="watchlist-modal-parse" class="ghost">Parse Paste</button>
+        <button type="button" id="watchlist-modal-save" class="primary">Save Watchlist</button>
+      </footer>
+    </form>
+  </dialog>
+
   <script src="/static/theme-utils.js"></script>
   <script src="/static/app-header.js"></script>
   <script src="/static/guest.js"></script>

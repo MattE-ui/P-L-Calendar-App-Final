@@ -9405,6 +9405,16 @@ textarea {
 .social-watchlists-wrap { display: flex; flex-direction: column; gap: 8px; }
 .social-watchlist-card { display: flex; flex-direction: column; gap: 8px; }
 .social-watchlist-head { display: flex; flex-direction: column; gap: 2px; }
+.social-watchlist-title-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.social-watchlist-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.social-watchlist-chip { font-size: 11px; border: 1px solid rgba(68, 184, 126, 0.35); color: #b8e7cf; background: rgba(17, 50, 37, 0.45); border-radius: 999px; padding: 3px 8px; }
+.social-watchlist-expand-toggle { min-height: 28px; }
+.social-watchlist-details { display: flex; flex-direction: column; gap: 8px; }
+.social-watchlist-section-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.02); padding: 8px; }
+.social-watchlist-section-card summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+.social-watchlist-section-card summary::-webkit-details-marker { display: none; }
+.social-watchlist-section-body { display: grid; gap: 4px; margin-top: 8px; }
+.social-watchlist-mini-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 6px 8px; border-radius: 8px; background: rgba(9, 22, 17, 0.7); font-size: 12px; align-items: center; }
 .social-watchlist-table-wrap { overflow-x: auto; border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 10px; }
 .social-watchlist-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 680px; }
 .social-watchlist-table th, .social-watchlist-table td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align: right; white-space: nowrap; }
@@ -9412,6 +9422,11 @@ textarea {
 .social-watchlist-table tbody tr:last-child td { border-bottom: 0; }
 .social-watchlist-table .is-pos { color: #4dd48a; }
 .social-watchlist-table .is-neg { color: #ff6e6e; }
+.social-watchlist-tile { cursor: pointer; }
+.social-watchlist-tile-head { display: flex; flex-direction: column; gap: 4px; }
+.watchlist-builder-modal { max-width: 760px; width: min(92vw, 760px); border: 1px solid rgba(255,255,255,0.2); border-radius: 14px; background: #06150f; color: #e3f1eb; }
+.watchlist-builder-modal .social-modal-card { display: grid; gap: 10px; }
+.watchlist-builder-modal input, .watchlist-builder-modal textarea { width: 100%; background: rgba(255,255,255,0.04); color: inherit; border: 1px solid rgba(255,255,255,0.16); border-radius: 8px; padding: 8px; }
 
 @media (max-width: 980px) {
   .watchlists-layout { grid-template-columns: 1fr; }
