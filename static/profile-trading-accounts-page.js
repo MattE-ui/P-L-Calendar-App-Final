@@ -5,6 +5,7 @@
     t212Accounts: [],
     tradingAccounts: [],
     ibkr: {},
+    providerIntegrations: [],
     resolvedAccounts: [],
     modalMode: 'add',
     modalAccountId: '',
@@ -92,7 +93,7 @@
       merged.set(key, {
         id: `resolved:${local.id}`,
         name: local.label || 'Trading account',
-        broker,
+        broker: provider,
         accountType: local.accountType || 'Trading account',
         portfolioValue: Number.isFinite(Number(local.currentValue)) ? Number(local.currentValue) : null,
         lastUpdated: state.ibkr.lastSyncAt || null,
@@ -212,7 +213,58 @@
       unmatchedLocalRecords: stats.unmatchedLocal,
       unmatchedIntegrationRecords: stats.unmatchedIntegration
     });
+    resolved.forEach((account) => {
+      const summary = {
+        id: account.id,
+        name: account.name || null,
+        broker: account.broker || null,
+        accountType: account.accountType || null,
+        dataSourceType: account.dataSource?.type || null,
+        providerAccountId: account.dataSource?.providerAccountId || null,
+        connectionId: account.dataSource?.connectionId || null
+      };
+      console.debug('[TradingAccounts][resolve][account]', summary);
+      if (!account.broker || !account.accountType) {
+        console.warn('[TradingAccounts][resolve][missing-fields]', summary);
+      }
+    });
     return resolved;
+  }
+
+  function resolveProviderIntegrationsForView() {
+    const t212LinkedAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
+    const ibkrEnabled = !!state.ibkr?.enabled;
+    const viewModel = [
+      {
+        id: 'trading212',
+        provider: 'Trading 212',
+        linkedCount: t212LinkedAccounts.length,
+        status: t212LinkedAccounts.length
+          ? (t212LinkedAccounts.some((account) => String(account.connectionStatus || '').toLowerCase() === 'connected') ? 'Connected' : 'Unknown')
+          : 'Disconnected',
+        lastUpdated: t212LinkedAccounts[0]?.lastSyncAt || null,
+        canAdd: true,
+        canSync: t212LinkedAccounts.length > 0,
+        canDisconnect: t212LinkedAccounts.length > 0
+      },
+      {
+        id: 'ibkr',
+        provider: 'IBKR',
+        linkedCount: ibkrEnabled ? 1 : 0,
+        status: state.ibkr?.connectionStatus || (ibkrEnabled ? 'Connected' : 'Disconnected'),
+        lastUpdated: state.ibkr?.lastSyncAt || null,
+        canAdd: !ibkrEnabled,
+        canSync: ibkrEnabled,
+        canDisconnect: false
+      }
+    ];
+    console.debug('[TradingAccounts][integrations][resolve]', {
+      providerIntegrationsCount: viewModel.length,
+      trading212LinkedAccounts: t212LinkedAccounts.length,
+      ibkrEnabled,
+      ibkrConnectionStatus: state.ibkr?.connectionStatus || null
+    });
+    return viewModel;
   }
 
   async function persistTradingAccounts(accounts) {
@@ -265,15 +317,16 @@
     accounts.forEach((account) => {
       const card = document.createElement('article');
       card.className = 'trading-account-card';
-      const sourceLabel = account.dataSource.type.charAt(0).toUpperCase() + account.dataSource.type.slice(1);
+      const sourceType = account.dataSource?.type || 'manual';
+      const sourceLabel = sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
       card.innerHTML = `
         <header class="trading-account-card__header">
-          <h3>${escapeHtml(account.name)}</h3>
-          <span class="data-source-badge is-${escapeHtml(account.dataSource.type)}">${escapeHtml(sourceLabel)}</span>
+          <h3>${escapeHtml(account.name || 'Trading account')}</h3>
+          <span class="data-source-badge is-${escapeHtml(sourceType)}">${escapeHtml(sourceLabel)}</span>
         </header>
         <dl class="broker-meta-grid">
-          <div><dt>Broker</dt><dd>${escapeHtml(account.broker)}</dd></div>
-          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType || 'Trading account')}</dd></div>
+          <div><dt>Broker</dt><dd>${escapeHtml(account.broker || 'Unknown broker')}</dd></div>
+          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType || 'Unspecified')}</dd></div>
           <div><dt>Portfolio value</dt><dd>${formatMoney(account.portfolioValue)}</dd></div>
           <div><dt>Last updated</dt><dd>${formatWhen(account.lastUpdated)}</dd></div>
         </dl>
@@ -287,20 +340,7 @@
       `;
       root.appendChild(card);
     });
-  }
-
-  function renderProviderHeader() {
-    const count = state.t212Accounts.length;
-    return `
-      <div class="broker-provider-header">
-        <div class="broker-provider-header__copy">
-          <p class="broker-provider-header__eyebrow">Provider</p>
-          <h3>Trading 212</h3>
-          <p class="helper">${count ? `${count} linked account${count === 1 ? '' : 's'} connected.` : 'Link multiple Trading 212 accounts.'}</p>
-        </div>
-        <button type="button" class="primary" data-action="add-t212">+ Add account</button>
-      </div>
-    `;
+    console.debug('[TradingAccounts][render][accounts]', { accountCardsRendered: accounts.length });
   }
 
   function renderTrading212Cards() {
@@ -308,47 +348,35 @@
     if (!root) return;
     root.innerHTML = '';
 
-    const wrapper = document.createElement('section');
-    wrapper.className = 'broker-provider-section';
-    wrapper.innerHTML = `${renderProviderHeader()}<div class="broker-provider-list"></div>`;
-    const list = wrapper.querySelector('.broker-provider-list');
-
-    if (!state.t212Accounts.length) {
-      const empty = document.createElement('p');
-      empty.className = 'helper';
-      empty.textContent = 'No linked Trading 212 accounts yet.';
-      list.appendChild(empty);
-    }
-
-    state.t212Accounts.forEach((account) => {
+    state.providerIntegrations.forEach((integration) => {
       const card = document.createElement('article');
       card.className = 'broker-card broker-card--premium';
       card.innerHTML = `
         <header class="broker-card__head">
           <div class="broker-card__title-wrap">
-            <h4>${escapeHtml(account.accountLabel || 'Trading 212 account')}</h4>
+            <h4>${escapeHtml(integration.provider || 'Unknown provider')}</h4>
             <div class="broker-card__badges">
-              <span class="broker-pill">Trading 212</span>
-              <span class="broker-pill">${escapeHtml(account.accountType || 'Trading account')}</span>
+              <span class="broker-pill">${escapeHtml(integration.status || 'Unknown')}</span>
+              <span class="broker-pill">${escapeHtml(String(Number(integration.linkedCount) || 0))} linked</span>
             </div>
           </div>
         </header>
         <dl class="broker-meta-grid">
-          <div><dt>Connection</dt><dd>${escapeHtml(account.connectionStatus || 'Connected')}</dd></div>
-          <div><dt>Data status</dt><dd>${escapeHtml(account.syncStatus || 'Idle')}</dd></div>
-          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType || 'Trading account')}</dd></div>
-          <div><dt>Last update</dt><dd>${formatWhen(account.lastSyncAt)}</dd></div>
+          <div><dt>Connection</dt><dd>${escapeHtml(integration.status || 'Unknown')}</dd></div>
+          <div><dt>Linked accounts</dt><dd>${escapeHtml(String(Number(integration.linkedCount) || 0))}</dd></div>
+          <div><dt>Provider</dt><dd>${escapeHtml(integration.provider || 'Unknown provider')}</dd></div>
+          <div><dt>Last update</dt><dd>${formatWhen(integration.lastUpdated)}</dd></div>
         </dl>
         <div class="broker-card__actions">
-          <button type="button" class="primary" data-action="sync-account" data-account-id="${account.brokerAccountId}">Refresh now</button>
-          <button type="button" class="ghost" data-action="edit-account" data-account-id="${account.brokerAccountId}">Edit account</button>
-          <button type="button" class="danger" data-action="disconnect-account" data-account-id="${account.brokerAccountId}">Disconnect</button>
+          ${integration.id === 'trading212' ? '<button type="button" class="ghost" data-action="add-t212">+ Add account</button>' : ''}
+          ${integration.id === 'trading212' && integration.canSync ? '<button type="button" class="primary" data-action="sync-all-t212">Refresh now</button>' : ''}
+          ${integration.id === 'ibkr' && integration.canAdd ? '<button type="button" class="ghost" data-action="connect-ibkr">Connect broker</button>' : ''}
+          ${integration.id === 'ibkr' && integration.canSync ? '<button type="button" class="primary" data-action="sync-ibkr">Sync now</button>' : ''}
         </div>
       `;
-      list.appendChild(card);
+      root.appendChild(card);
     });
-
-    root.appendChild(wrapper);
+    console.debug('[TradingAccounts][render][integrations]', { integrationCardsRendered: state.providerIntegrations.length });
   }
 
   function renderIbkrCard() {
@@ -412,7 +440,18 @@
       state.tradingAccounts = Array.isArray(refreshed.accounts) ? refreshed.accounts : [];
     }
 
+    console.debug('[TradingAccounts][raw]', {
+      localTradingAccountsCount: state.tradingAccounts.length,
+      manualOrImportedAccountsCount: state.tradingAccounts.filter((account) => {
+        const type = normalizeDataSource(account);
+        return type === 'manual' || type === 'imported';
+      }).length,
+      trading212IntegrationCount: state.t212Accounts.length,
+      ibkrProviderConnectionCount: state.ibkr?.enabled ? 1 : 0
+    });
+
     state.resolvedAccounts = resolveAccountsForView();
+    state.providerIntegrations = resolveProviderIntegrationsForView();
     renderAccountsList();
     renderTrading212Cards();
     renderIbkrCard();
@@ -618,6 +657,10 @@
     }
     if (action === 'open-integrations-tab') return setActiveTab('integrations');
     if (action === 'add-t212') return openAccountModal('add');
+    if (action === 'sync-all-t212') {
+      await Promise.all(state.t212Accounts.map((account) => api(`/api/broker-accounts/${encodeURIComponent(account.brokerAccountId)}/sync`, { method: 'POST' })));
+      return setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
+    }
     if (action === 'sync-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
     if (action === 'disconnect-account') {
       const resolved = state.resolvedAccounts.find((item) => item.brokerAccountId === accountId);
