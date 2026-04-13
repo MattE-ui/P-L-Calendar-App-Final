@@ -8665,7 +8665,7 @@ function getPortfolioGBPForRisk(user) {
 function getTradingAccountAggregationSnapshot(user) {
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
   const accounts = accountList.map((account) => {
-    const portfolioValue = Number(account?.portfolioValue ?? account?.currentValue ?? account?.liveValue);
+    const portfolioValue = Number(account?.currentValue ?? account?.portfolioValue ?? account?.liveValue);
     const netDeposits = Number(account?.currentNetDeposits);
     return {
       id: account?.id || '',
@@ -8697,7 +8697,7 @@ function getCurrentPortfolioValueFromAccounts(accounts = []) {
     const portfolioValueRaw = Number(acc?.portfolioValue);
     const currentValueRaw = Number(acc?.currentValue);
     const liveValueRaw = Number(acc?.liveValue);
-    const chosen = Number(acc?.portfolioValue ?? acc?.currentValue ?? acc?.liveValue ?? 0);
+    const chosen = Number(acc?.currentValue ?? acc?.portfolioValue ?? acc?.liveValue ?? 0);
     const chosenValue = Number.isFinite(chosen) ? chosen : 0;
     total += chosenValue;
     diagnosticAccounts.push({
@@ -8706,9 +8706,9 @@ function getCurrentPortfolioValueFromAccounts(accounts = []) {
       portfolioValue: Number.isFinite(portfolioValueRaw) ? portfolioValueRaw : null,
       currentValue: Number.isFinite(currentValueRaw) ? currentValueRaw : null,
       liveValue: Number.isFinite(liveValueRaw) ? liveValueRaw : null,
-      chosenField: Number.isFinite(portfolioValueRaw)
-        ? 'portfolioValue'
-        : (Number.isFinite(currentValueRaw) ? 'currentValue' : 'liveValue'),
+      chosenField: Number.isFinite(currentValueRaw)
+        ? 'currentValue'
+        : (Number.isFinite(portfolioValueRaw) ? 'portfolioValue' : 'liveValue'),
       chosenValue
     });
   });
@@ -8722,6 +8722,80 @@ function getCurrentPortfolioValueFromAccounts(accounts = []) {
     }
   });
   return total;
+}
+
+function hasActiveIntegratedTradingAccount(user) {
+  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  return accounts.some((account) => (
+    !!account
+    && !!account.integrationEnabled
+    && (account.integrationProvider === 'trading212' || account.integrationProvider === 'ibkr')
+  ));
+}
+
+function clearStaleManualPortfolioBaseline(user, options = {}) {
+  if (!user || typeof user !== 'object') return false;
+  const manualBaseline = Number(user.manualPortfolioBaseline);
+  if (!Number.isFinite(manualBaseline)) return false;
+  if (!hasActiveIntegratedTradingAccount(user)) return false;
+  const snapshot = getCurrentPortfolioValue(user);
+  console.info('[portfolio][manual-baseline][clear]', {
+    reason: options.reason || 'integrated_account_present',
+    manualPortfolioBaseline: manualBaseline,
+    livePortfolioValue: Number.isFinite(Number(snapshot?.value)) ? Number(snapshot.value) : null,
+    source: snapshot?.source || null,
+    accountIds: (Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [])
+      .filter(account => account?.integrationEnabled && (account?.integrationProvider === 'trading212' || account?.integrationProvider === 'ibkr'))
+      .map(account => account.id)
+  });
+  user.manualPortfolioBaseline = null;
+  user.manualBaselineUpdatedAt = new Date().toISOString();
+  return true;
+}
+
+function logPortfolioBootstrapDiagnostics(user, options = {}) {
+  const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
+  const snapshot = getCurrentPortfolioValue(user);
+  const manualBaseline = Number(user?.manualPortfolioBaseline);
+  const totalFromAccounts = getCurrentPortfolioValueFromAccounts(accounts);
+  const staleDisplayedValue = Number(options?.staleDisplayedValue);
+  const hasStaleReference = Number.isFinite(staleDisplayedValue);
+  const staleMatches = hasStaleReference && (
+    (Number.isFinite(manualBaseline) && manualBaseline === staleDisplayedValue)
+    || (Number.isFinite(Number(user?.portfolio)) && Number(user.portfolio) === staleDisplayedValue)
+    || (Number.isFinite(totalFromAccounts) && totalFromAccounts === staleDisplayedValue)
+  );
+  console.info('[portfolio][diagnostics][bootstrap]', {
+    endpoint: options.endpoint || null,
+    user: options.user || null,
+    persisted: {
+      userPortfolio: Number.isFinite(Number(user?.portfolio)) ? Number(user.portfolio) : null,
+      manualPortfolioBaseline: Number.isFinite(manualBaseline) ? manualBaseline : null,
+      manualBaselineUpdatedAt: user?.manualBaselineUpdatedAt || null,
+      lastPortfolioSyncAt: user?.lastPortfolioSyncAt || null,
+      portfolioSource: user?.portfolioSource || null
+    },
+    snapshot: {
+      value: Number.isFinite(Number(snapshot?.value)) ? Number(snapshot.value) : null,
+      source: snapshot?.source || null,
+      lastUpdatedAt: snapshot?.lastUpdatedAt || null,
+      accountTotal: Number.isFinite(totalFromAccounts) ? totalFromAccounts : null
+    },
+    ownership: {
+      accounts: accounts.map(account => ({
+        id: account?.id || '',
+        label: account?.label || '',
+        provider: account?.integrationProvider || null,
+        integrationEnabled: !!account?.integrationEnabled,
+        linkedBrokerAccountId: account?.linkedBrokerAccountId || '',
+        providerAccountId: account?.providerAccountId || ''
+      }))
+    },
+    staleReference: hasStaleReference ? {
+      value: staleDisplayedValue,
+      matchesPersistedOrLive: staleMatches
+    } : null
+  });
 }
 
 function getLatestMergedEquityValue(user, history = ensurePortfolioHistory(user)) {
@@ -8836,7 +8910,7 @@ function getCurrentPortfolioValue(user) {
       accounts: accounts.map(a => ({
         name: a?.name || a?.label || '',
         broker: a?.broker || a?.integrationProvider || '',
-        value: Number(a?.portfolioValue ?? a?.currentValue ?? 0) || 0
+        value: Number(a?.currentValue ?? a?.portfolioValue ?? 0) || 0
       })),
       total: portfolioValue
     });
@@ -12901,6 +12975,12 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const staleDisplayedValue = req.query?.staleDisplayedValue;
+  logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/portfolio', user: req.username, staleDisplayedValue });
+  const clearedManualPortfolioBaseline = clearStaleManualPortfolioBaseline(user, { reason: '/api/portfolio' });
+  if (clearedManualPortfolioBaseline) {
+    portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
+  }
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
   const computedTotalFromAccounts = accountAggregation.portfolioValue;
   const manualPortfolioRaw = user.manualPortfolioBaseline;
@@ -12909,7 +12989,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     && manualPortfolioRaw !== undefined
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
-  const resolvedPortfolio = hasManualPortfolioBaseline ? manualPortfolioBaseline : portfolioSnapshot.value;
+  const resolvedPortfolio = portfolioSnapshot.value;
   console.info('[trace][portfolio][endpoint-hit]', {
     endpoint: '/api/portfolio',
     user: req.username,
@@ -12917,7 +12997,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     portfolioSourceField: hasManualPortfolioBaseline ? 'manualPortfolioBaseline' : 'getCurrentPortfolioValue.value',
     sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
   });
-  if (mutated || normalized || anchors.mutated) saveDB(db);
+  if (mutated || normalized || anchors.mutated || clearedManualPortfolioBaseline) saveDB(db);
   console.info('[baseline][resolve][portfolio]', {
     user: req.username,
     source: totals.source || 'history',
@@ -12939,7 +13019,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   });
   const responsePayload = {
     portfolioValue: resolvedPortfolio,
-    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
+    portfolioSource: portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: totals.baseline,
@@ -13081,6 +13161,14 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const staleDisplayedValue = req.query?.staleDisplayedValue;
+  logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/profile', user: req.username, staleDisplayedValue });
+  const clearedManualPortfolioBaseline = clearStaleManualPortfolioBaseline(user, { reason: '/api/profile' });
+  if (clearedManualPortfolioBaseline) {
+    portfolioSnapshot.value = getCurrentPortfolioValue(user).value;
+    mutated = true;
+  }
+  if (mutated) saveDB(db);
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13088,11 +13176,9 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     && manualPortfolioRaw !== undefined
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
-  const portfolioValue = hasManualPortfolioBaseline
-    ? manualPortfolioBaseline
-    : (Number.isFinite(portfolioSnapshot.value)
-      ? portfolioSnapshot.value
-      : (portfolioBaseline || 0));
+  const portfolioValue = Number.isFinite(portfolioSnapshot.value)
+    ? portfolioSnapshot.value
+    : (portfolioBaseline || 0);
   console.info('[trace][portfolio][endpoint-hit]', {
     endpoint: '/api/profile',
     user: req.username,
@@ -13123,13 +13209,13 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   logPortfolioAttribution('profile_response', user, {
     user: req.username,
     resolvedProfilePortfolio: portfolioValue,
-    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source
+    portfolioSource: portfolioSnapshot.source
   });
   res.json({
     profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
     portfolioValue,
-    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
+    portfolioSource: portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: baseline,
@@ -13168,7 +13254,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     returnedFields: {
       portfolio: portfolioValue,
       portfolioValue,
-      portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source
+      portfolioSource: portfolioSnapshot.source
     },
     cache: {
       enabled: false,

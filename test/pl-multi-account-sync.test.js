@@ -130,7 +130,7 @@ test('deleting a more recent account close rolls current value back to the lates
   assert.equal(profile.data.portfolio, 10400);
 });
 
-test('manual baseline save remains canonical in multi-account mode across profile and portfolio reads', async () => {
+test('manual baseline save does not override live multi-account aggregation in profile and portfolio reads', async () => {
   const saveBaseline = await authedFetch('/api/profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -146,7 +146,7 @@ test('manual baseline save remains canonical in multi-account mode across profil
   assert.equal(profile.res.status, 200);
   assert.equal(profile.data.netDepositsTotal, 18000);
   assert.equal(profile.data.initialNetDeposits, 18000);
-  assert.equal(profile.data.portfolio, 12000);
+  assert.equal(profile.data.portfolio, 10500);
   const primary = profile.data.tradingAccounts.find(account => account.id === 'primary');
   const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
   assert.ok(primary);
@@ -158,10 +158,10 @@ test('manual baseline save remains canonical in multi-account mode across profil
   assert.equal(portfolio.res.status, 200);
   assert.equal(portfolio.data.netDepositsTotal, 18000);
   assert.equal(portfolio.data.initialNetDeposits, 18000);
-  assert.equal(portfolio.data.portfolio, 12000);
+  assert.equal(portfolio.data.portfolioValue, 10500);
 });
 
-test('manual baseline save does not collapse multi-account attribution in profile and trading account APIs', async () => {
+test('manual baseline save clears stale baseline while preserving multi-account attribution', async () => {
   const saveBaseline = await authedFetch('/api/profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -174,7 +174,7 @@ test('manual baseline save does not collapse multi-account attribution in profil
 
   const profile = await authedFetch('/api/profile');
   assert.equal(profile.res.status, 200);
-  assert.equal(profile.data.portfolio, 15000);
+  assert.equal(profile.data.portfolio, 10500);
   const primary = profile.data.tradingAccounts.find(account => account.id === 'primary');
   const ibkr = profile.data.tradingAccounts.find(account => account.id === 'ibkr');
   assert.ok(primary);
@@ -210,6 +210,6 @@ test('single integrated account is still used for portfolio and net deposit aggr
 
   const portfolio = await authedFetch('/api/portfolio');
   assert.equal(portfolio.res.status, 200);
-  assert.equal(portfolio.data.portfolio, 7312.45);
+  assert.equal(portfolio.data.portfolioValue, 7312.45);
   assert.equal(portfolio.data.netDepositsTotal, 6900);
 });
