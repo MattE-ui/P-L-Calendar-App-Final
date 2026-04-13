@@ -20910,8 +20910,9 @@ async function buildActiveTrades(user, rates = {}) {
       });
     });
   }
+  const dedupedTrades = dedupeActiveTradesByIdentity(trades);
   const enriched = [];
-  for (const trade of trades) {
+  for (const trade of dedupedTrades) {
     const symbol = typeof trade.symbol === 'string' ? trade.symbol.trim().toUpperCase() : '';
     const quoteSymbol = normalizeTrading212Symbol(symbol);
     const isOption = isOptionsTrade(trade);
@@ -21163,6 +21164,59 @@ async function buildActiveTrades(user, rates = {}) {
     liveOpenPnlMode: providerTrades > 0 && manualTrades === 0 ? 'provider' : 'computed',
     liveOpenPnlCurrency: providerTrades > 0 && manualTrades === 0 ? (providerCurrency || 'GBP') : undefined
   };
+}
+
+function activeTradeRecencyTimestamp(trade) {
+  const candidates = [
+    trade?.updatedAt,
+    trade?.currentStopLastSyncedAt,
+    trade?.createdAt,
+    trade?.date
+  ];
+  for (const candidate of candidates) {
+    const parsed = Date.parse(candidate || '');
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function compareDuplicateActiveTrades(existing, incoming) {
+  const existingExited = Number(existing?.totalExitedQuantity || 0);
+  const incomingExited = Number(incoming?.totalExitedQuantity || 0);
+  if (incomingExited !== existingExited) return incomingExited > existingExited ? incoming : existing;
+
+  const existingOpen = Number(existing?.openQuantity ?? existing?.sizeUnits ?? 0);
+  const incomingOpen = Number(incoming?.openQuantity ?? incoming?.sizeUnits ?? 0);
+  if (incomingOpen !== existingOpen) return incomingOpen < existingOpen ? incoming : existing;
+
+  const existingStamp = activeTradeRecencyTimestamp(existing);
+  const incomingStamp = activeTradeRecencyTimestamp(incoming);
+  if (incomingStamp !== existingStamp) return incomingStamp > existingStamp ? incoming : existing;
+
+  return existing;
+}
+
+function dedupeActiveTradesByIdentity(trades = []) {
+  if (!Array.isArray(trades) || !trades.length) return [];
+  const deduped = [];
+  const byKey = new Map();
+  for (const trade of trades) {
+    if (!trade || typeof trade !== 'object') continue;
+    const key = String(
+      trade.id
+      || trade.ibkrPositionId
+      || trade.trading212PositionKey
+      || `${trade.symbol || ''}|${trade.date || ''}|${trade.entry || ''}`
+    );
+    const existingIndex = byKey.get(key);
+    if (existingIndex === undefined) {
+      byKey.set(key, deduped.length);
+      deduped.push(trade);
+      continue;
+    }
+    deduped[existingIndex] = compareDuplicateActiveTrades(deduped[existingIndex], trade);
+  }
+  return deduped;
 }
 
 function computeActiveTradesFingerprint(user) {
