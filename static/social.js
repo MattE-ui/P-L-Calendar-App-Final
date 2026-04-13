@@ -1286,7 +1286,7 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
 
       if (response?.group?.role === 'leader') {
         try {
-          const mine = await socialApi('/api/watchlists');
+          const mine = await socialApi('/api/watchlists?view=summary');
           socialState.myWatchlists = Array.isArray(mine?.watchlists) ? mine.watchlists : [];
         } catch (_error) {
           socialState.myWatchlists = [];

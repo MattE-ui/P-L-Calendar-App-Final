@@ -1,6 +1,8 @@
 (() => {
   const state = {
     watchlists: [],
+    watchlistDetailsById: {},
+    loadedTickerSetByWatchlist: {},
     selectedId: '',
     marketRows: [],
     marketRowsSignature: '',
@@ -330,21 +332,86 @@
       scheduleWatchlistRefresh();
       return;
     }
-    const payload = await api('/api/watchlists');
+    const payload = await api('/api/watchlists?view=summary');
     state.watchlists = Array.isArray(payload.watchlists) ? payload.watchlists : [];
+    debugPerf('watchlists-summary-bootstrap-used', { watchlistCount: state.watchlists.length });
     state.lastLoadedWatchlistsAt = Date.now();
     if (selectId) state.selectedId = selectId;
     if (!state.selectedId) state.selectedId = state.watchlists[0]?.id || '';
     if (!state.watchlists.some((w) => w.id === state.selectedId)) state.selectedId = state.watchlists[0]?.id || '';
+    if (state.selectedId && !state.loadedTickerSetByWatchlist[state.selectedId]) {
+      state.loadedTickerSetByWatchlist[state.selectedId] = new Set();
+    }
     render();
-    if (state.selectedId) await loadMarketData(state.selectedId, { reason: 'watchlist-load', forceRender: true });
+    if (state.selectedId) {
+      await ensureWatchlistDetail(state.selectedId, { reason: 'watchlist-load' });
+      renderTable({ forceFullRender: true, reason: 'watchlist-load-structure' });
+      await loadVisibleMarketData(state.selectedId, { reason: 'watchlist-load', forceRender: true });
+    }
     scheduleWatchlistRefresh();
+  }
+
+  async function ensureWatchlistDetail(watchlistId, { reason = 'manual', force = false } = {}) {
+    if (!watchlistId) return null;
+    if (!force && state.watchlistDetailsById[watchlistId]) return state.watchlistDetailsById[watchlistId];
+    const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/detail`);
+    const detail = payload?.watchlist && typeof payload.watchlist === 'object' ? payload.watchlist : null;
+    if (detail) {
+      state.watchlistDetailsById[watchlistId] = detail;
+      debugPerf('watchlist-detail-loaded', {
+        reason,
+        watchlistId,
+        sectionCount: Number(detail.sectionCount || 0),
+        tickerCount: Number(detail.tickerCount || 0)
+      });
+    }
+    return detail;
+  }
+
+  function getSelectedDetailWatchlist() {
+    if (!state.selectedId) return null;
+    return state.watchlistDetailsById[state.selectedId]
+      || state.watchlists.find((watchlist) => watchlist.id === state.selectedId)
+      || null;
+  }
+
+  function collectVisibleTickersForWatchlist(watchlistId) {
+    const selected = state.watchlistDetailsById[watchlistId] || state.watchlists.find((watchlist) => watchlist.id === watchlistId);
+    const sections = buildDetailSections(selected);
+    if (!sections.length) return [];
+    const wrap = el('watchlist-table-wrap');
+    const openKeysFromDom = wrap
+      ? [...wrap.querySelectorAll('.social-watchlist-group-card[open]')].map((node) => node.getAttribute('data-group-key')).filter(Boolean)
+      : [];
+    const fallbackOpenKeys = [...ensureAccordionState(watchlistId, sections)];
+    const openKeySet = new Set(openKeysFromDom.length ? openKeysFromDom : fallbackOpenKeys);
+    const tickers = [];
+    sections.forEach((section) => {
+      if (!openKeySet.has(section.key)) return;
+      section.tickers.forEach((ticker) => {
+        const normalized = normalizeTicker(ticker);
+        if (normalized) tickers.push(normalized);
+      });
+    });
+    return [...new Set(tickers)];
   }
 
   async function loadMarketData(watchlistId, { reason = 'manual', forceRender = false } = {}) {
     const start = window.PerfDiagnostics?.mark('watchlist-marketdata-start');
-    const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data`);
+    const visibleTickers = collectVisibleTickersForWatchlist(watchlistId);
+    const tickerQuery = visibleTickers.length ? `?tickers=${encodeURIComponent(visibleTickers.join(','))}` : '';
+    if (visibleTickers.length) {
+      const selected = state.watchlistDetailsById[watchlistId];
+      const totalTickers = Number(selected?.tickerCount || 0);
+      if (totalTickers > visibleTickers.length) {
+        debugPerf('watchlist-marketdata-deferred', { watchlistId, visibleTickerCount: visibleTickers.length, totalTickerCount: totalTickers, reason });
+      }
+    }
+    const payload = await api(`/api/watchlists/${encodeURIComponent(watchlistId)}/market-data${tickerQuery}`);
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const loadedSet = state.loadedTickerSetByWatchlist[watchlistId] || new Set();
+    rows.forEach((row) => loadedSet.add(normalizeTicker(row?.ticker)));
+    state.loadedTickerSetByWatchlist[watchlistId] = loadedSet;
     const nextSignature = buildMarketRowsSignature(rows);
     const shouldSkip = !forceRender
       && state.selectedId === watchlistId
@@ -358,6 +425,11 @@
     state.marketRowsSignature = nextSignature;
     renderTable({ forceFullRender: forceRender, reason });
     if (start) window.PerfDiagnostics?.measure('watchlist-marketdata-cycle', start);
+  }
+
+  async function loadVisibleMarketData(watchlistId, { reason = 'manual', forceRender = false } = {}) {
+    if (!watchlistId) return;
+    await loadMarketData(watchlistId, { reason, forceRender });
   }
 
   function scheduleWatchlistRefresh() {
@@ -431,15 +503,18 @@
           state.selectedId = watchlist.id;
           state.marketRowsSignature = '';
           state.sectionStructureSignature = '';
+          state.loadedTickerSetByWatchlist[watchlist.id] = new Set();
           render();
-          await loadMarketData(watchlist.id, { reason: 'watchlist-select', forceRender: true });
+          await ensureWatchlistDetail(watchlist.id, { reason: 'watchlist-select' });
+          renderTable({ forceFullRender: true, reason: 'watchlist-select-structure' });
+          await loadVisibleMarketData(watchlist.id, { reason: 'watchlist-select', forceRender: true });
           scheduleWatchlistRefresh();
         };
         sidebar.appendChild(row);
       });
     }
 
-    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+    const selected = getSelectedDetailWatchlist() || state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     el('watchlist-detail-title').textContent = selected ? (selected.title || selected.name) : 'Select a watchlist';
     el('watchlist-detail-meta').textContent = selected
       ? `${selected.sectionCount || 0} sections • ${selected.tickerCount || 0} tickers • Updated ${selected.updatedAt ? new Date(selected.updatedAt).toLocaleString() : 'Recently'}`
@@ -448,7 +523,7 @@
 
   function renderTable({ forceFullRender = false, reason = 'render' } = {}) {
     const wrap = el('watchlist-table-wrap');
-    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+    const selected = getSelectedDetailWatchlist() || state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     if (!wrap) return;
     if (!selected) {
       state.sectionStructureSignature = '';
@@ -537,6 +612,10 @@
 
   function renderSectionCard({ section, index, isOpen, rowLookup }) {
     const chevron = isOpen ? '▾' : '▸';
+    const bodyMarkup = isOpen
+      ? renderSectionTable(section, rowLookup)
+      : '<div class="helper">Expand to load rows.</div>';
+    if (!isOpen) debugPerf('watchlist-section-deferred', { sectionKey: section.key, tickerCount: section.tickers.length });
     return `
       <details class="social-watchlist-group-card" data-group-key="${escapeHtml(section.key)}" ${isOpen ? 'open' : ''}>
         <summary class="social-watchlist-group-summary">
@@ -547,7 +626,7 @@
           <span class="social-watchlist-group-count">${section.tickers.length}</span>
         </summary>
         <div class="social-watchlist-group-body">
-          ${renderSectionTable(section, rowLookup)}
+          ${bodyMarkup}
         </div>
       </details>
     `;
@@ -623,10 +702,13 @@
     });
   }
 
-  function openWatchlistModal(mode = 'create') {
+  async function openWatchlistModal(mode = 'create') {
     const modal = el('watchlist-modal');
     if (!modal) return;
-    const selected = state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
+    if (mode === 'edit' && state.selectedId) {
+      await ensureWatchlistDetail(state.selectedId, { reason: 'watchlist-edit' });
+    }
+    const selected = getSelectedDetailWatchlist() || state.watchlists.find((watchlist) => watchlist.id === state.selectedId);
     state.editingId = mode === 'edit' ? selected?.id || '' : '';
     el('watchlist-modal-title').textContent = mode === 'edit' ? 'Edit watchlist' : 'Create watchlist';
     el('watchlist-modal-name').value = mode === 'edit' ? (selected?.title || selected?.name || '') : '';
@@ -711,8 +793,8 @@
 
   async function init() {
     const pageStart = window.PerfDiagnostics?.mark('watchlists-page-init-start');
-    el('watchlist-new-btn')?.addEventListener('click', () => openWatchlistModal('create'));
-    el('watchlist-edit-btn')?.addEventListener('click', () => openWatchlistModal('edit'));
+    el('watchlist-new-btn')?.addEventListener('click', () => openWatchlistModal('create').catch((error) => setFeedback('watchlist-page-feedback', error.message, 'error')));
+    el('watchlist-edit-btn')?.addEventListener('click', () => openWatchlistModal('edit').catch((error) => setFeedback('watchlist-page-feedback', error.message, 'error')));
     el('watchlist-delete-btn')?.addEventListener('click', () => onDelete().catch((error) => setFeedback('watchlist-page-feedback', error.message, 'error')));
     el('watchlist-modal-close')?.addEventListener('click', closeWatchlistModal);
     el('watchlist-modal-save')?.addEventListener('click', () => onSaveModal().catch((error) => setFeedback('watchlist-modal-feedback', error.message, 'error')));
@@ -730,6 +812,18 @@
       setAccordionState(selected.id, openKeys.length ? openKeys : [groupKeys[0]].filter(Boolean));
       const chevron = details.querySelector('.social-watchlist-group-chevron');
       if (chevron) chevron.textContent = details.open ? '▾' : '▸';
+      if (details.open) {
+        const selectedDetail = getSelectedDetailWatchlist();
+        const sections = buildDetailSections(selectedDetail);
+        const sectionKey = details.getAttribute('data-group-key');
+        const section = sections.find((item) => item.key === sectionKey);
+        const body = details.querySelector('.social-watchlist-group-body');
+        if (section && body && !body.querySelector('table')) {
+          const rowLookup = new Map((state.marketRows || []).map((row) => [normalizeTicker(row.ticker), row]));
+          body.innerHTML = renderSectionTable(section, rowLookup);
+        }
+        loadVisibleMarketData(selected.id, { reason: 'section-expand', forceRender: false }).catch(() => {});
+      }
     }, true);
     el('watchlist-table-wrap')?.addEventListener('click', (event) => {
       const actionBtn = event.target.closest('[data-watchlist-accordion]');
