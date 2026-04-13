@@ -23,8 +23,11 @@
     resolvedAccounts: [],
     modalMode: 'add',
     modalAccountId: '',
-    activeTab: 'accounts'
+    activeTab: 'accounts',
+    refreshInFlight: null,
+    refreshQueued: false
   };
+  const refreshChannel = window.AppRefreshCoordinator?.createChannel('profile-trading-accounts');
 
   function normalizeRiskAccount(account = {}) {
     const id = String(account?.id || '').trim();
@@ -751,6 +754,12 @@
   }
 
   async function refreshData() {
+    if (state.refreshInFlight) {
+      state.refreshQueued = true;
+      window.PerfDiagnostics?.log('trading-accounts-refresh-coalesced', { reason: 'in-flight' });
+      return state.refreshInFlight;
+    }
+    const execute = async () => {
     writeRiskSettingsState('account-refresh', {
       loading: true
     });
@@ -806,6 +815,22 @@
     renderIbkrCard();
     renderSyncPanel();
     renderRiskSelectionPanel();
+    return true;
+    };
+    state.refreshInFlight = refreshChannel
+      ? refreshChannel.run(execute, { reason: 'refresh-data', minIntervalMs: 500, allowWhenHidden: true })
+      : execute();
+    try {
+      return await state.refreshInFlight;
+    } finally {
+      state.refreshInFlight = null;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        window.setTimeout(() => {
+          refreshData().catch(() => {});
+        }, 0);
+      }
+    }
   }
 
   function openAccountModal(mode, accountId = '') {

@@ -226,6 +226,83 @@
   };
 })();
 
+(function initRefreshCoordinator() {
+  if (window.AppRefreshCoordinator?.createChannel) return;
+
+  function createChannel(channelName) {
+    const state = {
+      inFlight: null,
+      queued: false,
+      queuedReason: '',
+      lastRunAt: 0,
+      lastSuccessAt: 0,
+      lastResult: null
+    };
+
+    async function run(task, options = {}) {
+      const {
+        reason = 'manual',
+        minIntervalMs = 0,
+        reuseResultMs = 0,
+        allowWhenHidden = false,
+        force = false
+      } = options;
+
+      const now = Date.now();
+      if (!allowWhenHidden && document.visibilityState === 'hidden') {
+        window.PerfDiagnostics?.log('refresh-hidden-poll-suppressed', { channel: channelName, reason });
+        return state.lastResult;
+      }
+
+      if (!force && reuseResultMs > 0 && state.lastResult && (now - state.lastSuccessAt) < reuseResultMs) {
+        window.PerfDiagnostics?.log('refresh-recent-data-reused', { channel: channelName, reason, ageMs: now - state.lastSuccessAt });
+        return state.lastResult;
+      }
+
+      if (!force && minIntervalMs > 0 && (now - state.lastRunAt) < minIntervalMs) {
+        window.PerfDiagnostics?.log('refresh-skipped-cooldown', { channel: channelName, reason, ageMs: now - state.lastRunAt, minIntervalMs });
+        return state.lastResult;
+      }
+
+      if (state.inFlight) {
+        state.queued = true;
+        state.queuedReason = reason;
+        window.PerfDiagnostics?.log('refresh-coalesced-inflight', { channel: channelName, reason });
+        return state.inFlight;
+      }
+
+      state.lastRunAt = now;
+      state.inFlight = Promise.resolve()
+        .then(task)
+        .then((result) => {
+          state.lastResult = result;
+          state.lastSuccessAt = Date.now();
+          return result;
+        })
+        .finally(() => {
+          state.inFlight = null;
+          if (!state.queued) return;
+          const queuedReason = state.queuedReason || 'queued';
+          state.queued = false;
+          state.queuedReason = '';
+          window.setTimeout(() => {
+            run(task, { ...options, reason: `${queuedReason}:coalesced` }).catch(() => {});
+          }, 0);
+        });
+
+      window.PerfDiagnostics?.log('refresh-start', { channel: channelName, reason });
+      return state.inFlight;
+    }
+
+    return {
+      run,
+      getLastSuccessAt: () => state.lastSuccessAt
+    };
+  }
+
+  window.AppRefreshCoordinator = { createChannel };
+})();
+
 (function initOwnerActions() {
   const adminBtn = document.getElementById('site-announcements-admin-btn');
   const devtoolsBtn = document.getElementById('devtools-btn');
@@ -262,6 +339,7 @@
   }
 
   function createSocialRequestSync() {
+    const refreshChannel = window.AppRefreshCoordinator?.createChannel('social-request-sync');
     const state = {
       pollTimer: null,
       pollingStarted: false,
@@ -303,8 +381,75 @@
 
     async function refresh(reason = 'manual') {
       if (isGuestSession()) return { ...state.data };
-      if (state.refreshInFlight) return state.refreshInFlight;
+      if (refreshChannel) {
+        return refreshChannel.run(async () => {
+          try {
+            const me = await api('/api/social/me');
+            if (!me) {
+              state.data = {
+                friends: [],
+                incomingRequests: [],
+                outgoingRequests: [],
+                acceptedOutgoingRequests: [],
+                nicknameRequired: false,
+                authenticated: false,
+                lastRefreshAt: Date.now(),
+                error: ''
+              };
+              emitChange('unauthenticated');
+              return { ...state.data };
+            }
 
+            const nicknameRequired = !!me.nickname_required;
+            if (nicknameRequired) {
+              state.data = {
+                friends: [],
+                incomingRequests: [],
+                outgoingRequests: [],
+                acceptedOutgoingRequests: [],
+                nicknameRequired: true,
+                authenticated: true,
+                lastRefreshAt: Date.now(),
+                error: ''
+              };
+              emitChange(reason);
+              return { ...state.data };
+            }
+
+            const [friendsResponse, requestsResponse] = await Promise.all([
+              api('/api/social/friends'),
+              api('/api/social/friends/requests')
+            ]);
+
+            state.data = {
+              friends: Array.isArray(friendsResponse?.friends) ? friendsResponse.friends : [],
+              incomingRequests: normalizeRequests(requestsResponse?.incoming),
+              outgoingRequests: normalizeRequests(requestsResponse?.outgoing),
+              acceptedOutgoingRequests: Array.isArray(requestsResponse?.acceptedOutgoing) ? requestsResponse.acceptedOutgoing : [],
+              nicknameRequired: false,
+              authenticated: true,
+              lastRefreshAt: Date.now(),
+              error: ''
+            };
+            emitChange(reason);
+          } catch (error) {
+            state.data = {
+              ...state.data,
+              error: error?.message || 'Unable to refresh social request state.',
+              lastRefreshAt: Date.now()
+            };
+            console.warn('[social-sync] refresh failed; polling will continue', error);
+            emitChange('error');
+          }
+          return { ...state.data };
+        }, {
+          reason,
+          minIntervalMs: reason === 'poll' ? 12000 : 0,
+          allowWhenHidden: reason !== 'poll',
+          reuseResultMs: reason === 'tab-visible' ? 2000 : 0
+        });
+      }
+      if (state.refreshInFlight) return state.refreshInFlight;
       state.refreshInFlight = (async () => {
         try {
           const me = await api('/api/social/me');
@@ -432,6 +577,7 @@
     tradeGroupNotifications: [],
     hiddenTradeGroupNotificationIds: new Set()
   };
+  const tradeGroupRefreshChannel = window.AppRefreshCoordinator?.createChannel('social-trade-group-notifications');
 
   function createAlertShell() {
     if (document.getElementById('global-friend-request-alert')) return;
@@ -585,23 +731,29 @@
 
 
   async function refreshTradeGroupNotifications() {
-    try {
-      const previousTopId = Array.isArray(state.tradeGroupNotifications) && state.tradeGroupNotifications.length
-        ? String(state.tradeGroupNotifications[0].notification_id || '')
-        : '';
-      const payload = await api('/api/social/trade-groups/notifications/unread');
-      state.tradeGroupNotifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
-      const nextTopId = state.tradeGroupNotifications.length
-        ? String(state.tradeGroupNotifications[0].notification_id || '')
-        : '';
-      if (nextTopId && nextTopId !== previousTopId) {
-        window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT, {
-          detail: { reason: 'trade-group-notification-updated' }
-        }));
+    const runner = async () => {
+      try {
+        const previousTopId = Array.isArray(state.tradeGroupNotifications) && state.tradeGroupNotifications.length
+          ? String(state.tradeGroupNotifications[0].notification_id || '')
+          : '';
+        const payload = await api('/api/social/trade-groups/notifications/unread');
+        state.tradeGroupNotifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
+        const nextTopId = state.tradeGroupNotifications.length
+          ? String(state.tradeGroupNotifications[0].notification_id || '')
+          : '';
+        if (nextTopId && nextTopId !== previousTopId) {
+          window.dispatchEvent(new CustomEvent(SOCIAL_REFRESH_EVENT, {
+            detail: { reason: 'trade-group-notification-updated' }
+          }));
+        }
+      } catch (_error) {
+        state.tradeGroupNotifications = [];
       }
-    } catch (_error) {
-      state.tradeGroupNotifications = [];
+    };
+    if (tradeGroupRefreshChannel) {
+      return tradeGroupRefreshChannel.run(runner, { reason: 'trade-group-refresh', minIntervalMs: 2000, allowWhenHidden: false });
     }
+    return runner();
   }
 
   async function dismissTradeGroupNotification(notificationId) {
@@ -2075,10 +2227,24 @@
 
   loadChats();
   render();
-  window.setInterval(loadChats, 15000);
+  const chatListRefreshChannel = window.AppRefreshCoordinator?.createChannel('utility-chat-list');
+  const openChatRefreshChannel = window.AppRefreshCoordinator?.createChannel('utility-chat-open-group');
   window.setInterval(() => {
-    if (state.activeChatGroupId && state.isUtilitySidebarOpen && state.activeUtilitySidebarTab === 'chat') {
-      openChat(state.activeChatGroupId, { markRead: false, refreshList: false });
+    if (chatListRefreshChannel) {
+      chatListRefreshChannel.run(loadChats, { reason: 'chat-list-poll', minIntervalMs: 14000, allowWhenHidden: false }).catch(() => {});
+      return;
     }
+    if (!document.hidden) loadChats();
+  }, 15000);
+  window.setInterval(() => {
+    if (!state.activeChatGroupId || !state.isUtilitySidebarOpen || state.activeUtilitySidebarTab !== 'chat') return;
+    if (openChatRefreshChannel) {
+      openChatRefreshChannel.run(
+        () => openChat(state.activeChatGroupId, { markRead: false, refreshList: false }),
+        { reason: 'open-chat-poll', minIntervalMs: 4500, allowWhenHidden: false }
+      ).catch(() => {});
+      return;
+    }
+    if (!document.hidden) openChat(state.activeChatGroupId, { markRead: false, refreshList: false });
   }, 5000);
 })();

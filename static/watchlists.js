@@ -10,14 +10,20 @@
     sortableInstances: [],
     detailAccordion: {},
     refreshTimer: null,
-    refreshInFlight: false
+    refreshInFlight: false,
+    refreshQueued: false,
+    lastRefreshAt: 0,
+    lastLoadedWatchlistsAt: 0
   };
 
   const UNGROUPED_TITLE = 'Ungrouped';
   const TICKER_PATTERN = /^[A-Z0-9._-]{1,15}$/;
   const WATCHLIST_DEBUG_TICKERS = new Set(['LWLG', 'NBIS', 'GLW']);
   const WATCHLIST_REFRESH_INTERVAL_MS = 15000;
+  const WATCHLIST_REFRESH_COOLDOWN_MS = 5000;
+  const WATCHLIST_RECENT_REUSE_MS = 7000;
   const WATCHLIST_PERF_DEBUG = window.localStorage?.getItem('watchlistPerfDebug') === '1';
+  const refreshChannel = window.AppRefreshCoordinator?.createChannel('watchlists-market-data');
 
   async function api(path, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
@@ -314,8 +320,19 @@
 
   async function loadWatchlists(selectId = '') {
     clearTimeout(state.refreshTimer);
+    const shouldReuseRecent = !selectId
+      && state.watchlists.length
+      && state.selectedId
+      && (Date.now() - state.lastLoadedWatchlistsAt) <= WATCHLIST_RECENT_REUSE_MS;
+    if (shouldReuseRecent) {
+      debugPerf('watchlist-recent-data-reused', { source: 'load-watchlists', ageMs: Date.now() - state.lastLoadedWatchlistsAt });
+      render();
+      scheduleWatchlistRefresh();
+      return;
+    }
     const payload = await api('/api/watchlists');
     state.watchlists = Array.isArray(payload.watchlists) ? payload.watchlists : [];
+    state.lastLoadedWatchlistsAt = Date.now();
     if (selectId) state.selectedId = selectId;
     if (!state.selectedId) state.selectedId = state.watchlists[0]?.id || '';
     if (!state.watchlists.some((w) => w.id === state.selectedId)) state.selectedId = state.watchlists[0]?.id || '';
@@ -354,16 +371,48 @@
   }
 
   async function refreshSelectedWatchlist(reason = 'manual') {
-    if (!state.selectedId || state.refreshInFlight) return;
+    if (!state.selectedId) return;
     if (document.visibilityState === 'hidden') {
+      debugPerf('watchlist-hidden-poll-suppressed', { reason, watchlistId: state.selectedId });
+      scheduleWatchlistRefresh();
+      return;
+    }
+    if (state.refreshInFlight) {
+      state.refreshQueued = true;
+      debugPerf('watchlist-refresh-coalesced', { reason, watchlistId: state.selectedId });
+      return;
+    }
+    if (reason === 'poll' && (Date.now() - state.lastRefreshAt) < WATCHLIST_REFRESH_COOLDOWN_MS) {
+      debugPerf('watchlist-refresh-cooldown-skip', {
+        reason,
+        watchlistId: state.selectedId,
+        ageMs: Date.now() - state.lastRefreshAt
+      });
       scheduleWatchlistRefresh();
       return;
     }
     state.refreshInFlight = true;
     try {
-      await loadMarketData(state.selectedId, { reason, forceRender: false });
+      const runner = () => loadMarketData(state.selectedId, { reason, forceRender: false });
+      if (refreshChannel) {
+        await refreshChannel.run(runner, {
+          reason,
+          minIntervalMs: reason === 'poll' ? WATCHLIST_REFRESH_COOLDOWN_MS : 0,
+          allowWhenHidden: reason !== 'poll',
+          reuseResultMs: reason === 'visibility' ? 2000 : 0
+        });
+      } else {
+        await runner();
+      }
+      state.lastRefreshAt = Date.now();
     } finally {
       state.refreshInFlight = false;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        window.setTimeout(() => {
+          refreshSelectedWatchlist('queued').catch(() => {});
+        }, 0);
+      }
       scheduleWatchlistRefresh();
     }
   }
@@ -699,10 +748,13 @@
         if (chevron) chevron.textContent = card.open ? '▾' : '▸';
       });
     });
+    let visibilityRefreshDebounce = null;
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState !== 'visible') return;
+      window.clearTimeout(visibilityRefreshDebounce);
+      visibilityRefreshDebounce = window.setTimeout(() => {
         refreshSelectedWatchlist('visibility').catch(() => {});
-      }
+      }, 150);
     });
     await loadWatchlists();
     window.PerfDiagnostics?.mark('watchlists-first-meaningful-data');
