@@ -85,7 +85,9 @@ const socialState = {
   tradeGroupPollTimer: null,
   lastSeenTradeGroupFeedId: '',
   overviewFeedFilter: 'all',
-  liveFeedFlashUntil: 0
+  liveFeedFlashUntil: 0,
+  expandedGroupWatchlistIds: new Set(),
+  expandedGroupWatchlistSections: {}
 };
 
 
@@ -817,24 +819,60 @@ function renderGroupWatchlistsSection(isLeader = false) {
     return;
   }
 
+  const activeWatchlistIds = new Set(rows.map((item) => String(item?.id || '')).filter(Boolean));
+  socialState.expandedGroupWatchlistIds = new Set(
+    [...socialState.expandedGroupWatchlistIds].filter((id) => activeWatchlistIds.has(id))
+  );
+  Object.keys(socialState.expandedGroupWatchlistSections).forEach((watchlistId) => {
+    if (!activeWatchlistIds.has(watchlistId)) delete socialState.expandedGroupWatchlistSections[watchlistId];
+  });
+
   rows.forEach((posted) => {
+    const watchlistId = String(posted?.id || '');
     const card = document.createElement('article');
     card.className = 'social-list-row social-list-row--request social-watchlist-card';
+    if (watchlistId) card.dataset.watchlistId = watchlistId;
     const head = document.createElement('div');
     head.className = 'social-watchlist-head';
-    const sectionPreview = Array.isArray(posted.sections) ? posted.sections.slice(0, 2).map((section) => section.title).join(' • ') : '';
+
+    const rowsByTicker = new Map((posted.rows || []).map((row) => [String(row.ticker || '').toUpperCase(), row]));
+    const normalizedSections = Array.isArray(posted.sections) && posted.sections.length
+      ? posted.sections
+      : [{ id: 'legacy', title: 'Tickers', tickers: (posted.rows || []).map((row) => row.ticker).filter(Boolean) }];
+    const visibleSections = normalizedSections
+      .map((section, index) => {
+        const tickers = (section?.tickers || [])
+          .map((ticker) => String(ticker || '').toUpperCase())
+          .filter((ticker) => rowsByTicker.has(ticker));
+        const isUngrouped = String(section?.title || '').trim().toLowerCase() === 'ungrouped';
+        if (isUngrouped && tickers.length === 0) return null;
+        return {
+          id: String(section?.id || `${watchlistId || 'watchlist'}-section-${index + 1}`),
+          title: section?.title || `Section ${index + 1}`,
+          tickers
+        };
+      })
+      .filter((section) => section && section.tickers.length > 0);
+
+    const totalTickerCount = visibleSections.reduce((sum, section) => sum + section.tickers.length, 0);
+    const visibleSectionIds = new Set(visibleSections.map((section) => section.id));
+    const openSectionIds = new Set(
+      (socialState.expandedGroupWatchlistSections[watchlistId] || []).filter((sectionId) => visibleSectionIds.has(sectionId))
+    );
+    socialState.expandedGroupWatchlistSections[watchlistId] = [...openSectionIds];
+    const isWatchlistExpanded = socialState.expandedGroupWatchlistIds.has(watchlistId);
+
     head.innerHTML = `
       <div class="social-watchlist-title-row">
         <strong>${posted.title || posted.name || 'Watchlist'}</strong>
-        <button class="ghost social-watchlist-expand-toggle" type="button" data-expand-watchlist="${posted.id}">Expand</button>
+        <button class="ghost social-watchlist-expand-toggle" type="button" data-expand-watchlist="${watchlistId}">${isWatchlistExpanded ? 'Collapse' : 'Expand'}</button>
       </div>
       <div class="social-watchlist-chip-row">
         <span class="social-watchlist-chip">By ${posted.postedByName || 'Leader'}</span>
         <span class="social-watchlist-chip">${posted.createdAt ? new Date(posted.createdAt).toLocaleString() : 'Recently'}</span>
-        <span class="social-watchlist-chip">${posted.sectionCount || 0} sections</span>
-        <span class="social-watchlist-chip">${posted.tickerCount || (posted.rows || []).length} tickers</span>
+        <span class="social-watchlist-chip">${visibleSections.length} sections</span>
+        <span class="social-watchlist-chip">${totalTickerCount} tickers</span>
       </div>
-      ${sectionPreview ? `<span class="helper">${sectionPreview}</span>` : ''}
     `;
     card.appendChild(head);
 
@@ -853,22 +891,20 @@ function renderGroupWatchlistsSection(isLeader = false) {
       card.appendChild(wrap);
     }
 
-    const rowsByTicker = new Map((posted.rows || []).map((row) => [String(row.ticker || '').toUpperCase(), row]));
-    const sections = Array.isArray(posted.sections) && posted.sections.length
-      ? posted.sections
-      : [{ id: 'legacy', title: 'Tickers', tickers: (posted.rows || []).map((row) => row.ticker).filter(Boolean) }];
     const details = document.createElement('div');
-    details.className = 'social-watchlist-details hidden';
-    sections.forEach((section) => {
+    details.className = `social-watchlist-details ${isWatchlistExpanded ? '' : 'hidden'}`.trim();
+    visibleSections.forEach((section) => {
       const sectionCard = document.createElement('details');
       sectionCard.className = 'social-watchlist-section-card';
+      sectionCard.dataset.sectionId = section.id;
+      sectionCard.open = openSectionIds.has(section.id);
       const summary = document.createElement('summary');
-      summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${Array.isArray(section.tickers) ? section.tickers.length : 0} tickers</span>`;
+      summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${section.tickers.length} tickers</span>`;
       sectionCard.appendChild(summary);
       const sectionBody = document.createElement('div');
       sectionBody.className = 'social-watchlist-section-body';
-      (section.tickers || []).forEach((ticker) => {
-        const tickerRow = rowsByTicker.get(String(ticker || '').toUpperCase());
+      section.tickers.forEach((ticker) => {
+        const tickerRow = rowsByTicker.get(ticker);
         if (!tickerRow) return;
         const row = document.createElement('div');
         row.className = 'social-watchlist-mini-row';
@@ -879,9 +915,23 @@ function renderGroupWatchlistsSection(isLeader = false) {
       details.appendChild(sectionCard);
     });
     card.appendChild(details);
+    details.addEventListener('toggle', (event) => {
+      const sectionCard = event.target.closest('.social-watchlist-section-card');
+      if (!sectionCard || !watchlistId) return;
+      const sectionId = sectionCard.dataset.sectionId;
+      if (!sectionId) return;
+      const expanded = new Set(socialState.expandedGroupWatchlistSections[watchlistId] || []);
+      if (sectionCard.open) expanded.add(sectionId);
+      else expanded.delete(sectionId);
+      socialState.expandedGroupWatchlistSections[watchlistId] = [...expanded];
+    });
+
     head.querySelector('[data-expand-watchlist]')?.addEventListener('click', (event) => {
       const isHidden = details.classList.toggle('hidden');
       event.currentTarget.textContent = isHidden ? 'Expand' : 'Collapse';
+      if (!watchlistId) return;
+      if (isHidden) socialState.expandedGroupWatchlistIds.delete(watchlistId);
+      else socialState.expandedGroupWatchlistIds.add(watchlistId);
     });
     listEl?.appendChild(card);
   });

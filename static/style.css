@@ -9413,8 +9413,11 @@ textarea {
 .social-watchlist-section-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.02); padding: 8px; }
 .social-watchlist-section-card summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
 .social-watchlist-section-card summary::-webkit-details-marker { display: none; }
-.social-watchlist-section-body { display: grid; gap: 4px; margin-top: 8px; }
-.social-watchlist-mini-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 6px 8px; border-radius: 8px; background: rgba(9, 22, 17, 0.7); font-size: 12px; align-items: center; }
+.social-watchlist-section-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
+.social-watchlist-mini-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "ticker price" "change change"; row-gap: 4px; column-gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(88, 167, 131, 0.2); background: rgba(9, 22, 17, 0.7); font-size: 12px; align-items: center; }
+.social-watchlist-mini-row strong { grid-area: ticker; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.social-watchlist-mini-row span:nth-child(2) { grid-area: price; text-align: right; }
+.social-watchlist-mini-row span:nth-child(3) { grid-area: change; font-weight: 600; }
 .social-watchlist-table-wrap { overflow-x: auto; border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 10px; }
 .social-watchlist-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 680px; }
 .social-watchlist-table th, .social-watchlist-table td { padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); text-align: right; white-space: nowrap; }
