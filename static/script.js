@@ -104,6 +104,7 @@ const DASHBOARD_LOADING_STATUS_MESSAGES = [
   'Syncing portfolio data',
   'Loading active positions'
 ];
+window.DEBUG_PORTFOLIO = window.DEBUG_PORTFOLIO === true;
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -3164,21 +3165,25 @@ function getRenderedPortfolioValue(value) {
 
 function setPortfolioValue(value, source = 'unknown') {
   const normalizedValue = Number.isFinite(Number(value)) ? Number(value) : 0;
-  console.info('[trace][frontend][setPortfolioValue][input]', {
-    source,
-    receivedValue: value,
-    receivedType: typeof value,
-    statePortfolioBefore: state.portfolioGBP,
-    normalizedValue
-  });
+  const statePortfolioBefore = state.portfolioGBP;
+  assignPortfolioStateField('portfolioGBP', normalizedValue, 'setPortfolioValue');
   assignPortfolioStateField('lastHeaderRenderedPortfolioGBP', normalizedValue, 'setPortfolioValue');
-  console.info('[trace][frontend][setPortfolioValue][state]', {
-    source,
-    stateCurrentPortfolioValueGBP: state.currentPortfolioValueGBP,
-    stateHistoryPortfolioValueGBP: state.historyPortfolioValueGBP,
-    statePortfolioAfter: state.portfolioGBP,
-    headerRenderedPortfolioAfter: state.lastHeaderRenderedPortfolioGBP
-  });
+  if (window.DEBUG_PORTFOLIO) {
+    console.info('[trace][frontend][setPortfolioValue][input]', {
+      source,
+      receivedValue: value,
+      receivedType: typeof value,
+      statePortfolioBefore,
+      normalizedValue
+    });
+    console.info('[trace][frontend][setPortfolioValue][state]', {
+      source,
+      stateCurrentPortfolioValueGBP: state.currentPortfolioValueGBP,
+      stateHistoryPortfolioValueGBP: state.historyPortfolioValueGBP,
+      statePortfolioAfter: state.portfolioGBP,
+      headerRenderedPortfolioAfter: state.lastHeaderRenderedPortfolioGBP
+    });
+  }
   const portfolioValueEl = document.getElementById('header-portfolio-value');
   if (!portfolioValueEl) {
     console.warn('[portfolio-single-writer] #header-portfolio-value not found', { source, value: normalizedValue });
@@ -3186,27 +3191,35 @@ function setPortfolioValue(value, source = 'unknown') {
   }
 
   const renderedPortfolioValue = getRenderedPortfolioValue(normalizedValue);
-  portfolioValueEl.style.border = '2px solid red';
+  if (window.DEBUG_PORTFOLIO) {
+    portfolioValueEl.style.border = '2px solid red';
+  } else {
+    portfolioValueEl.style.border = '';
+  }
   state.portfolioDomExpectedText = renderedPortfolioValue;
   if (portfolioValueEl.textContent === renderedPortfolioValue) {
-    console.info('[trace][frontend][setPortfolioValue][final-dom]', {
-      source,
-      finalText: portfolioValueEl.textContent,
-      writeSkipped: true
-    });
+    if (window.DEBUG_PORTFOLIO) {
+      console.info('[trace][frontend][setPortfolioValue][final-dom]', {
+        source,
+        finalText: portfolioValueEl.textContent,
+        writeSkipped: true
+      });
+    }
     return;
   }
 
   state.portfolioDomWriteInProgress = true;
   portfolioValueEl.textContent = renderedPortfolioValue;
   state.portfolioDomWriteCount += 1;
-  console.info('[portfolio-single-writer] DOM write', {
-    source,
-    value: normalizedValue,
-    renderedValue: renderedPortfolioValue,
-    finalTextWritten: portfolioValueEl.textContent,
-    totalWrites: state.portfolioDomWriteCount
-  });
+  if (window.DEBUG_PORTFOLIO) {
+    console.info('[portfolio-single-writer] DOM write', {
+      source,
+      value: normalizedValue,
+      renderedValue: renderedPortfolioValue,
+      finalTextWritten: portfolioValueEl.textContent,
+      totalWrites: state.portfolioDomWriteCount
+    });
+  }
   queueMicrotask(() => {
     state.portfolioDomWriteInProgress = false;
   });
