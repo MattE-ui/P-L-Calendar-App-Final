@@ -25,7 +25,16 @@
     modalAccountId: '',
     activeTab: 'accounts',
     refreshInFlight: null,
-    refreshQueued: false
+    refreshQueued: false,
+    refreshPendingReason: null,
+    lastAccountsRenderSignature: '',
+    lastIntegrationsRenderSignature: '',
+    lastIbkrRenderSignature: '',
+    lastSyncPanelRenderSignature: '',
+    lastRiskRenderSignature: '',
+    lastTradingAccountsSignature: '',
+    lastBrokerAccountsSignature: '',
+    hasRunLinkageReconcile: false
   };
   const refreshChannel = window.AppRefreshCoordinator?.createChannel('profile-trading-accounts');
 
@@ -116,6 +125,14 @@
 
   function normalizeLabel(value) {
     return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function stableStringify(value) {
+    try {
+      return JSON.stringify(value);
+    } catch (_error) {
+      return String(value);
+    }
   }
 
   function normalizeDataSource(account = {}) {
@@ -537,6 +554,21 @@
     const root = document.getElementById('trading-accounts-grid');
     if (!root) return;
     const accounts = state.resolvedAccounts;
+    const signature = stableStringify(accounts.map((account) => ({
+      id: account.id,
+      name: account.name,
+      broker: account.broker,
+      accountType: account.accountType,
+      portfolioValue: account.portfolioValue,
+      lastUpdated: account.lastUpdated,
+      dataSource: account.dataSource,
+      actions: account.actions
+    })));
+    if (signature === state.lastAccountsRenderSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'accounts-list' });
+      return;
+    }
+    state.lastAccountsRenderSignature = signature;
     root.innerHTML = '';
 
     if (!accounts.length) {
@@ -577,6 +609,12 @@
   function renderTrading212Cards() {
     const root = document.getElementById('broker-cards');
     if (!root) return;
+    const signature = stableStringify(state.providerIntegrations);
+    if (signature === state.lastIntegrationsRenderSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'provider-integrations' });
+      return;
+    }
+    state.lastIntegrationsRenderSignature = signature;
     root.innerHTML = '';
 
     state.providerIntegrations.forEach((integration) => {
@@ -614,6 +652,12 @@
     const root = document.getElementById('broker-connect-options');
     if (!root) return;
     const connected = !!state.ibkr.enabled;
+    const signature = `${connected}|${state.ibkr.lastSyncAt || ''}`;
+    if (signature === state.lastIbkrRenderSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'ibkr-connect' });
+      return;
+    }
+    state.lastIbkrRenderSignature = signature;
     root.innerHTML = `
       <button type="button" class="broker-connect-option ${connected ? 'is-connected' : 'is-disconnected'}" data-action="${connected ? 'sync-ibkr' : 'connect-ibkr'}">
         <div class="broker-connect-option__head">
@@ -628,6 +672,16 @@
   function renderSyncPanel() {
     const panel = document.getElementById('trading-sync-status-panel');
     if (!panel) return;
+    const signature = stableStringify({
+      t212Count: state.t212Accounts.length,
+      ibkrEnabled: !!state.ibkr.enabled,
+      ibkrLastSyncAt: state.ibkr.lastSyncAt || null
+    });
+    if (signature === state.lastSyncPanelRenderSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'sync-panel' });
+      return;
+    }
+    state.lastSyncPanelRenderSignature = signature;
     panel.innerHTML = `
       <div class="status-kv-group">
         <h3 class="status-kv-group__title">Trading 212</h3>
@@ -682,6 +736,23 @@
     const loading = !!riskSettingsState.loading;
     const showPanelShell = (loading && state.hasEverQualifiedForRiskPanel) || eligibleAccounts.length >= 2;
     const displayAccounts = eligibleAccounts.length >= 2 ? eligibleAccounts : state.lastKnownEligibleAccounts;
+    const signature = stableStringify({
+      loading,
+      showPanelShell,
+      eligibleAccountIds: eligibleAccounts.map((account) => account.id),
+      lastKnownEligibleIds: state.lastKnownEligibleAccounts.map((account) => account.id),
+      selectedIds: riskSettingsState?.riskSettings?.selectedTradingAccountIdsForRisk || [],
+      selectedCount: Array.isArray(riskSettingsState.selectedAccounts) ? riskSettingsState.selectedAccounts.length : 0,
+      useSelectedTradingAccountsForRisk: !!riskSettingsState?.riskSettings?.useSelectedTradingAccountsForRisk,
+      riskCapitalBase: riskCapital?.riskCapitalBase ?? null,
+      totalEligibleRiskCapital: riskCapital?.totalEligibleRiskCapital ?? null,
+      selectedRiskCapital: riskCapital?.selectedRiskCapital ?? null
+    });
+    if (signature === state.lastRiskRenderSignature) {
+      window.PerfDiagnostics?.log('trading-accounts-eligibility-reused', { source: 'risk-render-signature' });
+      return;
+    }
+    state.lastRiskRenderSignature = signature;
 
     console.log('[risk-ui][render]', {
       loading,
@@ -753,28 +824,38 @@
     });
   }
 
-  async function refreshData() {
+  async function refreshData(reason = 'manual-refresh') {
     if (state.refreshInFlight) {
       state.refreshQueued = true;
+      state.refreshPendingReason = reason;
       window.PerfDiagnostics?.log('trading-accounts-refresh-coalesced', { reason: 'in-flight' });
       return state.refreshInFlight;
     }
     const execute = async () => {
+    window.PerfDiagnostics?.log('trading-accounts-refresh-start', { reason });
     writeRiskSettingsState('account-refresh', {
       loading: true
     });
     renderRiskSelectionPanel();
-    const [brokerPayload, ibkrPayload, tradingAccountsPayload, riskSettingsPayload] = await Promise.all([
+    const [brokerPayload, tradingAccountsPayload, riskSettingsPayload] = await Promise.all([
       api('/api/broker-accounts?provider=trading212').catch(() => ({ accounts: [] })),
-      api('/api/integrations/ibkr').catch(() => ({})),
       api('/api/account/trading-accounts').catch(() => ({ accounts: [] })),
       api('/api/account/risk-settings').catch(() => null)
     ]);
-    state.t212Accounts = Array.isArray(brokerPayload.accounts)
+    const nextT212Accounts = Array.isArray(brokerPayload.accounts)
       ? brokerPayload.accounts.filter((account) => account.provider === 'trading212' && account.active !== false)
       : [];
-    state.ibkr = ibkrPayload || {};
-    state.tradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
+    const nextTradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
+    const brokerSignature = stableStringify(nextT212Accounts);
+    const tradingSignature = stableStringify(nextTradingAccounts);
+    const hasCoreDataChanged = brokerSignature !== state.lastBrokerAccountsSignature
+      || tradingSignature !== state.lastTradingAccountsSignature;
+    state.t212Accounts = Array.isArray(brokerPayload.accounts)
+      ? nextT212Accounts
+      : [];
+    state.tradingAccounts = nextTradingAccounts;
+    state.lastBrokerAccountsSignature = brokerSignature;
+    state.lastTradingAccountsSignature = tradingSignature;
     if (riskSettingsPayload) {
       writeRiskSettingsState('risk-settings-fetch', {
         loading: false,
@@ -791,11 +872,19 @@
       });
     }
 
-    const staleFixed = await reconcileStaleLinkedState();
-    const linkageFixed = await reconcileTrading212Linkage();
+    let staleFixed = false;
+    let linkageFixed = false;
+    if (hasCoreDataChanged || !state.hasRunLinkageReconcile) {
+      staleFixed = await reconcileStaleLinkedState();
+      linkageFixed = await reconcileTrading212Linkage();
+      state.hasRunLinkageReconcile = true;
+    } else {
+      window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'linkage-reconcile-skipped' });
+    }
     if (staleFixed || linkageFixed) {
       const refreshed = await api('/api/account/trading-accounts').catch(() => ({ accounts: [] }));
       state.tradingAccounts = Array.isArray(refreshed.accounts) ? refreshed.accounts : [];
+      state.lastTradingAccountsSignature = stableStringify(state.tradingAccounts);
     }
 
     console.debug('[TradingAccounts][raw]', {
@@ -812,9 +901,34 @@
     state.providerIntegrations = resolveProviderIntegrationsForView();
     renderAccountsList();
     renderTrading212Cards();
-    renderIbkrCard();
     renderSyncPanel();
     renderRiskSelectionPanel();
+    window.PerfDiagnostics?.mark('trading-accounts-full-render');
+
+    api('/api/integrations/ibkr')
+      .then((ibkrPayload) => {
+        const nextIbkr = ibkrPayload || {};
+        const ibkrSignature = stableStringify({
+          enabled: !!nextIbkr.enabled,
+          lastSyncAt: nextIbkr.lastSyncAt || null,
+          connectionStatus: nextIbkr.connectionStatus || null
+        });
+        const previousSignature = stableStringify({
+          enabled: !!state.ibkr?.enabled,
+          lastSyncAt: state.ibkr?.lastSyncAt || null,
+          connectionStatus: state.ibkr?.connectionStatus || null
+        });
+        state.ibkr = nextIbkr;
+        if (ibkrSignature !== previousSignature) {
+          state.providerIntegrations = resolveProviderIntegrationsForView();
+          renderTrading212Cards();
+          renderIbkrCard();
+          renderSyncPanel();
+        } else {
+          window.PerfDiagnostics?.log('trading-accounts-section-reused', { section: 'ibkr-secondary-load' });
+        }
+      })
+      .catch(() => {});
     return true;
     };
     state.refreshInFlight = refreshChannel
@@ -826,8 +940,11 @@
       state.refreshInFlight = null;
       if (state.refreshQueued) {
         state.refreshQueued = false;
+        const queuedReason = state.refreshPendingReason || 'queued';
+        state.refreshPendingReason = null;
         window.setTimeout(() => {
-          refreshData().catch(() => {});
+          window.PerfDiagnostics?.log('trading-accounts-refresh-coalesced', { reason: queuedReason });
+          refreshData(queuedReason).catch(() => {});
         }, 0);
       }
     }
@@ -1008,20 +1125,24 @@
     if (action === 'sync-unified-account') {
       if (account.dataSource.provider === 'trading212' && account.brokerAccountId) {
         await api(`/api/broker-accounts/${encodeURIComponent(account.brokerAccountId)}/sync`, { method: 'POST' });
-        return setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
+        setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
+        return false;
       }
       if (account.dataSource.provider === 'ibkr') {
         await api('/api/integrations/ibkr/sync', { method: 'POST' });
-        return setText('trading-broker-action-status', 'IBKR sync requested.');
+        setText('trading-broker-action-status', 'IBKR sync requested.');
+        return false;
       }
     }
     if (action === 'disconnect-unified-account') {
       await disconnectResolvedAccount(account);
-      return setText('trading-broker-action-status', 'Account disconnected and reconciled.');
+      setText('trading-broker-action-status', 'Account disconnected and reconciled.');
+      return true;
     }
     if (action === 'delete-unified-account') {
       await deleteResolvedAccount(account);
-      return setText('trading-broker-action-status', 'Account deleted.');
+      setText('trading-broker-action-status', 'Account deleted.');
+      return true;
     }
     if (action === 'import-unified-account') {
       window.location.href = '/trades.html';
@@ -1033,7 +1154,8 @@
       const enabled = !!document.getElementById('risk-account-selection-enabled')?.checked;
       await saveRiskSettings({ useSelectedTradingAccountsForRisk: enabled });
       setText('risk-account-selection-status', 'Risk account selection updated.');
-      return;
+      window.PerfDiagnostics?.log('trading-accounts-action-patch-applied', { action });
+      return false;
     }
     if (action === 'toggle-risk-account') {
       const selected = new Set(Array.isArray(state.riskSettingsState?.riskSettings?.selectedTradingAccountIdsForRisk)
@@ -1046,7 +1168,8 @@
         selectedTradingAccountIdsForRisk: Array.from(selected)
       });
       setText('risk-account-selection-status', 'Risk account list saved.');
-      return;
+      window.PerfDiagnostics?.log('trading-accounts-action-patch-applied', { action });
+      return false;
     }
     if (action === 'open-add-account-modal') return openAddAccountModal();
     if (action === 'close-add-account-modal') return closeAddAccountModal();
@@ -1067,9 +1190,13 @@
     if (action === 'add-t212') return openAccountModal('add');
     if (action === 'sync-all-t212') {
       await Promise.all(state.t212Accounts.map((account) => api(`/api/broker-accounts/${encodeURIComponent(account.brokerAccountId)}/sync`, { method: 'POST' })));
-      return setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
+      setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
+      return false;
     }
-    if (action === 'sync-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
+    if (action === 'sync-account') {
+      await api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
+      return false;
+    }
     if (action === 'disconnect-account') {
       const resolved = state.resolvedAccounts.find((item) => item.brokerAccountId === accountId);
       if (resolved) return disconnectResolvedAccount(resolved);
@@ -1083,7 +1210,10 @@
     if (action === 'connect-ibkr') {
       return api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
     }
-    if (action === 'sync-ibkr') return api('/api/integrations/ibkr/sync', { method: 'POST' });
+    if (action === 'sync-ibkr') {
+      await api('/api/integrations/ibkr/sync', { method: 'POST' });
+      return false;
+    }
     if (['manage-account', 'edit-unified-account', 'sync-unified-account', 'import-unified-account', 'disconnect-unified-account', 'delete-unified-account'].includes(action)) {
       return handleUnifiedAction(action, accountId);
     }
@@ -1102,8 +1232,8 @@
     const action = target.dataset.action;
     const accountId = target.dataset.accountId || '';
     try {
-      await handleAction(action, accountId);
-      await refreshData();
+      const shouldRefresh = await handleAction(action, accountId);
+      if (shouldRefresh !== false) await refreshData(`action:${action}`);
     } catch (error) {
       setText('trading-broker-action-status', error.message || 'Action failed.');
     }
@@ -1112,7 +1242,6 @@
   document.getElementById('risk-account-selection-enabled')?.addEventListener('change', async () => {
     try {
       await handleAction('toggle-risk-selection-mode', '');
-      await refreshData();
     } catch (error) {
       setText('risk-account-selection-status', error.message || 'Unable to update risk selection mode.');
     }
@@ -1122,7 +1251,7 @@
     event.preventDefault();
     try {
       await submitAccountModal();
-      await refreshData();
+      await refreshData('submit-account-modal');
     } catch (error) {
       setStatus('t212-account-modal-status', error.message || 'Unable to save account.', true);
     }

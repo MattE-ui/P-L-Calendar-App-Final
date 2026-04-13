@@ -18008,10 +18008,12 @@ app.get('/api/account/risk-settings', auth, (req, res) => {
     mutated = true;
   }
   if (mutated) saveDB(db);
-  const resolvedRiskCapital = getRiskCapitalBase(user, {
-    user: req.username,
-    logDiagnostics: process.env.NODE_ENV !== 'production'
-  });
+  const resolvedRiskCapital = mutated
+    ? getRiskCapitalBase(user, {
+      user: req.username,
+      logDiagnostics: process.env.NODE_ENV !== 'production'
+    })
+    : riskCapital;
   res.json({
     eligibleAccounts: resolvedRiskCapital.eligibleAccounts || [],
     selectedAccounts: resolvedRiskCapital.selectedAccounts || [],
@@ -18053,10 +18055,7 @@ app.post('/api/account/risk-settings', auth, (req, res) => {
   settings.selectedTradingAccountIdsForRisk = (settings.selectedTradingAccountIdsForRisk || [])
     .filter(id => validEligibleIds.has(id));
   saveDB(db);
-  const resolvedRiskCapital = getRiskCapitalBase(user, {
-    user: req.username,
-    logDiagnostics: process.env.NODE_ENV !== 'production'
-  });
+  const resolvedRiskCapital = riskCapital;
   res.json({
     ok: true,
     eligibleAccounts: resolvedRiskCapital.eligibleAccounts || [],
