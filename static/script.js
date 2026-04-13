@@ -672,16 +672,62 @@ function assignPortfolioStateField(field, nextValue, source, detail = {}) {
 }
 
 function getCurrentPortfolioForDisplay() {
-  const live = Number(state.portfolioGBP);
-  const source = Number.isFinite(live) && live >= 0 ? 'state.portfolioGBP' : 'state.metrics.latestGBP';
+  const live = Number(state.currentPortfolioValueGBP);
+  const source = Number.isFinite(live) && live >= 0
+    ? 'state.currentPortfolioValueGBP'
+    : 'null';
   console.info('[trace][frontend][calendar-live-portfolio-candidate]', {
     source,
+    stateCurrentPortfolioValueGBP: state.currentPortfolioValueGBP,
     statePortfolioGBP: state.portfolioGBP,
-    metricsLatestGBP: state.metrics?.latestGBP
+    metricsLatestGBP: state.metrics?.latestGBP,
+    historyPortfolioValueGBP: state.historyPortfolioValueGBP
   });
   if (Number.isFinite(live) && live >= 0) return live;
-  const metric = Number(state.metrics?.latestGBP);
-  return Number.isFinite(metric) && metric >= 0 ? metric : null;
+  return null;
+}
+
+function resolveCalendarClosingValue(date, entry, livePortfolioValue) {
+  const key = formatDate(date);
+  const todayKey = getCurrentDateKey();
+  const isToday = key === todayKey;
+  const historyValueRaw = entry?.closing;
+  const historyValue = Number(historyValueRaw);
+  const hasHistoryValue = Number.isFinite(historyValue);
+  const liveValue = Number(livePortfolioValue);
+  const hasLiveValue = Number.isFinite(liveValue) && liveValue >= 0;
+
+  if (!isToday) {
+    return {
+      value: hasHistoryValue ? historyValue : null,
+      source: hasHistoryValue ? 'history' : 'missing_history',
+      key,
+      isToday,
+      historyValueRaw,
+      hasHistoryValue,
+      liveFallbackValue: hasLiveValue ? liveValue : null
+    };
+  }
+
+  let chosenValue = 0;
+  let chosenSource = 'zero';
+  if (hasHistoryValue) {
+    chosenValue = historyValue;
+    chosenSource = 'history';
+  } else if (hasLiveValue) {
+    chosenValue = liveValue;
+    chosenSource = 'live_fallback';
+  }
+
+  return {
+    value: chosenValue,
+    source: chosenSource,
+    key,
+    isToday,
+    historyValueRaw,
+    hasHistoryValue,
+    liveFallbackValue: hasLiveValue ? liveValue : null
+  };
 }
 
 function currencyAmount(valueGBP, currency = state.currency) {
@@ -1103,6 +1149,23 @@ function traceTodayCalendarSource(context, livePortfolio, closingUsed) {
     livePortfolioCandidate: livePortfolio,
     fallbackUsed,
     closingUsed
+  });
+}
+
+function logTodayCalendarDecision(context, resolution) {
+  if (!resolution?.isToday) return;
+  const historyValue = Number(resolution.historyValueRaw);
+  const historyIsZero = Number.isFinite(historyValue) && historyValue === 0;
+  console.info('[trace][frontend][calendar][today-cell-decision]', {
+    context,
+    date: resolution.key,
+    historyValue: Number.isFinite(historyValue) ? historyValue : null,
+    historyValueRaw: resolution.historyValueRaw ?? null,
+    historyValueMissing: resolution.historyValueRaw === null || resolution.historyValueRaw === undefined,
+    historyValueZero: historyIsZero,
+    liveFallbackValue: resolution.liveFallbackValue,
+    chosenValue: resolution.value,
+    chosenSource: resolution.source
   });
 }
 
@@ -3449,10 +3512,10 @@ function renderDay() {
   days.forEach(date => {
     const key = formatDate(date);
     const entry = getDailyEntry(date);
-    const closing = key === todayKey && livePortfolio !== null
-      ? livePortfolio
-      : (entry?.closing ?? null);
+    const resolution = resolveCalendarClosingValue(date, entry, livePortfolio);
+    const closing = resolution.value;
     if (key === todayKey) {
+      logTodayCalendarDecision('renderDay:today-cell', resolution);
       traceTodayCalendarSource('renderDay:today-cell', livePortfolio, closing);
     }
     const change = entry?.change ?? null;
@@ -3624,10 +3687,10 @@ function renderMonthGrid(targetDate, grid) {
     const date = new Date(first.getFullYear(), first.getMonth(), day);
     const key = formatDate(date);
     const entry = getDailyEntry(date);
-    const closing = key === todayKey && livePortfolio !== null
-      ? livePortfolio
-      : (entry?.closing ?? null);
+    const resolution = resolveCalendarClosingValue(date, entry, livePortfolio);
+    const closing = resolution.value;
     if (key === todayKey) {
+      logTodayCalendarDecision('renderMonthGrid:today-cell', resolution);
       traceTodayCalendarSource('renderMonthGrid:today-cell', livePortfolio, closing);
     }
     const change = entry?.change ?? null;
