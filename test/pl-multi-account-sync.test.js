@@ -129,3 +129,28 @@ test('deleting a more recent account close rolls current value back to the lates
   assert.equal(ibkr.currentValue, 6400);
   assert.equal(profile.data.portfolio, 10400);
 });
+
+test('manual baseline save remains canonical in multi-account mode across profile and portfolio reads', async () => {
+  const saveBaseline = await authedFetch('/api/profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      portfolio: 12000,
+      netDeposits: 18000
+    })
+  });
+  assert.equal(saveBaseline.res.status, 200);
+  assert.equal(saveBaseline.data.manualNetDepositsBaseline, 18000);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  assert.equal(profile.data.netDepositsTotal, 18000);
+  assert.equal(profile.data.initialNetDeposits, 18000);
+  assert.equal(profile.data.portfolio, 12000);
+
+  const portfolio = await authedFetch('/api/portfolio');
+  assert.equal(portfolio.res.status, 200);
+  assert.equal(portfolio.data.netDepositsTotal, 18000);
+  assert.equal(portfolio.data.initialNetDeposits, 18000);
+  assert.equal(portfolio.data.portfolio, 12000);
+});

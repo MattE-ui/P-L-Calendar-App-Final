@@ -5382,6 +5382,40 @@ function ensureUserShape(user, identifier) {
     user.initialNetDeposits = 0;
     mutated = true;
   }
+  if (user.manualPortfolioBaseline === undefined) {
+    user.manualPortfolioBaseline = null;
+    mutated = true;
+  } else if (user.manualPortfolioBaseline !== null && !Number.isFinite(Number(user.manualPortfolioBaseline))) {
+    user.manualPortfolioBaseline = null;
+    mutated = true;
+  } else if (user.manualPortfolioBaseline !== null) {
+    const normalized = Number(user.manualPortfolioBaseline);
+    if (user.manualPortfolioBaseline !== normalized) {
+      user.manualPortfolioBaseline = normalized;
+      mutated = true;
+    }
+  }
+  if (user.manualNetDepositsBaseline === undefined) {
+    user.manualNetDepositsBaseline = null;
+    mutated = true;
+  } else if (user.manualNetDepositsBaseline !== null && !Number.isFinite(Number(user.manualNetDepositsBaseline))) {
+    user.manualNetDepositsBaseline = null;
+    mutated = true;
+  } else if (user.manualNetDepositsBaseline !== null) {
+    const normalized = Number(user.manualNetDepositsBaseline);
+    if (user.manualNetDepositsBaseline !== normalized) {
+      user.manualNetDepositsBaseline = normalized;
+      mutated = true;
+    }
+  }
+  if (user.manualBaselineUpdatedAt !== undefined && user.manualBaselineUpdatedAt !== null && typeof user.manualBaselineUpdatedAt !== 'string') {
+    user.manualBaselineUpdatedAt = null;
+    mutated = true;
+  }
+  if (user.manualBaselineUpdatedAt === undefined) {
+    user.manualBaselineUpdatedAt = null;
+    mutated = true;
+  }
   if (user.profileComplete === undefined) {
     const history = user.portfolioHistory || {};
     const hasEntries = Object.values(history).some(days => days && Object.keys(days).length);
@@ -6549,11 +6583,16 @@ function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
 }
 
 function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) {
+  const manualNetRaw = user?.manualNetDepositsBaseline;
+  const manualNetDeposits = Number(manualNetRaw);
+  if (manualNetRaw !== null && manualNetRaw !== undefined && manualNetRaw !== '' && Number.isFinite(manualNetDeposits)) {
+    return { baseline: manualNetDeposits, total: manualNetDeposits, source: 'manual' };
+  }
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
   const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
   if (multiEnabled && accountList.length) {
     const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentNetDeposits) || 0), 0);
-    return { baseline: combined, total: combined };
+    return { baseline: combined, total: combined, source: 'accounts' };
   }
   const baseline = Number.isFinite(Number(user?.initialNetDeposits))
     ? Number(user.initialNetDeposits)
@@ -6568,7 +6607,7 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
       total += (Number.isFinite(cashIn) ? cashIn : 0) - (Number.isFinite(cashOut) ? cashOut : 0);
     }
   }
-  return { baseline, total };
+  return { baseline, total, source: 'history' };
 }
 
 function findLatestAccountClosingValue(history, accountId) {
@@ -12411,11 +12450,26 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
-  const livePortfolio = portfolioSnapshot.value;
+  const manualPortfolioRaw = user.manualPortfolioBaseline;
+  const manualPortfolioBaseline = Number(manualPortfolioRaw);
+  const hasManualPortfolioBaseline = manualPortfolioRaw !== null
+    && manualPortfolioRaw !== undefined
+    && manualPortfolioRaw !== ''
+    && Number.isFinite(manualPortfolioBaseline);
+  const resolvedPortfolio = hasManualPortfolioBaseline ? manualPortfolioBaseline : portfolioSnapshot.value;
+  const livePortfolio = resolvedPortfolio;
   if (mutated || normalized || anchors.mutated) saveDB(db);
+  console.info('[baseline][resolve][portfolio]', {
+    user: req.username,
+    source: totals.source || 'history',
+    manualNetDepositsBaseline: user.manualNetDepositsBaseline,
+    resolvedNetDeposits: totals.total,
+    manualPortfolioBaseline: hasManualPortfolioBaseline ? manualPortfolioBaseline : null,
+    resolvedPortfolio
+  });
   res.json({
-    portfolio: portfolioSnapshot.value,
-    portfolioSource: portfolioSnapshot.source,
+    portfolio: resolvedPortfolio,
+    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: totals.baseline,
@@ -12501,15 +12555,31 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
-  const portfolioValue = Number.isFinite(portfolioSnapshot.value)
-    ? portfolioSnapshot.value
-    : (portfolioBaseline || 0);
+  const manualPortfolioRaw = user.manualPortfolioBaseline;
+  const manualPortfolioBaseline = Number(manualPortfolioRaw);
+  const hasManualPortfolioBaseline = manualPortfolioRaw !== null
+    && manualPortfolioRaw !== undefined
+    && manualPortfolioRaw !== ''
+    && Number.isFinite(manualPortfolioBaseline);
+  const portfolioValue = hasManualPortfolioBaseline
+    ? manualPortfolioBaseline
+    : (Number.isFinite(portfolioSnapshot.value)
+      ? portfolioSnapshot.value
+      : (portfolioBaseline || 0));
+  console.info('[baseline][resolve][profile]', {
+    user: req.username,
+    source: baseline.source || 'history',
+    manualNetDepositsBaseline: user.manualNetDepositsBaseline,
+    resolvedNetDeposits: total,
+    manualPortfolioBaseline: hasManualPortfolioBaseline ? manualPortfolioBaseline : null,
+    resolvedPortfolio: portfolioValue
+  });
   const role = getUserRole(user, req.username);
   const profileSummary = buildProfileCompletionSummary(user, portfolioValue, total);
   res.json({
     profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
-    portfolioSource: portfolioSnapshot.source,
+    portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
     portfolioLastUpdatedAt: portfolioSnapshot.lastUpdatedAt,
     initialNetDeposits: baseline,
@@ -16091,6 +16161,13 @@ app.delete('/api/profile/avatar', auth, (req, res) => {
 
 app.post('/api/profile', auth, (req,res)=>{
   const { portfolio, netDeposits, date, nickname, tradingAccounts } = req.body || {};
+  console.info('[baseline][save][request]', {
+    user: req.username,
+    portfolio,
+    netDeposits,
+    hasTradingAccountsPayload: Array.isArray(tradingAccounts),
+    tradingAccountsCount: Array.isArray(tradingAccounts) ? tradingAccounts.length : 0
+  });
   if (portfolio === '' || portfolio === null || portfolio === undefined) {
     return res.status(400).json({ error: 'Portfolio value is required' });
   }
@@ -16216,7 +16293,7 @@ app.post('/api/profile', auth, (req,res)=>{
   };
   const accountRecords = {};
   const normalizedAccounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
-  if (normalizedAccounts.length && (user.multiTradingAccountsEnabled || normalizedAccounts.length > 1)) {
+  if (tradingAccountsProvided && normalizedAccounts.length && (user.multiTradingAccountsEnabled || normalizedAccounts.length > 1)) {
     const combinedPortfolio = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentValue) || 0), 0);
     const combinedNetDeposits = normalizedAccounts.reduce((sum, account) => sum + (Number(account.currentNetDeposits) || 0), 0);
     portfolioNumber = combinedPortfolio;
@@ -16240,6 +16317,9 @@ app.post('/api/profile', auth, (req,res)=>{
   }
   history[ym][targetDate].end = portfolioNumber;
   history[ym][targetDate].accounts = accountRecords;
+  user.manualPortfolioBaseline = portfolioNumber;
+  user.manualNetDepositsBaseline = netDepositsNumber;
+  user.manualBaselineUpdatedAt = new Date().toISOString();
   if (!wasComplete) {
     user.initialNetDeposits = 0;
   } else if (resetNetDeposits) {
@@ -16253,8 +16333,21 @@ app.post('/api/profile', auth, (req,res)=>{
   const totals = computeNetDepositsTotals(user, history);
   tradingCfg.lastNetDeposits = totals.total;
   refreshAnchors(user, history);
+  console.info('[baseline][save][persisted]', {
+    user: req.username,
+    manualPortfolioBaseline: user.manualPortfolioBaseline,
+    manualNetDepositsBaseline: user.manualNetDepositsBaseline,
+    resolvedNetDeposits: totals.total,
+    source: totals.source || 'history'
+  });
   saveDB(db);
-  res.json({ ok: true, netDeposits: totals.total });
+  res.json({
+    ok: true,
+    netDeposits: totals.total,
+    manualPortfolioBaseline: user.manualPortfolioBaseline,
+    manualNetDepositsBaseline: user.manualNetDepositsBaseline,
+    baselineSource: totals.source || 'history'
+  });
 });
 
 app.post('/api/account/password', auth, async (req, res) => {
