@@ -14262,17 +14262,23 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
   const previousCloseTargetDate = getMostRecentCompletedUsTradingSessionDate(new Date());
   let didMutatePreviousCloseRef = false;
+  let providerPreviousCloseFetchAttempted = false;
+  let providerPreviousCloseFetchSucceeded = false;
   const ingested = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
     snapshot,
     marketDate: previousCloseTargetDate,
     source: 'provider_previous_close'
   });
+  providerPreviousCloseFetchAttempted = true;
+  providerPreviousCloseFetchSucceeded = Boolean(ingested?.didMutate);
   didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
   if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
     const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
       marketDate: previousCloseTargetDate,
       source: 'on_demand_provider_backfill'
     });
+    providerPreviousCloseFetchAttempted = true;
+    providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded || Boolean(onDemandIngest?.didMutate);
     didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
   }
   if (didMutatePreviousCloseRef) {
@@ -14289,6 +14295,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   const previousClose = previousCloseReference ? Number(previousCloseReference.previousClose) : null;
   const previousCloseDate = previousCloseReference?.marketDate || null;
   const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
+  const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate);
   const isStale = snapshot?.isStale === true;
   const resolvedSession = isStale
     ? 'stale'
@@ -14358,9 +14365,14 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
 
   console.info('[WATCHLIST_PREV_CLOSE_CALC]', {
     ticker: normalized,
+    targetSessionDate: previousCloseTargetDate,
+    hasReferenceForDate,
+    storedPreviousClose: previousClose,
+    storedReferenceDate: previousCloseDate,
+    providerPreviousCloseFetchAttempted,
+    providerPreviousCloseFetchSucceeded,
     displayPrice: payload.displayPrice,
-    previousClose: payload.previousClose,
-    previousCloseDate: payload.previousCloseDate,
+    computedPercentRaw: percentChangeToday,
     computedPercent: payload.displayChangePct,
     selectedPriceSource: payload.selectedPriceSource
   });

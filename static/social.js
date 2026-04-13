@@ -777,6 +777,7 @@ async function respondToInviteFromPage(inviteId, action) {
 
 
 function formatWatchlistValue(value, kind = 'number') {
+  if (value === null || value === undefined) return '—';
   const num = Number(value);
   if (!Number.isFinite(num)) return '—';
   if (kind === 'price') return `$${num.toFixed(num >= 100 ? 2 : 4)}`;

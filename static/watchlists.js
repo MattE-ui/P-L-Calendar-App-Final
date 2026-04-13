@@ -11,6 +11,7 @@
 
   const UNGROUPED_TITLE = 'Ungrouped';
   const TICKER_PATTERN = /^[A-Z0-9._-]{1,15}$/;
+  const WATCHLIST_DEBUG_TICKERS = new Set(['LWLG', 'NBIS', 'GLW']);
 
   async function api(path, opts = {}) {
     const res = await fetch(path, { credentials: 'include', ...opts });
@@ -32,6 +33,7 @@
   }
 
   function fmt(value, kind = 'num') {
+    if (value === null || value === undefined) return '—';
     const n = Number(value);
     if (!Number.isFinite(n)) return '—';
     if (kind === 'price') return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
@@ -401,6 +403,22 @@
 
   function renderSectionTable(section, rowLookup) {
     const rows = section.tickers.map((ticker) => rowLookup.get(ticker) || { ticker });
+    rows.forEach((row) => {
+      const normalizedTicker = normalizeTicker(row?.ticker);
+      if (!WATCHLIST_DEBUG_TICKERS.has(normalizedTicker)) return;
+      const computedPercentRaw = row.displayChangePct ?? row.percentChangeToday;
+      console.info('[WATCHLIST_UI_DEBUG]', {
+        ticker: normalizedTicker,
+        targetSessionDate: row.previousCloseDate || null,
+        hasReferenceForDate: Number.isFinite(Number(row.previousClose)) && Number(row.previousClose) > 0 && !!row.previousCloseDate,
+        storedPreviousClose: row.previousClose ?? null,
+        storedReferenceDate: row.previousCloseDate || null,
+        providerPreviousCloseFetchAttempted: null,
+        providerPreviousCloseFetchSucceeded: null,
+        computedPercentRaw,
+        finalRenderedPercentValue: fmt(computedPercentRaw, 'pct')
+      });
+    });
     return `
       <div class="social-watchlist-table-wrap social-watchlist-table-wrap--group">
         <table class="social-watchlist-table">
