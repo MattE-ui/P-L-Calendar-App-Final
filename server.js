@@ -21456,6 +21456,14 @@ function scheduleActiveTradesRefresh(username) {
   return refreshPromise;
 }
 
+function shapeTradeSummary(trade = {}) {
+  const summary = { ...trade };
+  delete summary.executions;
+  delete summary.partialCloses;
+  delete summary.importRawRows;
+  return summary;
+}
+
 app.get('/api/trades', auth, async (req, res) => {
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
@@ -21483,8 +21491,40 @@ app.get('/api/trades', auth, async (req, res) => {
         const bDate = b.openDate || '';
         return bDate.localeCompare(aDate);
       });
-  req.perfDiag?.setMeta({ resultCount: filtered.length, cache: 'bypass', requestScopedReuse: true, summaryModeUsed: Boolean(prefilter.from || prefilter.to) });
-  res.json({ trades: filtered });
+  const summaryModeRaw = String(req.query?.summaryMode ?? '1').toLowerCase();
+  const summaryMode = !['0', 'false', 'off', 'no'].includes(summaryModeRaw);
+  const limitInput = Number(req.query?.limit);
+  const offsetInput = Number(req.query?.offset);
+  const limit = Number.isFinite(limitInput) ? Math.max(1, Math.min(200, Math.floor(limitInput))) : 100;
+  const offset = Number.isFinite(offsetInput) ? Math.max(0, Math.floor(offsetInput)) : 0;
+  const total = filtered.length;
+  const pageStart = Math.min(offset, total);
+  const pageEnd = Math.min(pageStart + limit, total);
+  const pageItems = filtered.slice(pageStart, pageEnd);
+  const responseTrades = summaryMode ? pageItems.map(shapeTradeSummary) : pageItems;
+  const payloadSizeBytes = Buffer.byteLength(JSON.stringify(responseTrades));
+  req.perfDiag?.setMeta({
+    resultCount: responseTrades.length,
+    cache: 'bypass',
+    requestScopedReuse: true,
+    summaryModeUsed: summaryMode,
+    paginatedResponse: true,
+    totalTrades: total,
+    initialWindowSize: limit,
+    returnedWindowSize: responseTrades.length,
+    hasMore: pageEnd < total,
+    responsePayloadBytes: payloadSizeBytes
+  });
+  res.json({
+    trades: responseTrades,
+    total,
+    limit,
+    offset: pageStart,
+    nextOffset: pageEnd < total ? pageEnd : null,
+    hasMore: pageEnd < total,
+    summaryMode,
+    paginated: true
+  });
 });
 
 app.get('/api/weekly-recap/latest', auth, (req, res) => {
@@ -23075,6 +23115,20 @@ app.get('/api/trades/active', auth, async (req, res) => {
     cache: 'snapshot_refresh'
   });
   return res.json(freshPayload);
+});
+
+app.get('/api/trades/:id', auth, async (req, res) => {
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  ensureUserShape(user, req.username);
+  normalizeTradeJournal(user);
+  const found = findTradeById(user, req.params.id);
+  if (!found) return res.status(404).json({ error: 'Trade not found' });
+  const rates = await fetchRates();
+  const mapped = applyInstrumentMappingToTrade({ ...found.trade, openDate: found.dateKey }, db, req.username);
+  req.perfDiag?.setMeta({ detailLoadedOnDemand: true, tradeId: req.params.id });
+  res.json({ trade: mapped, detailLoadedOnDemand: true });
 });
 
 app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
