@@ -19427,6 +19427,10 @@ const dailyLowCache = new Map();
 const optionContractResolutionCache = new Map();
 const optionQuoteCache = new Map();
 const OPTION_QUOTE_CACHE_TTL_MS = Number(process.env.OPTION_QUOTE_CACHE_TTL_MS) || 10 * 1000;
+const ACTIVE_TRADES_SNAPSHOT_TTL_MS = Number(process.env.ACTIVE_TRADES_SNAPSHOT_TTL_MS) || 15000;
+const ACTIVE_TRADES_MAX_STALE_MS = Number(process.env.ACTIVE_TRADES_MAX_STALE_MS) || 120000;
+const activeTradesSnapshotCache = new Map();
+const activeTradesRefreshLocks = new Map();
 
 function getTimezoneOffset(date, timeZone) {
   const tzDate = new Date(date.toLocaleString('en-US', { timeZone }));
@@ -21060,6 +21064,150 @@ async function buildActiveTrades(user, rates = {}) {
   };
 }
 
+function computeActiveTradesFingerprint(user) {
+  const journal = ensureTradeJournal(user);
+  let bucketCount = 0;
+  let tradeCount = 0;
+  let openCount = 0;
+  const tradeVectors = [];
+  for (const [dateKey, items] of Object.entries(journal)) {
+    bucketCount += 1;
+    for (const trade of items || []) {
+      if (!trade || typeof trade !== 'object') continue;
+      tradeCount += 1;
+      const status = String(trade.status || '');
+      if (status !== 'closed') openCount += 1;
+      tradeVectors.push([
+        dateKey,
+        String(trade.id || ''),
+        status,
+        String(trade.updatedAt || trade.createdAt || ''),
+        String(trade.currentStop || ''),
+        String(trade.currentStopLastSyncedAt || ''),
+        String(trade.lastSyncPrice || ''),
+        String(trade.ppl || ''),
+        String(trade.sizeUnits || ''),
+        String(trade.openQuantity || '')
+      ].join('|'));
+    }
+  }
+  const ibkrLiveCount = Array.isArray(user?.ibkr?.livePositions) ? user.ibkr.livePositions.length : 0;
+  const tradingSyncHint = String(user?.trading212?.lastSuccessfulSyncAt || user?.trading212?.lastSyncAt || '');
+  const ibkrSyncHint = String(user?.ibkr?.lastSnapshotAt || user?.ibkr?.lastHeartbeatAt || '');
+  tradeVectors.sort();
+  const digest = crypto
+    .createHash('sha1')
+    .update(JSON.stringify({
+      bucketCount,
+      tradeCount,
+      openCount,
+      ibkrLiveCount,
+      tradingSyncHint,
+      ibkrSyncHint,
+      tradeVectors
+    }))
+    .digest('hex');
+  return `${bucketCount}:${tradeCount}:${openCount}:${ibkrLiveCount}:${digest}`;
+}
+
+function buildActiveTradesSnapshotPayload(snapshot) {
+  return {
+    trades: snapshot.trades,
+    liveOpenPnl: snapshot.liveOpenPnl,
+    openLossPotential: snapshot.openLossPotential,
+    liveOpenPnlMode: snapshot.liveOpenPnlMode,
+    liveOpenPnlCurrency: snapshot.liveOpenPnlCurrency,
+    freshness: {
+      generatedAt: snapshot.generatedAt,
+      snapshotAgeMs: Math.max(0, Date.now() - snapshot.generatedAtMs),
+      refreshInProgress: Boolean(activeTradesRefreshLocks.get(snapshot.username)),
+      cacheHit: snapshot.cacheHit === true,
+      snapshotUsed: true
+    }
+  };
+}
+
+async function computeActiveTradesSnapshot(username) {
+  const db = loadDB();
+  const user = db.users[username];
+  if (!user) return null;
+  ensureUserShape(user, username);
+  const fingerprint = computeActiveTradesFingerprint(user);
+  const rates = await fetchRates();
+  const tradingCfg = user.trading212;
+  const tradingAccounts = getTrading212Accounts(tradingCfg);
+  if (tradingCfg?.enabled && tradingAccounts.length) {
+    try {
+      let totalUpdates = 0;
+      for (const account of tradingAccounts) {
+        const accountId = account.id || '';
+        const accountConfig = {
+          ...tradingCfg,
+          apiKey: account.apiKey,
+          apiSecret: account.apiSecret,
+          mode: account.mode || tradingCfg.mode,
+          baseUrl: account.baseUrl || tradingCfg.baseUrl
+        };
+        const ordersPayload = await fetchTrading212Orders(accountConfig, username, { accountId });
+        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
+        totalUpdates += stopUpdates;
+      }
+      if (totalUpdates > 0) {
+        saveDB(db);
+        console.info(`[T212] refreshed ${totalUpdates} trade stop(s) during active trades snapshot refresh`);
+      }
+    } catch (e) {
+      console.warn('Trading 212 stop refresh failed during active trades snapshot refresh', e);
+    }
+  }
+  const ibkrCfg = user.ibkr;
+  if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
+    const snapshot = getLatestBrokerSnapshot(db, username, 'IBKR');
+    if (snapshot) {
+      const derived = snapshot.derivedStopByTicker || computeIbkrDerivedStops(snapshot.positions || [], snapshot.orders || []);
+      const { updated: stopUpdates } = applyIbkrDerivedStopsToLivePositions(user, derived);
+      if (stopUpdates > 0) {
+        saveDB(db);
+        console.info(`[IBKR] refreshed ${stopUpdates} live position stop(s) during active trades snapshot refresh`);
+      }
+    }
+  }
+  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
+  const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, username));
+  return {
+    username,
+    fingerprint,
+    generatedAtMs: Date.now(),
+    generatedAt: new Date().toISOString(),
+    trades: mappedTrades,
+    liveOpenPnl: liveOpenPnlGBP,
+    openLossPotential: openLossPotentialGBP,
+    liveOpenPnlMode,
+    liveOpenPnlCurrency
+  };
+}
+
+function scheduleActiveTradesRefresh(username) {
+  const existing = activeTradesRefreshLocks.get(username);
+  if (existing) return existing;
+  const refreshPromise = computeActiveTradesSnapshot(username)
+    .then((snapshot) => {
+      if (snapshot) {
+        activeTradesSnapshotCache.set(username, snapshot);
+      }
+      return snapshot;
+    })
+    .catch((error) => {
+      console.warn('[active-trades] snapshot refresh failed', { username, message: error?.message || error });
+      return null;
+    })
+    .finally(() => {
+      activeTradesRefreshLocks.delete(username);
+    });
+  activeTradesRefreshLocks.set(username, refreshPromise);
+  return refreshPromise;
+}
+
 app.get('/api/trades', auth, async (req, res) => {
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
@@ -22549,58 +22697,105 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
-  const tradingCfg = user.trading212;
-  const tradingAccounts = getTrading212Accounts(tradingCfg);
-  if (tradingCfg?.enabled && tradingAccounts.length) {
-    try {
-      let totalUpdates = 0;
-      for (const account of tradingAccounts) {
-        const accountId = account.id || '';
-        const accountConfig = {
-          ...tradingCfg,
-          apiKey: account.apiKey,
-          apiSecret: account.apiSecret,
-          mode: account.mode || tradingCfg.mode,
-          baseUrl: account.baseUrl || tradingCfg.baseUrl
-        };
-        const ordersPayload = await fetchTrading212Orders(accountConfig, req.username, { accountId });
-        const { updated: stopUpdates } = upsertTrading212StopOrders(user, ordersPayload, accountId, rates);
-        totalUpdates += stopUpdates;
-      }
-      if (totalUpdates > 0) {
-        saveDB(db);
-        console.info(`[T212] refreshed ${totalUpdates} trade stop(s) during active trades poll`);
-      }
-    } catch (e) {
-      console.warn('Trading 212 stop refresh failed during active trades poll', e);
-    }
+  const forceRefresh = req.query?.refresh === '1' || req.query?.forceRefresh === '1';
+  const fingerprint = req.perfDiag?.timeSync('active_fingerprint', () => computeActiveTradesFingerprint(user))
+    || computeActiveTradesFingerprint(user);
+  const now = Date.now();
+  const cached = activeTradesSnapshotCache.get(req.username);
+  const cacheAgeMs = cached ? (now - cached.generatedAtMs) : null;
+  const freshCache = Boolean(
+    cached
+    && cached.fingerprint === fingerprint
+    && Number.isFinite(cacheAgeMs)
+    && cacheAgeMs >= 0
+    && cacheAgeMs <= ACTIVE_TRADES_SNAPSHOT_TTL_MS
+  );
+  const staleButUsable = Boolean(
+    cached
+    && cached.fingerprint === fingerprint
+    && Number.isFinite(cacheAgeMs)
+    && cacheAgeMs >= 0
+    && cacheAgeMs <= ACTIVE_TRADES_MAX_STALE_MS
+  );
+  const refreshInProgress = Boolean(activeTradesRefreshLocks.get(req.username));
+
+  if (!forceRefresh && freshCache) {
+    req.perfDiag?.setMeta({
+      externalProviderAttempted: false,
+      externalProviderDurationMs: 0,
+      resultCount: cached.trades.length,
+      cache: 'snapshot_hit',
+      activeTradesSnapshotAgeMs: cacheAgeMs,
+      refreshInProgress
+    });
+    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+    payload.freshness.refreshInProgress = refreshInProgress;
+    return res.json(payload);
   }
-  const ibkrCfg = user.ibkr;
-  if (ibkrCfg?.enabled && ibkrCfg?.mode === 'connector') {
-    const snapshot = getLatestBrokerSnapshot(db, req.username, 'IBKR');
-    if (snapshot) {
-      const derived = snapshot.derivedStopByTicker || computeIbkrDerivedStops(snapshot.positions || [], snapshot.orders || []);
-      const { updated: stopUpdates } = applyIbkrDerivedStopsToLivePositions(user, derived);
-      if (stopUpdates > 0) {
-        saveDB(db);
-        console.info(`[IBKR] refreshed ${stopUpdates} live position stop(s) during active trades poll`);
-      }
+
+  if (!forceRefresh && staleButUsable) {
+    if (!refreshInProgress) {
+      scheduleActiveTradesRefresh(req.username);
     }
+    req.perfDiag?.setMeta({
+      externalProviderAttempted: false,
+      externalProviderDurationMs: 0,
+      resultCount: cached.trades.length,
+      cache: 'snapshot_stale_revalidate',
+      activeTradesSnapshotAgeMs: cacheAgeMs,
+      refreshInProgress: true
+    });
+    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+    payload.freshness.refreshInProgress = true;
+    return res.json(payload);
+  }
+
+  const externalStart = process.hrtime.bigint();
+  let snapshot = null;
+  const inflight = activeTradesRefreshLocks.get(req.username);
+  if (inflight) {
+    req.perfDiag?.setMeta({ activeTradesRefreshCoalesced: true });
+    if (!forceRefresh && cached) {
+      req.perfDiag?.setMeta({
+        externalProviderAttempted: false,
+        externalProviderDurationMs: 0,
+        resultCount: cached.trades.length,
+        cache: 'snapshot_stale_coalesced',
+        activeTradesSnapshotAgeMs: cacheAgeMs,
+        refreshInProgress: true
+      });
+      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+      payload.freshness.refreshInProgress = true;
+      return res.json(payload);
+    }
+    snapshot = await inflight;
+  } else {
+    req.perfDiag?.setMeta({ activeTradesRefreshCoalesced: false });
+    snapshot = await (req.perfDiag?.timeAsync('active_snapshot_refresh', async () => scheduleActiveTradesRefresh(req.username))
+      || scheduleActiveTradesRefresh(req.username));
   }
   req.perfDiag?.setMeta({ externalProviderAttempted: true });
-  const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
-  const externalStart = process.hrtime.bigint();
-  const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
-  req.perfDiag?.setMeta({ externalProviderDurationMs: Number(process.hrtime.bigint() - externalStart) / 1e6 });
-  const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, req.username));
-  req.perfDiag?.setMeta({ resultCount: mappedTrades.length, cache: 'bypass' });
-  res.json({
-    trades: mappedTrades,
-    liveOpenPnl: liveOpenPnlGBP,
-    openLossPotential: openLossPotentialGBP,
-    liveOpenPnlMode,
-    liveOpenPnlCurrency
+  if (!snapshot) {
+    if (cached) {
+      req.perfDiag?.setMeta({
+        externalProviderDurationMs: Number(process.hrtime.bigint() - externalStart) / 1e6,
+        resultCount: cached.trades.length,
+        cache: 'snapshot_fallback_after_refresh_error',
+        activeTradesSnapshotAgeMs: cacheAgeMs
+      });
+      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+      payload.freshness.refreshInProgress = Boolean(activeTradesRefreshLocks.get(req.username));
+      return res.json(payload);
+    }
+    return res.status(503).json({ error: 'Active trades are temporarily unavailable.' });
+  }
+  const freshPayload = buildActiveTradesSnapshotPayload({ ...snapshot, cacheHit: false });
+  req.perfDiag?.setMeta({
+    externalProviderDurationMs: Number(process.hrtime.bigint() - externalStart) / 1e6,
+    resultCount: snapshot.trades.length,
+    cache: 'snapshot_refresh'
   });
+  return res.json(freshPayload);
 });
 
 app.get('/api/trades/:id/stop-sync', auth, async (req, res) => {
