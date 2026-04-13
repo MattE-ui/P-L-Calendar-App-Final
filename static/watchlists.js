@@ -41,8 +41,9 @@
 
   function sessionLabel(rawSession) {
     const session = String(rawSession || '').trim().toLowerCase();
-    if (session === 'premarket') return 'PREMARKET';
-    if (session === 'afterhours') return 'AFTER_HOURS';
+    if (session === 'premarket') return 'PRE';
+    if (session === 'afterhours') return 'AH';
+    if (session === 'stale') return 'STALE';
     if (session === 'regular') return 'LIVE';
     return 'CLOSED';
   }
@@ -51,6 +52,7 @@
     const session = String(rawSession || '').trim().toLowerCase();
     if (session === 'premarket') return 'is-premarket';
     if (session === 'afterhours') return 'is-afterhours';
+    if (session === 'stale') return 'is-closed';
     if (session === 'regular') return 'is-live';
     return 'is-closed';
   }
