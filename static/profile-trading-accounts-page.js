@@ -5,6 +5,7 @@
     t212Accounts: [],
     tradingAccounts: [],
     ibkr: {},
+    resolvedAccounts: [],
     modalMode: 'add',
     modalAccountId: '',
     activeTab: 'accounts'
@@ -16,10 +17,14 @@
     subtitle: document.getElementById('t212-account-modal-subtitle'),
     form: document.getElementById('t212-account-form'),
     label: document.getElementById('t212-account-label-input'),
+    accountType: document.getElementById('t212-account-type-input'),
+    brokerLabel: document.getElementById('t212-broker-label-input'),
+    providerStatus: document.getElementById('t212-provider-status'),
+    apiKeyWrap: document.getElementById('t212-api-key-wrap'),
+    apiSecretWrap: document.getElementById('t212-api-secret-wrap'),
+    providerStatusWrap: document.getElementById('t212-provider-status-wrap'),
     apiKey: document.getElementById('t212-api-key-input'),
     apiSecret: document.getElementById('t212-api-secret-input'),
-    apiKeyHelper: document.getElementById('t212-api-key-helper'),
-    apiSecretHelper: document.getElementById('t212-api-secret-helper'),
     submit: document.getElementById('t212-account-submit-btn')
   };
 
@@ -43,62 +48,213 @@
     ));
   }
 
+  function normalizeLabel(value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
   function normalizeDataSource(account = {}) {
     if (account?.dataSource) return account.dataSource;
     if (account?.source === 'imported' || account?.imported || account?.importSource) return 'imported';
     const provider = String(account.integrationProvider || '').toLowerCase();
     if (provider === 'trading212' && account.integrationEnabled !== false) return 'automated';
-    if (provider === 'ibkr') return 'manual';
+    if (provider === 'ibkr' && account.integrationEnabled !== false) return 'automated';
     return 'manual';
   }
 
-  function createUnifiedAccounts() {
-    const unified = [];
+  function accountIdentityKey({ providerAccountId, linkedLocalAccountId, broker, accountName, accountType }) {
+    if (providerAccountId) return `provider:${providerAccountId}`;
+    if (linkedLocalAccountId) return `local:${linkedLocalAccountId}`;
+    return `fallback:${normalizeLabel(broker)}|${normalizeLabel(accountName)}|${normalizeLabel(accountType || 'trading account')}`;
+  }
 
-    state.tradingAccounts.forEach((account) => {
-      const provider = account.integrationProvider === 'trading212'
-        ? 'Trading 212'
-        : account.integrationProvider === 'ibkr'
-          ? 'IBKR'
-          : 'Manual';
-      unified.push({
-        id: `acct-${account.id}`,
-        sourceId: account.id,
-        accountName: account.label || 'Trading account',
+  function resolveAccountsForView() {
+    const localAccounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
+    const integrationAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
+    const merged = new Map();
+    const stats = {
+      localCount: localAccounts.length,
+      integrationCount: integrationAccounts.length,
+      mergeMatches: 0,
+      unmatchedLocal: 0,
+      unmatchedIntegration: 0
+    };
+
+    localAccounts.forEach((local) => {
+      const provider = local.integrationProvider === 'trading212' ? 'Trading 212' : local.integrationProvider === 'ibkr' ? 'IBKR' : (local.brokerDisplayLabel || 'Manual');
+      const dataSource = normalizeDataSource(local);
+      const key = accountIdentityKey({
+        providerAccountId: local.providerAccountId || local.linkedBrokerAccountId,
+        linkedLocalAccountId: local.id,
         broker: provider,
-        accountType: account.integrationProvider === 'ibkr' ? 'Broker account' : 'Trading account',
-        portfolioValue: account.currentValue,
-        dataSource: normalizeDataSource(account),
+        accountName: local.label,
+        accountType: local.accountType || 'Trading account'
+      });
+      merged.set(key, {
+        id: `resolved:${local.id}`,
+        name: local.label || 'Trading account',
+        broker,
+        accountType: local.accountType || 'Trading account',
+        portfolioValue: Number.isFinite(Number(local.currentValue)) ? Number(local.currentValue) : null,
         lastUpdated: state.ibkr.lastSyncAt || null,
-        automated: normalizeDataSource(account) === 'automated',
-        kind: 'trading-account',
-        provider: account.integrationProvider || null
+        dataSource: {
+          type: dataSource,
+          provider: local.integrationProvider || undefined,
+          connectionId: local.linkedBrokerAccountId || null,
+          providerAccountId: local.providerAccountId || null
+        },
+        actions: {
+          canManage: true,
+          canEdit: true,
+          canSync: dataSource === 'automated',
+          canDisconnect: dataSource === 'automated',
+          canImport: dataSource !== 'automated'
+        },
+        localAccountId: local.id,
+        brokerAccountId: local.linkedBrokerAccountId || null,
+        connectionStatus: null
       });
     });
 
-    state.t212Accounts.forEach((account) => {
-      unified.push({
-        id: `t212-${account.brokerAccountId}`,
-        sourceId: account.brokerAccountId,
-        accountName: account.accountLabel || 'Trading 212 account',
+    integrationAccounts.forEach((integration) => {
+      const keyCandidates = [
+        accountIdentityKey({
+          providerAccountId: integration.providerAccountId || integration.brokerAccountId,
+          linkedLocalAccountId: integration.linkedTradingAccountId || integration.providerMetadata?.linkedTradingAccountId,
+          broker: 'Trading 212',
+          accountName: integration.accountLabel,
+          accountType: integration.accountType || 'Trading account'
+        }),
+        accountIdentityKey({
+          providerAccountId: null,
+          linkedLocalAccountId: integration.linkedTradingAccountId || integration.providerMetadata?.linkedTradingAccountId,
+          broker: 'Trading 212',
+          accountName: integration.accountLabel,
+          accountType: integration.accountType || 'Trading account'
+        }),
+        accountIdentityKey({
+          providerAccountId: null,
+          linkedLocalAccountId: null,
+          broker: 'Trading 212',
+          accountName: integration.accountLabel,
+          accountType: integration.accountType || 'Trading account'
+        })
+      ];
+
+      const matchKey = keyCandidates.find((candidate) => merged.has(candidate));
+      if (matchKey) {
+        stats.mergeMatches += 1;
+        const current = merged.get(matchKey);
+        merged.set(matchKey, {
+          ...current,
+          broker: 'Trading 212',
+          accountType: current.accountType || integration.accountType || 'Trading account',
+          portfolioValue: current.portfolioValue,
+          lastUpdated: integration.lastSyncAt || current.lastUpdated,
+          dataSource: {
+            type: 'automated',
+            provider: 'trading212',
+            connectionId: integration.brokerAccountId || null,
+            providerAccountId: integration.providerAccountId || integration.brokerAccountId || null
+          },
+          actions: {
+            canManage: true,
+            canEdit: true,
+            canSync: true,
+            canDisconnect: true,
+            canImport: false
+          },
+          brokerAccountId: integration.brokerAccountId || current.brokerAccountId,
+          providerConnectionStatus: integration.connectionStatus || null
+        });
+        return;
+      }
+
+      const fallbackKey = keyCandidates[keyCandidates.length - 1];
+      merged.set(fallbackKey, {
+        id: `resolved:t212:${integration.brokerAccountId}`,
+        name: integration.accountLabel || 'Trading 212 account',
         broker: 'Trading 212',
-        accountType: account.accountType || 'Trading account',
+        accountType: integration.accountType || 'Trading account',
         portfolioValue: null,
-        dataSource: 'automated',
-        lastUpdated: account.lastSyncAt,
-        automated: true,
-        kind: 't212',
-        provider: 'trading212'
+        lastUpdated: integration.lastSyncAt || null,
+        dataSource: {
+          type: 'automated',
+          provider: 'trading212',
+          connectionId: integration.brokerAccountId || null,
+          providerAccountId: integration.providerAccountId || integration.brokerAccountId || null
+        },
+        actions: {
+          canManage: true,
+          canEdit: true,
+          canSync: true,
+          canDisconnect: true,
+          canImport: false
+        },
+        localAccountId: null,
+        brokerAccountId: integration.brokerAccountId,
+        providerConnectionStatus: integration.connectionStatus || null
       });
+      stats.unmatchedIntegration += 1;
     });
 
-    return unified;
+    merged.forEach((item) => {
+      if (item.localAccountId && !item.brokerAccountId && item.dataSource.provider === 'trading212' && item.dataSource.type === 'automated') {
+        stats.unmatchedLocal += 1;
+      }
+    });
+
+    const resolved = Array.from(merged.values());
+    console.debug('[TradingAccounts][resolve]', {
+      localAccountCount: stats.localCount,
+      integrationAccountCount: stats.integrationCount,
+      resolvedAccountCount: resolved.length,
+      mergeMatchesFound: stats.mergeMatches,
+      unmatchedLocalRecords: stats.unmatchedLocal,
+      unmatchedIntegrationRecords: stats.unmatchedIntegration
+    });
+    return resolved;
+  }
+
+  async function persistTradingAccounts(accounts) {
+    await api('/api/account/trading-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true, accounts })
+    });
+  }
+
+  async function reconcileStaleLinkedState() {
+    const localAccounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
+    const integrationAccounts = Array.isArray(state.t212Accounts) ? state.t212Accounts : [];
+    if (!localAccounts.length) return false;
+    const activeIntegrationIds = new Set(integrationAccounts.map((item) => item.brokerAccountId).filter(Boolean));
+    let changed = false;
+    const repaired = localAccounts.map((account) => {
+      if (!(account.integrationProvider === 'trading212' && account.integrationEnabled)) return account;
+      const linkedId = account.linkedBrokerAccountId || account.providerAccountId;
+      const hasIntegration = linkedId
+        ? activeIntegrationIds.has(linkedId)
+        : integrationAccounts.some((item) => normalizeLabel(item.accountLabel) === normalizeLabel(account.label));
+      if (hasIntegration) return account;
+      changed = true;
+      return {
+        ...account,
+        integrationProvider: null,
+        integrationEnabled: false,
+        linkedBrokerAccountId: '',
+        providerAccountId: ''
+      };
+    });
+    if (!changed) return false;
+    console.debug('[TradingAccounts][reconcile] removing stale linked-provider state from local records');
+    await persistTradingAccounts(repaired);
+    return true;
   }
 
   function renderAccountsList() {
     const root = document.getElementById('trading-accounts-grid');
     if (!root) return;
-    const accounts = createUnifiedAccounts();
+    const accounts = state.resolvedAccounts;
     root.innerHTML = '';
 
     if (!accounts.length) {
@@ -109,26 +265,24 @@
     accounts.forEach((account) => {
       const card = document.createElement('article');
       card.className = 'trading-account-card';
-      const sourceLabel = account.dataSource.charAt(0).toUpperCase() + account.dataSource.slice(1);
-      const canSync = account.dataSource === 'automated';
-      const canImport = account.dataSource !== 'automated';
+      const sourceLabel = account.dataSource.type.charAt(0).toUpperCase() + account.dataSource.type.slice(1);
       card.innerHTML = `
         <header class="trading-account-card__header">
-          <h3>${escapeHtml(account.accountName)}</h3>
-          <span class="data-source-badge is-${escapeHtml(account.dataSource)}">${escapeHtml(sourceLabel)}</span>
+          <h3>${escapeHtml(account.name)}</h3>
+          <span class="data-source-badge is-${escapeHtml(account.dataSource.type)}">${escapeHtml(sourceLabel)}</span>
         </header>
         <dl class="broker-meta-grid">
           <div><dt>Broker</dt><dd>${escapeHtml(account.broker)}</dd></div>
-          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType)}</dd></div>
+          <div><dt>Account type</dt><dd>${escapeHtml(account.accountType || 'Trading account')}</dd></div>
           <div><dt>Portfolio value</dt><dd>${formatMoney(account.portfolioValue)}</dd></div>
           <div><dt>Last updated</dt><dd>${formatWhen(account.lastUpdated)}</dd></div>
         </dl>
         <div class="broker-card__actions">
           <button type="button" class="ghost" data-action="manage-account" data-account-id="${escapeHtml(account.id)}">Manage</button>
           <button type="button" class="ghost" data-action="edit-unified-account" data-account-id="${escapeHtml(account.id)}">Edit</button>
-          ${canSync ? `<button type="button" class="primary" data-action="sync-unified-account" data-account-id="${escapeHtml(account.id)}">Sync</button>` : ''}
-          ${canImport ? `<button type="button" class="ghost" data-action="import-unified-account" data-account-id="${escapeHtml(account.id)}">Import</button>` : ''}
-          ${account.automated ? `<button type="button" class="danger" data-action="disconnect-unified-account" data-account-id="${escapeHtml(account.id)}">Disconnect</button>` : ''}
+          ${account.actions.canSync ? `<button type="button" class="primary" data-action="sync-unified-account" data-account-id="${escapeHtml(account.id)}">Sync</button>` : ''}
+          ${account.actions.canImport ? `<button type="button" class="ghost" data-action="import-unified-account" data-account-id="${escapeHtml(account.id)}">Import</button>` : ''}
+          ${account.actions.canDisconnect ? `<button type="button" class="danger" data-action="disconnect-unified-account" data-account-id="${escapeHtml(account.id)}">Disconnect</button>` : ''}
         </div>
       `;
       root.appendChild(card);
@@ -251,6 +405,14 @@
       : [];
     state.ibkr = ibkrPayload || {};
     state.tradingAccounts = Array.isArray(tradingAccountsPayload.accounts) ? tradingAccountsPayload.accounts : [];
+
+    const staleFixed = await reconcileStaleLinkedState();
+    if (staleFixed) {
+      const refreshed = await api('/api/account/trading-accounts').catch(() => ({ accounts: [] }));
+      state.tradingAccounts = Array.isArray(refreshed.accounts) ? refreshed.accounts : [];
+    }
+
+    state.resolvedAccounts = resolveAccountsForView();
     renderAccountsList();
     renderTrading212Cards();
     renderIbkrCard();
@@ -262,15 +424,29 @@
     const isEdit = mode === 'edit';
     state.modalMode = mode;
     state.modalAccountId = accountId;
-    const account = isEdit ? state.t212Accounts.find((row) => row.brokerAccountId === accountId) : null;
-    modalElements.title.textContent = isEdit ? 'Edit Trading 212 account' : 'Add Trading 212 account';
+    const resolved = isEdit ? state.resolvedAccounts.find((item) => item.id === accountId) : null;
+    const integration = isEdit ? state.t212Accounts.find((row) => row.brokerAccountId === (resolved?.brokerAccountId || accountId)) : null;
+    const editingAutomated = !!integration || resolved?.dataSource?.provider === 'trading212';
+
+    modalElements.title.textContent = isEdit ? 'Edit account' : 'Add Trading 212 account';
     modalElements.subtitle.textContent = isEdit
-      ? 'Update label or replace credentials. Leave key/secret blank to keep current values.'
+      ? 'Update account metadata. Provider credentials are optional unless you need to rotate keys.'
       : 'Connect a Trading 212 account with secure API credentials.';
     modalElements.submit.textContent = isEdit ? 'Save changes' : 'Save account';
-    modalElements.label.value = account?.accountLabel || '';
+
+    modalElements.label.value = integration?.accountLabel || resolved?.name || '';
+    modalElements.accountType.value = integration?.accountType || resolved?.accountType || 'Trading account';
+    modalElements.brokerLabel.value = resolved?.broker || 'Trading 212';
     modalElements.apiKey.value = '';
     modalElements.apiSecret.value = '';
+
+    modalElements.apiKeyWrap?.classList.toggle('hidden', isEdit && !editingAutomated);
+    modalElements.apiSecretWrap?.classList.toggle('hidden', isEdit && !editingAutomated);
+    modalElements.providerStatusWrap?.classList.toggle('hidden', !(isEdit && editingAutomated));
+    modalElements.providerStatus.textContent = editingAutomated
+      ? `${integration?.connectionStatus || resolved?.providerConnectionStatus || 'Connected'} · ${integration?.syncStatus || 'Idle'}`
+      : 'Manual account';
+
     setStatus('t212-account-modal-status', '', false);
     modalElements.root.classList.remove('hidden');
     modalElements.label.focus();
@@ -298,78 +474,126 @@
     accounts.push({
       id: `manual-${Date.now()}`,
       label: label.trim(),
+      accountType: 'Trading account',
+      brokerDisplayLabel: 'Manual',
       currentValue: Number.isFinite(value) && value >= 0 ? value : 0,
       currentNetDeposits: 0,
       integrationProvider: null,
-      integrationEnabled: false
+      integrationEnabled: false,
+      linkedBrokerAccountId: '',
+      providerAccountId: ''
     });
-    await api('/api/account/trading-accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: true, accounts })
-    });
+    await persistTradingAccounts(accounts);
     setText('trading-broker-action-status', 'Manual account created.');
+  }
+
+  async function updateLocalAccount(accountId, patch) {
+    const accounts = Array.isArray(state.tradingAccounts) ? [...state.tradingAccounts] : [];
+    const next = accounts.map((account) => (account.id === accountId ? { ...account, ...patch } : account));
+    await persistTradingAccounts(next);
   }
 
   async function submitAccountModal() {
     const isEditMode = state.modalMode === 'edit';
     const accountLabel = modalElements.label.value.trim();
+    const accountType = modalElements.accountType.value.trim() || 'Trading account';
+    const brokerDisplayLabel = modalElements.brokerLabel.value.trim();
     const apiKey = modalElements.apiKey.value.trim();
     const apiSecret = modalElements.apiSecret.value.trim();
     if (!accountLabel) return setStatus('t212-account-modal-status', 'Account label is required.', true);
-    if (!isEditMode && !apiKey) return setStatus('t212-account-modal-status', 'API key is required.', true);
-    if (!isEditMode && !apiSecret) return setStatus('t212-account-modal-status', 'API secret is required.', true);
 
     if (isEditMode) {
-      await api(`/api/broker-accounts/${encodeURIComponent(state.modalAccountId)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountLabel, ...(apiKey ? { apiKey } : {}), ...(apiSecret ? { apiSecret } : {}) })
-      });
+      const resolved = state.resolvedAccounts.find((item) => item.id === state.modalAccountId);
+      if (!resolved) return setStatus('t212-account-modal-status', 'Account no longer exists.', true);
+
+      if (resolved.brokerAccountId && resolved.dataSource.provider === 'trading212') {
+        await api(`/api/broker-accounts/${encodeURIComponent(resolved.brokerAccountId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountLabel, accountType, ...(apiKey ? { apiKey } : {}), ...(apiSecret ? { apiSecret } : {}) })
+        });
+      }
+
+      if (resolved.localAccountId) {
+        await updateLocalAccount(resolved.localAccountId, {
+          label: accountLabel,
+          accountType,
+          brokerDisplayLabel,
+          linkedBrokerAccountId: resolved.brokerAccountId || '',
+          providerAccountId: resolved.dataSource.providerAccountId || resolved.brokerAccountId || ''
+        });
+      }
       closeAccountModal();
-      setText('trading-broker-action-status', 'Trading 212 account updated.');
+      setText('trading-broker-action-status', 'Account updated.');
       return;
     }
 
-    await api('/api/broker-accounts', {
+    if (!apiKey) return setStatus('t212-account-modal-status', 'API key is required.', true);
+    if (!apiSecret) return setStatus('t212-account-modal-status', 'API secret is required.', true);
+
+    const created = await api('/api/broker-accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: 'trading212', accountLabel, apiKey, apiSecret })
     });
+
+    const accounts = Array.isArray(state.tradingAccounts) ? [...state.tradingAccounts] : [];
+    accounts.push({
+      id: `linked-${Date.now()}`,
+      label: accountLabel,
+      accountType,
+      brokerDisplayLabel: brokerDisplayLabel || 'Trading 212',
+      currentValue: 0,
+      currentNetDeposits: 0,
+      integrationProvider: 'trading212',
+      integrationEnabled: true,
+      linkedBrokerAccountId: created?.account?.brokerAccountId || '',
+      providerAccountId: created?.account?.brokerAccountId || ''
+    });
+    await persistTradingAccounts(accounts);
+
     closeAccountModal();
     setText('trading-broker-action-status', 'Trading 212 account linked.');
   }
 
+  async function disconnectResolvedAccount(account) {
+    if (account.brokerAccountId && account.dataSource.provider === 'trading212') {
+      await api(`/api/broker-accounts/${encodeURIComponent(account.brokerAccountId)}`, { method: 'DELETE' });
+    }
+
+    if (account.localAccountId) {
+      await updateLocalAccount(account.localAccountId, {
+        integrationProvider: null,
+        integrationEnabled: false,
+        linkedBrokerAccountId: '',
+        providerAccountId: ''
+      });
+    }
+  }
+
   async function handleUnifiedAction(action, accountId) {
-    const account = createUnifiedAccounts().find((item) => item.id === accountId);
+    const account = state.resolvedAccounts.find((item) => item.id === accountId);
     if (!account) return;
     if (action === 'manage-account') {
-      window.location.href = '/profile-manage.html';
+      window.location.href = '/profile/manage';
       return;
     }
     if (action === 'edit-unified-account') {
-      if (account.kind === 't212') return openAccountModal('edit', account.sourceId);
-      return setText('trading-broker-action-status', 'Edit manual/imported accounts from Profile Manage.');
+      return openAccountModal('edit', account.id);
     }
     if (action === 'sync-unified-account') {
-      if (account.kind === 't212') {
-        await api(`/api/broker-accounts/${encodeURIComponent(account.sourceId)}/sync`, { method: 'POST' });
+      if (account.dataSource.provider === 'trading212' && account.brokerAccountId) {
+        await api(`/api/broker-accounts/${encodeURIComponent(account.brokerAccountId)}/sync`, { method: 'POST' });
         return setText('trading-broker-action-status', 'Trading 212 account refresh requested.');
       }
-      if (account.provider === 'ibkr') {
+      if (account.dataSource.provider === 'ibkr') {
         await api('/api/integrations/ibkr/sync', { method: 'POST' });
         return setText('trading-broker-action-status', 'IBKR sync requested.');
       }
     }
     if (action === 'disconnect-unified-account') {
-      if (account.kind === 't212') {
-        await api(`/api/broker-accounts/${encodeURIComponent(account.sourceId)}`, { method: 'DELETE' });
-        return setText('trading-broker-action-status', 'Trading 212 account disconnected.');
-      }
-      if (account.provider === 'ibkr') {
-        await api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }) });
-        return setText('trading-broker-action-status', 'IBKR disconnected.');
-      }
+      await disconnectResolvedAccount(account);
+      return setText('trading-broker-action-status', 'Account disconnected and reconciled.');
     }
     if (action === 'import-unified-account') {
       window.location.href = '/trades.html';
@@ -395,8 +619,15 @@
     if (action === 'open-integrations-tab') return setActiveTab('integrations');
     if (action === 'add-t212') return openAccountModal('add');
     if (action === 'sync-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}/sync`, { method: 'POST' });
-    if (action === 'disconnect-account') return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
-    if (action === 'edit-account') return openAccountModal('edit', accountId);
+    if (action === 'disconnect-account') {
+      const resolved = state.resolvedAccounts.find((item) => item.brokerAccountId === accountId);
+      if (resolved) return disconnectResolvedAccount(resolved);
+      return api(`/api/broker-accounts/${encodeURIComponent(accountId)}`, { method: 'DELETE' });
+    }
+    if (action === 'edit-account') {
+      const resolved = state.resolvedAccounts.find((item) => item.brokerAccountId === accountId);
+      return openAccountModal('edit', resolved?.id || `resolved:t212:${accountId}`);
+    }
     if (action === 'close-account-modal') return closeAccountModal();
     if (action === 'connect-ibkr') {
       return api('/api/integrations/ibkr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
