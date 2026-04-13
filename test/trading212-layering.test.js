@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const {
   findTrading212OpenTradeMatch,
   inferTrading212AddedEntryPrice,
-  isTrading212AddToPosition
+  isTrading212AddToPosition,
+  buildTrading212PositionBudgetKey,
+  consumeTrading212BuyFillBudget
 } = require('../server');
 
 test('findTrading212OpenTradeMatch prefers exact id match over aggregate symbol match', () => {
@@ -69,4 +71,16 @@ test('isTrading212AddToPosition only returns true when units increase', () => {
   assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 12), true);
   assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 10), false);
   assert.equal(isTrading212AddToPosition({ sizeUnits: 10 }, 9), false);
+});
+
+test('consumeTrading212BuyFillBudget only allows snapshot layering once per imported buy quantity', () => {
+  const budget = new Map();
+  const key = buildTrading212PositionBudgetKey('acct', 'aapl');
+  budget.set(key, 5);
+
+  assert.equal(consumeTrading212BuyFillBudget(budget, key, 3), true);
+  assert.equal(Number(budget.get(key)), 2);
+  assert.equal(consumeTrading212BuyFillBudget(budget, key, 3), false);
+  assert.equal(consumeTrading212BuyFillBudget(budget, key, 2), true);
+  assert.equal(budget.has(key), false);
 });
