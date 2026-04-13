@@ -5328,9 +5328,18 @@ function bindControls() {
   });
 }
 
+
+async function getBootstrapProfile({ refreshIntegrations = false, forceRefresh = false, consumer = 'dashboard' } = {}) {
+  if (window.AppBootstrap?.getProfile) {
+    return window.AppBootstrap.getProfile({ refreshIntegrations, forceRefresh, consumer });
+  }
+  const profileUrl = refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
+  return api(profileUrl);
+}
+
 async function updateDevtoolsNav() {
   try {
-    const profile = await api('/api/profile');
+    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
     const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
     $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {
@@ -5344,8 +5353,7 @@ if (typeof module !== 'undefined') {
 
 async function loadProfile({ refreshIntegrations = false } = {}) {
   try {
-    const profileUrl = refreshIntegrations ? '/api/profile?refreshIntegrations=true' : '/api/profile';
-    const profile = await api(profileUrl);
+    const profile = await getBootstrapProfile({ refreshIntegrations, consumer: 'dashboard-load-profile' });
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
     const accounts = Array.isArray(profile?.tradingAccounts)
@@ -5368,7 +5376,7 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
 
 async function updateDevtoolsNav() {
   try {
-    const profile = await api('/api/profile');
+    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
     const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
     $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {
@@ -5467,7 +5475,7 @@ function consumePendingRiskCalculatorPrefill() {
 
 async function updateDevtoolsNav() {
   try {
-    const profile = await api('/api/profile');
+    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
     const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
     $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {
@@ -5481,7 +5489,7 @@ if (typeof module !== 'undefined') {
 
 async function updateDevtoolsNav() {
   try {
-    const profile = await api('/api/profile');
+    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
     const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
     $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {
