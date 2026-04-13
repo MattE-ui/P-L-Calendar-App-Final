@@ -357,7 +357,7 @@ test('saving trading accounts migrates Trading 212 ownership from deleted fallba
     });
     assert.equal(saveRes.status, 200);
     const payload = await saveRes.json();
-    assert.equal(payload.accounts.length, 2); // includes required primary account
+    assert.equal(payload.accounts.length, 1);
     const mainIsa = payload.accounts.find(account => account.id === 'main-isa');
     assert.equal(mainIsa.integrationProvider, 'trading212');
     assert.equal(mainIsa.integrationEnabled, true);

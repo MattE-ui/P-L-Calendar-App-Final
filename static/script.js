@@ -22,7 +22,7 @@ const state = {
   isGuest: false,
   isAdmin: false,
   profile: null,
-  tradingAccounts: [{ id: 'primary', label: 'Primary account' }],
+  tradingAccounts: [],
   multiTradingAccountsEnabled: false,
   metrics: {
     baselineGBP: 0,
@@ -4135,7 +4135,7 @@ function openEntryModal(dateStr, existingEntry = null) {
   const accountField = $('#profit-account-field');
   const accountSelect = $('#profit-account-select');
   const useAccountSplit = state.multiTradingAccountsEnabled || (state.tradingAccounts || []).length > 1;
-  const selectedAccountId = accountSelect?.value || 'primary';
+  const selectedAccountId = accountSelect?.value || '';
   const accountEntries = entry?.accounts && typeof entry.accounts === 'object' ? entry.accounts : {};
   const selectedAccount = accountEntries[selectedAccountId] || {};
   const currentValGBP = useAccountSplit
@@ -4151,9 +4151,7 @@ function openEntryModal(dateStr, existingEntry = null) {
     ? (selectedAccount?.note ?? '')
     : (entry?.note ?? '');
   if (accountField && accountSelect) {
-    const accounts = Array.isArray(state.tradingAccounts) && state.tradingAccounts.length
-      ? state.tradingAccounts
-      : [{ id: 'primary', label: 'Primary account' }];
+    const accounts = Array.isArray(state.tradingAccounts) ? state.tradingAccounts : [];
     accountField.classList.toggle('hidden', !useAccountSplit);
     accountSelect.innerHTML = accounts
       .map(account => `<option value="${account.id}">${account.label || account.id}</option>`)
@@ -4236,7 +4234,7 @@ function openEntryModal(dateStr, existingEntry = null) {
             cashIn: toGBP(depositVal),
             cashOut: toGBP(withdrawalVal),
             note: noteVal,
-            accountId: accountSelect ? accountSelect.value : 'primary'
+            ...(accountSelect?.value ? { accountId: accountSelect.value } : {})
           })
         });
         modal.classList.add('hidden');
@@ -4257,7 +4255,7 @@ function openEntryModal(dateStr, existingEntry = null) {
           body: JSON.stringify({
             date: dateStr,
             value: null,
-            accountId: accountSelect ? accountSelect.value : 'primary'
+            ...(accountSelect?.value ? { accountId: accountSelect.value } : {})
           })
         });
         modal.classList.add('hidden');
@@ -5046,15 +5044,15 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
     const profile = await api(profileUrl);
     state.isAdmin = !!profile?.isAdmin;
     state.profile = profile || null;
-    const accounts = Array.isArray(profile?.tradingAccounts) && profile.tradingAccounts.length
+    const accounts = Array.isArray(profile?.tradingAccounts)
       ? profile.tradingAccounts
-      : [{ id: 'primary', label: 'Primary account' }];
+      : [];
     state.tradingAccounts = accounts;
     state.multiTradingAccountsEnabled = !!profile?.multiTradingAccountsEnabled;
   } catch (e) {
     state.isAdmin = false;
     state.profile = null;
-    state.tradingAccounts = [{ id: 'primary', label: 'Primary account' }];
+    state.tradingAccounts = [];
     state.multiTradingAccountsEnabled = false;
   }
 }
