@@ -12902,6 +12902,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
   const accountAggregation = getTradingAccountAggregationSnapshot(user);
+  const computedTotalFromAccounts = accountAggregation.portfolioValue;
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
   const hasManualPortfolioBaseline = manualPortfolioRaw !== null
@@ -12909,7 +12910,6 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
   const resolvedPortfolio = hasManualPortfolioBaseline ? manualPortfolioBaseline : portfolioSnapshot.value;
-  const livePortfolio = resolvedPortfolio;
   console.info('[trace][portfolio][endpoint-hit]', {
     endpoint: '/api/portfolio',
     user: req.username,
@@ -12937,8 +12937,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
       performancePct: totals.total !== 0 ? ((resolvedPortfolio - totals.total) / totals.total) : null
     }
   });
-  res.json({
-    portfolio: resolvedPortfolio,
+  const responsePayload = {
     portfolioValue: resolvedPortfolio,
     portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
     portfolioCurrency: portfolioSnapshot.currency,
@@ -12948,18 +12947,27 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     profileComplete: !!user.profileComplete,
     liveOpenPnl: liveOpenPnlGBP,
     openLossPotential: openLossPotentialGBP,
-    livePortfolio,
     activeTrades: trades.length,
     isGuest: !!user.guest
+  };
+  console.info('[trace][portfolio][response-payload-verification]', {
+    endpoint: '/api/portfolio',
+    computedTotalFromAccounts,
+    portfolioSnapshotValue: portfolioSnapshot.value,
+    resolvedPortfolio,
+    responseFields: {
+      portfolioValue: responsePayload.portfolioValue,
+      portfolio: responsePayload.portfolio,
+      currentPortfolioValue: responsePayload.currentPortfolioValue,
+      livePortfolio: responsePayload.livePortfolio,
+      portfolioSource: responsePayload.portfolioSource
+    },
+    fullPayload: responsePayload
   });
+  res.json(responsePayload);
   console.info('[trace][portfolio][response]', {
     endpoint: '/api/portfolio',
-    returnedFields: {
-      portfolio: resolvedPortfolio,
-      portfolioValue: resolvedPortfolio,
-      portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
-      livePortfolio
-    },
+    returnedFields: responsePayload,
     cache: {
       enabled: false,
       mode: 'none'

@@ -3032,8 +3032,20 @@ function getRenderedPortfolioValue(value) {
 }
 
 function setPortfolioValue(value, source = 'unknown') {
+  const beforePortfolioGBP = state.portfolioGBP;
   const normalizedValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+  console.info('[trace][frontend][setPortfolioValue][input]', {
+    source,
+    receivedValue: value,
+    receivedType: typeof value,
+    statePortfolioBefore: beforePortfolioGBP,
+    normalizedValue
+  });
   state.portfolioGBP = normalizedValue;
+  console.info('[trace][frontend][setPortfolioValue][state]', {
+    source,
+    statePortfolioAfter: state.portfolioGBP
+  });
   const portfolioValueEl = document.getElementById('header-portfolio-value');
   if (!portfolioValueEl) {
     console.warn('[portfolio-single-writer] #header-portfolio-value not found', { source, value: normalizedValue });
@@ -3890,15 +3902,26 @@ async function loadData() {
       endpoint: '/api/portfolio',
       payload: res
     });
-    const portfolioVal = Number(res?.portfolioValue ?? res?.portfolio);
-    const chosenPortfolioField = Number.isFinite(Number(res?.portfolioValue)) ? 'portfolioValue' : 'portfolio';
+    const candidatePortfolioFields = {
+      portfolioValue: res?.portfolioValue,
+      portfolio: res?.portfolio,
+      currentPortfolioValue: res?.currentPortfolioValue,
+      livePortfolio: res?.livePortfolio,
+      nested: {
+        portfolioValue: res?.portfolio?.portfolioValue,
+        value: res?.portfolio?.value,
+        totalValue: res?.portfolio?.totalValue,
+        currentPortfolioValue: res?.portfolio?.currentPortfolioValue
+      }
+    };
+    const chosenPortfolioValue = Number(res?.portfolioValue);
     console.info('[trace][frontend][portfolio-field-selection]', {
       endpoint: '/api/portfolio',
-      chosenField: chosenPortfolioField,
-      chosenValue: Number.isFinite(portfolioVal) ? portfolioVal : 0,
-      fallbackField: chosenPortfolioField === 'portfolioValue' ? 'portfolio' : null
+      candidateFields: candidatePortfolioFields,
+      chosenField: 'portfolioValue',
+      chosenRawValue: res?.portfolioValue,
+      chosenNumericValue: chosenPortfolioValue
     });
-    state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
     const baselineVal = Number(res?.initialNetDeposits);
     const totalVal = Number(res?.netDepositsTotal);
     state.netDepositsBaselineGBP = Number.isFinite(baselineVal) ? baselineVal : 0;
@@ -3906,8 +3929,12 @@ async function loadData() {
       ? totalVal
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
-    state.livePortfolioGBP = state.portfolioGBP;
-    setPortfolioValue(state.portfolioGBP, 'loadData:/api/portfolio');
+    state.livePortfolioGBP = Number.isFinite(chosenPortfolioValue) ? chosenPortfolioValue : 0;
+    console.info('[trace][frontend][portfolio-to-setter]', {
+      endpoint: '/api/portfolio',
+      valuePassedToSetter: chosenPortfolioValue
+    });
+    setPortfolioValue(chosenPortfolioValue, 'loadData:/api/portfolio');
     state.isGuest = !!res?.isGuest;
     if (!res?.profileComplete) {
       window.location.href = '/profile.html';
