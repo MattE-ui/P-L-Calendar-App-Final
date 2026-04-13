@@ -8691,10 +8691,37 @@ function getTradingAccountAggregationSnapshot(user) {
 }
 
 function getCurrentPortfolioValueFromAccounts(accounts = []) {
-  return accounts.reduce((sum, acc) => {
-    const value = Number(acc?.portfolioValue ?? acc?.currentValue ?? acc?.liveValue ?? 0);
-    return sum + (Number.isFinite(value) ? value : 0);
-  }, 0);
+  let total = 0;
+  const diagnosticAccounts = [];
+  accounts.forEach((acc) => {
+    const portfolioValueRaw = Number(acc?.portfolioValue);
+    const currentValueRaw = Number(acc?.currentValue);
+    const liveValueRaw = Number(acc?.liveValue);
+    const chosen = Number(acc?.portfolioValue ?? acc?.currentValue ?? acc?.liveValue ?? 0);
+    const chosenValue = Number.isFinite(chosen) ? chosen : 0;
+    total += chosenValue;
+    diagnosticAccounts.push({
+      accountId: acc?.id || '',
+      accountName: acc?.name || acc?.label || '',
+      portfolioValue: Number.isFinite(portfolioValueRaw) ? portfolioValueRaw : null,
+      currentValue: Number.isFinite(currentValueRaw) ? currentValueRaw : null,
+      liveValue: Number.isFinite(liveValueRaw) ? liveValueRaw : null,
+      chosenField: Number.isFinite(portfolioValueRaw)
+        ? 'portfolioValue'
+        : (Number.isFinite(currentValueRaw) ? 'currentValue' : 'liveValue'),
+      chosenValue
+    });
+  });
+  console.info('[trace][portfolio][accounts-aggregation]', {
+    accountCount: accounts.length,
+    accounts: diagnosticAccounts,
+    total,
+    cache: {
+      enabled: false,
+      mode: 'none'
+    }
+  });
+  return total;
 }
 
 function getLatestMergedEquityValue(user, history = ensurePortfolioHistory(user)) {
@@ -12883,6 +12910,13 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     && Number.isFinite(manualPortfolioBaseline);
   const resolvedPortfolio = hasManualPortfolioBaseline ? manualPortfolioBaseline : portfolioSnapshot.value;
   const livePortfolio = resolvedPortfolio;
+  console.info('[trace][portfolio][endpoint-hit]', {
+    endpoint: '/api/portfolio',
+    user: req.username,
+    portfolioField: 'portfolioValue',
+    portfolioSourceField: hasManualPortfolioBaseline ? 'manualPortfolioBaseline' : 'getCurrentPortfolioValue.value',
+    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
+  });
   if (mutated || normalized || anchors.mutated) saveDB(db);
   console.info('[baseline][resolve][portfolio]', {
     user: req.username,
@@ -12918,6 +12952,19 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     activeTrades: trades.length,
     isGuest: !!user.guest
   });
+  console.info('[trace][portfolio][response]', {
+    endpoint: '/api/portfolio',
+    returnedFields: {
+      portfolio: resolvedPortfolio,
+      portfolioValue: resolvedPortfolio,
+      portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source,
+      livePortfolio
+    },
+    cache: {
+      enabled: false,
+      mode: 'none'
+    }
+  });
 });
 
 app.get('/api/portfolio/snapshot', auth, (req, res) => {
@@ -12926,6 +12973,12 @@ app.get('/api/portfolio/snapshot', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   const mutated = ensureUserShape(user, req.username);
   const snapshot = getCurrentPortfolioValue(user);
+  console.info('[trace][portfolio][endpoint-hit]', {
+    endpoint: '/api/portfolio/snapshot',
+    user: req.username,
+    portfolioField: 'portfolioValue',
+    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
+  });
   if (mutated) saveDB(db);
   res.json({
     portfolio: snapshot.value,
@@ -12933,6 +12986,18 @@ app.get('/api/portfolio/snapshot', auth, (req, res) => {
     portfolioSource: snapshot.source,
     portfolioCurrency: snapshot.currency,
     portfolioLastUpdatedAt: snapshot.lastUpdatedAt
+  });
+  console.info('[trace][portfolio][response]', {
+    endpoint: '/api/portfolio/snapshot',
+    returnedFields: {
+      portfolio: snapshot.value,
+      portfolioValue: snapshot.value,
+      portfolioSource: snapshot.source
+    },
+    cache: {
+      enabled: false,
+      mode: 'none'
+    }
   });
 });
 
@@ -13012,6 +13077,12 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     : (Number.isFinite(portfolioSnapshot.value)
       ? portfolioSnapshot.value
       : (portfolioBaseline || 0));
+  console.info('[trace][portfolio][endpoint-hit]', {
+    endpoint: '/api/profile',
+    user: req.username,
+    portfolioField: 'portfolioValue',
+    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
+  });
   console.info('[baseline][resolve][profile]', {
     user: req.username,
     source: baseline.source || 'history',
@@ -13075,6 +13146,18 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true,
     profileSummary
+  });
+  console.info('[trace][portfolio][response]', {
+    endpoint: '/api/profile',
+    returnedFields: {
+      portfolio: portfolioValue,
+      portfolioValue,
+      portfolioSource: hasManualPortfolioBaseline ? 'manual_baseline' : portfolioSnapshot.source
+    },
+    cache: {
+      enabled: false,
+      mode: 'none'
+    }
   });
 }));
 

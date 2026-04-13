@@ -3042,7 +3042,16 @@ function renderMetrics() {
 
   const portfolioValueEl = $('#header-portfolio-value');
   if (portfolioValueEl) {
-    portfolioValueEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
+    const renderedPortfolioValue = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatCurrency(liveGBP);
+    portfolioValueEl.textContent = renderedPortfolioValue;
+    console.info('RENDER CURRENT PORTFOLIO VALUE', {
+      sourceField: Number.isFinite(state.livePortfolioGBP) ? 'state.livePortfolioGBP' : 'state.portfolioGBP/state.metrics.latestGBP',
+      sourceEndpoint: '/api/portfolio',
+      sourceStore: 'state.livePortfolioGBP',
+      numericValue: liveGBP,
+      renderedValue: renderedPortfolioValue,
+      renderPath: 'renderMetrics -> #header-portfolio-value'
+    });
   }
   const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
@@ -3180,7 +3189,18 @@ function updatePortfolioPill() {
     }
   }
   if (heroVal) {
-    heroVal.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : base;
+    const nextValue = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : base;
+    const previousValue = heroVal.textContent;
+    heroVal.textContent = nextValue;
+    if (previousValue !== nextValue) {
+      console.info('[trace][frontend][portfolio-overwrite]', {
+        element: '#header-portfolio-value',
+        previousValue,
+        nextValue,
+        overwritePath: 'updatePortfolioPill',
+        sourceField: 'state.livePortfolioGBP || state.portfolioGBP || state.metrics.latestGBP'
+      });
+    }
   }
   if (heroSub) {
     heroSub.textContent = state.safeScreenshot ? '' : (alt ? `≈ ${alt}` : '');
@@ -3864,7 +3884,18 @@ async function loadData() {
   }
   try {
     const res = await api('/api/portfolio');
+    console.info('[trace][frontend][portfolio-fetch-response]', {
+      endpoint: '/api/portfolio',
+      payload: res
+    });
     const portfolioVal = Number(res?.portfolioValue ?? res?.portfolio);
+    const chosenPortfolioField = Number.isFinite(Number(res?.portfolioValue)) ? 'portfolioValue' : 'portfolio';
+    console.info('[trace][frontend][portfolio-field-selection]', {
+      endpoint: '/api/portfolio',
+      chosenField: chosenPortfolioField,
+      chosenValue: Number.isFinite(portfolioVal) ? portfolioVal : 0,
+      fallbackField: chosenPortfolioField === 'portfolioValue' ? 'portfolio' : null
+    });
     state.portfolioGBP = Number.isFinite(portfolioVal) ? portfolioVal : 0;
     const baselineVal = Number(res?.initialNetDeposits);
     const totalVal = Number(res?.netDepositsTotal);
