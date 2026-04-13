@@ -12964,6 +12964,14 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     },
     fullPayload: responsePayload
   });
+  console.info('[trace][portfolio][response-before-send]', {
+    endpoint: '/api/portfolio',
+    timestamp: new Date().toISOString(),
+    computedLiveTotalFromAccounts: computedTotalFromAccounts,
+    portfolioSnapshotValue: portfolioSnapshot.value,
+    portfolioValueInResponse: responsePayload.portfolioValue,
+    responseObjectSent: responsePayload
+  });
   res.json(responsePayload);
   console.info('[trace][portfolio][response]', {
     endpoint: '/api/portfolio',
