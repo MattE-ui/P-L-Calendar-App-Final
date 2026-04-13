@@ -39,19 +39,36 @@
     return String(n);
   }
 
-  function sessionLabel(rawSession) {
-    const session = String(rawSession || '').trim().toLowerCase();
+  function priceSourceKey(row = {}) {
+    return String(row.selectedPriceSource || row.priceSource || '').trim();
+  }
+
+  function sessionLabel(row = {}) {
+    const source = priceSourceKey(row);
+    if (source === 'preMarketPrice') return 'PRE';
+    if (source === 'postMarketPrice') return 'POST';
+    if (source === 'extendedHoursPrice') return 'EXT';
+    if (source === 'regularMarketPrice') return 'LIVE';
+    if (source === 'previousClose') return 'CLOSE';
+    const session = String(row.session || '').trim().toLowerCase();
     if (session === 'premarket') return 'PRE';
     if (session === 'afterhours') return 'AH';
+    if (session === 'extended') return 'EXT';
     if (session === 'stale') return 'STALE';
     if (session === 'regular') return 'LIVE';
     return 'CLOSED';
   }
 
-  function sessionClass(rawSession) {
-    const session = String(rawSession || '').trim().toLowerCase();
+  function sessionClass(row = {}) {
+    const source = priceSourceKey(row);
+    if (source === 'preMarketPrice') return 'is-premarket';
+    if (source === 'postMarketPrice') return 'is-afterhours';
+    if (source === 'extendedHoursPrice') return 'is-afterhours';
+    if (source === 'regularMarketPrice') return 'is-live';
+    const session = String(row.session || '').trim().toLowerCase();
     if (session === 'premarket') return 'is-premarket';
     if (session === 'afterhours') return 'is-afterhours';
+    if (session === 'extended') return 'is-afterhours';
     if (session === 'stale') return 'is-closed';
     if (session === 'regular') return 'is-live';
     return 'is-closed';
@@ -393,7 +410,7 @@
               <tr>
                 <td>
                   <strong>${escapeHtml(row.ticker || '—')}</strong>
-                  <span class="social-watchlist-session-badge ${sessionClass(row.session)}">${escapeHtml(sessionLabel(row.session))}</span>
+                  <span class="social-watchlist-session-badge ${sessionClass(row)}">${escapeHtml(sessionLabel(row))}</span>
                   ${row.isStale ? '<span class="social-watchlist-stale-indicator">Stale</span>' : ''}
                   ${row.name ? `<div class="helper">${escapeHtml(row.name)}</div>` : ''}
                   <div class="helper">${escapeHtml(fmtAsOf(row.asOf))}${row.isDelayed ? ' • Delayed' : ''}</div>

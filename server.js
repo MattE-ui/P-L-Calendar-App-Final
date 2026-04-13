@@ -13709,6 +13709,7 @@ async function fetchWatchlistTickerMetrics(ticker) {
   const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
   const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
   const previousClose = Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null;
+  const regularMarketPrice = Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null;
   const extendedHoursPrice = Number.isFinite(Number(snapshot?.extendedHoursPrice)) ? Number(snapshot.extendedHoursPrice) : null;
   const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
   const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
@@ -13717,23 +13718,13 @@ async function fetchWatchlistTickerMetrics(ticker) {
     ? 'stale'
     : priceSource === 'preMarketPrice'
       ? 'premarket'
-      : priceSource === 'postMarketPrice'
+    : priceSource === 'postMarketPrice'
         ? 'afterhours'
+        : priceSource === 'extendedHoursPrice'
+          ? 'extended'
         : priceSource === 'regularMarketPrice'
           ? 'regular'
           : 'closed';
-  console.info('[WATCHLIST_QUOTE_DEBUG]', {
-    ticker: normalized,
-    selectedField: priceSource,
-    session: resolvedSession,
-    marketState: snapshot?.marketState || '',
-    displayPrice,
-    previousClose,
-    regularMarketPrice: Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null,
-    preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
-    postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
-    extendedHoursPrice
-  });
   const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
     ? volume * currentPrice
     : null;
@@ -13743,6 +13734,7 @@ async function fetchWatchlistTickerMetrics(ticker) {
     session: resolvedSession,
     currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
     previousClose,
+    regularMarketPrice,
     regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
     preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
     postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
@@ -13750,6 +13742,7 @@ async function fetchWatchlistTickerMetrics(ticker) {
     displayPrice,
     displayChangePct: percentChangeToday,
     priceSource,
+    selectedPriceSource: priceSource,
     displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
     asOf: snapshot?.asOf || null,
     isDelayed: snapshot?.isDelayed === true,
@@ -13765,6 +13758,22 @@ async function fetchWatchlistTickerMetrics(ticker) {
     dataStatus: 'ok',
     asOfSessionTs: timestamps[latestIndex] ? new Date(Number(timestamps[latestIndex]) * 1000).toISOString() : null
   };
+
+  if (shouldDebugWatchlistQuoteSymbol(normalized)) {
+    console.info('[WATCHLIST_QUOTE_PIPELINE_NORMALIZED]', {
+      ticker: normalized,
+      previousClose: payload.previousClose,
+      regularMarketPrice: payload.regularMarketPrice,
+      preMarketPrice: payload.preMarketPrice,
+      postMarketPrice: payload.postMarketPrice,
+      extendedHoursPrice: payload.extendedHoursPrice,
+      displayPrice: payload.displayPrice,
+      displayChangePct: payload.displayChangePct,
+      session: payload.session,
+      asOf: payload.asOf,
+      selectedPriceSource: payload.selectedPriceSource
+    });
+  }
 
   watchlistMarketDataCache.set(normalized, { at: now, payload });
   return payload;
@@ -18590,6 +18599,12 @@ function parsePositiveNumber(...values) {
   return null;
 }
 
+const WATCHLIST_QUOTE_DEBUG_SYMBOLS = new Set(['LWLG', 'NBIS', 'GLW']);
+
+function shouldDebugWatchlistQuoteSymbol(symbol) {
+  return WATCHLIST_QUOTE_DEBUG_SYMBOLS.has(String(symbol || '').trim().toUpperCase());
+}
+
 function computeMidPrice(bidRaw, askRaw) {
   const bid = parsePositiveNumber(bidRaw);
   const ask = parsePositiveNumber(askRaw);
@@ -18602,9 +18617,16 @@ function marketStateIsOpen(marketStateRaw) {
   return marketState === 'regular' || marketState === 'pre' || marketState === 'post';
 }
 
-function resolveDisplayPriceAndSession({ preMarketPrice, postMarketPrice, regularMarketPrice, previousClose }) {
+function resolveDisplayPriceAndSession({
+  preMarketPrice,
+  postMarketPrice,
+  extendedHoursPrice,
+  regularMarketPrice,
+  previousClose
+}) {
   if (Number.isFinite(preMarketPrice)) return { displayPrice: preMarketPrice, session: 'premarket', priceSource: 'preMarketPrice' };
   if (Number.isFinite(postMarketPrice)) return { displayPrice: postMarketPrice, session: 'afterhours', priceSource: 'postMarketPrice' };
+  if (Number.isFinite(extendedHoursPrice)) return { displayPrice: extendedHoursPrice, session: 'extended', priceSource: 'extendedHoursPrice' };
   if (Number.isFinite(regularMarketPrice)) return { displayPrice: regularMarketPrice, session: 'regular', priceSource: 'regularMarketPrice' };
   if (Number.isFinite(previousClose)) return { displayPrice: previousClose, session: 'closed', priceSource: 'previousClose' };
   return { displayPrice: null, session: 'closed', priceSource: 'none' };
@@ -18620,6 +18642,8 @@ function quoteAsOfFromSource(quote = {}, priceSource = 'none') {
     ? Number(quote?.preMarketTime)
     : priceSource === 'postMarketPrice'
       ? Number(quote?.postMarketTime)
+      : priceSource === 'extendedHoursPrice'
+        ? Number(quote?.extendedMarketTime) || Number(quote?.postMarketTime) || Number(quote?.preMarketTime)
       : Number(quote?.regularMarketTime);
   if (Number.isFinite(asOfEpoch) && asOfEpoch > 0) return new Date(asOfEpoch * 1000).toISOString();
   return new Date().toISOString();
@@ -18657,12 +18681,14 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     ? resolveDisplayPriceAndSession({
       preMarketPrice: null,
       postMarketPrice: null,
+      extendedHoursPrice: null,
       regularMarketPrice: currentPrice,
       previousClose
     })
     : resolveDisplayPriceAndSession({
       preMarketPrice: preferredPre,
       postMarketPrice: preferredPost,
+      extendedHoursPrice,
       regularMarketPrice: null,
       previousClose
     });
@@ -18731,6 +18757,35 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
   };
 }
 
+function valueFromRaw(node) {
+  if (node && typeof node === 'object' && Number.isFinite(Number(node.raw))) return Number(node.raw);
+  const parsed = Number(node);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fetchYahooQuoteSummaryPrice(symbol) {
+  const trimmed = (symbol || '').toUpperCase();
+  if (!trimmed) return null;
+  const baseUrls = [
+    'https://query1.finance.yahoo.com/v10/finance/quoteSummary',
+    'https://query2.finance.yahoo.com/v10/finance/quoteSummary'
+  ];
+  for (const baseUrl of baseUrls) {
+    const url = `${baseUrl}/${encodeURIComponent(trimmed)}?modules=price`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json,text/plain,*/*'
+      }
+    });
+    if (!res.ok) continue;
+    const data = await res.json();
+    const price = data?.quoteSummary?.result?.[0]?.price;
+    if (price) return price;
+  }
+  return null;
+}
+
 async function fetchYahooQuoteSnapshot(symbol) {
   const baseUrls = [
     'https://query1.finance.yahoo.com/v7/finance/quote',
@@ -18749,7 +18804,37 @@ async function fetchYahooQuoteSnapshot(symbol) {
     const data = await res.json();
     const quote = data?.quoteResponse?.result?.[0];
     if (!quote) continue;
-    const snapshot = normalizeQuoteSnapshot(trimmed, quote);
+    const hasExtendedFields = Number.isFinite(Number(quote?.preMarketPrice))
+      || Number.isFinite(Number(quote?.postMarketPrice))
+      || Number.isFinite(Number(quote?.extendedMarketPrice))
+      || Number.isFinite(Number(quote?.extendedHoursPrice));
+    let summaryPrice = null;
+    let mergedQuote = quote;
+    if (!hasExtendedFields) {
+      summaryPrice = await fetchYahooQuoteSummaryPrice(trimmed);
+      if (summaryPrice) {
+        mergedQuote = {
+          ...quote,
+          marketState: String(summaryPrice?.marketState || quote?.marketState || ''),
+          regularMarketPrice: valueFromRaw(summaryPrice?.regularMarketPrice) ?? quote?.regularMarketPrice,
+          regularMarketPreviousClose: valueFromRaw(summaryPrice?.regularMarketPreviousClose) ?? quote?.regularMarketPreviousClose,
+          preMarketPrice: valueFromRaw(summaryPrice?.preMarketPrice) ?? quote?.preMarketPrice,
+          postMarketPrice: valueFromRaw(summaryPrice?.postMarketPrice) ?? quote?.postMarketPrice,
+          extendedMarketPrice: valueFromRaw(summaryPrice?.postMarketPrice) ?? valueFromRaw(summaryPrice?.preMarketPrice) ?? quote?.extendedMarketPrice,
+          regularMarketTime: valueFromRaw(summaryPrice?.regularMarketTime) ?? quote?.regularMarketTime,
+          preMarketTime: valueFromRaw(summaryPrice?.preMarketTime) ?? quote?.preMarketTime,
+          postMarketTime: valueFromRaw(summaryPrice?.postMarketTime) ?? quote?.postMarketTime
+        };
+      }
+    }
+    if (shouldDebugWatchlistQuoteSymbol(trimmed)) {
+      console.info('[WATCHLIST_QUOTE_PIPELINE_RAW_PROVIDER]', {
+        ticker: trimmed,
+        providerPath: summaryPrice ? 'yahoo_quoteSummary_price+v7_quote' : 'yahoo_v7_quote',
+        rawProviderQuote: mergedQuote
+      });
+    }
+    const snapshot = normalizeQuoteSnapshot(trimmed, mergedQuote);
     if (!Number.isFinite(snapshot.selectedPrice) || snapshot.selectedPrice <= 0) continue;
     return snapshot;
   }
@@ -18921,6 +19006,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
       const { displayPrice, session, priceSource } = resolveDisplayPriceAndSession({
         preMarketPrice: null,
         postMarketPrice: null,
+        extendedHoursPrice: null,
         regularMarketPrice: yahooChart.price,
         previousClose
       });
