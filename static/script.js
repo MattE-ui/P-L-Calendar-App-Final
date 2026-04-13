@@ -72,7 +72,10 @@ const state = {
     ratesSignature: '',
     value: null
   },
-  portfolioTrendSignature: ''
+  portfolioTrendSignature: '',
+  historyLoadScope: 'window',
+  deferredHistoryLoaded: false,
+  deferredHistoryLoadInFlight: false
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -262,6 +265,18 @@ function createDashboardLoadingOverlayController() {
 
 function isCriticalDashboardDataReady(loadStatus) {
   return Boolean(loadStatus?.portfolio && loadStatus?.calendar && loadStatus?.activeTrades);
+}
+
+function getSelectedMonthQuery() {
+  const selected = state.selected instanceof Date ? state.selected : new Date();
+  return `year=${selected.getFullYear()}&month=${String(selected.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function buildPlEndpoint({ historyScope = 'window', includeTrades = true } = {}) {
+  if (historyScope === 'full') {
+    return `/api/pl?includeTrades=${includeTrades ? '1' : '0'}`;
+  }
+  return `/api/pl?${getSelectedMonthQuery()}&visibleWindowOnly=1&includeTrades=${includeTrades ? '1' : '0'}`;
 }
 
 async function api(path, opts = {}) {
@@ -3998,6 +4013,9 @@ function renderYearGrid(targetDate, grid) {
       state.view = 'day';
       state.selected = startOfMonth(item.monthDate);
       updatePeriodSelect();
+      if (!state.deferredHistoryLoaded) {
+        loadDeferredFullDashboardHistory('period-select').catch(() => {});
+      }
       render();
     });
     grid.appendChild(cell);
@@ -4054,6 +4072,9 @@ function renderYear() {
     row.addEventListener('click', () => {
       state.view = 'month';
       state.selected = new Date(year, 0, 1);
+      if (!state.deferredHistoryLoaded) {
+        loadDeferredFullDashboardHistory('view-change').catch(() => {});
+      }
       updatePeriodSelect();
       render();
     });
@@ -4216,14 +4237,22 @@ async function saveUiPrefs() {
   }
 }
 
-async function loadData({ includeActiveInPortfolio = false } = {}) {
+async function loadData({ includeActiveInPortfolio = false, historyScope = 'window', includeTradeHistory = true } = {}) {
   const loadStatus = {
     calendar: false,
     portfolio: false,
     activeTrades: false
   };
   try {
-    state.data = await api('/api/pl');
+    const plEndpoint = buildPlEndpoint({ historyScope, includeTrades: includeTradeHistory });
+    state.data = await api(plEndpoint);
+    state.historyLoadScope = historyScope;
+    state.deferredHistoryLoaded = historyScope === 'full';
+    window.PerfDiagnostics?.log('dashboard-history-summary-used', {
+      historyScope,
+      includeTradeHistory,
+      endpoint: plEndpoint
+    });
     loadStatus.calendar = true;
   } catch (e) {
     if (e?.message !== 'Profile incomplete') {
@@ -4340,6 +4369,30 @@ async function loadData({ includeActiveInPortfolio = false } = {}) {
     state.openLossPotentialGBP = 0;
   }
   return loadStatus;
+}
+
+async function loadDeferredFullDashboardHistory(reason = 'post-render') {
+  if (state.deferredHistoryLoaded || state.deferredHistoryLoadInFlight) return;
+  state.deferredHistoryLoadInFlight = true;
+  try {
+    const fullHistory = await api(buildPlEndpoint({ historyScope: 'full', includeTrades: true }));
+    state.data = fullHistory || {};
+    state.historyLoadScope = 'full';
+    state.deferredHistoryLoaded = true;
+    computeLifetimeMetrics();
+    renderMetrics();
+    renderPortfolioTrend();
+    renderSummary();
+    window.PerfDiagnostics?.log('dashboard-history-detail-deferred', {
+      reason,
+      mergedScope: 'full',
+      dashboardRouteOverlapReduced: true
+    });
+  } catch (error) {
+    console.warn('Deferred full dashboard history load failed', error);
+  } finally {
+    state.deferredHistoryLoadInFlight = false;
+  }
 }
 
 async function refreshActiveTrades() {
@@ -4469,7 +4522,7 @@ async function refreshAutomatedCalendarData() {
   const beforeFingerprint = getDashboardRenderFingerprint();
   try {
     await loadProfile();
-    await loadData();
+    await loadData({ historyScope: 'window', includeTradeHistory: true });
     const afterFingerprint = getDashboardRenderFingerprint();
     if (!userIsActivelyInteracting() && beforeFingerprint !== afterFingerprint) {
       render();
@@ -4629,7 +4682,7 @@ function renderTradeList(trades = [], dateStr = null) {
         }
         try {
           await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
-          await loadData();
+          await loadData({ historyScope: 'window', includeTradeHistory: true });
           if (dateStr) {
             const refreshed = getDailyEntry(new Date(dateStr));
             renderTradeList(refreshed?.trades || [], dateStr);
@@ -4768,7 +4821,7 @@ function openEntryModal(dateStr, existingEntry = null) {
           })
         });
         modal.classList.add('hidden');
-        await loadData();
+        await loadData({ historyScope: 'window', includeTradeHistory: true });
         render();
       } catch (e) {
         console.error(e);
@@ -4789,7 +4842,7 @@ function openEntryModal(dateStr, existingEntry = null) {
           })
         });
         modal.classList.add('hidden');
-        await loadData();
+        await loadData({ historyScope: 'window', includeTradeHistory: true });
         render();
       } catch (e) {
         console.error(e);
@@ -4970,7 +5023,7 @@ function bindControls() {
         body: JSON.stringify({ portfolio: toGBP(raw) })
       });
       $('#portfolio-modal')?.classList.add('hidden');
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       console.error(e);
@@ -5116,7 +5169,7 @@ function bindControls() {
         body: JSON.stringify({ id: tradeId, price: priceVal, date: dateInput?.value })
       });
       modal.classList.add('hidden');
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to close trade.';
@@ -5168,7 +5221,7 @@ function bindControls() {
         })
       });
       modal.classList.add('hidden');
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to trim trade.';
@@ -5269,7 +5322,7 @@ function bindControls() {
         body: JSON.stringify(tradePayload)
       });
       modal.classList.add('hidden');
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to update trade.';
@@ -5291,7 +5344,7 @@ function bindControls() {
         body: JSON.stringify({ mappingId })
       });
       if (status) status.textContent = 'Mapping promoted globally.';
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to promote mapping.';
@@ -5310,7 +5363,7 @@ function bindControls() {
     try {
       await api(`/api/trades/${tradeId}`, { method: 'DELETE' });
       modal.classList.add('hidden');
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       if (status) status.textContent = e?.message || 'Failed to delete trade.';
@@ -5525,7 +5578,7 @@ function bindControls() {
         statusEl.classList.add('success');
         statusEl.textContent = 'Trade saved to calendar.';
       }
-      await loadData();
+      await loadData({ historyScope: 'window', includeTradeHistory: true });
       render();
     } catch (e) {
       console.error(e);
@@ -5732,7 +5785,7 @@ async function init() {
   setActiveView();
   const criticalStart = window.PerfDiagnostics?.mark('dashboard-critical-load-start');
   const [initialLoadStatus] = await Promise.all([
-    loadData({ includeActiveInPortfolio: false }),
+    loadData({ includeActiveInPortfolio: false, historyScope: 'window', includeTradeHistory: true }),
     loadProfile()
   ]);
   if (criticalStart) {
@@ -5746,6 +5799,7 @@ async function init() {
   render();
   consumePendingRiskCalculatorPrefill();
   window.setTimeout(() => {
+    loadDeferredFullDashboardHistory('post-first-render').catch(() => {});
     loadUiPrefs({ loadServer: true })
       .then(() => {
         renderRiskPills();
