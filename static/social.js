@@ -822,7 +822,20 @@ function renderGroupWatchlistsSection(isLeader = false) {
     card.className = 'social-list-row social-list-row--request social-watchlist-card';
     const head = document.createElement('div');
     head.className = 'social-watchlist-head';
-    head.innerHTML = `<strong>${posted.name || 'Watchlist'}</strong><span class="helper">Posted by ${posted.postedByName || 'Leader'} • ${posted.createdAt ? new Date(posted.createdAt).toLocaleString() : 'Recently'}</span>`;
+    const sectionPreview = Array.isArray(posted.sections) ? posted.sections.slice(0, 2).map((section) => section.title).join(' • ') : '';
+    head.innerHTML = `
+      <div class="social-watchlist-title-row">
+        <strong>${posted.title || posted.name || 'Watchlist'}</strong>
+        <button class="ghost social-watchlist-expand-toggle" type="button" data-expand-watchlist="${posted.id}">Expand</button>
+      </div>
+      <div class="social-watchlist-chip-row">
+        <span class="social-watchlist-chip">By ${posted.postedByName || 'Leader'}</span>
+        <span class="social-watchlist-chip">${posted.createdAt ? new Date(posted.createdAt).toLocaleString() : 'Recently'}</span>
+        <span class="social-watchlist-chip">${posted.sectionCount || 0} sections</span>
+        <span class="social-watchlist-chip">${posted.tickerCount || (posted.rows || []).length} tickers</span>
+      </div>
+      ${sectionPreview ? `<span class="helper">${sectionPreview}</span>` : ''}
+    `;
     card.appendChild(head);
 
     if (isLeader) {
@@ -840,27 +853,36 @@ function renderGroupWatchlistsSection(isLeader = false) {
       card.appendChild(wrap);
     }
 
-    const tableWrap = document.createElement('div');
-    tableWrap.className = 'social-watchlist-table-wrap';
-    const table = document.createElement('table');
-    table.className = 'social-watchlist-table';
-    table.innerHTML = '<thead><tr><th>Ticker</th><th>Current</th><th>Open</th><th>% Today</th><th>ADR%</th><th>$ Volume</th></tr></thead>';
-    const body = document.createElement('tbody');
-    (posted.rows || []).forEach((item) => {
-      const tr = document.createElement('tr');
-      const todayClass = Number(item.percentChangeToday) > 0 ? 'is-pos' : (Number(item.percentChangeToday) < 0 ? 'is-neg' : '');
-      tr.innerHTML = `
-        <td><strong>${item.ticker || '—'}</strong>${item.name ? `<div class="helper">${item.name}</div>` : ''}</td>
-        <td>${formatWatchlistValue(item.currentPrice, 'price')}</td>
-        <td>${formatWatchlistValue(item.dayOpenPrice, 'price')}</td>
-        <td class="${todayClass}">${formatWatchlistValue(item.percentChangeToday, 'percent')}</td>
-        <td>${formatWatchlistValue(item.adrPercent, 'percent')}</td>
-        <td>${item.dollarVolumeDisplay || formatWatchlistValue(item.dollarVolume, 'volume')}</td>`;
-      body.appendChild(tr);
+    const rowsByTicker = new Map((posted.rows || []).map((row) => [String(row.ticker || '').toUpperCase(), row]));
+    const sections = Array.isArray(posted.sections) && posted.sections.length
+      ? posted.sections
+      : [{ id: 'legacy', title: 'Tickers', tickers: (posted.rows || []).map((row) => row.ticker).filter(Boolean) }];
+    const details = document.createElement('div');
+    details.className = 'social-watchlist-details hidden';
+    sections.forEach((section) => {
+      const sectionCard = document.createElement('details');
+      sectionCard.className = 'social-watchlist-section-card';
+      const summary = document.createElement('summary');
+      summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${Array.isArray(section.tickers) ? section.tickers.length : 0} tickers</span>`;
+      sectionCard.appendChild(summary);
+      const sectionBody = document.createElement('div');
+      sectionBody.className = 'social-watchlist-section-body';
+      (section.tickers || []).forEach((ticker) => {
+        const tickerRow = rowsByTicker.get(String(ticker || '').toUpperCase());
+        if (!tickerRow) return;
+        const row = document.createElement('div');
+        row.className = 'social-watchlist-mini-row';
+        row.innerHTML = `<strong>${tickerRow.ticker}</strong><span>${formatWatchlistValue(tickerRow.currentPrice, 'price')}</span><span class="${Number(tickerRow.percentChangeToday) > 0 ? 'is-pos' : (Number(tickerRow.percentChangeToday) < 0 ? 'is-neg' : '')}">${formatWatchlistValue(tickerRow.percentChangeToday, 'percent')}</span>`;
+        sectionBody.appendChild(row);
+      });
+      sectionCard.appendChild(sectionBody);
+      details.appendChild(sectionCard);
     });
-    table.appendChild(body);
-    tableWrap.appendChild(table);
-    card.appendChild(tableWrap);
+    card.appendChild(details);
+    head.querySelector('[data-expand-watchlist]')?.addEventListener('click', (event) => {
+      const isHidden = details.classList.toggle('hidden');
+      event.currentTarget.textContent = isHidden ? 'Expand' : 'Collapse';
+    });
     listEl?.appendChild(card);
   });
 }

@@ -13217,7 +13217,14 @@ const tradeGroupAnnouncementCreateSchema = z.object({
 const WATCHLIST_SCOPE_VALUES = ['personal', 'group'];
 
 const watchlistCreateSchema = z.object({
-  name: z.string().min(1).max(64),
+  name: z.string().min(1).max(64).optional(),
+  title: z.string().min(1).max(120).optional(),
+  notes: z.string().max(1200).optional(),
+  sections: z.array(z.object({
+    id: z.string().max(80).optional(),
+    title: z.string().min(1).max(120),
+    tickers: z.array(z.string().min(1).max(24)).max(300)
+  })).max(40).optional(),
   order_index: z.number().min(0).optional(),
   scope: z.enum(WATCHLIST_SCOPE_VALUES).optional(),
   tradingGroupId: z.string().min(1).optional()
@@ -13225,6 +13232,13 @@ const watchlistCreateSchema = z.object({
 
 const watchlistPatchSchema = z.object({
   name: z.string().min(1).max(64).optional(),
+  title: z.string().min(1).max(120).optional(),
+  notes: z.string().max(1200).optional(),
+  sections: z.array(z.object({
+    id: z.string().max(80).optional(),
+    title: z.string().min(1).max(120),
+    tickers: z.array(z.string().min(1).max(24)).max(300)
+  })).max(40).optional(),
   order_index: z.number().min(0).optional(),
   can_members_edit: z.boolean().optional()
 });
@@ -13333,17 +13347,30 @@ function sanitizeWatchlistRow(db, watchlist, viewerUserId) {
     const access = getTradeGroupIfAccessible(db, watchlist.trading_group_id, viewerUserId);
     canEdit = !access.error && (access.isLeader || watchlist.can_members_edit === true);
   }
+  const structuredSections = normalizeWatchlistSections(watchlist.sections);
+  const fallbackSections = structuredSections.length
+    ? structuredSections
+    : [{
+      id: 'legacy-tickers',
+      title: 'Tickers',
+      tickers: items.map((item) => item.display_ticker || item.ticker).filter(Boolean)
+    }];
+  const tickerCount = fallbackSections.reduce((sum, section) => sum + section.tickers.length, 0);
   return {
     id: watchlist.id,
     ownerUserId: watchlist.owner_user_id,
-    name: watchlist.name,
+    name: watchlist.name || watchlist.title || 'Watchlist',
+    title: watchlist.title || watchlist.name || 'Watchlist',
+    notes: String(watchlist.notes || ''),
     scope: watchlist.scope === 'group' ? 'group' : 'personal',
     tradingGroupId: watchlist.trading_group_id || null,
     canMembersEdit: watchlist.can_members_edit === true,
     createdAt: watchlist.created_at,
     updatedAt: watchlist.updated_at,
     orderIndex: Number.isFinite(Number(watchlist.order_index)) ? Number(watchlist.order_index) : 0,
-    tickerCount: items.length,
+    tickerCount,
+    sectionCount: fallbackSections.length,
+    sections: fallbackSections,
     isOwner: watchlist.owner_user_id === viewerUserId,
     canEdit,
     items: items.map((item) => ({
@@ -13357,6 +13384,54 @@ function sanitizeWatchlistRow(db, watchlist, viewerUserId) {
       orderIndex: Number.isFinite(Number(item.order_index)) ? Number(item.order_index) : 0
     }))
   };
+}
+
+function normalizeWatchlistSections(rawSections) {
+  if (!Array.isArray(rawSections)) return [];
+  return rawSections
+    .map((section, index) => {
+      const title = String(section?.title || '').trim();
+      if (!title) return null;
+      const seen = new Set();
+      const tickers = Array.isArray(section?.tickers) ? section.tickers
+        .map((ticker) => normalizeWatchlistTicker(ticker))
+        .filter((ticker) => {
+          if (!isValidWatchlistTicker(ticker) || seen.has(ticker)) return false;
+          seen.add(ticker);
+          return true;
+        }) : [];
+      return {
+        id: String(section?.id || `section-${index + 1}`),
+        title,
+        tickers
+      };
+    })
+    .filter(Boolean);
+}
+
+function syncWatchlistItemsFromSections(db, watchlist, sections = []) {
+  const flattened = [];
+  sections.forEach((section) => {
+    section.tickers.forEach((ticker) => {
+      flattened.push({ sectionId: section.id, sectionTitle: section.title, ticker });
+    });
+  });
+  db.watchlistItems = db.watchlistItems.filter((item) => item.watchlist_id !== watchlist.id);
+  const nowIso = new Date().toISOString();
+  flattened.forEach((entry, orderIndex) => {
+    db.watchlistItems.push({
+      id: crypto.randomUUID(),
+      watchlist_id: watchlist.id,
+      ticker: entry.ticker,
+      canonical_ticker: entry.ticker,
+      display_ticker: entry.ticker,
+      display_name: '',
+      section_id: entry.sectionId,
+      section_title: entry.sectionTitle,
+      created_at: nowIso,
+      order_index: orderIndex
+    });
+  });
 }
 
 function formatAbbrevNumber(value) {
@@ -15360,18 +15435,25 @@ app.post('/api/watchlists', auth, (req, res) => {
       return (item.scope !== 'group') && item.owner_user_id === req.username;
     })
     .reduce((max, item) => Math.max(max, Number(item.order_index || 0)), -1);
+  const normalizedSections = normalizeWatchlistSections(parsed.data.sections);
+  const resolvedTitle = String(parsed.data.title || parsed.data.name || '').trim();
+  if (!resolvedTitle) return res.status(400).json({ error: 'Watchlist title is required.' });
   const watchlist = {
     id: crypto.randomUUID(),
     owner_user_id: ownerUserId,
     scope,
     trading_group_id: tradingGroupId,
     can_members_edit: canMembersEdit,
-    name: parsed.data.name.trim(),
+    name: resolvedTitle.slice(0, 64),
+    title: resolvedTitle,
+    notes: String(parsed.data.notes || '').trim(),
+    sections: normalizedSections,
     order_index: Number.isFinite(Number(parsed.data.order_index)) ? Number(parsed.data.order_index) : (maxOrder + 1),
     created_at: nowIso,
     updated_at: nowIso
   };
   db.watchlists.push(watchlist);
+  syncWatchlistItemsFromSections(db, watchlist, normalizedSections);
   saveDB(db);
   res.status(201).json({ watchlist: sanitizeWatchlistRow(db, watchlist, req.username) });
 });
@@ -15387,6 +15469,15 @@ app.patch('/api/watchlists/:watchlistId', auth, (req, res) => {
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const watchlist = access.watchlist;
   if (parsed.data.name !== undefined) watchlist.name = parsed.data.name.trim();
+  if (parsed.data.title !== undefined) {
+    watchlist.title = parsed.data.title.trim();
+    watchlist.name = parsed.data.title.trim().slice(0, 64);
+  }
+  if (parsed.data.notes !== undefined) watchlist.notes = String(parsed.data.notes || '').trim();
+  if (parsed.data.sections !== undefined) {
+    watchlist.sections = normalizeWatchlistSections(parsed.data.sections);
+    syncWatchlistItemsFromSections(db, watchlist, watchlist.sections);
+  }
   if (parsed.data.order_index !== undefined) watchlist.order_index = Number(parsed.data.order_index);
   if (access.isLeader && parsed.data.can_members_edit !== undefined && watchlist.scope === 'group') {
     watchlist.can_members_edit = parsed.data.can_members_edit === true;
@@ -15445,6 +15536,11 @@ app.post('/api/watchlists/:watchlistId/items', auth, asyncHandler(async (req, re
     order_index: maxOrder + 1
   };
   db.watchlistItems.push(item);
+  const normalizedSections = normalizeWatchlistSections(watchlist.sections);
+  if (normalizedSections.length) {
+    normalizedSections[0].tickers.push(normalizedTicker);
+    watchlist.sections = normalizeWatchlistSections(normalizedSections);
+  }
   watchlist.updated_at = nowIso;
   saveDB(db);
   res.status(201).json({ item });
@@ -15458,9 +15554,18 @@ app.delete('/api/watchlists/:watchlistId/items/:itemId', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const watchlist = access.watchlist;
+  const removedItem = db.watchlistItems.find((item) => item.id === req.params.itemId && item.watchlist_id === watchlist.id);
   const before = db.watchlistItems.length;
   db.watchlistItems = db.watchlistItems.filter((item) => !(item.id === req.params.itemId && item.watchlist_id === watchlist.id));
   if (db.watchlistItems.length === before) return res.status(404).json({ error: 'Watchlist item not found.' });
+  const normalizedSections = normalizeWatchlistSections(watchlist.sections);
+  if (normalizedSections.length && removedItem) {
+    const removedTicker = normalizeWatchlistTicker(removedItem.ticker);
+    watchlist.sections = normalizeWatchlistSections(normalizedSections.map((section) => ({
+      ...section,
+      tickers: section.tickers.filter((ticker) => normalizeWatchlistTicker(ticker) !== removedTicker)
+    })));
+  }
   watchlist.updated_at = new Date().toISOString();
   saveDB(db);
   res.json({ ok: true });
@@ -15493,11 +15598,17 @@ app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req
     if (!source) return null;
     const owner = socialIdentityForUser(db, source.owner_user_id);
     const rows = await buildWatchlistMarketDataRows(db, source);
+    const sanitized = sanitizeWatchlistRow(db, source, req.username);
     return {
       id: postedRow.id,
       groupId: postedRow.group_id,
       sourceWatchlistId: source.id,
-      name: source.name,
+      name: source.title || source.name,
+      title: source.title || source.name,
+      notes: String(source.notes || ''),
+      sections: sanitized.sections,
+      sectionCount: sanitized.sectionCount,
+      tickerCount: sanitized.tickerCount,
       postedByUserId: postedRow.posted_by_user_id,
       postedByName: owner.nickname || source.owner_user_id,
       createdAt: postedRow.created_at,
