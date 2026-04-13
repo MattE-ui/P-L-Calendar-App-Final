@@ -14270,7 +14270,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
     source: 'provider_previous_close'
   });
   providerPreviousCloseFetchAttempted = true;
-  providerPreviousCloseFetchSucceeded = Boolean(ingested?.didMutate);
+  providerPreviousCloseFetchSucceeded = Boolean(ingested?.hadProviderPreviousClose || ingested?.capturedRegularClose);
   didMutatePreviousCloseRef = ingested.didMutate || didMutatePreviousCloseRef;
   if (!hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate)) {
     const onDemandIngest = await ingestWatchlistPreviousCloseFromProvider(db, normalized, {
@@ -14278,7 +14278,8 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
       source: 'on_demand_provider_backfill'
     });
     providerPreviousCloseFetchAttempted = true;
-    providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded || Boolean(onDemandIngest?.didMutate);
+    providerPreviousCloseFetchSucceeded = providerPreviousCloseFetchSucceeded
+      || Boolean(onDemandIngest?.hadProviderPreviousClose || onDemandIngest?.capturedRegularClose);
     didMutatePreviousCloseRef = onDemandIngest.didMutate || didMutatePreviousCloseRef;
   }
   if (didMutatePreviousCloseRef) {
@@ -14294,6 +14295,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
   const previousCloseReference = resolveWatchlistPreviousCloseReference(db, normalized, previousCloseTargetDate);
   const previousClose = previousCloseReference ? Number(previousCloseReference.previousClose) : null;
   const previousCloseDate = previousCloseReference?.marketDate || null;
+  const sessionDateMatchesReferenceDate = Boolean(previousCloseDate && previousCloseDate === previousCloseTargetDate);
   const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
   const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalized, previousCloseTargetDate);
   const isStale = snapshot?.isStale === true;
@@ -14369,6 +14371,8 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
     hasReferenceForDate,
     storedPreviousClose: previousClose,
     storedReferenceDate: previousCloseDate,
+    sessionDateMatchesReferenceDate,
+    dateResolutionPair: `${previousCloseTargetDate} vs ${previousCloseDate || 'null'}`,
     providerPreviousCloseFetchAttempted,
     providerPreviousCloseFetchSucceeded,
     displayPrice: payload.displayPrice,
@@ -14394,7 +14398,24 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         name: item.display_name || '',
         ...metrics
       };
-    } catch (_error) {
+    } catch (error) {
+      const normalizedTicker = normalizeWatchlistTicker(item.canonical_ticker || item.ticker);
+      const targetSessionDate = getMostRecentCompletedUsTradingSessionDate(new Date());
+      const storedReference = resolveWatchlistPreviousCloseReference(db, normalizedTicker, targetSessionDate);
+      const storedReferenceDate = storedReference?.marketDate || null;
+      const hasReferenceForDate = hasWatchlistPreviousCloseReferenceForDate(db, normalizedTicker, targetSessionDate);
+      if (shouldDebugWatchlistQuoteSymbol(normalizedTicker)) {
+        console.warn('[WATCHLIST_PREV_CLOSE_CALC_FALLBACK]', {
+          ticker: normalizedTicker,
+          targetSessionDate,
+          storedReferenceDate,
+          sessionDateMatchesReferenceDate: Boolean(storedReferenceDate && storedReferenceDate === targetSessionDate),
+          hasReferenceForDate,
+          providerPreviousCloseFetchAttempted: true,
+          providerPreviousCloseFetchSucceeded: false,
+          error: error?.message || error
+        });
+      }
       return {
         itemId: item.id,
         ticker: item.display_ticker || item.ticker,
@@ -14417,6 +14438,9 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         adrPercent: null,
         dollarVolume: null,
         dollarVolumeDisplay: '—',
+        previousCloseDate: storedReferenceDate,
+        previousCloseSource: storedReference?.source || null,
+        previousCloseCapturedAt: storedReference?.capturedAt || null,
         lastUpdated: new Date().toISOString(),
         dataStatus: 'unavailable'
       };
@@ -19487,11 +19511,12 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
   const quoteSnapshot = snapshot || await fetchMarketQuoteSnapshot(normalizedTicker);
   let didMutate = false;
   const providerPreviousClose = Number.isFinite(Number(quoteSnapshot?.previousClose)) ? Number(quoteSnapshot.previousClose) : null;
+  const hadProviderPreviousClose = Number.isFinite(providerPreviousClose) && providerPreviousClose > 0;
   const nyDate = getNyDateKeyForDate(new Date(), false);
   const providerReferenceDate = isUsTradingSessionDate(nyDate)
     ? previousUsTradingSessionDate(nyDate)
     : getMostRecentCompletedUsTradingSessionDate(new Date());
-  if (Number.isFinite(providerPreviousClose) && providerPreviousClose > 0) {
+  if (hadProviderPreviousClose) {
     didMutate = upsertWatchlistPreviousCloseReference(db, {
       ticker: normalizedTicker,
       marketDate: providerReferenceDate,
@@ -19504,6 +19529,7 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
   const marketState = String(quoteSnapshot?.marketState || '').trim().toLowerCase();
   const regularMarketPrice = Number.isFinite(Number(quoteSnapshot?.regularMarketPrice)) ? Number(quoteSnapshot.regularMarketPrice) : null;
   const shouldCaptureRegularClose = (marketState === 'post' || marketState === 'closed') && Number.isFinite(regularMarketPrice) && regularMarketPrice > 0;
+  const capturedRegularClose = shouldCaptureRegularClose;
   if (shouldCaptureRegularClose) {
     didMutate = upsertWatchlistPreviousCloseReference(db, {
       ticker: normalizedTicker,
@@ -19514,7 +19540,14 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
       exchange: quoteSnapshot?.quote?.exchange || quoteSnapshot?.quoteType || null
     }) || didMutate;
   }
-  return { didMutate, snapshot: quoteSnapshot };
+  return {
+    didMutate,
+    hadProviderPreviousClose,
+    capturedRegularClose,
+    providerReferenceDate,
+    targetMarketDate,
+    snapshot: quoteSnapshot
+  };
 }
 async function fetchYahooQuote(symbol) {
   const snapshot = await fetchYahooQuoteSnapshot(symbol);
