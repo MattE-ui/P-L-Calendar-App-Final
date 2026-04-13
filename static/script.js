@@ -650,8 +650,35 @@ function getCurrentDateKey() {
   return formatDate(new Date());
 }
 
+function getTraceCallerLabel(depth = 3) {
+  const stack = new Error().stack || '';
+  const stackLines = stack.split('\n').map(line => line.trim()).filter(Boolean);
+  return stackLines[depth] || stackLines[stackLines.length - 1] || 'unknown-caller';
+}
+
+function assignPortfolioStateField(field, nextValue, source, detail = {}) {
+  const oldValue = state[field];
+  state[field] = nextValue;
+  console.info('[trace][frontend][portfolio-state-assignment]', {
+    field,
+    oldValue,
+    newValue: nextValue,
+    sourceFunction: source,
+    callerLabel: getTraceCallerLabel(4),
+    timestamp: new Date().toISOString(),
+    ...detail
+  });
+  return nextValue;
+}
+
 function getCurrentPortfolioForDisplay() {
   const live = Number(state.portfolioGBP);
+  const source = Number.isFinite(live) && live >= 0 ? 'state.portfolioGBP' : 'state.metrics.latestGBP';
+  console.info('[trace][frontend][calendar-live-portfolio-candidate]', {
+    source,
+    statePortfolioGBP: state.portfolioGBP,
+    metricsLatestGBP: state.metrics?.latestGBP
+  });
   if (Number.isFinite(live) && live >= 0) return live;
   const metric = Number(state.metrics?.latestGBP);
   return Number.isFinite(metric) && metric >= 0 ? metric : null;
@@ -1041,6 +1068,42 @@ function getDailyEntry(date) {
     trades,
     tradesCount: trades.length
   };
+}
+
+function traceTodayCalendarSource(context, livePortfolio, closingUsed) {
+  const today = new Date();
+  const todayKey = formatDate(today);
+  const monthData = getMonthData(today);
+  const rawTodayRecord = monthData?.[todayKey];
+  const todayEntry = getDailyEntry(today);
+  const rawTodayValue = Number(rawTodayRecord?.end);
+  const accountValues = rawTodayRecord?.accounts && typeof rawTodayRecord.accounts === 'object'
+    ? Object.entries(rawTodayRecord.accounts).map(([accountId, accountRecord]) => ({
+      accountId,
+      end: accountRecord?.end,
+      numericEnd: Number(accountRecord?.end)
+    }))
+    : [];
+  const accountAggregate = accountValues.reduce((sum, item) => (Number.isFinite(item.numericEnd) ? sum + item.numericEnd : sum), 0);
+  const fallbackUsed = livePortfolio !== null
+    ? 'today_override_from_getCurrentPortfolioForDisplay'
+    : (todayEntry?.closing ?? null) !== null
+      ? 'calendar_entry_today_closing'
+      : 'null_fallback';
+  console.info('[trace][frontend][calendar][today-value-path]', {
+    context,
+    todayKey,
+    entryExists: !!todayEntry,
+    rawTodayRecord,
+    rawTodayValue: Number.isFinite(rawTodayValue) ? rawTodayValue : null,
+    todayEntryClosing: todayEntry?.closing ?? null,
+    accountValues,
+    accountAggregate: accountValues.length ? accountAggregate : null,
+    accountHistoryMergeMissingTodayValue: !!rawTodayRecord && !Number.isFinite(rawTodayValue),
+    livePortfolioCandidate: livePortfolio,
+    fallbackUsed,
+    closingUsed
+  });
 }
 
 function getDaysInMonth(date) {
@@ -3045,9 +3108,11 @@ function setPortfolioValue(value, source = 'unknown') {
     statePortfolioBefore: state.portfolioGBP,
     normalizedValue
   });
-  state.lastHeaderRenderedPortfolioGBP = normalizedValue;
+  assignPortfolioStateField('lastHeaderRenderedPortfolioGBP', normalizedValue, 'setPortfolioValue');
   console.info('[trace][frontend][setPortfolioValue][state]', {
     source,
+    stateCurrentPortfolioValueGBP: state.currentPortfolioValueGBP,
+    stateHistoryPortfolioValueGBP: state.historyPortfolioValueGBP,
     statePortfolioAfter: state.portfolioGBP,
     headerRenderedPortfolioAfter: state.lastHeaderRenderedPortfolioGBP
   });
@@ -3061,6 +3126,11 @@ function setPortfolioValue(value, source = 'unknown') {
   portfolioValueEl.style.border = '2px solid red';
   state.portfolioDomExpectedText = renderedPortfolioValue;
   if (portfolioValueEl.textContent === renderedPortfolioValue) {
+    console.info('[trace][frontend][setPortfolioValue][final-dom]', {
+      source,
+      finalText: portfolioValueEl.textContent,
+      writeSkipped: true
+    });
     return;
   }
 
@@ -3071,6 +3141,7 @@ function setPortfolioValue(value, source = 'unknown') {
     source,
     value: normalizedValue,
     renderedValue: renderedPortfolioValue,
+    finalTextWritten: portfolioValueEl.textContent,
     totalWrites: state.portfolioDomWriteCount
   });
   queueMicrotask(() => {
@@ -3123,6 +3194,13 @@ function renderMetrics() {
     : 'GBP';
 
   setPortfolioValue(currentGBP, 'renderMetrics:currentPortfolioValueGBP');
+  console.info('[trace][frontend][renderMetrics][header-render]', {
+    source: 'renderMetrics',
+    passedToSetPortfolioValue: currentGBP,
+    stateCurrentPortfolioValueGBP: state.currentPortfolioValueGBP,
+    stateHistoryPortfolioValueGBP: state.historyPortfolioValueGBP,
+    headerElementText: document.getElementById('header-portfolio-value')?.textContent || null
+  });
   const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
@@ -3367,12 +3445,16 @@ function renderDay() {
   const days = getDaysInMonth(state.selected);
   const todayKey = getCurrentDateKey();
   const livePortfolio = getCurrentPortfolioForDisplay();
+  traceTodayCalendarSource('renderDay:start', livePortfolio, null);
   days.forEach(date => {
     const key = formatDate(date);
     const entry = getDailyEntry(date);
     const closing = key === todayKey && livePortfolio !== null
       ? livePortfolio
       : (entry?.closing ?? null);
+    if (key === todayKey) {
+      traceTodayCalendarSource('renderDay:today-cell', livePortfolio, closing);
+    }
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const cashFlow = entry?.cashFlow ?? 0;
@@ -3524,6 +3606,11 @@ function renderMonthGrid(targetDate, grid) {
   const firstEntryKey = state.firstEntryKey;
   const todayKey = getCurrentDateKey();
   const livePortfolio = getCurrentPortfolioForDisplay();
+  const renderingCurrentMonth = first.getFullYear() === new Date().getFullYear()
+    && first.getMonth() === new Date().getMonth();
+  if (renderingCurrentMonth) {
+    traceTodayCalendarSource('renderMonthGrid:start-current-month', livePortfolio, null);
+  }
 
   for (let i = 0; i < startDay; i++) {
     const placeholder = document.createElement('div');
@@ -3540,6 +3627,9 @@ function renderMonthGrid(targetDate, grid) {
     const closing = key === todayKey && livePortfolio !== null
       ? livePortfolio
       : (entry?.closing ?? null);
+    if (key === todayKey) {
+      traceTodayCalendarSource('renderMonthGrid:today-cell', livePortfolio, closing);
+    }
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const tradeCount = entry?.tradesCount ?? 0;
@@ -3925,9 +4015,15 @@ async function loadData() {
   }
   try {
     const res = await api('/api/portfolio');
+    const portfolioLikeFields = Object.entries(res || {})
+      .filter(([key]) => key.toLowerCase().includes('portfolio'))
+      .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
     console.info('[trace][frontend][portfolio-fetch-response]', {
       endpoint: '/api/portfolio',
-      payload: res
+      payload: res,
+      portfolioValue: res?.portfolioValue,
+      portfolioLikeFields,
+      receivedAt: new Date().toISOString()
     });
     const candidatePortfolioFields = {
       portfolioValue: res?.portfolioValue,
@@ -3956,8 +4052,18 @@ async function loadData() {
       ? totalVal
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
-    state.currentPortfolioValueGBP = Number.isFinite(chosenPortfolioValue) ? chosenPortfolioValue : 0;
-    state.livePortfolioGBP = state.currentPortfolioValueGBP;
+    assignPortfolioStateField(
+      'currentPortfolioValueGBP',
+      Number.isFinite(chosenPortfolioValue) ? chosenPortfolioValue : 0,
+      'loadData:/api/portfolio',
+      { assignedFrom: 'res.portfolioValue', responsePortfolioValue: res?.portfolioValue }
+    );
+    assignPortfolioStateField(
+      'livePortfolioGBP',
+      state.currentPortfolioValueGBP,
+      'loadData:/api/portfolio',
+      { assignedFrom: 'state.currentPortfolioValueGBP' }
+    );
     console.info('[trace][frontend][loadData][current-portfolio-assigned]', {
       endpoint: '/api/portfolio',
       currentPortfolioValueGBP: state.currentPortfolioValueGBP,
@@ -3976,8 +4082,8 @@ async function loadData() {
     loadStatus.portfolio = true;
   } catch (e) {
     console.error('Failed to load portfolio', e);
-    state.portfolioGBP = 0;
-    state.currentPortfolioValueGBP = 0;
+    assignPortfolioStateField('portfolioGBP', 0, 'loadData:/api/portfolio:catch');
+    assignPortfolioStateField('currentPortfolioValueGBP', 0, 'loadData:/api/portfolio:catch');
     state.netDepositsBaselineGBP = 0;
     state.netDepositsTotalGBP = 0;
   }
@@ -3987,7 +4093,12 @@ async function loadData() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0;
+      assignPortfolioStateField(
+        'livePortfolioGBP',
+        Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0,
+        'loadData:/api/trades/active',
+        { assignedFrom: 'state.currentPortfolioValueGBP' }
+      );
     }
     state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
       ? activeRes.openLossPotential
@@ -4009,7 +4120,12 @@ async function refreshActiveTrades() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0;
+      assignPortfolioStateField(
+        'livePortfolioGBP',
+        Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0,
+        'refreshActiveTrades:/api/trades/active',
+        { assignedFrom: 'state.currentPortfolioValueGBP' }
+      );
     }
     state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
       ? activeRes.openLossPotential
