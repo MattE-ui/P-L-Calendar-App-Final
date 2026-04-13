@@ -13211,11 +13211,26 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const normalized = req.perfDiag?.timeSync('history_normalize', () => normalizePortfolioHistory(user)) ?? normalizePortfolioHistory(user);
   const totals = req.perfDiag?.timeSync('compute_net_deposits', () => computeNetDepositsTotals(user, history)) || computeNetDepositsTotals(user, history);
   const anchors = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
-  req.perfDiag?.setMeta({ externalProviderAttempted: true });
-  const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
-  const activeTradesStart = process.hrtime.bigint();
-  const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
-  req.perfDiag?.setMeta({ externalProviderDurationMs: Number(process.hrtime.bigint() - activeTradesStart) / 1e6 });
+  const includeActiveTrades = req.query?.includeActiveTrades !== '0';
+  let trades = [];
+  let liveOpenPnlGBP = 0;
+  let openLossPotentialGBP = 0;
+  if (includeActiveTrades) {
+    req.perfDiag?.setMeta({ externalProviderAttempted: true });
+    const rates = await (req.perfDiag?.timeAsync('external_rates_fetch', async () => fetchRates()) || fetchRates());
+    const activeTradesStart = process.hrtime.bigint();
+    const activeTradeSnapshot = await buildActiveTrades(user, rates);
+    trades = activeTradeSnapshot.trades;
+    liveOpenPnlGBP = activeTradeSnapshot.liveOpenPnlGBP;
+    openLossPotentialGBP = activeTradeSnapshot.openLossPotentialGBP;
+    req.perfDiag?.setMeta({ externalProviderDurationMs: Number(process.hrtime.bigint() - activeTradesStart) / 1e6 });
+  } else {
+    req.perfDiag?.setMeta({
+      externalProviderAttempted: false,
+      externalProviderDurationMs: 0,
+      activeTradesSkipped: true
+    });
+  }
   const portfolioSnapshot = getCurrentPortfolioValue(user);
   const staleDisplayedValue = req.query?.staleDisplayedValue;
   logPortfolioBootstrapDiagnostics(user, { endpoint: '/api/portfolio', user: req.username, staleDisplayedValue });
@@ -13277,7 +13292,8 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     activeTrades: trades.length,
     isGuest: !!user.guest,
     riskCapitalBase: riskCapital.riskCapitalBase,
-    riskCapital
+    riskCapital,
+    activeTradesDeferred: !includeActiveTrades
   };
   req.perfDiag?.setMeta({ resultCount: trades.length, cache: 'bypass' });
   console.info('[trace][portfolio][response-payload-verification]', {

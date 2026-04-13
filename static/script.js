@@ -4019,9 +4019,10 @@ function persistLocalPrefs() {
   }
 }
 
-async function loadUiPrefs() {
+async function loadUiPrefs({ loadServer = true } = {}) {
   if (isGuestSession()) return;
   let localPrefs = null;
+  if (!loadServer) return;
   try {
     const saved = localStorage.getItem('plc-prefs');
     localPrefs = saved ? JSON.parse(saved) : null;
@@ -4085,7 +4086,7 @@ async function saveUiPrefs() {
   }
 }
 
-async function loadData() {
+async function loadData({ includeActiveInPortfolio = false } = {}) {
   const loadStatus = {
     calendar: false,
     portfolio: false,
@@ -4101,12 +4102,15 @@ async function loadData() {
     state.data = {};
   }
   try {
-    const res = await api('/api/portfolio');
+    const portfolioEndpoint = includeActiveInPortfolio
+      ? '/api/portfolio'
+      : '/api/portfolio?includeActiveTrades=0';
+    const res = await api(portfolioEndpoint);
     const portfolioLikeFields = Object.entries(res || {})
       .filter(([key]) => key.toLowerCase().includes('portfolio'))
       .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
     console.info('[trace][frontend][portfolio-fetch-response]', {
-      endpoint: '/api/portfolio',
+      endpoint: portfolioEndpoint,
       payload: res,
       portfolioValue: res?.portfolioValue,
       portfolioLikeFields,
@@ -4126,7 +4130,7 @@ async function loadData() {
     };
     const chosenPortfolioValue = Number(res?.portfolioValue);
     console.info('[trace][frontend][portfolio-field-selection]', {
-      endpoint: '/api/portfolio',
+      endpoint: portfolioEndpoint,
       candidateFields: candidatePortfolioFields,
       chosenField: 'portfolioValue',
       chosenRawValue: res?.portfolioValue,
@@ -4153,12 +4157,12 @@ async function loadData() {
       { assignedFrom: 'state.currentPortfolioValueGBP' }
     );
     console.info('[trace][frontend][loadData][current-portfolio-assigned]', {
-      endpoint: '/api/portfolio',
+      endpoint: portfolioEndpoint,
       currentPortfolioValueGBP: state.currentPortfolioValueGBP,
       assignedFrom: 'res.portfolioValue'
     });
     console.info('[trace][frontend][portfolio-to-setter]', {
-      endpoint: '/api/portfolio',
+      endpoint: portfolioEndpoint,
       valuePassedToSetter: chosenPortfolioValue
     });
     setPortfolioValue(chosenPortfolioValue, 'loadData:/api/portfolio');
@@ -5528,8 +5532,6 @@ async function init() {
   } catch (e) {
     console.warn(e);
   }
-  await loadUiPrefs();
-  await loadProfile();
   pruneLegacyMetricRenders();
   setupPortfolioValueMutationObserver();
   bindControls();
@@ -5544,18 +5546,36 @@ async function init() {
   });
   updatePeriodSelect();
   setActiveView();
-  try {
-    await loadRates();
-  } catch (e) {
-    console.warn(e);
+  const criticalStart = window.PerfDiagnostics?.mark('dashboard-critical-load-start');
+  const [initialLoadStatus] = await Promise.all([
+    loadData({ includeActiveInPortfolio: false }),
+    loadProfile()
+  ]);
+  if (criticalStart) {
+    window.PerfDiagnostics?.measure('dashboard-critical-load-end', criticalStart, {
+      criticalRequests: ['/api/profile', '/api/pl', '/api/portfolio?includeActiveTrades=0', '/api/trades/active'],
+      deferredRequests: ['/api/prefs', '/api/rates', '/api/site-announcements/active', '/api/weekly-recap/latest']
+    });
   }
-  const initialLoadStatus = await loadData();
   window.PerfDiagnostics?.mark('dashboard-first-meaningful-data', { initialLoadStatus });
   updateDevtoolsNav();
   render();
   consumePendingRiskCalculatorPrefill();
-  loadSiteAnnouncementsOnBoot();
-  loadWeeklyRecapPreviewCard();
+  window.setTimeout(() => {
+    loadUiPrefs({ loadServer: true })
+      .then(() => {
+        renderRiskPills();
+        syncRiskFields();
+      })
+      .catch((error) => {
+        console.warn('Deferred ui prefs load failed', error);
+      });
+    loadRates().catch((error) => {
+      console.warn('Deferred rates load failed', error);
+    });
+    loadSiteAnnouncementsOnBoot();
+    loadWeeklyRecapPreviewCard();
+  }, 0);
   if (pageStart) window.PerfDiagnostics?.measure('dashboard-page-ready', pageStart);
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
