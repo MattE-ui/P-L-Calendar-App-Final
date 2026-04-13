@@ -13708,7 +13708,9 @@ async function fetchWatchlistTickerMetrics(ticker) {
   const currentPrice = Number(snapshot?.currentPrice);
   const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
   const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
-  const percentChangeToday = Number.isFinite(Number(snapshot?.displayChangePct)) ? Number(snapshot.displayChangePct) : null;
+  const previousClose = Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null;
+  const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
+  const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
   const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
     ? volume * currentPrice
     : null;
@@ -13717,12 +13719,13 @@ async function fetchWatchlistTickerMetrics(ticker) {
     ticker: normalized,
     session: String(snapshot?.session || 'closed'),
     currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
-    previousClose: Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null,
+    previousClose,
     regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
     preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
     postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
     displayPrice,
     displayChangePct: percentChangeToday,
+    priceSource,
     displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
     asOf: snapshot?.asOf || null,
     isDelayed: snapshot?.isDelayed === true,
@@ -18582,6 +18585,12 @@ function resolveDisplayPriceAndSession({ preMarketPrice, postMarketPrice, regula
   return { displayPrice: null, session: 'closed', priceSource: 'none' };
 }
 
+function computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource = 'none' } = {}) {
+  if (priceSource === 'previousClose' || priceSource === 'none') return null;
+  if (!Number.isFinite(displayPrice) || !Number.isFinite(previousClose) || previousClose <= 0) return null;
+  return ((displayPrice - previousClose) / previousClose) * 100;
+}
+
 function quoteAsOfFromSource(quote = {}, priceSource = 'none') {
   const asOfEpoch = priceSource === 'preMarketPrice'
     ? Number(quote?.preMarketTime)
@@ -18614,9 +18623,7 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     regularMarketPrice: currentPrice,
     previousClose
   });
-  const displayChangePct = Number.isFinite(displayPrice) && Number.isFinite(previousClose) && previousClose > 0
-    ? ((displayPrice - previousClose) / previousClose) * 100
-    : null;
+  const displayChangePct = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
   const isDelayed = Number.isFinite(Number(quote?.exchangeDataDelayedBy)) && Number(quote.exchangeDataDelayedBy) > 0;
   const asOf = quoteAsOfFromSource(quote, priceSource);
   const isStale = isAsOfStale(asOf, { isDelayed });
@@ -18656,6 +18663,7 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     postMarketPrice,
     displayPrice,
     displayChangePct,
+    priceSource,
     displayChangeBasis: 'previousClose',
     asOf,
     isDelayed,
@@ -18851,11 +18859,18 @@ async function fetchMarketQuoteSnapshot(symbol) {
       yahooChart?.price
       && (!yahooQuote?.selectedPrice || Math.abs(yahooChart.price - yahooQuote.selectedPrice) > 0.0001)
     ) {
+      const previousClose = Number.isFinite(Number(yahooQuote?.previousClose)) ? Number(yahooQuote.previousClose) : null;
+      const { displayPrice, session, priceSource } = resolveDisplayPriceAndSession({
+        preMarketPrice: null,
+        postMarketPrice: null,
+        regularMarketPrice: yahooChart.price,
+        previousClose
+      });
       snapshot = {
         symbol: trimmed,
         currency: yahooChart.currency || 'GBP',
         marketState: yahooChart.marketState || '',
-        session: Number.isFinite(yahooChart.price) ? 'regular' : 'closed',
+        session,
         marketOpen: marketStateIsOpen(yahooChart.marketState || ''),
         isExtended: true,
         live: yahooChart.price,
@@ -18866,15 +18881,14 @@ async function fetchMarketQuoteSnapshot(symbol) {
         regularOpen: null,
         preMarketPrice: null,
         postMarketPrice: null,
-        displayPrice: yahooChart.price,
-        displayChangePct: Number.isFinite(Number(yahooQuote?.previousClose)) && Number(yahooQuote.previousClose) > 0
-          ? ((yahooChart.price - Number(yahooQuote.previousClose)) / Number(yahooQuote.previousClose)) * 100
-          : null,
+        displayPrice,
+        displayChangePct: computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource }),
+        priceSource,
         displayChangeBasis: 'previousClose',
         asOf: new Date().toISOString(),
         isDelayed: false,
         isStale: false,
-        previousClose: yahooQuote?.previousClose ?? null,
+        previousClose,
         selectedPrice: yahooChart.price
       };
     } else if (yahooQuote) {
@@ -18899,6 +18913,7 @@ async function fetchMarketQuoteSnapshot(symbol) {
         postMarketPrice: null,
         displayPrice: stooq.price,
         displayChangePct: null,
+        priceSource: 'none',
         displayChangeBasis: 'previousClose',
         asOf: new Date().toISOString(),
         isDelayed: true,
