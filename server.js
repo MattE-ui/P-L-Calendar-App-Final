@@ -19528,6 +19528,12 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
   let didMutate = false;
   const providerPreviousClose = Number.isFinite(Number(quoteSnapshot?.previousClose)) ? Number(quoteSnapshot.previousClose) : null;
   const hadProviderPreviousClose = Number.isFinite(providerPreviousClose) && providerPreviousClose > 0;
+  console.info('[WATCHLIST_PREV_CLOSE_INGEST_PROVIDER_VALUE]', {
+    ticker: normalizedTicker,
+    source,
+    providerPreviousClose,
+    hasProviderPreviousClose: hadProviderPreviousClose
+  });
   const nyDate = getNyDateKeyForDate(new Date(), false);
   const providerReferenceDate = isUsTradingSessionDate(nyDate)
     ? previousUsTradingSessionDate(nyDate)
@@ -19541,6 +19547,13 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
       currency: quoteSnapshot?.currency || null,
       exchange: quoteSnapshot?.quote?.exchange || quoteSnapshot?.quoteType || null
     }) || didMutate;
+    console.info('[WATCHLIST_PREV_CLOSE_INGEST_STORED]', {
+      ticker: normalizedTicker,
+      marketDate: providerReferenceDate,
+      previousClose: providerPreviousClose,
+      source,
+      didMutate
+    });
   }
   const marketState = String(quoteSnapshot?.marketState || '').trim().toLowerCase();
   const regularMarketPrice = Number.isFinite(Number(quoteSnapshot?.regularMarketPrice)) ? Number(quoteSnapshot.regularMarketPrice) : null;
@@ -19867,9 +19880,21 @@ async function fetchYahooChartQuote(symbol) {
   const marketState = typeof result?.meta?.marketState === 'string'
     ? result.meta.marketState.toLowerCase()
     : '';
+  const previousClose = parsePositiveNumber(result?.meta?.previousClose);
+  if (Number.isFinite(previousClose) && previousClose > 0) {
+    console.info('[YAHOO_CHART_PREVIOUS_CLOSE_EXTRACTED]', {
+      ticker: trimmed,
+      previousClose
+    });
+  } else {
+    console.info('[YAHOO_CHART_PREVIOUS_CLOSE_MISSING]', {
+      ticker: trimmed
+    });
+  }
   return {
     symbol: trimmed,
     price: last,
+    previousClose,
     currency,
     isExtended: true,
     marketState
@@ -20002,7 +20027,9 @@ async function fetchMarketQuoteSnapshot(symbol) {
       yahooChart?.price
       && (!yahooQuote?.selectedPrice || Math.abs(yahooChart.price - yahooQuote.selectedPrice) > 0.0001)
     ) {
-      const previousClose = Number.isFinite(Number(yahooQuote?.previousClose)) ? Number(yahooQuote.previousClose) : null;
+      const previousClose = Number.isFinite(Number(yahooChart?.previousClose))
+        ? Number(yahooChart.previousClose)
+        : (Number.isFinite(Number(yahooQuote?.previousClose)) ? Number(yahooQuote.previousClose) : null);
       const { displayPrice, session, priceSource } = resolveDisplayPriceAndSession({
         preMarketPrice: null,
         postMarketPrice: null,
@@ -20037,8 +20064,25 @@ async function fetchMarketQuoteSnapshot(symbol) {
         previousClose,
         selectedPrice: yahooChart.price
       };
+      console.info('[WATCHLIST_PREV_CLOSE_SNAPSHOT_SOURCE]', {
+        ticker: trimmed,
+        previousClose,
+        source: Number.isFinite(Number(yahooChart?.previousClose)) ? 'yahoo_chart.meta.previousClose' : 'yahoo_quote.previousClose_fallback'
+      });
     } else if (yahooQuote) {
-      snapshot = yahooQuote;
+      if (Number.isFinite(Number(yahooChart?.previousClose)) && Number(yahooChart.previousClose) > 0) {
+        snapshot = {
+          ...yahooQuote,
+          previousClose: Number(yahooChart.previousClose)
+        };
+        console.info('[WATCHLIST_PREV_CLOSE_SNAPSHOT_SOURCE]', {
+          ticker: trimmed,
+          previousClose: Number(yahooChart.previousClose),
+          source: 'yahoo_chart.meta.previousClose'
+        });
+      } else {
+        snapshot = yahooQuote;
+      }
     }
     if (!snapshot) {
       let stooq = null;
