@@ -146,9 +146,11 @@
   const devtoolsBtn = document.getElementById('devtools-btn');
   const ownerGroup = document.getElementById('app-shell-owner-tools');
   if (!adminBtn || !devtoolsBtn || !ownerGroup) return;
+  const startedAt = window.PerfDiagnostics?.mark('app-header-profile-bootstrap-start');
   fetch('/api/profile', { credentials: 'include' })
     .then((res) => (res.ok ? res.json() : null))
     .then((profile) => {
+      if (startedAt) window.PerfDiagnostics?.measure('app-header-profile-bootstrap-end', startedAt, { owner: !!profile?.isOwner });
       const showOwnerTools = !!profile?.isOwner;
       adminBtn.classList.toggle('is-hidden', !showOwnerTools);
       devtoolsBtn.classList.toggle('is-hidden', !showOwnerTools);

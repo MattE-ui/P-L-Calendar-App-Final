@@ -5,7 +5,11 @@
 
   async function api(path, opts = {}) {
     if (isGuestSession()) return window.handleGuestRequest(path, opts);
-    const response = await fetch(path, { credentials: 'include', ...opts });
+    const method = (opts.method || 'GET').toUpperCase();
+    const fetchPromise = fetch(path, { credentials: 'include', ...opts });
+    const response = window.PerfDiagnostics
+      ? await window.PerfDiagnostics.trackApi(`account-center-api:${method}:${path}`, fetchPromise)
+      : await fetchPromise;
     let payload = {};
     try {
       payload = await response.json();

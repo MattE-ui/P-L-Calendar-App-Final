@@ -223,7 +223,10 @@ async function api(path, opts = {}) {
     }
     return window.handleGuestRequest(path, opts);
   }
-  const res = await fetch(path, { credentials: 'include', ...opts });
+  const fetchPromise = fetch(path, { credentials: 'include', ...opts });
+  const res = window.PerfDiagnostics
+    ? await window.PerfDiagnostics.trackApi(`dashboard-api:${method}:${path}`, fetchPromise)
+    : await fetchPromise;
   let data;
   try {
     data = await res.json();
@@ -5491,6 +5494,7 @@ if (typeof module !== 'undefined') {
 }
 
 async function init() {
+  const pageStart = window.PerfDiagnostics?.mark('dashboard-page-init-start');
   const dashboardLoadingOverlay = createDashboardLoadingOverlayController();
   if (dashboardLoadingOverlay.enabled) {
     dashboardLoadingOverlay.show();
@@ -5538,11 +5542,13 @@ async function init() {
     console.warn(e);
   }
   const initialLoadStatus = await loadData();
+  window.PerfDiagnostics?.mark('dashboard-first-meaningful-data', { initialLoadStatus });
   updateDevtoolsNav();
   render();
   consumePendingRiskCalculatorPrefill();
   loadSiteAnnouncementsOnBoot();
   loadWeeklyRecapPreviewCard();
+  if (pageStart) window.PerfDiagnostics?.measure('dashboard-page-ready', pageStart);
   if (dashboardLoadingOverlay.enabled) {
     // The branded overlay stays up only for the first meaningful hydration.
     // We require core dashboard datasets (portfolio metrics, calendar data, active trades)

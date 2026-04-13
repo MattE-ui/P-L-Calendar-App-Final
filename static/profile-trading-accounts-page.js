@@ -1,4 +1,5 @@
 (async function initTradingAccountsPage() {
+  const pageStart = window.PerfDiagnostics?.mark('trading-accounts-page-init-start');
   const { api, setText, setStatus } = window.AccountCenter;
 
   const state = {
@@ -1111,6 +1112,8 @@
   try {
     setActiveTab('accounts');
     await refreshData();
+    window.PerfDiagnostics?.mark('trading-accounts-first-meaningful-data');
+    if (pageStart) window.PerfDiagnostics?.measure('trading-accounts-page-ready', pageStart);
   } catch (error) {
     setText('trading-broker-action-status', error.message || 'Unable to load trading accounts.');
   }
