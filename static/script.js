@@ -4365,6 +4365,53 @@ async function refreshActiveTrades() {
   }
 }
 
+const dashboardRefreshChannels = {
+  activeTrades: window.AppRefreshCoordinator?.createChannel('dashboard-active-trades'),
+  automated: window.AppRefreshCoordinator?.createChannel('dashboard-automated-data')
+};
+
+function requestActiveTradesRefresh(reason = 'manual', options = {}) {
+  const channel = dashboardRefreshChannels.activeTrades;
+  if (channel) {
+    return channel.run(
+      () => refreshActiveTrades(),
+      {
+        reason,
+        minIntervalMs: reason === 'poll' ? 8000 : 0,
+        allowWhenHidden: reason !== 'poll',
+        reuseResultMs: reason === 'visibility' ? 1500 : 0,
+        ...options
+      }
+    );
+  }
+  if (document.visibilityState === 'hidden' && reason === 'poll') {
+    window.PerfDiagnostics?.log('dashboard-active-trades-hidden-poll-suppressed', { reason });
+    return Promise.resolve();
+  }
+  return refreshActiveTrades();
+}
+
+function requestAutomatedRefresh(reason = 'manual', options = {}) {
+  const channel = dashboardRefreshChannels.automated;
+  if (channel) {
+    return channel.run(
+      () => refreshAutomatedCalendarData(),
+      {
+        reason,
+        minIntervalMs: reason === 'poll' ? 20000 : 0,
+        allowWhenHidden: reason !== 'poll',
+        reuseResultMs: reason === 'visibility' ? 2500 : 0,
+        ...options
+      }
+    );
+  }
+  if (document.visibilityState === 'hidden' && reason === 'poll') {
+    window.PerfDiagnostics?.log('dashboard-automated-hidden-poll-suppressed', { reason });
+    return Promise.resolve();
+  }
+  return refreshAutomatedCalendarData();
+}
+
 
 function hasEnabledAutomationIntegration() {
   return Array.isArray(state.tradingAccounts)
@@ -5692,11 +5739,19 @@ async function init() {
     }
     await dashboardLoadingOverlay.hide();
   }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    requestActiveTradesRefresh('visibility').catch(() => {});
+    requestAutomatedRefresh('visibility').catch(() => {});
+  });
+  window.addEventListener('focus', () => {
+    requestActiveTradesRefresh('focus', { minIntervalMs: 2000, reuseResultMs: 1000 }).catch(() => {});
+  });
   setInterval(() => {
-    refreshActiveTrades();
+    requestActiveTradesRefresh('poll').catch(() => {});
   }, 15000);
   setInterval(() => {
-    refreshAutomatedCalendarData();
+    requestAutomatedRefresh('poll').catch(() => {});
   }, 30000);
   setInterval(() => {
     flushPendingBackgroundRender();
