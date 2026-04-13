@@ -4797,7 +4797,208 @@ function getIntegratedTradingAccount(user, provider) {
   const { accounts } = ensureTradingAccounts(user);
   const normalizedProvider = provider === 'trading212' || provider === 'ibkr' ? provider : null;
   if (!normalizedProvider) return null;
+  if (normalizedProvider === 'trading212') {
+    const canonical = resolveCanonicalTrading212OwnerAccount(user);
+    if (canonical) return canonical;
+  }
   return accounts.find(account => account.integrationEnabled && account.integrationProvider === normalizedProvider) || null;
+}
+
+function normalizeCanonicalAccountLabel(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function resolveCanonicalTrading212OwnerAccount(user, options = {}) {
+  if (!user || typeof user !== 'object') return null;
+  const { accounts } = ensureTradingAccounts(user);
+  const cfg = user.trading212 || {};
+  const linkedBrokerAccountId = String(options?.brokerAccountId || '').trim();
+  const activeBrokerAccounts = getTrading212Accounts(cfg);
+  const activeBrokerIdSet = new Set(activeBrokerAccounts.map(account => String(account.id || '').trim()).filter(Boolean));
+
+  const candidates = accounts.filter((account) => {
+    if (!account || typeof account !== 'object') return false;
+    const provider = String(account.integrationProvider || '').toLowerCase();
+    const linkedId = String(account.linkedBrokerAccountId || account.providerAccountId || '').trim();
+    if (provider === 'trading212' && account.integrationEnabled) {
+      if (!linkedBrokerAccountId) return true;
+      return linkedId === linkedBrokerAccountId || (!linkedId && activeBrokerIdSet.size === 1);
+    }
+    return false;
+  });
+  if (linkedBrokerAccountId) {
+    const linkedMatch = candidates.find((account) => (
+      String(account.linkedBrokerAccountId || account.providerAccountId || '').trim() === linkedBrokerAccountId
+    ));
+    if (linkedMatch) return linkedMatch;
+  }
+
+  const brokerAccountLabel = normalizeCanonicalAccountLabel(
+    activeBrokerAccounts.find(account => String(account.id || '').trim() === linkedBrokerAccountId)?.label
+    || activeBrokerAccounts[0]?.label
+    || ''
+  );
+  if (brokerAccountLabel) {
+    const labelMatched = accounts.find((account) => normalizeCanonicalAccountLabel(account.label) === brokerAccountLabel);
+    if (labelMatched) return labelMatched;
+  }
+
+  if (candidates.length) return candidates[0];
+  if (linkedBrokerAccountId) {
+    const idMatched = accounts.find(account => account.id === linkedBrokerAccountId);
+    if (idMatched) return idMatched;
+  }
+  return null;
+}
+
+function reconcileTrading212IntegrationOwnership(user, options = {}) {
+  if (!user || typeof user !== 'object') return { mutated: false, migrations: [], canonicalOwnerAccountId: null };
+  ensureTradingAccounts(user);
+  ensureTrading212Config(user);
+  const cfg = user.trading212 || {};
+  let tradingAccounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+  const activeBrokerAccounts = getTrading212Accounts(cfg);
+  const activeBrokerIdSet = new Set(activeBrokerAccounts.map(account => String(account.id || '').trim()).filter(Boolean));
+  const migrations = [];
+  let mutated = false;
+
+  const ensureCanonicalOwnerForBrokerAccount = (brokerAccount) => {
+    tradingAccounts = Array.isArray(user.tradingAccounts) ? user.tradingAccounts : [];
+    const brokerAccountId = String(brokerAccount?.id || '').trim();
+    if (!brokerAccountId) return null;
+    const ownerCandidates = tradingAccounts.filter((account) => (
+      account
+      && String(account.integrationProvider || '').toLowerCase() === 'trading212'
+      && account.integrationEnabled
+      && String(account.linkedBrokerAccountId || account.providerAccountId || '').trim() === brokerAccountId
+    ));
+    let canonical = ownerCandidates[0] || null;
+    if (!canonical) {
+      const normalizedBrokerLabel = normalizeCanonicalAccountLabel(brokerAccount?.label || '');
+      if (normalizedBrokerLabel) {
+        canonical = tradingAccounts.find(account => normalizeCanonicalAccountLabel(account?.label) === normalizedBrokerLabel) || null;
+      }
+    }
+    if (!canonical) {
+      canonical = tradingAccounts.find(account => account?.id === brokerAccountId) || null;
+    }
+    if (!canonical) {
+      canonical = {
+        id: crypto.randomBytes(6).toString('hex'),
+        label: brokerAccount.label || 'Trading 212',
+        accountType: 'Trading account',
+        brokerDisplayLabel: 'Trading 212',
+        currentValue: 0,
+        currentNetDeposits: 0,
+        integrationProvider: 'trading212',
+        integrationEnabled: true,
+        linkedBrokerAccountId: brokerAccountId,
+        providerAccountId: brokerAccountId
+      };
+      tradingAccounts.push(canonical);
+      mutated = true;
+      migrations.push({ type: 'create_owner', brokerAccountId, toAccountId: canonical.id });
+    }
+
+    const canonicalLinkedId = String(canonical.linkedBrokerAccountId || canonical.providerAccountId || '').trim();
+    if (String(canonical.integrationProvider || '').toLowerCase() !== 'trading212' || canonical.integrationEnabled !== true || canonicalLinkedId !== brokerAccountId) {
+      canonical.integrationProvider = 'trading212';
+      canonical.integrationEnabled = true;
+      canonical.linkedBrokerAccountId = brokerAccountId;
+      canonical.providerAccountId = brokerAccountId;
+      if (!String(canonical.brokerDisplayLabel || '').trim()) canonical.brokerDisplayLabel = 'Trading 212';
+      mutated = true;
+      migrations.push({ type: 'promote_owner', brokerAccountId, toAccountId: canonical.id });
+    }
+
+    tradingAccounts.forEach((account) => {
+      if (!account || account.id === canonical.id) return;
+      const linkedId = String(account.linkedBrokerAccountId || account.providerAccountId || '').trim();
+      const isDuplicateOwner = String(account.integrationProvider || '').toLowerCase() === 'trading212'
+        && account.integrationEnabled
+        && linkedId === brokerAccountId;
+      if (!isDuplicateOwner) return;
+      account.integrationProvider = null;
+      account.integrationEnabled = false;
+      account.linkedBrokerAccountId = '';
+      account.providerAccountId = '';
+      mutated = true;
+      migrations.push({ type: 'demote_duplicate_owner', brokerAccountId, fromAccountId: account.id, toAccountId: canonical.id });
+    });
+    return canonical;
+  };
+
+  const canonicalOwners = activeBrokerAccounts
+    .map(ensureCanonicalOwnerForBrokerAccount)
+    .filter(Boolean);
+
+  const canonicalOwnerAccountId = canonicalOwners[0]?.id || null;
+  if (canonicalOwnerAccountId && activeBrokerAccounts.length === 1) {
+    const history = ensurePortfolioHistory(user);
+    const knownLocalAccountIds = new Set(tradingAccounts.map(account => account.id));
+    for (const days of Object.values(history || {})) {
+      for (const record of Object.values(days || {})) {
+        if (!record || typeof record !== 'object' || !record.accounts || typeof record.accounts !== 'object') continue;
+        const accountEntries = record.accounts;
+        const canonicalEntry = accountEntries[canonicalOwnerAccountId];
+        if (canonicalEntry && typeof canonicalEntry === 'object') continue;
+        for (const [candidateId, candidateEntry] of Object.entries(accountEntries)) {
+          if (candidateId === canonicalOwnerAccountId) continue;
+          if (knownLocalAccountIds.has(candidateId)) continue;
+          if (!candidateEntry || typeof candidateEntry !== 'object') continue;
+          const end = Number(candidateEntry.end);
+          if (!Number.isFinite(end) || end < 0) continue;
+          accountEntries[canonicalOwnerAccountId] = {
+            end,
+            cashIn: Number.isFinite(Number(candidateEntry.cashIn)) ? Number(candidateEntry.cashIn) : 0,
+            cashOut: Number.isFinite(Number(candidateEntry.cashOut)) ? Number(candidateEntry.cashOut) : 0
+          };
+          delete accountEntries[candidateId];
+          mutated = true;
+          migrations.push({ type: 'history_relink', fromAccountId: candidateId, toAccountId: canonicalOwnerAccountId });
+          break;
+        }
+      }
+    }
+  }
+
+  tradingAccounts.forEach((account) => {
+    if (!account) return;
+    if (String(account.integrationProvider || '').toLowerCase() !== 'trading212') return;
+    const linkedId = String(account.linkedBrokerAccountId || account.providerAccountId || '').trim();
+    if (!linkedId) return;
+    if (activeBrokerIdSet.has(linkedId)) return;
+    account.integrationProvider = null;
+    account.integrationEnabled = false;
+    account.linkedBrokerAccountId = '';
+    account.providerAccountId = '';
+    mutated = true;
+    migrations.push({ type: 'remove_stale_owner_link', fromAccountId: account.id, brokerAccountId: linkedId });
+  });
+
+  if (migrations.length || options.logDiagnostics) {
+    const valuationOwner = getIntegratedTradingAccount(user, 'trading212');
+    console.info('[T212][ownership]', {
+      reason: options.reason || 'unspecified',
+      canonicalOwnerAccountId,
+      valuationOwnerAccountId: valuationOwner?.id || null,
+      brokerAccounts: activeBrokerAccounts.map(account => ({ id: account.id, label: account.label })),
+      migrations,
+      tradingAccounts: tradingAccounts.map((account) => ({
+        id: account.id,
+        label: account.label,
+        provider: account.integrationProvider,
+        integrationEnabled: !!account.integrationEnabled,
+        linkedBrokerAccountId: account.linkedBrokerAccountId || '',
+        providerAccountId: account.providerAccountId || ''
+      }))
+    });
+  }
+  return { mutated, migrations, canonicalOwnerAccountId };
 }
 
 function applyAccountAggregatesToHistoryEntry(entry = {}) {
@@ -5401,6 +5602,8 @@ function ensureUserShape(user, identifier) {
   if (accountsMutated) mutated = true;
   const { mutated: tradingMutated } = ensureTrading212Config(user);
   if (tradingMutated) mutated = true;
+  const { mutated: t212OwnershipMutated } = reconcileTrading212IntegrationOwnership(user, { reason: 'ensure_user_shape' });
+  if (t212OwnershipMutated) mutated = true;
   const { mutated: ibkrMutated } = ensureIbkrConfig(user);
   if (ibkrMutated) mutated = true;
   if (user.initialNetDeposits === undefined) {
@@ -5776,6 +5979,12 @@ function listChronologicalEntriesForSource(user, source) {
 
   const integratedAccount = getIntegratedTradingAccount(user, sourceKey);
   const accountId = integratedAccount?.id || null;
+  if (sourceKey === 'trading212') {
+    console.info('[T212][valuation][calendar]', {
+      canonicalOwnerAccountId: resolveCanonicalTrading212OwnerAccount(user)?.id || null,
+      integratedOwnerAccountId: integratedAccount?.id || null
+    });
+  }
   if (!accountId) {
     return { entries: [], accountId: null, reason: 'integrated_account_not_connected' };
   }
@@ -10863,6 +11072,12 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     const cashOut = Number(existing.cashOut ?? 0);
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
+    const canonicalOwner = resolveCanonicalTrading212OwnerAccount(user);
+    console.info('[T212][valuation][sync]', {
+      canonicalOwnerAccountId: canonicalOwner?.id || null,
+      integrationOwnerAccountId: integratedAccount?.id || null,
+      brokerAccountIds: fulfilled.map(result => result.accountId)
+    });
     const combinedPortfolioValue = fulfilled.reduce((sum, result) => {
       const value = Number(result.snapshot?.portfolioValue);
       return Number.isFinite(value) ? sum + value : sum;
@@ -16913,6 +17128,7 @@ app.post('/api/account/trading-accounts', auth, (req, res) => {
       deduped.unshift({ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' });
     }
     user.tradingAccounts = deduped.length ? deduped : [{ id: 'primary', label: 'Primary account', accountType: 'Trading account', brokerDisplayLabel: '', currentValue: 0, currentNetDeposits: 0, integrationProvider: null, integrationEnabled: false, linkedBrokerAccountId: '', providerAccountId: '' }];
+    reconcileTrading212IntegrationOwnership(user, { reason: 'save_trading_accounts', logDiagnostics: true });
   }
   if (!user.multiTradingAccountsEnabled && (user.tradingAccounts || []).length > 1) {
     user.multiTradingAccountsEnabled = true;

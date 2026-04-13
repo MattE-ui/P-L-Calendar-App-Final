@@ -255,3 +255,119 @@ test('profile endpoint backfills integration-linked trading account current valu
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('saving trading accounts migrates Trading 212 ownership from deleted fallback account to canonical Main ISA account', async () => {
+  const { app, loadDB, saveDB } = require('../server');
+  const { once } = require('node:events');
+  const http = require('node:http');
+
+  const username = `integration-owner-migrate-${Date.now()}`;
+  const password = 'Passw0rd!';
+
+  const db = loadDB();
+  db.users[username] = {
+    username,
+    passwordHash: await bcrypt.hash(password, 10),
+    security: {},
+    guest: false,
+    profileComplete: true,
+    portfolio: 6000,
+    initialPortfolio: 6000,
+    initialNetDeposits: 3000,
+    portfolioHistory: {
+      '2026-04': {
+        '2026-04-10': {
+          end: 6000,
+          cashIn: 0,
+          cashOut: 0,
+          accounts: {
+            fallback: { end: 6000, cashIn: 0, cashOut: 0 }
+          }
+        }
+      }
+    },
+    multiTradingAccountsEnabled: true,
+    tradingAccounts: [
+      {
+        id: 'fallback',
+        label: 'Trading 212',
+        currentValue: 6000,
+        currentNetDeposits: 3000,
+        integrationProvider: 'trading212',
+        integrationEnabled: true,
+        linkedBrokerAccountId: 'broker-main-isa',
+        providerAccountId: 'broker-main-isa'
+      },
+      {
+        id: 'main-isa',
+        label: 'Main ISA',
+        currentValue: 0,
+        currentNetDeposits: 0,
+        integrationProvider: null,
+        integrationEnabled: false,
+        linkedBrokerAccountId: '',
+        providerAccountId: ''
+      }
+    ],
+    uiPrefs: {},
+    trading212: {
+      enabled: true,
+      accounts: [{
+        id: 'broker-main-isa',
+        label: 'Main ISA',
+        apiKey: 'key-123',
+        apiSecret: 'secret-123',
+        active: true,
+        connectionStatus: 'connected',
+        syncStatus: 'idle'
+      }]
+    },
+    ibkr: { enabled: false }
+  };
+  saveDB(db);
+
+  const server = http.createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  const base = `http://127.0.0.1:${port}`;
+
+  try {
+    const loginRes = await fetch(`${base}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    assert.equal(loginRes.status, 200);
+    const cookie = loginRes.headers.get('set-cookie');
+    assert.ok(cookie);
+
+    const saveRes = await fetch(`${base}/api/account/trading-accounts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        cookie
+      },
+      body: JSON.stringify({
+        enabled: true,
+        accounts: [
+          { id: 'main-isa', label: 'Main ISA', currentValue: 0, currentNetDeposits: 0 }
+        ]
+      })
+    });
+    assert.equal(saveRes.status, 200);
+    const payload = await saveRes.json();
+    assert.equal(payload.accounts.length, 2); // includes required primary account
+    const mainIsa = payload.accounts.find(account => account.id === 'main-isa');
+    assert.equal(mainIsa.integrationProvider, 'trading212');
+    assert.equal(mainIsa.integrationEnabled, true);
+    assert.equal(mainIsa.linkedBrokerAccountId, 'broker-main-isa');
+
+    const reloaded = loadDB().users[username];
+    const relinked = reloaded.portfolioHistory?.['2026-04']?.['2026-04-10']?.accounts || {};
+    assert.equal(relinked['fallback'], undefined);
+    assert.equal(relinked['main-isa']?.end, 6000);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
