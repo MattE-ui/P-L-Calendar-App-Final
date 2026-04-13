@@ -240,3 +240,63 @@ test('reconcileTrading212HistoricalExits coalesces multiple trim fills into weig
   assert.equal(trade.sizeUnits, 5);
   assert.equal(trade.status, 'open');
 });
+
+test('reconcileTrading212HistoricalExits keeps grouped ticker legs stable across repeated partial-trim syncs', () => {
+  const user = {
+    tradeJournal: {
+      '2026-03-01': [{
+        id: 'leg-1',
+        source: 'trading212',
+        status: 'open',
+        direction: 'long',
+        symbol: 'NVDA',
+        trading212Ticker: 'NVDA_US_EQ',
+        trading212Isin: 'US67066G1040',
+        trading212AccountId: 'acc-1',
+        currency: 'USD',
+        entry: 100,
+        sizeUnits: 5
+      }, {
+        id: 'leg-2',
+        source: 'trading212',
+        status: 'open',
+        direction: 'long',
+        symbol: 'NVDA',
+        trading212Ticker: 'NVDA_US_EQ',
+        trading212Isin: 'US67066G1040',
+        trading212AccountId: 'acc-1',
+        currency: 'USD',
+        entry: 110,
+        sizeUnits: 3
+      }]
+    }
+  };
+  const cfg = { historySync: { accounts: {} } };
+  const payload = {
+    orders: [{
+      id: 'trim-order-1',
+      fillId: 'trim-fill-1',
+      side: 'SELL',
+      status: 'FILLED',
+      quantity: 2,
+      fillPrice: 120,
+      filledAt: '2026-03-04T10:00:00Z',
+      instrumentTicker: 'NVDA_US_EQ',
+      instrumentIsin: 'US67066G1040'
+    }]
+  };
+
+  const first = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
+  assert.equal(first.imported, 1);
+  const legsAfterFirst = user.tradeJournal['2026-03-01'];
+  assert.equal(legsAfterFirst.length, 2);
+  assert.equal(legsAfterFirst[0].sizeUnits, 3);
+  assert.equal(legsAfterFirst[1].sizeUnits, 3);
+
+  const second = reconcileTrading212HistoricalExits(user, cfg, payload, 'acc-1', { orders: [] }, { USD: 1 });
+  assert.equal(second.imported, 0);
+  const legsAfterSecond = user.tradeJournal['2026-03-01'];
+  assert.equal(legsAfterSecond.length, 2);
+  assert.equal(legsAfterSecond[0].sizeUnits, 3);
+  assert.equal(legsAfterSecond[1].sizeUnits, 3);
+});
