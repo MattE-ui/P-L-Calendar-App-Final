@@ -648,6 +648,9 @@ function ensureSocialTables(db) {
     db.tradeGroupWatchlists = [];
     mutated = true;
   }
+  if (ensureWatchlistPreviousCloseReferences(db)) {
+    mutated = true;
+  }
   if (!Array.isArray(db.groupChats)) {
     db.groupChats = [];
     mutated = true;
@@ -4258,7 +4261,8 @@ function loadDB() {
       socialEventLog: [],
       watchlists: [],
       watchlistItems: [],
-      tradeGroupWatchlists: []
+      tradeGroupWatchlists: [],
+      watchlistPreviousCloseReferences: {}
     };
   }
 }
@@ -14204,7 +14208,7 @@ function formatAbbrevNumber(value) {
   return num.toFixed(0);
 }
 
-async function fetchWatchlistTickerMetrics(ticker) {
+async function fetchWatchlistTickerMetrics(db, ticker) {
   const normalized = normalizeWatchlistTicker(ticker);
   const cached = watchlistMarketDataCache.get(normalized);
   const now = Date.now();
@@ -14244,10 +14248,49 @@ async function fetchWatchlistTickerMetrics(ticker) {
   const currentPrice = Number(snapshot?.currentPrice);
   const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
   const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
-  const previousClose = Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null;
+  const providerPreviousClose = Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null;
   const regularMarketPrice = Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null;
   const extendedHoursPrice = Number.isFinite(Number(snapshot?.extendedHoursPrice)) ? Number(snapshot.extendedHoursPrice) : null;
   const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
+  const nyDate = getNyDateKeyForDate(new Date(), false);
+  const providerReferenceDate = previousWeekdayMarketDate(nyDate);
+  let didMutatePreviousCloseRef = false;
+  if (Number.isFinite(providerPreviousClose) && providerPreviousClose > 0) {
+    didMutatePreviousCloseRef = upsertWatchlistPreviousCloseReference(db, {
+      ticker: normalized,
+      marketDate: providerReferenceDate,
+      previousClose: providerPreviousClose,
+      source: 'provider_previous_close',
+      currency: snapshot?.currency || null,
+      exchange: snapshot?.quote?.exchange || snapshot?.quoteType || null
+    }) || didMutatePreviousCloseRef;
+  }
+  const marketState = String(snapshot?.marketState || '').trim().toLowerCase();
+  const shouldCaptureRegularClose = (marketState === 'post' || marketState === 'closed') && Number.isFinite(regularMarketPrice) && regularMarketPrice > 0;
+  if (shouldCaptureRegularClose) {
+    didMutatePreviousCloseRef = upsertWatchlistPreviousCloseReference(db, {
+      ticker: normalized,
+      marketDate: getMostRecentCompletedUsTradingSessionDate(new Date()),
+      previousClose: regularMarketPrice,
+      source: 'captured_regular_session_close',
+      currency: snapshot?.currency || null,
+      exchange: snapshot?.quote?.exchange || snapshot?.quoteType || null
+    }) || didMutatePreviousCloseRef;
+  }
+  if (didMutatePreviousCloseRef) {
+    try {
+      saveDB(db);
+    } catch (error) {
+      console.warn('[WATCHLIST_PREV_CLOSE_CALC] failed to persist previous-close reference store', {
+        ticker: normalized,
+        error: error?.message || error
+      });
+    }
+  }
+  const previousCloseTargetDate = getMostRecentCompletedUsTradingSessionDate(new Date());
+  const previousCloseReference = resolveWatchlistPreviousCloseReference(db, normalized, previousCloseTargetDate);
+  const previousClose = previousCloseReference ? Number(previousCloseReference.previousClose) : null;
+  const previousCloseDate = previousCloseReference?.marketDate || null;
   const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
   const isStale = snapshot?.isStale === true;
   const resolvedSession = isStale
@@ -14280,6 +14323,9 @@ async function fetchWatchlistTickerMetrics(ticker) {
     priceSource,
     selectedPriceSource: priceSource,
     displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
+    previousCloseDate,
+    previousCloseSource: previousCloseReference?.source || null,
+    previousCloseCapturedAt: previousCloseReference?.capturedAt || null,
     asOf: snapshot?.asOf || null,
     isDelayed: snapshot?.isDelayed === true,
     isStale,
@@ -14299,6 +14345,8 @@ async function fetchWatchlistTickerMetrics(ticker) {
     console.info('[WATCHLIST_QUOTE_PIPELINE_NORMALIZED]', {
       ticker: normalized,
       previousClose: payload.previousClose,
+      previousCloseDate: payload.previousCloseDate,
+      previousCloseSource: payload.previousCloseSource,
       regularMarketPrice: payload.regularMarketPrice,
       preMarketPrice: payload.preMarketPrice,
       postMarketPrice: payload.postMarketPrice,
@@ -14311,6 +14359,15 @@ async function fetchWatchlistTickerMetrics(ticker) {
     });
   }
 
+  console.info('[WATCHLIST_PREV_CLOSE_CALC]', {
+    ticker: normalized,
+    displayPrice: payload.displayPrice,
+    previousClose: payload.previousClose,
+    previousCloseDate: payload.previousCloseDate,
+    computedPercent: payload.displayChangePct,
+    selectedPriceSource: payload.selectedPriceSource
+  });
+
   watchlistMarketDataCache.set(normalized, { at: now, payload });
   return payload;
 }
@@ -14321,7 +14378,7 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
     .sort((a, b) => Number(a.order_index || 0) - Number(b.order_index || 0));
   const rows = await Promise.all(items.map(async (item) => {
     try {
-      const metrics = await fetchWatchlistTickerMetrics(item.canonical_ticker || item.ticker);
+      const metrics = await fetchWatchlistTickerMetrics(db, item.canonical_ticker || item.ticker);
       return {
         itemId: item.id,
         ticker: item.display_ticker || item.ticker,
@@ -19190,6 +19247,100 @@ function getNyDateKeyForDate(date, adjustForMarketOpen = false) {
 
 function getNyDateKey() {
   return getNyDateKeyForDate(new Date(), true);
+}
+
+function isWeekdayMarketDate(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return false;
+  const [year, month, day] = String(dateKey).split('-').map(Number);
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = utc.getUTCDay();
+  return dayOfWeek >= 1 && dayOfWeek <= 5;
+}
+
+function previousWeekdayMarketDate(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return '';
+  const [year, month, day] = String(dateKey).split('-').map(Number);
+  const cursor = new Date(Date.UTC(year, month - 1, day));
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  } while (cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6);
+  const y = cursor.getUTCFullYear();
+  const m = `${cursor.getUTCMonth() + 1}`.padStart(2, '0');
+  const d = `${cursor.getUTCDate()}`.padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getMostRecentCompletedUsTradingSessionDate(now = new Date()) {
+  const nyNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hours = nyNow.getHours();
+  const minutes = nyNow.getMinutes();
+  let marketDate = `${nyNow.getFullYear()}-${`${nyNow.getMonth() + 1}`.padStart(2, '0')}-${`${nyNow.getDate()}`.padStart(2, '0')}`;
+  if (hours < 16 || (hours === 16 && minutes === 0)) {
+    marketDate = previousWeekdayMarketDate(marketDate);
+  }
+  while (!isWeekdayMarketDate(marketDate)) {
+    marketDate = previousWeekdayMarketDate(marketDate);
+  }
+  return marketDate;
+}
+
+function ensureWatchlistPreviousCloseReferences(db) {
+  if (!db.watchlistPreviousCloseReferences || typeof db.watchlistPreviousCloseReferences !== 'object' || Array.isArray(db.watchlistPreviousCloseReferences)) {
+    db.watchlistPreviousCloseReferences = {};
+    return true;
+  }
+  return false;
+}
+
+function upsertWatchlistPreviousCloseReference(db, {
+  ticker,
+  marketDate,
+  previousClose,
+  source = 'unknown',
+  currency = null,
+  exchange = null
+} = {}) {
+  if (!ticker || !marketDate) return false;
+  const parsed = Number(previousClose);
+  if (!Number.isFinite(parsed) || parsed <= 0) return false;
+  ensureWatchlistPreviousCloseReferences(db);
+  const key = `${String(ticker).toUpperCase()}|${marketDate}`;
+  const existing = db.watchlistPreviousCloseReferences[key];
+  const next = {
+    ticker: String(ticker).toUpperCase(),
+    marketDate,
+    previousClose: parsed,
+    source: String(source || 'unknown'),
+    capturedAt: new Date().toISOString(),
+    currency: currency || null,
+    exchange: exchange || null
+  };
+  const changed = !existing
+    || Number(existing.previousClose) !== next.previousClose
+    || String(existing.source || '') !== next.source
+    || String(existing.currency || '') !== String(next.currency || '')
+    || String(existing.exchange || '') !== String(next.exchange || '');
+  if (changed) {
+    db.watchlistPreviousCloseReferences[key] = next;
+  }
+  return changed;
+}
+
+function resolveWatchlistPreviousCloseReference(db, ticker, marketDate) {
+  ensureWatchlistPreviousCloseReferences(db);
+  const normalizedTicker = String(ticker || '').trim().toUpperCase();
+  if (!normalizedTicker || !marketDate) return null;
+  const exact = db.watchlistPreviousCloseReferences[`${normalizedTicker}|${marketDate}`];
+  if (exact && Number.isFinite(Number(exact.previousClose)) && Number(exact.previousClose) > 0) {
+    return exact;
+  }
+  const prefix = `${normalizedTicker}|`;
+  const candidateKeys = Object.keys(db.watchlistPreviousCloseReferences)
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => db.watchlistPreviousCloseReferences[key])
+    .filter((entry) => entry && String(entry.marketDate || '') <= marketDate && Number.isFinite(Number(entry.previousClose)) && Number(entry.previousClose) > 0)
+    .sort((a, b) => String(b.marketDate || '').localeCompare(String(a.marketDate || '')));
+  return candidateKeys[0] || null;
 }
 async function fetchYahooQuote(symbol) {
   const snapshot = await fetchYahooQuoteSnapshot(symbol);
