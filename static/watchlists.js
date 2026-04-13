@@ -41,10 +41,10 @@
 
   function sessionLabel(rawSession) {
     const session = String(rawSession || '').trim().toLowerCase();
-    if (session === 'premarket') return 'Premarket';
-    if (session === 'afterhours') return 'After Hours';
-    if (session === 'regular') return 'Live';
-    return 'Closed';
+    if (session === 'premarket') return 'PREMARKET';
+    if (session === 'afterhours') return 'AFTER_HOURS';
+    if (session === 'regular') return 'LIVE';
+    return 'CLOSED';
   }
 
   function sessionClass(rawSession) {
@@ -397,7 +397,7 @@
                   <div class="helper">${escapeHtml(fmtAsOf(row.asOf))}${row.isDelayed ? ' • Delayed' : ''}</div>
                 </td>
                 <td>${fmt(row.displayPrice, 'price')}</td>
-                <td>${fmt(row.regularOpen ?? row.dayOpenPrice, 'price')}</td>
+                <td>${Number.isFinite(Number(row.regularOpen ?? row.dayOpenPrice)) && Number(row.regularOpen ?? row.dayOpenPrice) > 0 ? fmt(row.regularOpen ?? row.dayOpenPrice, 'price') : '—'}</td>
                 <td class="${Number(row.displayChangePct) > 0 ? 'is-pos' : (Number(row.displayChangePct) < 0 ? 'is-neg' : '')}">${fmt(row.displayChangePct ?? row.percentChangeToday, 'pct')}</td>
                 <td>${fmt(row.adrPercent, 'pct')}</td>
                 <td>${escapeHtml(row.dollarVolumeDisplay || '—')}</td>
