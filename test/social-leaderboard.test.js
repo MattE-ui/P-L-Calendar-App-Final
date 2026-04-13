@@ -156,3 +156,56 @@ test('leaderboard supports account mode using source-specific equity history', a
   assert.equal(entry.leaderboard_source, 'trading212');
   assert.equal(Math.round(entry.return_pct * 100) / 100, 0);
 });
+
+test('account mode merges source equity history across multiple integrated accounts', async () => {
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  const user = db.users.leader;
+  user.tradingAccounts = [
+    {
+      id: 'main-isa',
+      label: 'Main ISA',
+      currentValue: 1200,
+      currentNetDeposits: 0,
+      integrationProvider: 'trading212',
+      integrationEnabled: true
+    },
+    {
+      id: 'stocks-isa',
+      label: 'Stocks ISA',
+      currentValue: 700,
+      currentNetDeposits: 0,
+      integrationProvider: 'trading212',
+      integrationEnabled: true
+    }
+  ];
+  const beforeWindow = isoDayOffset(-10);
+  const withinWindow = isoDayOffset(-1);
+  user.portfolioHistory = {
+    [monthKey(beforeWindow)]: {
+      [beforeWindow]: {
+        end: 1500, cashIn: 0, cashOut: 0,
+        accounts: {
+          'main-isa': { end: 1000, cashIn: 0, cashOut: 0 },
+          'stocks-isa': { end: 500, cashIn: 0, cashOut: 0 }
+        }
+      }
+    },
+    [monthKey(withinWindow)]: {
+      [withinWindow]: {
+        end: 1900, cashIn: 200, cashOut: 0,
+        accounts: {
+          'main-isa': { end: 1200, cashIn: 100, cashOut: 0 },
+          'stocks-isa': { end: 700, cashIn: 100, cashOut: 0 }
+        }
+      }
+    }
+  };
+  saveDB(db);
+
+  const { res, data } = await authedFetch('/api/social/leaderboard?period=7D&verification=trusted&mode=account');
+  assert.equal(res.status, 200);
+  assert.equal(data.mode, 'account');
+  assert.equal(Array.isArray(data.entries), true);
+  assert.equal(data.entries.length, 1);
+  assert.equal(data.entries[0].leaderboard_source, 'trading212');
+});

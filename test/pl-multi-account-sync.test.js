@@ -191,3 +191,25 @@ test('manual baseline save does not collapse multi-account attribution in profil
   assert.equal(primaryFromAccountApi.currentValue, 4000);
   assert.equal(ibkrFromAccountApi.currentValue, 6500);
 });
+
+test('single integrated account is still used for portfolio and net deposit aggregation when multi-account flag is off', async () => {
+  seedDatabase();
+  const db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+  db.users[username].multiTradingAccountsEnabled = false;
+  db.users[username].tradingAccounts = [
+    { id: 'main-isa', label: 'Main ISA', currentValue: 7312.45, currentNetDeposits: 6900, integrationProvider: 'trading212', integrationEnabled: true }
+  ];
+  db.users[username].portfolio = 10;
+  db.users[username].initialNetDeposits = 20;
+  saveDB(db);
+
+  const profile = await authedFetch('/api/profile');
+  assert.equal(profile.res.status, 200);
+  assert.equal(profile.data.portfolio, 7312.45);
+  assert.equal(profile.data.netDepositsTotal, 6900);
+
+  const portfolio = await authedFetch('/api/portfolio');
+  assert.equal(portfolio.res.status, 200);
+  assert.equal(portfolio.data.portfolio, 7312.45);
+  assert.equal(portfolio.data.netDepositsTotal, 6900);
+});

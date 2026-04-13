@@ -2822,6 +2822,7 @@ function buildLeaderboardStatDiagnostics(db, username, periodKey, mode = 'trade'
     history_details: null,
     account_history_details: null,
     account_history_account_id: sourceHistory.accountId,
+    account_history_account_ids: Array.isArray(sourceHistory.accountIds) ? sourceHistory.accountIds : [],
     account_history_reason: sourceHistory.reason,
     trade_fallback_details: null,
     trade_return_details: null,
@@ -5971,46 +5972,74 @@ function listChronologicalEntriesForSource(user, source) {
     return { entries: [], accountId: null, reason: 'account_history_unsupported_source' };
   }
 
-  const integratedAccount = getIntegratedTradingAccount(user, sourceKey);
-  const accountId = integratedAccount?.id || null;
+  const { accounts } = ensureTradingAccounts(user);
+  const integratedAccounts = accounts.filter(account => (
+    account?.integrationEnabled
+    && account?.integrationProvider === sourceKey
+    && account?.id
+  ));
+  const accountIds = integratedAccounts.map(account => account.id);
+  const accountId = accountIds[0] || null;
   if (sourceKey === 'trading212') {
     console.info('[T212][valuation][calendar]', {
       canonicalOwnerAccountId: resolveCanonicalTrading212OwnerAccount(user)?.id || null,
-      integratedOwnerAccountId: integratedAccount?.id || null
+      integratedOwnerAccountId: accountId,
+      integratedOwnerAccountIds: accountIds
     });
   }
-  if (!accountId) {
-    return { entries: [], accountId: null, reason: 'integrated_account_not_connected' };
+  if (!accountIds.length) {
+    return { entries: [], accountId: null, accountIds: [], reason: 'integrated_account_not_connected' };
   }
 
+  const entriesByDate = new Map();
   const entries = [];
   for (const days of Object.values(history || {})) {
     for (const [dateKey, record] of Object.entries(days || {})) {
       if (!record || typeof record !== 'object') continue;
-      const accountRecord = record.accounts && typeof record.accounts === 'object'
-        ? record.accounts[accountId]
-        : null;
-      if (!accountRecord || typeof accountRecord !== 'object') continue;
-      const end = Number(accountRecord.end);
-      if (!Number.isFinite(end) || end < 0) continue;
-      const cashInRaw = Number(accountRecord.cashIn ?? 0);
-      const cashOutRaw = Number(accountRecord.cashOut ?? 0);
-      entries.push({
+      const accountMap = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
+      if (!accountMap) continue;
+      let summedEnd = 0;
+      let hasEnd = false;
+      let cashIn = 0;
+      let cashOut = 0;
+      let hasAnyValue = false;
+      let preBaseline = record.preBaseline === true;
+      accountIds.forEach((id) => {
+        const accountRecord = accountMap[id];
+        if (!accountRecord || typeof accountRecord !== 'object') return;
+        const end = Number(accountRecord.end);
+        if (Number.isFinite(end) && end >= 0) {
+          summedEnd += end;
+          hasEnd = true;
+          hasAnyValue = true;
+        }
+        const accountCashInRaw = Number(accountRecord.cashIn ?? 0);
+        const accountCashOutRaw = Number(accountRecord.cashOut ?? 0);
+        const accountCashIn = Number.isFinite(accountCashInRaw) && accountCashInRaw >= 0 ? accountCashInRaw : 0;
+        const accountCashOut = Number.isFinite(accountCashOutRaw) && accountCashOutRaw >= 0 ? accountCashOutRaw : 0;
+        if (accountCashIn || accountCashOut) hasAnyValue = true;
+        cashIn += accountCashIn;
+        cashOut += accountCashOut;
+        if (accountRecord.preBaseline === true) preBaseline = true;
+      });
+      if (!hasAnyValue || !hasEnd) continue;
+      entriesByDate.set(dateKey, {
         date: dateKey,
-        end,
-        cashIn: Number.isFinite(cashInRaw) && cashInRaw >= 0 ? cashInRaw : 0,
-        cashOut: Number.isFinite(cashOutRaw) && cashOutRaw >= 0 ? cashOutRaw : 0,
-        preBaseline: accountRecord.preBaseline === true || record.preBaseline === true
+        end: summedEnd,
+        cashIn,
+        cashOut,
+        preBaseline
       });
     }
   }
 
+  entries.push(...entriesByDate.values());
   entries.sort((a, b) => a.date.localeCompare(b.date));
   if (!entries.length) {
-    return { entries: [], accountId, reason: 'missing_source_history_entries' };
+    return { entries: [], accountId, accountIds, reason: 'missing_source_history_entries' };
   }
 
-  return { entries, accountId, reason: null };
+  return { entries, accountId, accountIds, reason: null };
 }
 
 function normalizeTradeJournal(user) {
@@ -6816,11 +6845,20 @@ function computeNetDepositsTotals(user, history = ensurePortfolioHistory(user)) 
   if (manualNetRaw !== null && manualNetRaw !== undefined && manualNetRaw !== '' && Number.isFinite(manualNetDeposits)) {
     return { baseline: manualNetDeposits, total: manualNetDeposits, source: 'manual' };
   }
-  const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
-  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
-  if (multiEnabled && accountList.length) {
-    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentNetDeposits) || 0), 0);
-    return { baseline: combined, total: combined, source: 'accounts' };
+  const aggregation = getTradingAccountAggregationSnapshot(user);
+  if (aggregation.accountCount > 0) {
+    console.info('[portfolio][aggregate][net_deposits]', {
+      accountCount: aggregation.accountCount,
+      accounts: aggregation.accounts.map(account => ({
+        id: account.id,
+        label: account.label,
+        provider: account.provider,
+        integrationEnabled: account.integrationEnabled,
+        netDeposits: account.netDeposits
+      })),
+      aggregatedNetDeposits: aggregation.netDeposits
+    });
+    return { baseline: aggregation.netDeposits, total: aggregation.netDeposits, source: 'accounts' };
   }
   const baseline = Number.isFinite(Number(user?.initialNetDeposits))
     ? Number(user.initialNetDeposits)
@@ -8620,13 +8658,50 @@ function getPortfolioGBPForRisk(user) {
   return Number.isFinite(portfolioGBP) && portfolioGBP >= 0 ? portfolioGBP : 0;
 }
 
-function getCurrentPortfolioValue(user) {
+function getTradingAccountAggregationSnapshot(user) {
   const accountList = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
-  const multiEnabled = user?.multiTradingAccountsEnabled || accountList.length > 1;
-  if (multiEnabled && accountList.length) {
-    const combined = accountList.reduce((sum, account) => sum + (Number(account?.currentValue) || 0), 0);
+  const accounts = accountList.map((account) => {
+    const portfolioValue = Number(account?.currentValue);
+    const netDeposits = Number(account?.currentNetDeposits);
     return {
-      value: combined,
+      id: account?.id || '',
+      label: account?.label || '',
+      provider: account?.integrationProvider || null,
+      integrationEnabled: !!account?.integrationEnabled,
+      portfolioValue: Number.isFinite(portfolioValue) ? portfolioValue : 0,
+      netDeposits: Number.isFinite(netDeposits) ? netDeposits : 0
+    };
+  });
+  const portfolioValue = accounts.reduce((sum, account) => sum + account.portfolioValue, 0);
+  const netDeposits = accounts.reduce((sum, account) => sum + account.netDeposits, 0);
+  const netPerformance = portfolioValue - netDeposits;
+  const performancePct = netDeposits !== 0 ? (netPerformance / netDeposits) : null;
+  return {
+    accountCount: accounts.length,
+    accounts,
+    portfolioValue,
+    netDeposits,
+    netPerformance,
+    performancePct
+  };
+}
+
+function getCurrentPortfolioValue(user) {
+  const aggregation = getTradingAccountAggregationSnapshot(user);
+  if (aggregation.accountCount > 0) {
+    console.info('[portfolio][aggregate][value]', {
+      accountCount: aggregation.accountCount,
+      accounts: aggregation.accounts.map(account => ({
+        id: account.id,
+        label: account.label,
+        provider: account.provider,
+        integrationEnabled: account.integrationEnabled,
+        portfolioValue: account.portfolioValue
+      })),
+      aggregatedPortfolioValue: aggregation.portfolioValue
+    });
+    return {
+      value: aggregation.portfolioValue,
       currency: 'GBP',
       source: 'manual',
       lastUpdatedAt: typeof user?.lastPortfolioSyncAt === 'string' ? user.lastPortfolioSyncAt : null
@@ -12684,6 +12759,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const rates = await fetchRates();
   const { trades, liveOpenPnlGBP, openLossPotentialGBP } = await buildActiveTrades(user, rates);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const accountAggregation = getTradingAccountAggregationSnapshot(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
   const hasManualPortfolioBaseline = manualPortfolioRaw !== null
@@ -12699,7 +12775,18 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     manualNetDepositsBaseline: user.manualNetDepositsBaseline,
     resolvedNetDeposits: totals.total,
     manualPortfolioBaseline: hasManualPortfolioBaseline ? manualPortfolioBaseline : null,
-    resolvedPortfolio
+    resolvedPortfolio,
+    accountCount: accountAggregation.accountCount,
+    accountPortfolioValues: accountAggregation.accounts.map(account => ({ id: account.id, value: account.portfolioValue })),
+    accountNetDeposits: accountAggregation.accounts.map(account => ({ id: account.id, netDeposits: account.netDeposits })),
+    aggregatedPortfolioValue: accountAggregation.portfolioValue,
+    aggregatedNetDeposits: accountAggregation.netDeposits,
+    netPerformanceInputs: {
+      portfolioValue: resolvedPortfolio,
+      netDeposits: totals.total,
+      netPerformance: resolvedPortfolio - totals.total,
+      performancePct: totals.total !== 0 ? ((resolvedPortfolio - totals.total) / totals.total) : null
+    }
   });
   res.json({
     portfolio: resolvedPortfolio,
@@ -12796,6 +12883,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   if (anchorMutated) mutated = true;
   if (mutated) saveDB(db);
   const portfolioSnapshot = getCurrentPortfolioValue(user);
+  const accountAggregation = getTradingAccountAggregationSnapshot(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
   const hasManualPortfolioBaseline = manualPortfolioRaw !== null
@@ -12813,7 +12901,18 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     manualNetDepositsBaseline: user.manualNetDepositsBaseline,
     resolvedNetDeposits: total,
     manualPortfolioBaseline: hasManualPortfolioBaseline ? manualPortfolioBaseline : null,
-    resolvedPortfolio: portfolioValue
+    resolvedPortfolio: portfolioValue,
+    accountCount: accountAggregation.accountCount,
+    accountPortfolioValues: accountAggregation.accounts.map(account => ({ id: account.id, value: account.portfolioValue })),
+    accountNetDeposits: accountAggregation.accounts.map(account => ({ id: account.id, netDeposits: account.netDeposits })),
+    aggregatedPortfolioValue: accountAggregation.portfolioValue,
+    aggregatedNetDeposits: accountAggregation.netDeposits,
+    netPerformanceInputs: {
+      portfolioValue,
+      netDeposits: total,
+      netPerformance: portfolioValue - total,
+      performancePct: total !== 0 ? ((portfolioValue - total) / total) : null
+    }
   });
   const role = getUserRole(user, req.username);
   const profileSummary = buildProfileCompletionSummary(user, portfolioValue, total);
