@@ -60,7 +60,18 @@ const state = {
   portfolioDomWriteCount: 0,
   portfolioDomWriteInProgress: false,
   portfolioDomExpectedText: '',
-  portfolioDomObserver: null
+  portfolioDomObserver: null,
+  activeTradesLastStructureSignature: '',
+  activeTradesLastRealtimeSignature: '',
+  activeTradesLastRenderSort: '',
+  activeTradesRenderCount: 0,
+  activeTradesIncrementalUpdateCount: 0,
+  tradeHeadlineMetricsCache: {
+    dataRef: null,
+    ratesSignature: '',
+    value: null
+  },
+  portfolioTrendSignature: ''
 };
 
 const ACTIVE_TRADE_SORTS = new Set([
@@ -137,6 +148,44 @@ function chooseRandom(list = []) {
   if (!Array.isArray(list) || !list.length) return '';
   const index = Math.floor(Math.random() * list.length);
   return list[index];
+}
+
+function buildRatesSignature(rates = {}) {
+  return ['GBP', 'USD', 'EUR']
+    .map(code => `${code}:${Number(rates?.[code] || 0).toFixed(6)}`)
+    .join('|');
+}
+
+function buildActiveTradeStructureSignature(trades = []) {
+  return trades.map((trade) => {
+    const tradeId = getActiveTradeUiId(trade);
+    return [
+      tradeId,
+      trade?.ticker || trade?.symbol || '',
+      trade?.direction || '',
+      Number(trade?.sizeUnits || 0),
+      Number(trade?.entry || 0),
+      Number(trade?.openQuantity || 0),
+      Number(trade?.currentStop || 0),
+      trade?.currentStopStale ? 1 : 0,
+      trade?.assetClass || '',
+      getTradeTimestamp(trade)
+    ].join(':');
+  }).join('|');
+}
+
+function buildActiveTradeRealtimeSignature(trades = [], safeScreenshot = false) {
+  return `${safeScreenshot ? 1 : 0}|${trades.map((trade) => {
+    const tradeId = getActiveTradeUiId(trade);
+    return [
+      tradeId,
+      Number(trade?.unrealizedGBP || 0).toFixed(2),
+      Number(trade?.guaranteedPnlGBP || 0).toFixed(2),
+      Number(trade?.livePrice || 0).toFixed(5),
+      Number(trade?.currentStop || 0).toFixed(5),
+      Number(trade?.positionGBP || 0).toFixed(2)
+    ].join(':');
+  }).join('|')}`;
 }
 
 function createDashboardLoadingOverlayController() {
@@ -1468,6 +1517,14 @@ function computeLifetimeMetrics() {
 
 
 function computeTradeHeadlineMetrics() {
+  const ratesSignature = buildRatesSignature(state.rates);
+  if (
+    state.tradeHeadlineMetricsCache.dataRef === state.data
+    && state.tradeHeadlineMetricsCache.ratesSignature === ratesSignature
+    && state.tradeHeadlineMetricsCache.value
+  ) {
+    return state.tradeHeadlineMetricsCache.value;
+  }
   const trades = Object.values(state.data || {}).flatMap((days = {}) => Object.values(days || {}))
     .flatMap(record => normalizeTradeRecords(record?.trades));
   const closedTrades = trades.filter(trade => trade.status === 'closed' && Number.isFinite(trade.closePrice));
@@ -1485,13 +1542,19 @@ function computeTradeHeadlineMetrics() {
     if (!values.length) return null;
     return values.reduce((sum, value) => sum + value, 0) / values.length;
   })();
-  return {
+  const computed = {
     totalTrades: trades.length,
     closedTrades: closedTrades.length,
     winners: winners.length,
     winRate: closedTrades.length ? (winners.length / closedTrades.length) * 100 : 0,
     avgRiskMultiple
   };
+  state.tradeHeadlineMetricsCache = {
+    dataRef: state.data,
+    ratesSignature,
+    value: computed
+  };
+  return computed;
 }
 
 function getLatestPortfolioGBP() {
@@ -1730,6 +1793,13 @@ function renderActiveTrades() {
   const openLossCard = $('#open-loss-potential-card');
   if (!list) return;
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
+  const structureSignature = buildActiveTradeStructureSignature(trades);
+  const realtimeSignature = buildActiveTradeRealtimeSignature(trades, state.safeScreenshot);
+  const shouldReuseExistingDom = (
+    list.childElementCount > 0
+    && state.activeTradesLastStructureSignature === structureSignature
+    && state.activeTradesLastRenderSort === state.activeTradeSort
+  );
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
   if (pnlEl) pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
@@ -1747,6 +1817,23 @@ function renderActiveTrades() {
   }
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
+    state.activeTradesLastRealtimeSignature = realtimeSignature;
+    state.activeTradesIncrementalUpdateCount += 1;
+    return;
+  }
+  if (shouldReuseExistingDom) {
+    if (state.activeTradesLastRealtimeSignature !== realtimeSignature) {
+      updateActiveTradeDisplay(trades);
+      state.activeTradesIncrementalUpdateCount += 1;
+    }
+    updateActiveTradesOverflow();
+    state.activeTradesLastRealtimeSignature = realtimeSignature;
+    if (window.PerfDiagnostics) {
+      window.PerfDiagnostics.log('dashboard-active-trades-dom-reused', {
+        sort: state.activeTradeSort,
+        incrementalUpdates: state.activeTradesIncrementalUpdateCount
+      });
+    }
     return;
   }
 
@@ -1775,6 +1862,9 @@ function renderActiveTrades() {
     state.expandedActiveTradeId = null;
     if (empty) empty.classList.remove('is-hidden');
     if (showAll) showAll.disabled = true;
+    state.activeTradesLastStructureSignature = structureSignature;
+    state.activeTradesLastRealtimeSignature = realtimeSignature;
+    state.activeTradesLastRenderSort = state.activeTradeSort;
     return;
   }
   if (empty) empty.classList.add('is-hidden');
@@ -1831,6 +1921,14 @@ function renderActiveTrades() {
     list.appendChild(groupCard);
   });
   updateActiveTradesOverflow();
+  state.activeTradesLastStructureSignature = structureSignature;
+  state.activeTradesLastRealtimeSignature = realtimeSignature;
+  state.activeTradesLastRenderSort = state.activeTradeSort;
+  state.activeTradesRenderCount += 1;
+  window.PerfDiagnostics?.log('dashboard-active-trades-full-render', {
+    sort: state.activeTradeSort,
+    fullRenders: state.activeTradesRenderCount
+  });
   } catch (error) {
     console.error('Failed to render active trades panel', error);
     const list = $('#active-trade-list');
@@ -2595,9 +2693,15 @@ function updateActiveTradeDisplay(trades) {
 function renderPortfolioTrend() {
   const el = $('#portfolio-trend');
   if (!el) return;
-  el.innerHTML = '';
 
   const periods = getPortfolioTrendPeriods();
+  const trendSignature = `${state.safeScreenshot ? 1 : 0}|${periods.map(item => `${item?.label || ''}:${Number(item?.pct || 0).toFixed(4)}`).join('|')}`;
+  if (state.portfolioTrendSignature === trendSignature) {
+    window.PerfDiagnostics?.log('dashboard-portfolio-trend-skip', { reason: 'signature-match' });
+    return;
+  }
+  state.portfolioTrendSignature = trendSignature;
+  el.innerHTML = '';
   const hasPerformanceData = periods.some(item => Number.isFinite(item?.pct));
   const noteEl = document.querySelector('#portfolio-trend-card .mini-chart-note');
   const defaultNote = 'Drag to inspect';
@@ -4214,6 +4318,10 @@ async function loadData({ includeActiveInPortfolio = false } = {}) {
 
 async function refreshActiveTrades() {
   try {
+    const prevStructure = state.activeTradesLastStructureSignature;
+    const prevRealtime = state.activeTradesLastRealtimeSignature;
+    const prevLiveOpenPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
+    const prevOpenLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
@@ -4230,10 +4338,24 @@ async function refreshActiveTrades() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
-    if (!userIsActivelyInteracting()) {
+    const nextStructure = buildActiveTradeStructureSignature(state.activeTrades);
+    const nextRealtime = buildActiveTradeRealtimeSignature(state.activeTrades, state.safeScreenshot);
+    const structureChanged = prevStructure !== nextStructure;
+    const realtimeChanged = prevRealtime !== nextRealtime;
+    const pnlChanged = prevLiveOpenPnl !== state.liveOpenPnlGBP || prevOpenLossPotential !== state.openLossPotentialGBP;
+    if (!userIsActivelyInteracting() && (structureChanged || realtimeChanged || pnlChanged)) {
       renderActiveTrades();
-      renderMetrics();
+      if (pnlChanged) {
+        renderMetrics();
+      }
       state.hasPendingBackgroundRender = false;
+      window.PerfDiagnostics?.log('dashboard-active-trades-refresh-rendered', {
+        structureChanged,
+        realtimeChanged,
+        pnlChanged
+      });
+    } else if (!userIsActivelyInteracting()) {
+      window.PerfDiagnostics?.log('dashboard-active-trades-refresh-skipped', { reason: 'no-material-change' });
     } else {
       state.hasPendingBackgroundRender = true;
     }
@@ -4249,16 +4371,43 @@ function hasEnabledAutomationIntegration() {
     && state.tradingAccounts.some(account => account?.integrationEnabled && account?.integrationProvider);
 }
 
+function getDashboardRenderFingerprint() {
+  const firstEntryCount = Object.keys(state.data || {}).length;
+  return [
+    state.data,
+    state.metrics?.latestGBP,
+    state.currentPortfolioValueGBP,
+    state.netDepositsTotalGBP,
+    state.liveOpenPnlGBP,
+    state.openLossPotentialGBP,
+    state.safeScreenshot ? 1 : 0,
+    state.view,
+    state.activeTradeSort,
+    firstEntryCount,
+    buildActiveTradeStructureSignature(state.activeTrades),
+    buildActiveTradeRealtimeSignature(state.activeTrades, state.safeScreenshot)
+  ].join('|');
+}
+
 async function refreshAutomatedCalendarData() {
   if (state.backgroundRefreshInFlight) return;
   if (!hasEnabledAutomationIntegration()) return;
   state.backgroundRefreshInFlight = true;
+  const beforeFingerprint = getDashboardRenderFingerprint();
   try {
     await loadProfile();
     await loadData();
-    if (!userIsActivelyInteracting()) {
+    const afterFingerprint = getDashboardRenderFingerprint();
+    if (!userIsActivelyInteracting() && beforeFingerprint !== afterFingerprint) {
       render();
       state.hasPendingBackgroundRender = false;
+      window.PerfDiagnostics?.log('dashboard-automated-refresh-rendered', {
+        changed: true
+      });
+    } else if (!userIsActivelyInteracting()) {
+      window.PerfDiagnostics?.log('dashboard-automated-refresh-skipped', {
+        changed: false
+      });
     } else {
       state.hasPendingBackgroundRender = true;
     }
@@ -5327,9 +5476,6 @@ function bindControls() {
   window.addEventListener('resize', () => {
     syncActiveTradesHeight();
   });
-  window.addEventListener('resize', () => {
-    syncActiveTradesHeight();
-  });
 }
 
 
@@ -5376,20 +5522,6 @@ async function loadProfile({ refreshIntegrations = false } = {}) {
     state.multiTradingAccountsEnabled = false;
     state.riskCapitalMeta = null;
   }
-}
-
-async function updateDevtoolsNav() {
-  try {
-    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
-    const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
-  } catch (e) {
-    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
-  }
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 function normalizeAlertPrefillPayload(payload = {}) {
@@ -5475,34 +5607,6 @@ function consumePendingRiskCalculatorPrefill() {
   }
   if (!payload) return;
   applyRiskCalculatorPrefillPayload(payload);
-}
-
-async function updateDevtoolsNav() {
-  try {
-    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
-    const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
-  } catch (e) {
-    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
-  }
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
-}
-
-async function updateDevtoolsNav() {
-  try {
-    const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
-    const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
-  } catch (e) {
-    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
-  }
-}
-
-if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
 }
 
 async function init() {
