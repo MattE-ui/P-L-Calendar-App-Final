@@ -13,6 +13,9 @@ const state = {
   liveOpenPnlGBP: 0,
   openLossPotentialGBP: 0,
   livePortfolioGBP: 0,
+  currentPortfolioValueGBP: 0,
+  historyPortfolioValueGBP: 0,
+  lastHeaderRenderedPortfolioGBP: 0,
   activeTrades: [],
   expandedActiveTradeId: null,
   activeTradeSort: 'newest',
@@ -1289,6 +1292,7 @@ function computeLifetimeMetrics() {
       netPerformanceGBP: netPerformance,
       netPerformancePct: Number.isFinite(pct) ? pct : null
     };
+    state.historyPortfolioValueGBP = fallback;
     return;
   }
   let baseline = null;
@@ -1327,6 +1331,7 @@ function computeLifetimeMetrics() {
     netPerformanceGBP: netPerformance,
     netPerformancePct: Number.isFinite(pct) ? pct : null
   };
+  state.historyPortfolioValueGBP = safeLatest;
 }
 
 
@@ -3032,19 +3037,19 @@ function getRenderedPortfolioValue(value) {
 }
 
 function setPortfolioValue(value, source = 'unknown') {
-  const beforePortfolioGBP = state.portfolioGBP;
   const normalizedValue = Number.isFinite(Number(value)) ? Number(value) : 0;
   console.info('[trace][frontend][setPortfolioValue][input]', {
     source,
     receivedValue: value,
     receivedType: typeof value,
-    statePortfolioBefore: beforePortfolioGBP,
+    statePortfolioBefore: state.portfolioGBP,
     normalizedValue
   });
-  state.portfolioGBP = normalizedValue;
+  state.lastHeaderRenderedPortfolioGBP = normalizedValue;
   console.info('[trace][frontend][setPortfolioValue][state]', {
     source,
-    statePortfolioAfter: state.portfolioGBP
+    statePortfolioAfter: state.portfolioGBP,
+    headerRenderedPortfolioAfter: state.lastHeaderRenderedPortfolioGBP
   });
   const portfolioValueEl = document.getElementById('header-portfolio-value');
   if (!portfolioValueEl) {
@@ -3097,14 +3102,19 @@ function setupPortfolioValueMutationObserver() {
 
 function renderMetrics() {
   const metrics = state.metrics || {};
-  const latestGBP = Number.isFinite(state.portfolioGBP)
-    ? state.portfolioGBP
+  const historyGBP = Number.isFinite(state.historyPortfolioValueGBP)
+    ? state.historyPortfolioValueGBP
     : (Number.isFinite(metrics.latestGBP) ? metrics.latestGBP : 0);
-  const liveGBP = Number.isFinite(state.livePortfolioGBP) ? state.livePortfolioGBP : latestGBP;
+  const currentGBP = Number.isFinite(state.currentPortfolioValueGBP)
+    ? state.currentPortfolioValueGBP
+    : 0;
+  const headerSource = Number.isFinite(state.currentPortfolioValueGBP)
+    ? 'state.currentPortfolioValueGBP'
+    : 'fallback:0';
   const netDepositsGBP = Number.isFinite(state.netDepositsTotalGBP)
     ? state.netDepositsTotalGBP
     : (Number.isFinite(metrics.netDepositsGBP) ? metrics.netDepositsGBP : 0);
-  const netPerformanceGBP = latestGBP - netDepositsGBP;
+  const netPerformanceGBP = historyGBP - netDepositsGBP;
   const netPerformancePct = netDepositsGBP !== 0
     ? (netPerformanceGBP / Math.abs(netDepositsGBP)) * 100
     : null;
@@ -3112,7 +3122,7 @@ function renderMetrics() {
     ? (state.rates.USD ? 'USD' : (state.rates.EUR ? 'EUR' : null))
     : 'GBP';
 
-  setPortfolioValue(liveGBP, 'renderMetrics');
+  setPortfolioValue(currentGBP, 'renderMetrics:currentPortfolioValueGBP');
   const portfolioSubEl = $('#header-portfolio-sub');
   if (portfolioSubEl) {
     if (state.safeScreenshot) {
@@ -3120,7 +3130,7 @@ function renderMetrics() {
     } else {
       const pieces = [];
       if (altCurrency) {
-        const altValue = formatCurrency(liveGBP, altCurrency);
+        const altValue = formatCurrency(currentGBP, altCurrency);
         if (altValue !== '—') pieces.push(`≈ ${altValue}`);
       }
       const openPnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
@@ -3187,10 +3197,27 @@ function renderMetrics() {
   const portfolioCard = $('#hero-portfolio');
   if (portfolioCard) {
     const deltaFromDeposits = Number.isFinite(netDepositsGBP)
-      ? latestGBP - netDepositsGBP
+      ? historyGBP - netDepositsGBP
       : 0;
     setMetricTrend(portfolioCard, deltaFromDeposits);
   }
+  const todayEntry = getDailyEntry(new Date());
+  const calendarTodayValue = Number.isFinite(todayEntry?.closing) ? Number(todayEntry.closing) : null;
+  console.info('[trace][frontend][renderMetrics][portfolio-sources]', {
+    currentPortfolioValueGBP: state.currentPortfolioValueGBP,
+    historyPortfolioValueGBP: state.historyPortfolioValueGBP,
+    headerRenderedValue: currentGBP,
+    calendarTodayValue,
+    sourceChosenForHeader: headerSource,
+    candidates: {
+      statePortfolioGBP: state.portfolioGBP,
+      stateLivePortfolioGBP: state.livePortfolioGBP,
+      metricsLatestGBP: metrics.latestGBP,
+      stateLatestAccountValue: state.latestAccountValue,
+      stateAccountHistory: state.accountHistory,
+      statePortfolioData: state.portfolioData
+    }
+  });
 }
 
 function setActiveView() {
@@ -3929,7 +3956,13 @@ async function loadData() {
       ? totalVal
       : state.netDepositsBaselineGBP;
     state.liveOpenPnlGBP = Number.isFinite(res?.liveOpenPnl) ? res.liveOpenPnl : 0;
-    state.livePortfolioGBP = Number.isFinite(chosenPortfolioValue) ? chosenPortfolioValue : 0;
+    state.currentPortfolioValueGBP = Number.isFinite(chosenPortfolioValue) ? chosenPortfolioValue : 0;
+    state.livePortfolioGBP = state.currentPortfolioValueGBP;
+    console.info('[trace][frontend][loadData][current-portfolio-assigned]', {
+      endpoint: '/api/portfolio',
+      currentPortfolioValueGBP: state.currentPortfolioValueGBP,
+      assignedFrom: 'res.portfolioValue'
+    });
     console.info('[trace][frontend][portfolio-to-setter]', {
       endpoint: '/api/portfolio',
       valuePassedToSetter: chosenPortfolioValue
@@ -3944,6 +3977,7 @@ async function loadData() {
   } catch (e) {
     console.error('Failed to load portfolio', e);
     state.portfolioGBP = 0;
+    state.currentPortfolioValueGBP = 0;
     state.netDepositsBaselineGBP = 0;
     state.netDepositsTotalGBP = 0;
   }
@@ -3953,7 +3987,7 @@ async function loadData() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+      state.livePortfolioGBP = Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0;
     }
     state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
       ? activeRes.openLossPotential
@@ -3975,7 +4009,7 @@ async function refreshActiveTrades() {
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
-      state.livePortfolioGBP = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
+      state.livePortfolioGBP = Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0;
     }
     state.openLossPotentialGBP = Number.isFinite(activeRes?.openLossPotential)
       ? activeRes.openLossPotential
