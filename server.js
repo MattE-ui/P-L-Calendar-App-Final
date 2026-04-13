@@ -6785,9 +6785,11 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
   return { pnlGBP: pnlSafe, closeDateKey: targetDate };
 }
 
-function buildSnapshots(history, initial, tradeJournal = {}) {
+function buildSnapshots(history, initial, tradeJournal = {}, options = {}) {
   const snapshots = {};
   const records = [];
+  const selectedMonthKey = typeof options.selectedMonthKey === 'string' ? options.selectedMonthKey.trim() : '';
+  const includeTrades = options.includeTrades !== false;
   for (const [monthKey, days] of Object.entries(history || {})) {
     for (const [dateKey, record] of Object.entries(days || {})) {
       if (!record || typeof record !== 'object') continue;
@@ -6815,42 +6817,49 @@ function buildSnapshots(history, initial, tradeJournal = {}) {
   records.sort((a, b) => a.date.localeCompare(b.date));
   let baseline = Number.isFinite(initial) ? initial : null;
   records.forEach(record => {
-    if (!snapshots[record.monthKey]) snapshots[record.monthKey] = {};
-    const payload = {};
-    if (record.end !== null) {
-      const start = baseline !== null ? baseline : record.end;
-      payload.start = start;
-      payload.end = record.end;
-      payload.cashIn = record.cashIn;
-      payload.cashOut = record.cashOut;
-      baseline = record.end;
-    } else {
-      if (record.cashIn || record.cashOut) {
+    const includeMonth = !selectedMonthKey || selectedMonthKey === record.monthKey;
+    if (includeMonth) {
+      if (!snapshots[record.monthKey]) snapshots[record.monthKey] = {};
+      const payload = {};
+      if (record.end !== null) {
+        const start = baseline !== null ? baseline : record.end;
+        payload.start = start;
+        payload.end = record.end;
+        payload.cashIn = record.cashIn;
+        payload.cashOut = record.cashOut;
+      } else if (record.cashIn || record.cashOut) {
         payload.cashIn = record.cashIn;
         payload.cashOut = record.cashOut;
       }
-      if (baseline !== null) {
-        baseline += record.cashIn - record.cashOut;
+      if (record.preBaseline) {
+        payload.preBaseline = true;
       }
+      if (record.note) {
+        payload.note = record.note;
+      }
+      if (record.accounts && typeof record.accounts === 'object') {
+        payload.accounts = record.accounts;
+      }
+      snapshots[record.monthKey][record.date] = payload;
     }
-    if (record.preBaseline) {
-      payload.preBaseline = true;
+    if (record.end !== null) {
+      baseline = record.end;
+    } else if (baseline !== null) {
+      baseline += record.cashIn - record.cashOut;
     }
-    if (record.note) {
-      payload.note = record.note;
-    }
-    if (record.accounts && typeof record.accounts === 'object') {
-      payload.accounts = record.accounts;
-    }
-    snapshots[record.monthKey][record.date] = payload;
   });
-  for (const [dateKey, trades] of Object.entries(tradeJournal)) {
+  for (const [dateKey, trades] of Object.entries(tradeJournal || {})) {
     const monthKey = dateKey.slice(0, 7);
+    if (selectedMonthKey && selectedMonthKey !== monthKey) continue;
     if (!snapshots[monthKey]) snapshots[monthKey] = {};
     if (!snapshots[monthKey][dateKey]) {
       snapshots[monthKey][dateKey] = {};
     }
-    snapshots[monthKey][dateKey].trades = trades;
+    const safeTrades = Array.isArray(trades) ? trades : [];
+    snapshots[monthKey][dateKey].tradesCount = safeTrades.length;
+    if (includeTrades) {
+      snapshots[monthKey][dateKey].trades = safeTrades;
+    }
   }
   return snapshots;
 }
@@ -19588,6 +19597,8 @@ app.post('/api/integrations/trading212', auth, async (req, res) => {
 app.get('/api/pl', auth, (req,res)=>{
   const { year, month } = req.query;
   const selectedMonthKey = year && month ? `${year}-${String(month).padStart(2,'0')}` : '';
+  const includeTrades = req.query?.includeTrades !== '0';
+  const visibleWindowOnly = ['1', 'true', 'yes'].includes(String(req.query?.visibleWindowOnly || '').toLowerCase());
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
@@ -19601,14 +19612,21 @@ app.get('/api/pl', auth, (req,res)=>{
   const { baseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   const mapper = createTradeInstrumentMapper(db, req.username);
-  const snapshots = req.perfDiag?.timeSync('build_snapshots', () => buildSnapshots(history, baseline, journal)) || buildSnapshots(history, baseline, journal);
+  const snapshots = req.perfDiag?.timeSync('build_snapshots', () => buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades })) || buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades });
   if (selectedMonthKey) {
     const monthEntries = snapshots[selectedMonthKey] || {};
     Object.values(monthEntries).forEach(entry => {
       if (!entry || !Array.isArray(entry.trades)) return;
       entry.trades = entry.trades.map(trade => mapper({ ...trade }));
     });
-    req.perfDiag?.setMeta({ summaryModeUsed: true, payloadTrimmed: true, requestScopedReuse: true });
+    req.perfDiag?.setMeta({
+      summaryModeUsed: true,
+      payloadTrimmed: true,
+      visibleWindowOnly,
+      includeTrades,
+      dashboardHistorySummaryUsed: true,
+      requestScopedReuse: true
+    });
   } else {
     Object.values(snapshots).forEach(monthEntries => {
       Object.values(monthEntries || {}).forEach(entry => {
@@ -19616,7 +19634,7 @@ app.get('/api/pl', auth, (req,res)=>{
         entry.trades = entry.trades.map(trade => mapper({ ...trade }));
       });
     });
-    req.perfDiag?.setMeta({ summaryModeUsed: false, requestScopedReuse: true });
+    req.perfDiag?.setMeta({ summaryModeUsed: false, includeTrades, requestScopedReuse: true });
   }
   if (mutated) saveDB(db);
   if (selectedMonthKey) {
