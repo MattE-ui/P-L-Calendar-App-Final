@@ -6472,6 +6472,13 @@ function filterTrades(trades = [], filters = {}) {
   const tags = sanitizeTagList(filters.tags);
   const winLoss = typeof filters.winLoss === 'string' ? filters.winLoss.trim().toLowerCase() : null;
   const status = typeof filters.status === 'string' ? filters.status.trim().toLowerCase() : null;
+  const hasNarrowingFilters = Boolean(
+    symbol || tradeType || assetClass || strategyTag || marketCondition
+    || tags.length || winLoss || status
+  );
+  if (!hasNarrowingFilters && !from && !to) {
+    return trades;
+  }
 
   return trades.filter(trade => {
     const dateKey = trade.openDate;
@@ -21464,12 +21471,18 @@ app.get('/api/trades', auth, async (req, res) => {
   };
   const trades = req.perfDiag?.timeSync('flatten_map_trades', () => flattenTrades(user, rates, prefilter).map(trade => mapper(trade)))
     || flattenTrades(user, rates, prefilter).map(trade => mapper(trade));
-  const filtered = filterTrades(trades, req.query || {})
+  const filtered = req.perfDiag?.timeSync('trades_filter_sort', () => filterTrades(trades, req.query || {})
     .sort((a, b) => {
       const aDate = a.openDate || '';
       const bDate = b.openDate || '';
       return bDate.localeCompare(aDate);
-    });
+    }))
+    || filterTrades(trades, req.query || {})
+      .sort((a, b) => {
+        const aDate = a.openDate || '';
+        const bDate = b.openDate || '';
+        return bDate.localeCompare(aDate);
+      });
   req.perfDiag?.setMeta({ resultCount: filtered.length, cache: 'bypass', requestScopedReuse: true, summaryModeUsed: Boolean(prefilter.from || prefilter.to) });
   res.json({ trades: filtered });
 });
@@ -22486,7 +22499,11 @@ app.post('/api/trades', auth, async (req, res) => {
     context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
   }).catch((error) => console.warn('[Notifications] trade create event failed:', error?.message || error));
   saveDB(db);
-  res.json({ ok: true, trade, date: targetDate });
+  res.json({
+    ok: true,
+    trade: applyInstrumentMappingToTrade({ ...trade, openDate: targetDate }, db, req.username),
+    date: targetDate
+  });
 });
 
 app.put('/api/trades/:id', auth, async (req, res) => {
@@ -22545,7 +22562,11 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }
   }
     saveDB(db);
-    return res.json({ ok: true, trade, trim: trimResult });
+    return res.json({
+      ok: true,
+      trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username),
+      trim: trimResult
+    });
   }
   const wantsRiskUpdate = (
     updates.entry !== undefined ||
@@ -22753,7 +22774,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
     }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
   }
   saveDB(db);
-  res.json({ ok: true, trade });
+  res.json({ ok: true, trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username) });
 });
 
 app.post('/api/trades/:id/trim', auth, async (req, res) => {
@@ -22805,7 +22826,11 @@ app.post('/api/trades/:id/trim', auth, async (req, res) => {
     }
   }
   saveDB(db);
-  res.json({ ok: true, trade, trim: result });
+  res.json({
+    ok: true,
+    trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username),
+    trim: result
+  });
 });
 
 app.delete('/api/trades/:id', auth, (req, res) => {
@@ -22903,7 +22928,11 @@ app.post('/api/trades/close', auth, (req, res) => {
           context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
         }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
         saveDB(db);
-        return res.json({ ok: true, pnlGBP: summaryAfter.realizedPnlGBP });
+        return res.json({
+          ok: true,
+          pnlGBP: summaryAfter.realizedPnlGBP,
+          trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username)
+        });
       }
       const result = applyTradeClose(user, trade, closePrice, date, rates, defaultDate);
       if (userLeadsTradeGroups(db, req.username)) {
@@ -22924,7 +22953,11 @@ app.post('/api/trades/close', auth, (req, res) => {
         context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
       }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
       saveDB(db);
-      res.json({ ok: true, pnlGBP: result.pnlGBP });
+      res.json({
+        ok: true,
+        pnlGBP: result.pnlGBP,
+        trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username)
+      });
     })
     .catch((err) => {
       console.error('Failed to compute PnL on trade close', err);
