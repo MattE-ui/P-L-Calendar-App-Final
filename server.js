@@ -13709,27 +13709,51 @@ async function fetchWatchlistTickerMetrics(ticker) {
   const dayOpenPrice = Number.isFinite(open) && open > 0 ? open : null;
   const displayPrice = Number.isFinite(Number(snapshot?.displayPrice)) ? Number(snapshot.displayPrice) : null;
   const previousClose = Number.isFinite(Number(snapshot?.previousClose)) ? Number(snapshot.previousClose) : null;
+  const extendedHoursPrice = Number.isFinite(Number(snapshot?.extendedHoursPrice)) ? Number(snapshot.extendedHoursPrice) : null;
   const priceSource = typeof snapshot?.priceSource === 'string' ? snapshot.priceSource : 'none';
   const percentChangeToday = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
+  const isStale = snapshot?.isStale === true;
+  const resolvedSession = isStale
+    ? 'stale'
+    : priceSource === 'preMarketPrice'
+      ? 'premarket'
+      : priceSource === 'postMarketPrice'
+        ? 'afterhours'
+        : priceSource === 'regularMarketPrice'
+          ? 'regular'
+          : 'closed';
+  console.info('[WATCHLIST_QUOTE_DEBUG]', {
+    ticker: normalized,
+    selectedField: priceSource,
+    session: resolvedSession,
+    marketState: snapshot?.marketState || '',
+    displayPrice,
+    previousClose,
+    regularMarketPrice: Number.isFinite(Number(snapshot?.regularMarketPrice)) ? Number(snapshot.regularMarketPrice) : null,
+    preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
+    postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
+    extendedHoursPrice
+  });
   const dollarVolumeRaw = Number.isFinite(volume) && Number.isFinite(currentPrice)
     ? volume * currentPrice
     : null;
 
   const payload = {
     ticker: normalized,
-    session: String(snapshot?.session || 'closed'),
+    session: resolvedSession,
     currentPrice: Number.isFinite(currentPrice) ? currentPrice : null,
     previousClose,
     regularOpen: Number.isFinite(Number(snapshot?.regularOpen)) ? Number(snapshot.regularOpen) : dayOpenPrice,
     preMarketPrice: Number.isFinite(Number(snapshot?.preMarketPrice)) ? Number(snapshot.preMarketPrice) : null,
     postMarketPrice: Number.isFinite(Number(snapshot?.postMarketPrice)) ? Number(snapshot.postMarketPrice) : null,
+    extendedHoursPrice,
     displayPrice,
     displayChangePct: percentChangeToday,
     priceSource,
     displayChangeBasis: snapshot?.displayChangeBasis || 'previousClose',
     asOf: snapshot?.asOf || null,
     isDelayed: snapshot?.isDelayed === true,
-    isStale: snapshot?.isStale === true,
+    isStale,
     dayOpenPrice,
     percentChangeToday,
     adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
@@ -13770,6 +13794,7 @@ async function buildWatchlistMarketDataRows(db, watchlist) {
         regularOpen: null,
         preMarketPrice: null,
         postMarketPrice: null,
+        extendedHoursPrice: null,
         displayPrice: null,
         displayChangePct: null,
         displayChangeBasis: 'previousClose',
@@ -18586,7 +18611,6 @@ function resolveDisplayPriceAndSession({ preMarketPrice, postMarketPrice, regula
 }
 
 function computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource = 'none' } = {}) {
-  if (priceSource === 'previousClose' || priceSource === 'none') return null;
   if (!Number.isFinite(displayPrice) || !Number.isFinite(previousClose) || previousClose <= 0) return null;
   return ((displayPrice - previousClose) / previousClose) * 100;
 }
@@ -18613,16 +18637,35 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
   const marketState = typeof quote?.marketState === 'string' ? quote.marketState.toLowerCase() : '';
   const preMarketPrice = parsePositiveNumber(quote?.preMarketPrice);
   const postMarketPrice = parsePositiveNumber(quote?.postMarketPrice);
+  const extendedHoursPrice = parsePositiveNumber(
+    quote?.extendedMarketPrice,
+    quote?.extendedHoursPrice,
+    quote?.extendedHoursMarketPrice,
+    quote?.postMarketTradePrice,
+    quote?.preMarketTradePrice,
+    quote?.postMarketLastPrice,
+    quote?.preMarketLastPrice
+  );
   const regularMarketPrice = parsePositiveNumber(quote?.regularMarketPrice, quote?.marketPrice, quote?.price);
   const previousClose = parsePositiveNumber(quote?.regularMarketPreviousClose, quote?.previousClose, quote?.close);
   const regularOpen = parsePositiveNumber(quote?.regularMarketOpen, quote?.open);
   const currentPrice = parsePositiveNumber(regularMarketPrice, quote?.marketPrice, quote?.price);
-  const { displayPrice, session, priceSource } = resolveDisplayPriceAndSession({
-    preMarketPrice,
-    postMarketPrice,
-    regularMarketPrice: currentPrice,
-    previousClose
-  });
+  const marketStateIsRegular = marketState === 'regular';
+  const preferredPre = marketState === 'pre' ? parsePositiveNumber(preMarketPrice, extendedHoursPrice) : preMarketPrice;
+  const preferredPost = marketState === 'post' ? parsePositiveNumber(postMarketPrice, extendedHoursPrice) : postMarketPrice;
+  const { displayPrice, session, priceSource } = marketStateIsRegular
+    ? resolveDisplayPriceAndSession({
+      preMarketPrice: null,
+      postMarketPrice: null,
+      regularMarketPrice: currentPrice,
+      previousClose
+    })
+    : resolveDisplayPriceAndSession({
+      preMarketPrice: preferredPre,
+      postMarketPrice: preferredPost,
+      regularMarketPrice: null,
+      previousClose
+    });
   const displayChangePct = computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource });
   const isDelayed = Number.isFinite(Number(quote?.exchangeDataDelayedBy)) && Number(quote.exchangeDataDelayedBy) > 0;
   const asOf = quoteAsOfFromSource(quote, priceSource);
@@ -18640,12 +18683,24 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
   const preferredExtended = parsePositiveNumber(
     preMarketPrice,
     postMarketPrice,
+    extendedHoursPrice,
     quote?.extendedMarketPrice
   );
   const live = parsePositiveNumber(
     preferredExtended,
     marketOpen ? regularMarketPrice : null
   );
+  const normalizedQuote = {
+    previousClose,
+    regularMarketPrice,
+    extendedHoursPrice,
+    preMarketPrice,
+    postMarketPrice,
+    displayPrice,
+    session,
+    asOf,
+    isStale
+  };
   return {
     symbol,
     currency: quote?.currency || 'GBP',
@@ -18658,9 +18713,11 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     mid,
     last,
     currentPrice,
+    regularMarketPrice,
     regularOpen,
     preMarketPrice,
     postMarketPrice,
+    extendedHoursPrice,
     displayPrice,
     displayChangePct,
     priceSource,
@@ -18669,6 +18726,7 @@ function normalizeQuoteSnapshot(symbol, quote = {}) {
     isDelayed,
     isStale,
     previousClose,
+    quote: normalizedQuote,
     selectedPrice: parsePositiveNumber(displayPrice, live, last, previousClose)
   };
 }
@@ -18878,9 +18936,11 @@ async function fetchMarketQuoteSnapshot(symbol) {
         mid: null,
         last: yahooChart.price,
         currentPrice: yahooChart.price,
+        regularMarketPrice: yahooChart.price,
         regularOpen: null,
         preMarketPrice: null,
         postMarketPrice: null,
+        extendedHoursPrice: null,
         displayPrice,
         displayChangePct: computePercentChangeFromPreviousClose(displayPrice, previousClose, { priceSource }),
         priceSource,
@@ -18908,9 +18968,11 @@ async function fetchMarketQuoteSnapshot(symbol) {
         mid: null,
         last: stooq.price,
         currentPrice: null,
+        regularMarketPrice: null,
         regularOpen: null,
         preMarketPrice: null,
         postMarketPrice: null,
+        extendedHoursPrice: null,
         displayPrice: stooq.price,
         displayChangePct: null,
         priceSource: 'none',
