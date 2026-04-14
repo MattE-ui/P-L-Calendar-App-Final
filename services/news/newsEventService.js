@@ -87,11 +87,15 @@ function buildEventDedupeKey(input = {}) {
     ? [sourceType, eventType, country, region, scheduledAt]
     : null;
 
+  const earningsScheduledIdentity = (eventType === 'earnings' && scheduledAt)
+    ? [sourceType, eventType, canonicalTicker, country, region, scheduledAt]
+    : null;
+
   const sourceIdentity = sourceExternalId
     ? [sourceType, eventType, sourceExternalId]
     : [sourceType, eventType, canonicalTicker, scheduledAt, publishedAt, title];
 
-  const raw = (macroScheduledIdentity || sourceIdentity).join('|').toLowerCase();
+  const raw = (macroScheduledIdentity || earningsScheduledIdentity || sourceIdentity).join('|').toLowerCase();
   if (!raw.replace(/\|/g, '').trim()) return null;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }

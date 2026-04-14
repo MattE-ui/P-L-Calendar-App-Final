@@ -18,6 +18,8 @@ const analytics = require('./lib/analytics');
 const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
 const { createNewsPreferenceService } = require('./services/news/newsPreferenceService');
 const { runMacroIngestion } = require('./services/news/macroIngestionService');
+const { runEarningsIngestion } = require('./services/news/earningsIngestionService');
+const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -51,23 +53,10 @@ const PORT = process.env.PORT || 3000;
 
 
 function resolveUserTickerUniverse(db, userId) {
-  const tickers = new Set();
-  const entries = Array.isArray(db?.trades) ? db.trades : [];
-  for (const trade of entries) {
-    if (trade?.username !== userId) continue;
-    const ticker = String(trade?.canonicalTicker || trade?.ticker || '').trim().toUpperCase();
-    if (ticker) tickers.add(ticker);
-  }
-  const watchlistItems = Array.isArray(db?.watchlistItems) ? db.watchlistItems : [];
-  const userWatchlistIds = new Set((Array.isArray(db?.watchlists) ? db.watchlists : [])
-    .filter((watchlist) => watchlist?.owner_user_id === userId)
-    .map((watchlist) => watchlist.id));
-  for (const item of watchlistItems) {
-    if (!userWatchlistIds.has(item?.watchlist_id)) continue;
-    const ticker = String(item?.canonical_ticker || item?.ticker || '').trim().toUpperCase();
-    if (ticker) tickers.add(ticker);
-  }
-  return tickers;
+  const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
+  const universe = resolveOwnedTickerUniverse({ db, logger: silentLogger });
+  const user = universe.perUserUniverse.find((entry) => entry.userId === userId);
+  return new Set(user?.tickerList || []);
 }
 
 const newsEventService = createNewsEventService({
@@ -118,6 +107,11 @@ const T212_LEADER_ALERT_SYNC_TICK_MS = (() => {
 const MACRO_INGEST_INTERVAL_MS = (() => {
   const parsed = Number(process.env.MACRO_INGEST_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < (30 * 60 * 1000)) return 6 * 60 * 60 * 1000;
+  return parsed;
+})();
+const EARNINGS_INGEST_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.EARNINGS_INGEST_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < (30 * 60 * 1000)) return 4 * 60 * 60 * 1000;
   return parsed;
 })();
 
@@ -3442,10 +3436,24 @@ function ensureNewsEventTables(db) {
         lastSuccessfulRunAt: null,
         lastDiagnostics: null,
         lastProviderStatuses: []
+      },
+      earnings: {
+        lastAttemptedRunAt: null,
+        lastSuccessfulRunAt: null,
+        lastDiagnostics: null,
+        lastProviderStatuses: []
       }
     };
   } else if (!db.newsIngestionStatus.macro || typeof db.newsIngestionStatus.macro !== 'object') {
     db.newsIngestionStatus.macro = {
+      lastAttemptedRunAt: null,
+      lastSuccessfulRunAt: null,
+      lastDiagnostics: null,
+      lastProviderStatuses: []
+    };
+  }
+  if (!db.newsIngestionStatus.earnings || typeof db.newsIngestionStatus.earnings !== 'object') {
+    db.newsIngestionStatus.earnings = {
       lastAttemptedRunAt: null,
       lastSuccessfulRunAt: null,
       lastDiagnostics: null,
@@ -18272,6 +18280,10 @@ app.get('/api/news/events', auth, (req, res) => {
     const db = loadDB();
     const userTickers = resolveUserTickerUniverse(db, req.username);
     rows = rows.filter((event) => {
+      if (event?.eventType === 'earnings' || event?.sourceType === 'earnings') {
+        const hasMappedRelevance = Array.isArray(event?.metadataJson?.relevanceUserIds) && event.metadataJson.relevanceUserIds.length > 0;
+        if (hasMappedRelevance) return isEventRelevantToUser(event, req.username);
+      }
       const eventTicker = String(event.canonicalTicker || event.ticker || '').toUpperCase();
       return eventTicker && userTickers.has(eventTicker);
     });
@@ -18326,24 +18338,51 @@ app.post('/api/admin/news/ingest/macro', auth, requireAuthenticatedUser, require
   res.json({ data: diagnostics });
 }));
 
+app.post('/api/admin/news/ingest/earnings', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
+  const diagnostics = await runEarningsIngestionJob('admin_endpoint');
+  console.info('[EarningsIngestion][Admin] manual trigger completed.', {
+    userId: req.username,
+    success: !!diagnostics?.success,
+    elapsedMs: diagnostics?.elapsedMs || null
+  });
+  res.json({ data: diagnostics });
+}));
+
 app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
   const db = loadDB();
   ensureNewsEventTables(db);
   const macroStatus = db.newsIngestionStatus?.macro || {};
-  const macroCountsByEventType = (Array.isArray(db.newsEvents) ? db.newsEvents : [])
-    .filter((event) => event?.sourceType === 'macro' && event?.isActive !== false)
+  const earningsStatus = db.newsIngestionStatus?.earnings || {};
+  const activeEvents = Array.isArray(db.newsEvents) ? db.newsEvents.filter((event) => event?.isActive !== false) : [];
+  const macroCountsByEventType = activeEvents
+    .filter((event) => event?.sourceType === 'macro')
     .reduce((acc, event) => {
       const key = String(event.eventType || 'unknown');
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
+  const earningsCount = activeEvents.filter((event) => event?.eventType === 'earnings' || event?.sourceType === 'earnings').length;
 
   res.json({
     data: {
-      lastAttemptedRunAt: macroStatus.lastAttemptedRunAt || null,
-      lastSuccessfulRunAt: macroStatus.lastSuccessfulRunAt || null,
-      lastProviderStatuses: Array.isArray(macroStatus.lastProviderStatuses) ? macroStatus.lastProviderStatuses : [],
-      macroCountsByEventType
+      macro: {
+        lastAttemptedRunAt: macroStatus.lastAttemptedRunAt || null,
+        lastSuccessfulRunAt: macroStatus.lastSuccessfulRunAt || null,
+        lastProviderStatuses: Array.isArray(macroStatus.lastProviderStatuses) ? macroStatus.lastProviderStatuses : [],
+        countsByEventType: macroCountsByEventType
+      },
+      earnings: {
+        lastAttemptedRunAt: earningsStatus.lastAttemptedRunAt || null,
+        lastSuccessfulRunAt: earningsStatus.lastSuccessfulRunAt || null,
+        lastProviderStatuses: Array.isArray(earningsStatus.lastProviderStatuses) ? earningsStatus.lastProviderStatuses : [],
+        eventsCount: earningsCount,
+        lastUniverseStats: earningsStatus?.lastDiagnostics
+          ? {
+            usersConsidered: earningsStatus.lastDiagnostics.usersConsidered || 0,
+            aggregateTickersResolved: earningsStatus.lastDiagnostics.aggregateTickersResolved || 0
+          }
+          : null
+      }
     }
   });
 });
@@ -24858,6 +24897,8 @@ function runGuestCleanup() {
 
 let macroIngestionJobRunning = false;
 let macroIngestionIntervalHandle = null;
+let earningsIngestionJobRunning = false;
+let earningsIngestionIntervalHandle = null;
 
 async function runMacroIngestionJob(trigger = 'scheduler') {
   if (macroIngestionJobRunning) {
@@ -24926,6 +24967,85 @@ function scheduleMacroIngestionJob() {
   }, MACRO_INGEST_INTERVAL_MS);
 }
 
+async function runEarningsIngestionJob(trigger = 'scheduler') {
+  if (earningsIngestionJobRunning) {
+    return { success: false, skipped: true, reason: 'already_running', trigger };
+  }
+  earningsIngestionJobRunning = true;
+  const startedAt = Date.now();
+  try {
+    const db = loadDB();
+    ensureNewsEventTables(db);
+    db.newsIngestionStatus.earnings.lastAttemptedRunAt = new Date().toISOString();
+    saveDB(db);
+
+    console.info('[EarningsIngestion] run start.', { trigger });
+    const diagnostics = await runEarningsIngestion({
+      loadDB,
+      newsEventService,
+      logger: console,
+      trigger
+    });
+
+    const dbAfter = loadDB();
+    ensureNewsEventTables(dbAfter);
+    dbAfter.newsIngestionStatus.earnings.lastDiagnostics = diagnostics;
+    dbAfter.newsIngestionStatus.earnings.lastProviderStatuses = diagnostics.providerStatus ? [diagnostics.providerStatus] : [];
+    if (diagnostics.success) {
+      dbAfter.newsIngestionStatus.earnings.lastSuccessfulRunAt = new Date().toISOString();
+    }
+    saveDB(dbAfter);
+
+    console.info('[EarningsIngestion] run end.', {
+      trigger,
+      elapsedMs: Date.now() - startedAt,
+      rowsInserted: diagnostics?.rowsInserted || 0,
+      rowsUpdated: diagnostics?.rowsUpdated || 0,
+      rowsSkipped: diagnostics?.providerStatus?.rowsSkipped || 0
+    });
+
+    return diagnostics;
+  } catch (error) {
+    console.error('[EarningsIngestion] run failed.', { trigger, error: error?.message || error });
+    return {
+      success: false,
+      skipped: false,
+      trigger,
+      error: error?.message || String(error),
+      elapsedMs: Date.now() - startedAt,
+      usersConsidered: 0,
+      userUniversesResolved: 0,
+      aggregateTickersResolved: 0,
+      providerStatus: {
+        attempted: false,
+        success: false,
+        fetchFailed: false,
+        rowsFetched: 0,
+        rowsParsed: 0,
+        rowsSkipped: 0,
+        error: null
+      },
+      rowsInserted: 0,
+      rowsUpdated: 0,
+      collisionsEncountered: 0,
+      safeErrors: []
+    };
+  } finally {
+    earningsIngestionJobRunning = false;
+  }
+}
+
+function scheduleEarningsIngestionJob() {
+  if (earningsIngestionIntervalHandle) {
+    clearInterval(earningsIngestionIntervalHandle);
+  }
+  earningsIngestionIntervalHandle = setInterval(() => {
+    runEarningsIngestionJob('scheduler').catch((error) => {
+      console.warn('[EarningsIngestion] scheduled run failed.', error?.message || error);
+    });
+  }, EARNINGS_INGEST_INTERVAL_MS);
+}
+
 let watchlistPreviousCloseReinforcementRunning = false;
 const WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT = Number(process.env.WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT) || 25;
 async function runWatchlistPreviousCloseReinforcement() {
@@ -24973,6 +25093,10 @@ if (require.main === module) {
     console.warn('[MacroIngestion] startup run failed', error?.message || error);
   });
   scheduleMacroIngestionJob();
+  runEarningsIngestionJob('startup').catch((error) => {
+    console.warn('[EarningsIngestion] startup run failed', error?.message || error);
+  });
+  scheduleEarningsIngestionJob();
   setInterval(runGuestCleanup, 60 * 60 * 1000);
   setInterval(() => {
     runWatchlistPreviousCloseReinforcement().catch((error) => {
