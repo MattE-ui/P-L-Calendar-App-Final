@@ -195,7 +195,7 @@ function shouldEnablePerfDiagnostics(req) {
 }
 
 function shouldCaptureApiPerf(pathname = '') {
-  return /^\/api\/(profile|portfolio|pl|trades|watchlists|account\/trading-accounts|account\/risk-settings|broker-accounts|integrations\/ibkr)/.test(pathname);
+  return /^\/api\/(profile|portfolio|pl|trades|watchlists|social|trading-groups|group-chats|account\/trading-accounts|account\/risk-settings|broker-accounts|integrations\/ibkr)/.test(pathname);
 }
 
 function ensureDataStore() {
@@ -14565,6 +14565,14 @@ function normalizeWatchlistTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
+function toWatchlistSectionStableId(watchlistId, section = {}, index = 0) {
+  const explicitId = String(section?.id || '').trim();
+  if (explicitId) return explicitId;
+  const normalizedTitle = String(section?.title || '').trim().toLowerCase();
+  if (normalizedTitle) return `${watchlistId || 'watchlist'}::${normalizedTitle}`;
+  return `${watchlistId || 'watchlist'}::section-${index + 1}`;
+}
+
 function isValidWatchlistTicker(raw) {
   return /^[A-Z][A-Z0-9.\-]{0,9}$/.test(String(raw || '').trim().toUpperCase());
 }
@@ -14663,6 +14671,52 @@ function sanitizeWatchlistSummaryRow(db, watchlist, viewerUserId) {
     sectionCount: structuredSections.length,
     isOwner: watchlist.owner_user_id === viewerUserId,
     canEdit
+  };
+}
+
+function sanitizeGroupWatchlistSummaryRow(db, postedRow, sourceWatchlist, viewerUserId) {
+  const owner = socialIdentityForUser(db, sourceWatchlist.owner_user_id);
+  const structuredSections = normalizeWatchlistSections(sourceWatchlist.sections);
+  const sectionSummaries = structuredSections.map((section, index) => ({
+    id: toWatchlistSectionStableId(sourceWatchlist.id, section, index),
+    title: section.title || `Section ${index + 1}`,
+    tickerCount: Array.isArray(section.tickers) ? section.tickers.length : 0
+  }));
+  const tickerCount = sectionSummaries.reduce((sum, section) => sum + section.tickerCount, 0);
+  return {
+    id: postedRow.id,
+    groupId: postedRow.group_id,
+    sourceWatchlistId: sourceWatchlist.id,
+    name: sourceWatchlist.title || sourceWatchlist.name,
+    title: sourceWatchlist.title || sourceWatchlist.name,
+    scope: sourceWatchlist.scope === 'group' ? 'group' : 'personal',
+    notes: String(sourceWatchlist.notes || ''),
+    sectionCount: sectionSummaries.length,
+    tickerCount,
+    sections: sectionSummaries,
+    postedByUserId: postedRow.posted_by_user_id,
+    postedByName: owner.nickname || sourceWatchlist.owner_user_id,
+    postedByAvatarUrl: owner.avatar_url,
+    postedByAvatarInitials: owner.avatar_initials,
+    createdAt: postedRow.created_at,
+    updatedAt: postedRow.updated_at,
+    displayOrder: postedRow.display_order || 0
+  };
+}
+
+function sanitizeGroupWatchlistDetailRow(db, postedRow, sourceWatchlist, viewerUserId, options = {}) {
+  const includeMarketRows = options.includeMarketRows === true;
+  const summary = sanitizeGroupWatchlistSummaryRow(db, postedRow, sourceWatchlist, viewerUserId);
+  const structuredSections = normalizeWatchlistSections(sourceWatchlist.sections);
+  const sections = structuredSections.map((section, index) => ({
+    id: toWatchlistSectionStableId(sourceWatchlist.id, section, index),
+    title: section.title || `Section ${index + 1}`,
+    tickers: Array.isArray(section.tickers) ? section.tickers.map((ticker) => normalizeWatchlistTicker(ticker)).filter(Boolean) : []
+  }));
+  return {
+    ...summary,
+    sections,
+    includeMarketRows
   };
 }
 
@@ -15686,6 +15740,18 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const view = String(req.query?.view || '').toLowerCase() === 'summary' ? 'summary' : 'full';
+  const includeMembers = String(req.query?.includeMembers || '').length
+    ? ['1', 'true', 'yes'].includes(String(req.query?.includeMembers || '').toLowerCase())
+    : view !== 'summary';
+  const includePendingInvites = String(req.query?.includePendingInvites || '').length
+    ? ['1', 'true', 'yes'].includes(String(req.query?.includePendingInvites || '').toLowerCase())
+    : view !== 'summary';
+  const includePositions = String(req.query?.includePositions || '').length
+    ? ['1', 'true', 'yes'].includes(String(req.query?.includePositions || '').toLowerCase())
+    : view !== 'summary';
+  const includeFeed = String(req.query?.includeFeed || '').length
+    ? ['1', 'true', 'yes'].includes(String(req.query?.includeFeed || '').toLowerCase())
+    : true;
   const requestedFeedLimit = Number.parseInt(String(req.query?.feed_limit || ''), 10);
   const defaultFeedLimit = view === 'summary' ? 8 : 50;
   const maxFeedLimit = view === 'summary' ? 15 : 75;
@@ -15733,10 +15799,19 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       leader_avatar_url: leaderIdentity.avatar_url,
       leader_avatar_initials: leaderIdentity.avatar_initials
     }));
-  const feed = [...alerts, ...announcements]
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, feedLimit);
+  const feed = includeFeed
+    ? [...alerts, ...announcements]
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, feedLimit)
+    : [];
   if (view === 'summary') {
+    req.perfDiag?.setMeta({
+      summaryModeUsed: true,
+      payloadTrimmed: true,
+      socialSummarySerializerUsed: true,
+      groupDetailDeferred: true,
+      resultCount: 1
+    });
     saveDB(db);
     return res.json({
       group: sanitizeTradeGroupForViewer(db, access.group, req.username),
@@ -15744,8 +15819,11 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       feed_mode: 'summary'
     });
   }
-  const members = getTradeGroupMembers(db, access.group.id, { status: 'active' }).map(member => sanitizeTradeGroupMemberRow(db, member));
-  const pendingInvites = db.tradeGroupInvites
+  const members = includeMembers
+    ? getTradeGroupMembers(db, access.group.id, { status: 'active' }).map(member => sanitizeTradeGroupMemberRow(db, member))
+    : [];
+  const pendingInvites = includePendingInvites
+    ? db.tradeGroupInvites
     .filter(invite => invite.group_id === access.group.id && invite.status === 'pending')
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
     .map(invite => ({
@@ -15756,20 +15834,28 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
         status: invite.status,
         joined_at: invite.created_at
       })
-    }));
-  const positions = buildGroupCurrentPositions(db, access.group);
+    }))
+    : [];
+  const positions = includePositions ? buildGroupCurrentPositions(db, access.group) : [];
   if (feed[0]) {
     console.info(`[TradeGroup][FrontendRefresh] group detail fetched user=${req.username} group=${access.group.id} topFeedId=${feed[0].id} topFeedType=${feed[0].type} topFeedCreatedAt=${feed[0].created_at || ''}`);
   } else {
     console.info(`[TradeGroup][FrontendRefresh] group detail fetched user=${req.username} group=${access.group.id} topFeedId=none`);
   }
   saveDB(db);
+  req.perfDiag?.setMeta({
+    summaryModeUsed: false,
+    payloadTrimmed: !(includeMembers && includePendingInvites && includePositions && includeFeed),
+    socialSummarySerializerUsed: false,
+    groupDetailDeferred: !(includeMembers && includePendingInvites && includePositions),
+    resultCount: 1
+  });
   res.json({
     group: sanitizeTradeGroupForViewer(db, access.group, req.username),
     members,
     pending_invites: access.isLeader ? pendingInvites : [],
-    alerts,
-    announcements,
+    alerts: includeFeed ? alerts : [],
+    announcements: includeFeed ? announcements : [],
     feed,
     current_positions: positions
   });
@@ -17115,6 +17201,9 @@ app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req
   const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
   if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const viewMode = String(req.query?.view || '').trim().toLowerCase();
+  const includeMarketRows = ['1', 'true', 'yes'].includes(String(req.query?.includeMarketRows || '').toLowerCase());
+  const isSummaryView = viewMode !== 'detail';
 
   const posted = db.tradeGroupWatchlists
     .filter((item) => item.group_id === access.group.id)
@@ -17123,28 +17212,48 @@ app.get('/api/trading-groups/:groupId/watchlists', auth, asyncHandler(async (req
   const watchlists = await Promise.all(posted.map(async (postedRow) => {
     const source = db.watchlists.find((item) => item.id === postedRow.source_watchlist_id);
     if (!source) return null;
-    const owner = socialIdentityForUser(db, source.owner_user_id);
-    const rows = await buildWatchlistMarketDataRows(db, source);
-    const sanitized = sanitizeWatchlistRow(db, source, req.username);
-    return {
-      id: postedRow.id,
-      groupId: postedRow.group_id,
-      sourceWatchlistId: source.id,
-      name: source.title || source.name,
-      title: source.title || source.name,
-      notes: String(source.notes || ''),
-      sections: sanitized.sections,
-      sectionCount: sanitized.sectionCount,
-      tickerCount: sanitized.tickerCount,
-      postedByUserId: postedRow.posted_by_user_id,
-      postedByName: owner.nickname || source.owner_user_id,
-      createdAt: postedRow.created_at,
-      updatedAt: postedRow.updated_at,
-      displayOrder: postedRow.display_order || 0,
-      rows
-    };
+    if (isSummaryView) {
+      return sanitizeGroupWatchlistSummaryRow(db, postedRow, source, req.username);
+    }
+    const detail = sanitizeGroupWatchlistDetailRow(db, postedRow, source, req.username, { includeMarketRows });
+    if (includeMarketRows) {
+      detail.rows = await buildWatchlistMarketDataRows(db, source);
+    }
+    return detail;
   }));
+  req.perfDiag?.setMeta({
+    resultCount: watchlists.filter(Boolean).length,
+    summaryModeUsed: isSummaryView,
+    sharedWatchlistSummaryUsed: isSummaryView,
+    payloadTrimmed: isSummaryView || !includeMarketRows,
+    groupDetailDeferred: isSummaryView
+  });
   res.json({ watchlists: watchlists.filter(Boolean), isLeader: access.isLeader });
+}));
+
+app.get('/api/trading-groups/:groupId/watchlists/:groupWatchlistId', auth, asyncHandler(async (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const access = getTradeGroupIfAccessible(db, req.params.groupId, req.username);
+  if (access.error === 'not_found') return res.status(404).json({ error: 'Trade group not found.' });
+  if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
+  const posted = db.tradeGroupWatchlists.find((item) => item.group_id === access.group.id && item.id === req.params.groupWatchlistId);
+  if (!posted) return res.status(404).json({ error: 'Posted watchlist not found.' });
+  const source = db.watchlists.find((item) => item.id === posted.source_watchlist_id);
+  if (!source) return res.status(404).json({ error: 'Watchlist not found.' });
+  const includeMarketRows = ['1', 'true', 'yes'].includes(String(req.query?.includeMarketRows || '1').toLowerCase());
+  const detail = sanitizeGroupWatchlistDetailRow(db, posted, source, req.username, { includeMarketRows });
+  if (includeMarketRows) {
+    detail.rows = await buildWatchlistMarketDataRows(db, source);
+  }
+  req.perfDiag?.setMeta({
+    summaryModeUsed: false,
+    sharedWatchlistSummaryUsed: false,
+    groupDetailDeferred: false,
+    payloadTrimmed: !includeMarketRows,
+    resultCount: 1
+  });
+  res.json({ watchlist: detail, isLeader: access.isLeader });
 }));
 
 app.post('/api/trading-groups/:groupId/watchlists', auth, (req, res) => {

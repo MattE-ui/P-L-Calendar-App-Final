@@ -76,6 +76,7 @@ const socialState = {
   selectedTradeGroupPositions: [],
   selectedTradeGroupRole: '',
   selectedTradeGroupWatchlists: [],
+  selectedTradeGroupWatchlistDetailById: {},
   myWatchlists: [],
   activeGroupWatchlistId: '',
   unreadTradeGroupNotifications: [],
@@ -152,6 +153,12 @@ async function socialApi(path, opts = {}) {
   if (!res.ok) {
     throw new Error(data.error || 'Request failed');
   }
+  try {
+    const payloadBytes = JSON.stringify(data || {}).length;
+    if (path.includes('/api/social/trade-groups') || path.includes('/api/trading-groups/') || path.includes('/api/watchlists')) {
+      logSocialPerf('social-route-response', { path, payloadBytes });
+    }
+  } catch (_error) {}
   return data;
 }
 
@@ -874,26 +881,26 @@ function renderGroupWatchlistsSection(isLeader = false) {
     const head = document.createElement('div');
     head.className = 'social-watchlist-head';
 
-    const rowsByTicker = new Map((posted.rows || []).map((row) => [String(row.ticker || '').toUpperCase(), row]));
-    const normalizedSections = Array.isArray(posted.sections) && posted.sections.length
-      ? posted.sections
-      : [{ id: 'legacy', title: 'Tickers', tickers: (posted.rows || []).map((row) => row.ticker).filter(Boolean) }];
-    const visibleSections = normalizedSections
-      .map((section, index) => {
-        const tickers = (section?.tickers || [])
-          .map((ticker) => String(ticker || '').toUpperCase())
-          .filter((ticker) => rowsByTicker.has(ticker));
-        const isUngrouped = String(section?.title || '').trim().toLowerCase() === 'ungrouped';
-        if (isUngrouped && tickers.length === 0) return null;
-        return {
+    const cachedDetail = watchlistId ? socialState.selectedTradeGroupWatchlistDetailById[watchlistId] : null;
+    const detailRows = Array.isArray(cachedDetail?.rows) ? cachedDetail.rows : [];
+    const rowsByTicker = new Map(detailRows.map((row) => [String(row.ticker || '').toUpperCase(), row]));
+    const summarySections = Array.isArray(posted.sections) ? posted.sections : [];
+    const totalTickerCount = Number.isFinite(Number(posted.tickerCount))
+      ? Number(posted.tickerCount)
+      : summarySections.reduce((sum, section) => sum + Number(section?.tickerCount || 0), 0);
+    const visibleSections = cachedDetail && Array.isArray(cachedDetail.sections)
+      ? cachedDetail.sections
+        .map((section, index) => ({
           id: toStableWatchlistSectionId(watchlistId, section, index),
           title: section?.title || `Section ${index + 1}`,
-          tickers
-        };
-      })
-      .filter((section) => section && section.tickers.length > 0);
-
-    const totalTickerCount = visibleSections.reduce((sum, section) => sum + section.tickers.length, 0);
+          tickers: (section?.tickers || []).map((ticker) => String(ticker || '').toUpperCase()).filter(Boolean)
+        }))
+        .filter((section) => section.tickers.length > 0)
+      : summarySections.map((section, index) => ({
+        id: toStableWatchlistSectionId(watchlistId, section, index),
+        title: section?.title || `Section ${index + 1}`,
+        tickerCount: Number(section?.tickerCount || 0)
+      }));
     const visibleSectionIds = new Set(visibleSections.map((section) => section.id));
     const expandedSectionState = Object.entries(socialState.expandedGroupWatchlistSections[watchlistId] || {})
       .reduce((acc, [sectionId, isExpanded]) => {
@@ -940,18 +947,28 @@ function renderGroupWatchlistsSection(isLeader = false) {
       sectionCard.dataset.sectionId = section.id;
       sectionCard.open = Boolean(expandedSectionState[section.id]);
       const summary = document.createElement('summary');
-      summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${section.tickers.length} tickers</span>`;
+      const sectionTickerCount = Array.isArray(section.tickers)
+        ? section.tickers.length
+        : Number(section.tickerCount || 0);
+      summary.innerHTML = `<span>${section.title || 'Section'}</span><span class="helper">${sectionTickerCount} tickers</span>`;
       sectionCard.appendChild(summary);
       const sectionBody = document.createElement('div');
       sectionBody.className = 'social-watchlist-section-body';
-      section.tickers.forEach((ticker) => {
-        const tickerRow = rowsByTicker.get(ticker);
-        if (!tickerRow) return;
-        const row = document.createElement('div');
-        row.className = 'social-watchlist-mini-row';
-        row.innerHTML = `<strong>${tickerRow.ticker}</strong><span>${formatWatchlistValue(tickerRow.currentPrice, 'price')}</span><span class="${Number(tickerRow.percentChangeToday) > 0 ? 'is-pos' : (Number(tickerRow.percentChangeToday) < 0 ? 'is-neg' : '')}">${formatWatchlistValue(tickerRow.percentChangeToday, 'percent')}</span>`;
-        sectionBody.appendChild(row);
-      });
+      if (cachedDetail && Array.isArray(section.tickers)) {
+        section.tickers.forEach((ticker) => {
+          const tickerRow = rowsByTicker.get(ticker);
+          if (!tickerRow) return;
+          const row = document.createElement('div');
+          row.className = 'social-watchlist-mini-row';
+          row.innerHTML = `<strong>${tickerRow.ticker}</strong><span>${formatWatchlistValue(tickerRow.currentPrice, 'price')}</span><span class="${Number(tickerRow.percentChangeToday) > 0 ? 'is-pos' : (Number(tickerRow.percentChangeToday) < 0 ? 'is-neg' : '')}">${formatWatchlistValue(tickerRow.percentChangeToday, 'percent')}</span>`;
+          sectionBody.appendChild(row);
+        });
+      } else {
+        const loadingHint = document.createElement('div');
+        loadingHint.className = 'helper';
+        loadingHint.textContent = 'Expand to load live ticker rows.';
+        sectionBody.appendChild(loadingHint);
+      }
       sectionCard.appendChild(sectionBody);
       sectionCard.addEventListener('toggle', () => {
         if (!watchlistId || !section.id) return;
@@ -964,12 +981,22 @@ function renderGroupWatchlistsSection(isLeader = false) {
     });
     card.appendChild(details);
 
-    head.querySelector('[data-expand-watchlist]')?.addEventListener('click', (event) => {
+    head.querySelector('[data-expand-watchlist]')?.addEventListener('click', async (event) => {
       const isHidden = details.classList.toggle('hidden');
       event.currentTarget.textContent = isHidden ? 'Expand' : 'Collapse';
       if (!watchlistId) return;
       if (isHidden) socialState.expandedGroupWatchlistIds.delete(watchlistId);
-      else socialState.expandedGroupWatchlistIds.add(watchlistId);
+      else {
+        socialState.expandedGroupWatchlistIds.add(watchlistId);
+        if (!socialState.selectedTradeGroupWatchlistDetailById[watchlistId]) {
+          try {
+            const detailPayload = await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists/${encodeURIComponent(watchlistId)}?includeMarketRows=1`);
+            socialState.selectedTradeGroupWatchlistDetailById[watchlistId] = detailPayload?.watchlist || null;
+            logSocialPerf('shared-watchlist-detail-loaded', { groupId: socialState.selectedTradeGroupId, watchlistId });
+          } catch (_error) {}
+          renderGroupWatchlistsSection(isLeader);
+        }
+      }
     });
     listEl?.appendChild(card);
   });
@@ -1266,6 +1293,9 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
   if (!groupId) return;
   const refreshReason = opts.reason || 'manual';
   const summaryOnly = opts.summaryOnly === true || !canLoadTradeGroupHeavySections();
+  if (socialState.selectedTradeGroupId && socialState.selectedTradeGroupId !== groupId) {
+    socialState.selectedTradeGroupWatchlistDetailById = {};
+  }
   try {
     const basePath = `/api/social/trade-groups/${encodeURIComponent(groupId)}`;
     const detailPath = summaryOnly ? `${basePath}?view=summary&feed_limit=8` : basePath;
@@ -1278,10 +1308,15 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
     socialState.selectedTradeGroupRole = response?.group?.role || '';
     if (!summaryOnly) {
       try {
-        const watchlistPayload = await socialApi(`/api/trading-groups/${encodeURIComponent(groupId)}/watchlists`);
+        const watchlistPayload = await socialApi(`/api/trading-groups/${encodeURIComponent(groupId)}/watchlists?view=summary`);
         socialState.selectedTradeGroupWatchlists = Array.isArray(watchlistPayload?.watchlists) ? watchlistPayload.watchlists : [];
+        const validIds = new Set(socialState.selectedTradeGroupWatchlists.map((item) => String(item?.id || '')).filter(Boolean));
+        socialState.selectedTradeGroupWatchlistDetailById = Object.fromEntries(
+          Object.entries(socialState.selectedTradeGroupWatchlistDetailById || {}).filter(([watchlistId]) => validIds.has(watchlistId))
+        );
       } catch (_error) {
         socialState.selectedTradeGroupWatchlists = [];
+        socialState.selectedTradeGroupWatchlistDetailById = {};
       }
 
       if (response?.group?.role === 'leader') {
@@ -1296,6 +1331,7 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
       }
     } else {
       socialState.selectedTradeGroupWatchlists = [];
+      socialState.selectedTradeGroupWatchlistDetailById = {};
       socialState.myWatchlists = [];
     }
 
@@ -1331,6 +1367,7 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
     socialState.selectedTradeGroupPositions = [];
     socialState.selectedTradeGroupAlerts = [];
     socialState.selectedTradeGroupWatchlists = [];
+    socialState.selectedTradeGroupWatchlistDetailById = {};
     socialState.myWatchlists = [];
   }
   renderTradeGroupSection();
