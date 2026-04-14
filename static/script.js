@@ -2209,9 +2209,19 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
 
 function isTradeMissingActiveStop(trade) {
   if ((trade?.assetClass || '').toLowerCase() === 'options') return false;
-  const hasStop = Boolean(trade?.currentStop || trade?.stopPrice || trade?.stop_order_id || trade?.stopOrderActive);
+  const hasStop = Boolean(resolveDisplayStop(trade) || trade?.stopPrice || trade?.stop_order_id || trade?.stopOrderActive);
   const staleStop = (trade?.source === 'trading212' || trade?.source === 'ibkr') && trade?.currentStopStale === true;
   return staleStop || !hasStop;
+}
+
+function resolveDisplayStop(trade) {
+  const currentStop = Number(trade?.currentStop);
+  if (Number.isFinite(currentStop) && currentStop > 0) return currentStop;
+  const displayStop = Number(trade?.displayStop);
+  if (Number.isFinite(displayStop) && displayStop > 0) return displayStop;
+  const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
+  if (Number.isFinite(originalStop) && originalStop > 0) return originalStop;
+  return null;
 }
 
 function renderSingleTradePill(trade, tradeId, isExpanded, noteDrafts) {
@@ -2424,8 +2434,7 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
     const showPriceInfo = Boolean(tradeId && state.openPriceInfoByTradeId?.[tradeId]);
 
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    const currentStopValue = Number(trade.currentStop);
-    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const currentStop = resolveDisplayStop(trade);
     const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
     const guaranteed = Number.isFinite(trade.guaranteedPnlGBP) ? trade.guaranteedPnlGBP : null;
     const riskMultiple = getTradeRiskMultiple(trade, pnl);
@@ -2771,8 +2780,7 @@ function updateActiveTradeDisplay(trades) {
     if (details) details.classList.toggle('is-hidden', state.safeScreenshot);
 
     const livePrice = Number.isFinite(trade.livePrice) ? trade.livePrice : null;
-    const currentStopValue = Number(trade.currentStop);
-    const currentStop = Number.isFinite(currentStopValue) ? currentStopValue : null;
+    const currentStop = resolveDisplayStop(trade);
     const optionPremiumSource = String(trade?.optionPremiumSource || '').toLowerCase();
     const livePriceLabel = ((trade?.assetClass || '').toLowerCase() === 'options')
       ? ({
@@ -3242,7 +3250,8 @@ function openEditTradeModal(trade) {
   if (entryInput) entryInput.value = Number.isFinite(trade.entry) ? trade.entry : '';
   if (stopInput) stopInput.value = Number.isFinite(trade.stop) ? trade.stop : '';
   if (currentStopInput) {
-    currentStopInput.value = Number.isFinite(trade.currentStop) ? trade.currentStop : '';
+    const resolvedCurrentStop = resolveDisplayStop(trade);
+    currentStopInput.value = Number.isFinite(resolvedCurrentStop) ? resolvedCurrentStop : '';
     currentStopInput.readOnly = false;
   }
   if (unitsInput) unitsInput.value = Number.isFinite(trade.sizeUnits) ? trade.sizeUnits : '';
@@ -4421,6 +4430,19 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
   try {
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    state.activeTrades.forEach((trade) => {
+      const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
+      const currentStop = Number(trade?.currentStop);
+      const displayStop = resolveDisplayStop(trade);
+      console.info('[TRADES][CLIENT_HYDRATION]', {
+        sourcePath: 'dashboard_load',
+        tradeId: trade?.id || '',
+        payloadTimestamp: activeRes?.freshness?.generatedAt || null,
+        originalStop: Number.isFinite(originalStop) ? originalStop : null,
+        currentStop: Number.isFinite(currentStop) ? currentStop : null,
+        displayStop
+      });
+    });
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       assignPortfolioStateField(
@@ -4476,6 +4498,19 @@ async function refreshActiveTrades() {
     const prevOpenLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    state.activeTrades.forEach((trade) => {
+      const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
+      const currentStop = Number(trade?.currentStop);
+      const displayStop = resolveDisplayStop(trade);
+      console.info('[TRADES][CLIENT_HYDRATION]', {
+        sourcePath: 'dashboard_poll_refresh',
+        tradeId: trade?.id || '',
+        payloadTimestamp: activeRes?.freshness?.generatedAt || null,
+        originalStop: Number.isFinite(originalStop) ? originalStop : null,
+        currentStop: Number.isFinite(currentStop) ? currentStop : null,
+        displayStop
+      });
+    });
     if (Number.isFinite(activeRes?.liveOpenPnl)) {
       state.liveOpenPnlGBP = activeRes.liveOpenPnl;
       assignPortfolioStateField(

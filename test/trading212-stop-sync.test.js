@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcrypt');
 
-const { upsertTrading212StopOrders } = require('../server');
+const { upsertTrading212StopOrders, updateTrading212LayerMetadata } = require('../server');
 
 test('upsertTrading212StopOrders keeps stop equal to provider currentStop when no manual override', () => {
   const user = {
@@ -83,6 +83,46 @@ test('upsertTrading212StopOrders preserves manual stop override while updating c
   const trade = user.tradeJournal['2026-02-20'][0];
   assert.equal(trade.currentStop, 590.1);
   assert.equal(trade.stop, 596);
+});
+
+test('updateTrading212LayerMetadata preserves existing currentStop when snapshot has no authoritative stop', () => {
+  const trade = {
+    id: 't3',
+    source: 'trading212',
+    symbol: 'SNDK',
+    entry: 619.74,
+    stop: 596,
+    currentStop: 590.1,
+    originalStopPrice: 596,
+    currentStopSource: 'manual',
+    stopManualOverride: true,
+    sizeUnits: 2,
+    currency: 'GBP',
+    direction: 'long',
+    status: 'open'
+  };
+
+  updateTrading212LayerMetadata(trade, {
+    symbol: 'SNDK',
+    trading212Id: 'position-1',
+    trading212PositionKey: 'SNDK',
+    accountId: '',
+    rawName: 'Sandisk',
+    rawIsin: '',
+    rawTickerValue: 'SNDK_US_EQ',
+    optionContract: {},
+    tradeCurrency: 'GBP',
+    direction: 'long',
+    currentPrice: 640.12,
+    stop: null,
+    lowStop: 580.0,
+    user: { portfolio: 10000 },
+    rates: { GBP: 1 }
+  });
+
+  assert.equal(trade.currentStop, 590.1);
+  assert.equal(trade.stop, 596);
+  assert.equal(trade.originalStopPrice, 596);
 });
 
 
