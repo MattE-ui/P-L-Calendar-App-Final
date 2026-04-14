@@ -5010,50 +5010,7 @@ function bindControls() {
     });
   });
 
-  $('#profile-btn')?.addEventListener('click', () => {
-    window.location.href = '/profile.html';
-  });
-
-  $('#analytics-btn')?.addEventListener('click', () => {
-    window.location.href = '/analytics.html';
-  });
-
-  $('#trades-btn')?.addEventListener('click', () => {
-    window.location.href = '/trades.html';
-  });
-  $('#calendar-btn')?.addEventListener('click', () => {
-    window.location.href = '/';
-  });
-  $('#transactions-btn')?.addEventListener('click', () => {
-    window.location.href = '/transactions.html';
-  });
-  $('#devtools-btn')?.addEventListener('click', () => {
-    setNavOpen(false);
-    window.location.href = '/devtools.html';
-  });
-
-  const navToggle = $('#nav-toggle-btn');
-  const navDrawer = $('#nav-drawer');
-  const navOverlay = $('#nav-drawer-overlay');
-  const navClose = $('#nav-close-btn');
-  const setNavOpen = open => {
-    if (!navDrawer || !navOverlay || !navToggle) return;
-    navDrawer.classList.toggle('hidden', !open);
-    navOverlay.classList.toggle('hidden', !open);
-    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  navToggle?.addEventListener('click', () => {
-    if (!navDrawer || !navOverlay) return;
-    const isOpen = !navDrawer.classList.contains('hidden');
-    setNavOpen(!isOpen);
-  });
-  navClose?.addEventListener('click', () => setNavOpen(false));
-  navOverlay?.addEventListener('click', () => setNavOpen(false));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    setNavOpen(false);
-  });
+  const setNavOpen = () => {};
 
   $('#active-trade-show-all')?.addEventListener('click', () => {
     window.location.href = '/trades.html';
@@ -5481,17 +5438,6 @@ function bindControls() {
     $('#edit-trade-modal')?.classList.add('hidden');
   });
 
-  $('#logout-btn')?.addEventListener('click', async () => {
-    try {
-      await api('/api/logout', { method: 'POST' });
-    } catch (e) {
-      console.warn(e);
-    }
-    sessionStorage.removeItem('guestMode');
-    localStorage.removeItem('guestMode');
-    window.location.href = '/login.html';
-  });
-
   let isAutoStopUpdate = false;
   const markAuto = value => {
     isAutoStopUpdate = value;
@@ -5578,7 +5524,7 @@ function bindControls() {
     if (safeToggle) safeToggle.checked = !!state.safeScreenshot;
     modal?.classList.remove('hidden');
   };
-  $('#quick-settings-btn')?.addEventListener('click', openQuickSettings);
+  document.addEventListener('app-menu:open-quick-settings', openQuickSettings);
   $('#safe-screenshot-open-qs')?.addEventListener('click', openQuickSettings);
   const closeQs = () => $('#quick-settings-modal')?.classList.add('hidden');
   $('#close-qs-btn')?.addEventListener('click', closeQs);
@@ -5732,9 +5678,9 @@ async function updateDevtoolsNav() {
   try {
     const profile = await getBootstrapProfile({ consumer: 'dashboard-devtools-nav' });
     const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-    $$('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+    $$('[data-app-menu-item-id="devtools"]').forEach(btn => btn.classList.toggle('is-hidden', !show));
   } catch (e) {
-    $$('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+    $$('[data-app-menu-item-id="devtools"]').forEach(btn => btn.classList.add('is-hidden'));
   }
 }
 

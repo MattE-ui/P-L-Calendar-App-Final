@@ -18,6 +18,44 @@
     }
   }
 
+  function collectLegacyMenuDiagnostics() {
+    const legacyActionIds = ['quick-settings-btn', 'devtools-btn', 'logout-btn'];
+    const legacyDrawerSelectors = ['#nav-drawer', '#nav-drawer-overlay', '#nav-toggle-btn', '#nav-close-btn'];
+    const duplicateActionNodes = legacyActionIds.flatMap((id) => Array.from(document.querySelectorAll(`#${id}`)));
+    const drawerNodes = legacyDrawerSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+    return {
+      duplicateActionCount: duplicateActionNodes.length,
+      drawerNodeCount: drawerNodes.length,
+      duplicateActionIds: duplicateActionNodes.map((node) => node.id),
+      hasDuplicateIds: duplicateActionNodes.length > legacyActionIds.length
+    };
+  }
+
+  function removeLegacyMenuNodes() {
+    const removed = {
+      actionsRemoved: [],
+      drawerContainersRemoved: []
+    };
+    const actionSelectors = ['#quick-settings-btn', '#devtools-btn', '#logout-btn'];
+    actionSelectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((node) => {
+        removed.actionsRemoved.push(node.id || selector);
+        node.remove();
+      });
+    });
+    ['#nav-drawer-overlay', '#nav-drawer'].forEach((selector) => {
+      document.querySelectorAll(selector).forEach((node) => {
+        removed.drawerContainersRemoved.push(selector.replace('#', ''));
+        node.remove();
+      });
+    });
+    document.querySelectorAll('#nav-toggle-btn, #nav-close-btn').forEach((node) => {
+      removed.drawerContainersRemoved.push(node.id);
+      node.remove();
+    });
+    return removed;
+  }
+
   function getPageContext(currentPath) {
     const normalizedPath = currentPath || '/';
     const isDashboard = normalizedPath === '/' || normalizedPath.endsWith('/index.html');
@@ -35,16 +73,29 @@
     })();
 
     const quickSettingsSelector = QUICK_SETTINGS_PAGE_SELECTORS[pageId];
+    const hasRouteMapping = !!quickSettingsSelector;
+    const hasDomSupport = !!(quickSettingsSelector && document.querySelector(quickSettingsSelector));
+    const settingsCapabilitySource = hasDomSupport ? 'dom-confirmed' : (hasRouteMapping ? 'route-only' : 'absent');
     const capabilities = {
       pageId,
       route: normalizedPath,
-      quickSettings: !!(quickSettingsSelector && document.querySelector(quickSettingsSelector)),
-      quickSettingsSelector: quickSettingsSelector || null
+      quickSettings: hasDomSupport,
+      quickSettingsSelector: quickSettingsSelector || null,
+      settingsCapabilitySource
     };
     return capabilities;
   }
 
-  const pageContext = getPageContext(path);
+  const legacyDiagnostics = collectLegacyMenuDiagnostics();
+  logMenu('legacy-duplicates-detected', legacyDiagnostics);
+  const legacyRemoval = removeLegacyMenuNodes();
+  logMenu('legacy-handlers-removed', {
+    removedActionNodes: legacyRemoval.actionsRemoved.length,
+    removedDrawerNodes: legacyRemoval.drawerContainersRemoved.length,
+    removedActionIds: legacyRemoval.actionsRemoved
+  });
+
+  let pageContext = getPageContext(path);
   const menuDefinitions = [
     {
       id: 'quick-settings',
@@ -84,7 +135,8 @@
     pageId: pageContext.pageId,
     route: pageContext.route,
     quickSettings: pageContext.quickSettings,
-    quickSettingsSelector: pageContext.quickSettingsSelector
+    quickSettingsSelector: pageContext.quickSettingsSelector,
+    settingsCapabilitySource: pageContext.settingsCapabilitySource
   });
   logMenu('items-rendered', {
     pageId: pageContext.pageId,
@@ -182,6 +234,31 @@
   const menuPanel = document.getElementById('app-shell-mobile-panel');
   const accountToggle = document.getElementById('app-shell-account-toggle');
   const accountMenu = document.getElementById('app-shell-account-menu');
+  const menuItemsByAction = new Map(
+    Array.from(accountMenu?.querySelectorAll('[data-app-menu-action]') || []).map((node) => [node.getAttribute('data-app-menu-action'), node])
+  );
+
+  function syncQuickSettingsVisibility(reason = 'init') {
+    pageContext = getPageContext(path);
+    const quickSettingsItem = menuItemsByAction.get('open-quick-settings');
+    const shouldShow = !!pageContext.quickSettings;
+    if (quickSettingsItem) {
+      quickSettingsItem.classList.toggle('is-hidden', !shouldShow);
+      quickSettingsItem.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+    }
+    logMenu('settings-capability-updated', {
+      reason,
+      pageId: pageContext.pageId,
+      route: pageContext.route,
+      quickSettings: pageContext.quickSettings,
+      quickSettingsSelector: pageContext.quickSettingsSelector,
+      settingsCapabilitySource: pageContext.settingsCapabilitySource
+    });
+    logMenu('items-rendered', {
+      pageId: pageContext.pageId,
+      items: Array.from(accountMenu?.querySelectorAll('[data-app-menu-item-id]:not(.is-hidden)') || []).map((item) => item.getAttribute('data-app-menu-item-id'))
+    });
+  }
 
   function closeMobileMenu() {
     if (!menuToggle || !menuPanel) return;
@@ -266,6 +343,13 @@
       });
       return;
     }
+    document.dispatchEvent(new CustomEvent('app-menu:open-quick-settings', {
+      detail: {
+        pageId: pageContext.pageId,
+        route: pageContext.route,
+        selector: pageContext.quickSettingsSelector
+      }
+    }));
     targetModal.classList.remove('hidden');
   }
 
@@ -279,12 +363,10 @@
 
   if (!window.__APP_SHELL_MENU_BOUND__) {
     document.addEventListener('click', (event) => {
-      const actionNode = event.target?.closest?.('[data-app-menu-action], #quick-settings-btn, #devtools-btn, #logout-btn');
+      if (event.__appShellMenuHandled) return;
+      const actionNode = event.target?.closest?.('[data-app-menu-action]');
       if (!actionNode) return;
-      const actionKey = actionNode.getAttribute('data-app-menu-action')
-        || (actionNode.id === 'quick-settings-btn' ? 'open-quick-settings' : '')
-        || (actionNode.id === 'devtools-btn' ? 'open-devtools' : '')
-        || (actionNode.id === 'logout-btn' ? 'logout' : '');
+      const actionKey = actionNode.getAttribute('data-app-menu-action') || '';
       if (!actionKey) return;
       const action = globalMenuActions[actionKey];
       if (!action) {
@@ -300,11 +382,23 @@
         pageId: pageContext.pageId,
         route: pageContext.route
       });
+      event.__appShellMenuHandled = true;
       event.preventDefault();
       action(event);
     });
     window.__APP_SHELL_MENU_BOUND__ = true;
   }
+
+  syncQuickSettingsVisibility('post-render');
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => syncQuickSettingsVisibility('dom-content-loaded'), { once: true });
+  } else {
+    requestAnimationFrame(() => syncQuickSettingsVisibility('raf-post-init'));
+  }
+  const observer = new MutationObserver(() => {
+    syncQuickSettingsVisibility('dom-mutation');
+  });
+  observer.observe(document.body, { subtree: true, childList: true });
 })();
 
 

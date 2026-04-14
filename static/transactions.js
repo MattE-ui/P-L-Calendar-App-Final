@@ -865,53 +865,8 @@ async function loadHeroMetrics() {
   }
 }
 
-function setupNav() {
-  const navToggle = document.getElementById('nav-toggle-btn');
-  const navDrawer = document.getElementById('nav-drawer');
-  const navOverlay = document.getElementById('nav-drawer-overlay');
-  const navClose = document.getElementById('nav-close-btn');
-  const setNavOpen = open => {
-    if (!navDrawer || !navOverlay || !navToggle) return;
-    navDrawer.classList.toggle('hidden', !open);
-    navOverlay.classList.toggle('hidden', !open);
-    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  navToggle?.addEventListener('click', () => {
-    const isOpen = !navDrawer?.classList.contains('hidden');
-    setNavOpen(!isOpen);
-  });
-  navClose?.addEventListener('click', () => setNavOpen(false));
-  navOverlay?.addEventListener('click', () => setNavOpen(false));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    setNavOpen(false);
-  });
-  document.getElementById('calendar-btn')?.addEventListener('click', () => {
-    window.location.href = '/';
-  });
-  document.getElementById('analytics-btn')?.addEventListener('click', () => {
-    window.location.href = '/analytics.html';
-  });
-  document.getElementById('trades-btn')?.addEventListener('click', () => {
-    window.location.href = '/trades.html';
-  });
-  document.getElementById('transactions-btn')?.addEventListener('click', () => {
-    window.location.href = '/transactions.html';
-  });
-  document.getElementById('profile-btn')?.addEventListener('click', () => {
-    window.location.href = '/profile.html';
-  });
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    try {
-      await api('/api/logout', { method: 'POST' });
-    } finally {
-      window.location.href = '/login.html';
-    }
-  });
-  document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
-    setNavOpen(false);
-    const modal = document.getElementById('transactions-settings-modal');
+function bindPageActions() {
+  document.addEventListener('app-menu:open-quick-settings', () => {
     try {
       const saved = localStorage.getItem('plc-transactions-prefs');
       if (saved) {
@@ -1013,7 +968,7 @@ function buildNoteKey(date, type, amount) {
   return `${date}-${type}-${amount}`;
 }
 
-setupNav();
+bindPageActions();
 loadHeroMetrics();
 loadTransactions();
 bindFilters();

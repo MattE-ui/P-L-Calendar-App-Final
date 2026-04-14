@@ -253,32 +253,6 @@ function renderChart(id, config) {
   charts[id] = new Chart(ctx, config);
 }
 
-function setupNavDrawer() {
-  const navToggle = document.getElementById('nav-toggle-btn');
-  const navDrawer = document.getElementById('nav-drawer');
-  const navOverlay = document.getElementById('nav-drawer-overlay');
-  const navClose = document.getElementById('nav-close-btn');
-  const setNavOpen = open => {
-    if (!navDrawer || !navOverlay || !navToggle) return;
-    navDrawer.classList.toggle('hidden', !open);
-    navOverlay.classList.toggle('hidden', !open);
-    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  navToggle?.addEventListener('click', () => {
-    if (!navDrawer || !navOverlay) return;
-    const isOpen = !navDrawer.classList.contains('hidden');
-    setNavOpen(!isOpen);
-  });
-  navClose?.addEventListener('click', () => setNavOpen(false));
-  navOverlay?.addEventListener('click', () => setNavOpen(false));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    setNavOpen(false);
-  });
-  return setNavOpen;
-}
-
 async function loadHeroMetrics() {
   try {
     const res = await api('/api/portfolio');
@@ -908,23 +882,7 @@ function resetFilters() {
 }
 
 function bindNav() {
-  const closeNav = setupNavDrawer();
-  document.querySelector('#calendar-btn')?.addEventListener('click', () => window.location.href = '/');
-  document.querySelector('#trades-btn')?.addEventListener('click', () => window.location.href = '/trades.html');
-  document.querySelector('#transactions-btn')?.addEventListener('click', () => window.location.href = '/transactions.html');
-  document.querySelector('#profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
-  document.querySelector('#devtools-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
-    window.location.href = '/devtools.html';
-  });
-  document.querySelector('#logout-btn')?.addEventListener('click', async () => {
-    await api('/api/logout', { method: 'POST' }).catch(() => {});
-    sessionStorage.removeItem('guestMode');
-    localStorage.removeItem('guestMode');
-    window.location.href = '/login.html';
-  });
-  document.querySelector('#quick-settings-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
+  document.addEventListener('app-menu:open-quick-settings', () => {
     const modal = document.querySelector('#quick-settings-modal');
     const riskSel = document.querySelector('#qs-risk-select');
     const curSel = document.querySelector('#qs-currency-select');
@@ -945,7 +903,6 @@ function bindNav() {
         .then(applyPrefs)
         .catch(err => console.warn('Failed to load ui prefs', err));
     }
-    modal?.classList.remove('hidden');
   });
   const closeQs = () => document.querySelector('#quick-settings-modal')?.classList.add('hidden');
   document.querySelector('#close-qs-btn')?.addEventListener('click', closeQs);
@@ -974,10 +931,10 @@ function bindNav() {
   api('/api/profile')
     .then(profile => {
       const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.toggle('is-hidden', !show));
     })
     .catch(() => {
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.add('is-hidden'));
     });
 }
 
