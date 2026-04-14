@@ -7,6 +7,7 @@ const {
   buildDateRange,
   buildDateRangePlan,
   normalizeNasdaqEarningsRow,
+  selectNextUpcomingEarningsPerTicker,
   fetchNasdaqEarningsEvents
 } = require('../providers/earnings/nasdaqEarningsProvider');
 const { runEarningsIngestion } = require('../services/news/earningsIngestionService');
@@ -133,6 +134,11 @@ test('buildDateRange default horizon generates inclusive date count', () => {
   assert.equal(plan.dates[2], plan.toDate);
 });
 
+test('buildDateRangePlan default horizon is widened for next earnings search', () => {
+  const plan = buildDateRangePlan();
+  assert.equal(plan.daysAhead, 45);
+});
+
 test('buildDateRangePlan returns empty list for invalid explicit range', () => {
   const plan = buildDateRangePlan({ from: '2026-07-30', to: '2026-07-28' });
   assert.equal(plan.strategy, 'explicit');
@@ -220,6 +226,7 @@ test('fetchNasdaqEarningsEvents filters rows to ticker universe', async () => {
   assert.equal(result.rows[0].canonicalTicker, 'AAPL');
   assert.equal(result.diagnostics.totalRowsFetched, 2);
   assert.equal(result.diagnostics.rowsMatchedToPortfolio, 1);
+  assert.equal(result.diagnostics.nextEarningsPerTickerCount, 1);
 });
 
 test('fetchNasdaqEarningsEvents normalizes Nasdaq symbol for portfolio matching', async () => {
@@ -363,7 +370,71 @@ test('fetchNasdaqEarningsEvents diagnostics show planned fetches for default hor
   assert.equal(result.diagnostics.generatedDateCount, 2);
   assert.equal(result.diagnostics.fetchAttempts, 2);
   assert.equal(result.diagnostics.datesFetched, 2);
+  assert.equal(result.diagnostics.daysAheadUsed, 1);
   assert.ok(loggerCalls.some((entry) => entry[0] === '[Earnings][Nasdaq] date plan computed.'));
+});
+
+test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
+  const result = selectNextUpcomingEarningsPerTicker([
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-30T16:00:00.000Z' },
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-29T16:00:00.000Z' },
+    { canonicalTicker: 'MSFT', scheduledAt: '2026-07-31T16:00:00.000Z' }
+  ], Date.parse('2026-07-28T00:00:00.000Z'));
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, '2026-07-29T16:00:00.000Z');
+});
+
+test('selectNextUpcomingEarningsPerTicker ignores rows in the past', () => {
+  const result = selectNextUpcomingEarningsPerTicker([
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-20T16:00:00.000Z' },
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-30T16:00:00.000Z' }
+  ], Date.parse('2026-07-28T00:00:00.000Z'));
+
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.skippedPastRows, ['AAPL']);
+});
+
+test('fetchNasdaqEarningsEvents returns one next-upcoming event per matched ticker with diagnostics', async () => {
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const pastDate = new Date(now - dayMs).toISOString().slice(0, 10);
+  const nextDate = new Date(now + dayMs).toISOString().slice(0, 10);
+  const laterDate = new Date(now + (3 * dayMs)).toISOString().slice(0, 10);
+
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL', 'MSFT', 'NVDA'],
+    from: pastDate,
+    to: pastDate,
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [
+              { symbol: 'AAPL', companyName: 'Apple', reportDate: pastDate, time: 'after-hours' },
+              { symbol: 'AAPL', companyName: 'Apple', reportDate: nextDate, time: 'after-hours' },
+              { symbol: 'AAPL', companyName: 'Apple', reportDate: laterDate, time: 'after-hours' },
+              { symbol: 'MSFT', companyName: 'Microsoft', reportDate: laterDate, time: 'after-hours' },
+              { symbol: 'TSLA', companyName: 'Tesla', reportDate: laterDate, time: 'after-hours' }
+            ]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 2);
+  assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
+  assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, `${nextDate}T21:00:00.000Z`);
+  assert.equal(result.diagnostics.rowsExtractedBeforePortfolioFilter, 5);
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 4);
+  assert.equal(result.diagnostics.uniquePortfolioTickersMatched, 2);
+  assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
+  assert.equal(result.diagnostics.rowsSkippedPastDate, 1);
+  assert.deepEqual(result.diagnostics.unmatchedPortfolioTickersSample, ['NVDA']);
 });
 
 test('fetchNasdaqEarningsEvents captures partial date failures', async () => {

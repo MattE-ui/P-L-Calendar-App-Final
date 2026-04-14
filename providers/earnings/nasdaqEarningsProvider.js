@@ -1,6 +1,7 @@
 const NASDAQ_EARNINGS_CALENDAR_API_URL = 'https://api.nasdaq.com/api/calendar/earnings';
 const NASDAQ_EARNINGS_SOURCE_URL = 'https://www.nasdaq.com/market-activity/earnings';
-const DEFAULT_DAYS_AHEAD = 7;
+const DEFAULT_DAYS_AHEAD = 45;
+const MAX_DAYS_AHEAD = 120;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function normalizeTicker(raw) {
@@ -16,7 +17,7 @@ function normalizeDateOnly(raw) {
 function normalizeDaysAhead(raw) {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DAYS_AHEAD;
-  return Math.min(parsed, 30);
+  return Math.min(parsed, MAX_DAYS_AHEAD);
 }
 
 function parseDateToUtcMs(raw) {
@@ -100,6 +101,29 @@ function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
       fiscalQuarterEnding: normalizeDateOnly(row?.fiscalQuarterEnding),
       raw: row
     }
+  };
+}
+
+function selectNextUpcomingEarningsPerTicker(rows, nowMs = Date.now()) {
+  const earliestByTicker = new Map();
+  const skippedPastRows = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const canonicalTicker = String(row?.canonicalTicker || row?.ticker || '').trim().toUpperCase();
+    const scheduledMs = Date.parse(String(row?.scheduledAt || ''));
+    if (!canonicalTicker || Number.isNaN(scheduledMs)) continue;
+    if (scheduledMs <= nowMs) {
+      skippedPastRows.push(canonicalTicker);
+      continue;
+    }
+    const existing = earliestByTicker.get(canonicalTicker);
+    if (!existing || scheduledMs < existing.scheduledMs) {
+      earliestByTicker.set(canonicalTicker, { row, scheduledMs });
+    }
+  }
+  return {
+    rows: Array.from(earliestByTicker.values()).map((item) => item.row),
+    skippedPastRows,
+    nextEarningsTickers: Array.from(earliestByTicker.keys())
   };
 }
 
@@ -235,6 +259,7 @@ async function fetchNasdaqEarningsEvents({
     toDateComputed: datePlan.toDate,
     dateRangeStrategy: datePlan.strategy,
     horizonDays: datePlan.daysAhead,
+    daysAheadUsed: datePlan.daysAhead,
     isValidRange: datePlan.isValidRange,
     datesRequested: requestedDates,
     generatedDateCount: requestedDates.length,
@@ -249,9 +274,14 @@ async function fetchNasdaqEarningsEvents({
     rowsExtractedBeforePortfolioFilter: 0,
     rowsMatchedToPortfolio: 0,
     rowsMismatchedToPortfolio: 0,
+    uniquePortfolioTickersMatched: 0,
+    nextEarningsPerTickerCount: 0,
     rowsSkipped: 0,
+    rowsSkippedPastDate: 0,
     extractedSymbolsSample: [],
     portfolioTickersSample: Array.from(tickerUniverse).slice(0, 10),
+    matchedTickersSample: [],
+    unmatchedPortfolioTickersSample: [],
     successfulJsonResponses: 0,
     htmlResponses: 0,
     nonJsonTextResponses: 0,
@@ -279,7 +309,7 @@ async function fetchNasdaqEarningsEvents({
     return { rows: [], diagnostics };
   }
 
-  const normalizedRows = [];
+  const matchedRows = [];
 
   for (const date of requestedDates) {
     const url = buildRequestUrl(baseUrl, date);
@@ -393,9 +423,18 @@ async function fetchNasdaqEarningsEvents({
         continue;
       }
       diagnostics.rowsMatchedToPortfolio += 1;
-      normalizedRows.push(normalized);
+      matchedRows.push(normalized);
     }
   }
+
+  const dedupedNext = selectNextUpcomingEarningsPerTicker(matchedRows);
+  const matchedTickers = new Set(dedupedNext.nextEarningsTickers);
+  const unmatchedPortfolioTickers = Array.from(tickerUniverse).filter((ticker) => !matchedTickers.has(ticker));
+  diagnostics.rowsSkippedPastDate = dedupedNext.skippedPastRows.length;
+  diagnostics.uniquePortfolioTickersMatched = matchedTickers.size;
+  diagnostics.nextEarningsPerTickerCount = dedupedNext.rows.length;
+  diagnostics.matchedTickersSample = Array.from(matchedTickers).slice(0, 10);
+  diagnostics.unmatchedPortfolioTickersSample = unmatchedPortfolioTickers.slice(0, 10);
 
   diagnostics.rowsMismatchedToPortfolio = Math.max(
     diagnostics.rowsExtractedBeforePortfolioFilter - diagnostics.rowsMatchedToPortfolio,
@@ -416,15 +455,20 @@ async function fetchNasdaqEarningsEvents({
     htmlResponses: diagnostics.htmlResponses,
     rowsExtractedBeforePortfolioFilter: diagnostics.rowsExtractedBeforePortfolioFilter,
     rowsMatchedToPortfolio: diagnostics.rowsMatchedToPortfolio,
+    uniquePortfolioTickersMatched: diagnostics.uniquePortfolioTickersMatched,
+    nextEarningsPerTickerCount: diagnostics.nextEarningsPerTickerCount,
     rowsMismatchedToPortfolio: diagnostics.rowsMismatchedToPortfolio,
+    rowsSkippedPastDate: diagnostics.rowsSkippedPastDate,
     extractedSymbolsSample: diagnostics.extractedSymbolsSample,
     portfolioTickersSample: diagnostics.portfolioTickersSample,
+    matchedTickersSample: diagnostics.matchedTickersSample,
+    unmatchedPortfolioTickersSample: diagnostics.unmatchedPortfolioTickersSample,
     unexpectedResponseShapes: compactUnexpectedReasons
   });
 
   logger.info('[Earnings][Nasdaq] fetch completed.', diagnostics);
 
-  return { rows: normalizedRows, diagnostics };
+  return { rows: dedupedNext.rows, diagnostics };
 }
 
 module.exports = {
@@ -433,5 +477,6 @@ module.exports = {
   buildDateRange,
   buildDateRangePlan,
   normalizeNasdaqEarningsRow,
+  selectNextUpcomingEarningsPerTicker,
   fetchNasdaqEarningsEvents
 };
