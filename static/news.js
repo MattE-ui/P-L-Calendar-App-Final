@@ -101,6 +101,17 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     { key: 'internalPostsEnabled', label: 'Internal posts (coming soon)', group: 'Categories', comingSoon: true },
     { key: 'portfolioOnly', label: 'Portfolio-only notifications', group: 'Scope' },
     { key: 'highImportanceOnly', label: 'High-importance notifications', group: 'Scope' },
+    {
+      key: 'rankingMode',
+      label: 'Headline ranking mode',
+      group: 'Personalization',
+      type: 'select',
+      options: [
+        { value: 'strict_signal', label: 'Strict signal — portfolio-first and quiet' },
+        { value: 'balanced', label: 'Balanced — default portfolio + selective watchlist' },
+        { value: 'discovery', label: 'Discovery — bounded watchlist + market context' }
+      ]
+    },
     { key: 'notifyPush', label: 'Push notifications', group: 'Channels' },
     { key: 'notifyInApp', label: 'In-app notifications', group: 'Channels' },
     { key: 'notifyEmail', label: 'Email notifications', group: 'Channels' },
@@ -401,12 +412,26 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       <section class="news-pref-group">
         <h4>${group}</h4>
         <div class="news-pref-list">
-          ${controls.map((control) => `
-            <label class="toggle-control ${control.comingSoon ? 'is-coming-soon' : ''}">
-              <input type="checkbox" data-pref-key="${control.key}" ${state.preferencesDraft?.[control.key] ? 'checked' : ''}>
-              <span>${control.label}</span>
-            </label>
-          `).join('')}
+          ${controls.map((control) => {
+            if (control.type === 'select') {
+              return `
+                <label class="toggle-control">
+                  <span>${control.label}</span>
+                  <select data-pref-select-key="${control.key}">
+                    ${(control.options || []).map((option) => `
+                      <option value="${option.value}" ${state.preferencesDraft?.[control.key] === option.value ? 'selected' : ''}>${option.label}</option>
+                    `).join('')}
+                  </select>
+                </label>
+              `;
+            }
+            return `
+              <label class="toggle-control ${control.comingSoon ? 'is-coming-soon' : ''}">
+                <input type="checkbox" data-pref-key="${control.key}" ${state.preferencesDraft?.[control.key] ? 'checked' : ''}>
+                <span>${control.label}</span>
+              </label>
+            `;
+          }).join('')}
         </div>
       </section>
     `).join('');
@@ -415,6 +440,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       input.addEventListener('change', (event) => {
         const key = event.target.getAttribute('data-pref-key');
         state.preferencesDraft[key] = !!event.target.checked;
+      });
+    });
+    els.prefsGrid.querySelectorAll('[data-pref-select-key]').forEach((input) => {
+      input.addEventListener('change', (event) => {
+        const key = event.target.getAttribute('data-pref-select-key');
+        state.preferencesDraft[key] = String(event.target.value || 'balanced');
       });
     });
   }

@@ -1,6 +1,7 @@
 const { isScheduledSignal, isPublishedSignal } = require('./newsEventService');
 const { NEWS_DELIVERY_CHANNELS } = require('./newsNotificationDispatchService');
-const { scoreNewsEvent } = require('./newsRankingService');
+const { scoreNewsEvent, getRankingModeProfile } = require('./newsRankingService');
+const { getUserTickerUniverse } = require('./newsUserRelevanceService');
 
 const WINDOW_KEY_IMMEDIATE = 'immediate';
 const WINDOW_KEY_ONE_DAY_BEFORE = 'one_day_before';
@@ -155,7 +156,17 @@ function isNowWithinQuietHours(preferences, now) {
   return minutes >= startTotal || minutes < endTotal;
 }
 
-function shouldDeliverEventToUser({ userId, event, preferences, now, deliveryWindow, shouldNotifyUserForEvent, isEventRelevantToUser }) {
+function shouldDeliverEventToUser({
+  userId,
+  event,
+  preferences,
+  now,
+  deliveryWindow,
+  shouldNotifyUserForEvent,
+  isEventRelevantToUser,
+  userTickerUniverse,
+  sourceProfiles = []
+}) {
   if (!userId || !event || !preferences || !deliveryWindow) {
     return { allowed: false, reason: 'invalid_arguments' };
   }
@@ -169,14 +180,19 @@ function shouldDeliverEventToUser({ userId, event, preferences, now, deliveryWin
   }
 
   if (windowKey === WINDOW_KEY_IMMEDIATE && (event.eventType === 'stock_news' || event.eventType === 'world_news')) {
-    const threshold = Number.isFinite(Number(process.env.NEWS_NOTIFICATION_HEADLINE_MIN_SCORE))
+    const profile = getRankingModeProfile(preferences?.rankingMode);
+    const configuredThreshold = Number.isFinite(Number(process.env.NEWS_NOTIFICATION_HEADLINE_MIN_SCORE))
       ? Number(process.env.NEWS_NOTIFICATION_HEADLINE_MIN_SCORE)
-      : 0.5;
+      : profile.thresholds.notificationHeadlineMinScore;
+    const threshold = Math.max(profile.thresholds.notificationHeadlineMinScore, configuredThreshold);
     const isRelevant = typeof isEventRelevantToUser === 'function' ? !!isEventRelevantToUser(event, userId) : false;
     const score = scoreNewsEvent(event, {
       userId,
       now,
-      isPortfolioRelevant: isRelevant
+      rankingMode: preferences?.rankingMode,
+      userTickerUniverse,
+      isPortfolioRelevant: isRelevant,
+      sourceProfiles
     });
     if (score.totalScore < threshold) return { allowed: false, reason: 'headline_ranking_threshold' };
   }
@@ -305,6 +321,9 @@ async function runNewsNotificationFanout(options = {}) {
     getUserNewsPreferences,
     shouldNotifyUserForEvent,
     isEventRelevantToUser,
+    resolveUserTickerUniverse = () => new Set(),
+    resolveUserWatchlistTickerUniverse = () => new Set(),
+    listNewsSourceProfiles = () => [],
     appendUserEventDeliveryLog,
     dispatchChannelPayload,
     logger = console,
@@ -365,7 +384,8 @@ async function runNewsNotificationFanout(options = {}) {
     eligibility: {
       allowed: 0,
       blocked: 0,
-      reasons: {}
+      reasons: {},
+      byMode: {}
     },
     deliveryLog: {
       inserted: 0,
@@ -409,11 +429,18 @@ async function runNewsNotificationFanout(options = {}) {
   });
 
   const digestGroups = new Map();
+  const sourceProfiles = listNewsSourceProfiles();
 
   for (const userId of users) {
     const preferences = getUserNewsPreferences(userId);
+    const rankingMode = String(preferences?.rankingMode || 'balanced');
+    diagnostics.eligibility.byMode[rankingMode] ||= { allowed: 0, blocked: 0, reasons: {} };
     const channels = selectChannelsFromPreferences(preferences);
     const hasDigest = !!preferences.dailyDigestEnabled;
+    const userTickerUniverse = getUserTickerUniverse(userId, {
+      resolvePortfolioTickerUniverse: resolveUserTickerUniverse,
+      resolveWatchlistTickerUniverse: resolveUserWatchlistTickerUniverse
+    });
 
     for (const event of candidates) {
       const dueWindows = getDueDeliveryWindowsForEvent(event, nowIso, preferences, options)
@@ -426,16 +453,21 @@ async function runNewsNotificationFanout(options = {}) {
           now: nowIso,
           deliveryWindow,
           shouldNotifyUserForEvent,
-          isEventRelevantToUser
+          isEventRelevantToUser,
+          userTickerUniverse,
+          sourceProfiles
         });
 
         if (!decision.allowed) {
           diagnostics.eligibility.blocked += 1;
           diagnostics.eligibility.reasons[decision.reason] = (diagnostics.eligibility.reasons[decision.reason] || 0) + 1;
+          diagnostics.eligibility.byMode[rankingMode].blocked += 1;
+          diagnostics.eligibility.byMode[rankingMode].reasons[decision.reason] = (diagnostics.eligibility.byMode[rankingMode].reasons[decision.reason] || 0) + 1;
           continue;
         }
 
         diagnostics.eligibility.allowed += 1;
+        diagnostics.eligibility.byMode[rankingMode].allowed += 1;
         diagnostics.totalsByDeliveryWindow[deliveryWindow.key] += 1;
 
         for (const channel of channels) {
@@ -504,8 +536,11 @@ async function runNewsNotificationFanout(options = {}) {
         now: nowIso,
         deliveryWindow: digestWindow,
         shouldNotifyUserForEvent,
-        isEventRelevantToUser
-      });
+          isEventRelevantToUser
+          ,
+          userTickerUniverse,
+          sourceProfiles
+        });
       if (!decision.allowed) return false;
       const alreadyDeliveredIndividually = (db.userEventDeliveryLog || []).some((row) => row.userId === userId
         && row.newsEventId === event.id

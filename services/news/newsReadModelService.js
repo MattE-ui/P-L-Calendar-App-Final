@@ -1,12 +1,10 @@
 const { isScheduledSignal, isPublishedSignal } = require('./newsEventService');
 const { isEventRelevantToUser } = require('./ownedTickerUniverseService');
-const { rankNewsEvents, buildRankingDiagnostics } = require('./newsRankingService');
+const { rankNewsEvents, buildRankingDiagnostics, getRankingModeProfile } = require('./newsRankingService');
+const { getUserTickerUniverse, getUserEventRelevance, buildUserRelevanceDiagnostics } = require('./newsUserRelevanceService');
 
 const READ_MODEL_MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 25;
-const LATEST_MIN_SCORE_THRESHOLD = 0.2;
-const FOR_YOU_HEADLINE_MIN_SCORE_THRESHOLD = 0.5;
-const FOR_YOU_GLOBAL_HEADLINE_MIN_SCORE_THRESHOLD = 0.82;
 const FOR_YOU_MAX_RELEVANT_HEADLINES = 5;
 const DUPLICATE_PUBLISHED_WINDOW_MS = 2 * 60 * 60 * 1000;
 
@@ -86,10 +84,9 @@ function deriveBadge(event, { isPortfolioRelevant, isHighImportance, urgencyClas
   return { badgeLabel: 'Scheduled', badgeTone: 'neutral' };
 }
 
-function deriveRelevanceClass(event, { isPortfolioRelevant }) {
-  if (isPortfolioRelevant) return 'portfolio';
+function deriveRelevanceClass(event, relevanceTier) {
   if (event.sourceType === 'macro') return 'macro';
-  return 'neutral';
+  return relevanceTier || 'neutral';
 }
 
 function calculateSortTimestamp(event) {
@@ -109,10 +106,21 @@ function buildNewsEventCardModel(event, context = {}) {
   const mappedRelevance = Array.isArray(event?.metadataJson?.relevanceUserIds) && userId
     ? isEventRelevantToUser(event, userId)
     : false;
-  const isPortfolioRelevant = Boolean(eventTicker && userTickers.has(eventTicker)) || mappedRelevance;
+  const userTickerUniverse = context.userTickerUniverse || {
+    portfolioTickers: userTickers,
+    watchlistTickers: context.watchlistTickers instanceof Set ? context.watchlistTickers : new Set()
+  };
+  const eventRelevance = getUserEventRelevance(event, {
+    userId,
+    userTickerUniverse,
+    rankingMode: context.rankingMode,
+    sourceProfile: context.sourceProfile
+  });
+  const isPortfolioRelevant = eventRelevance.relevanceTier === 'portfolio' || Boolean(eventTicker && userTickers.has(eventTicker)) || mappedRelevance;
+  const isWatchlistRelevant = eventRelevance.relevanceTier === 'watchlist';
   const urgencyClass = urgencyFromScheduledAt(event.scheduledAt, nowMs);
   const isHighImportance = Number(event.importance || 0) >= 80;
-  const relevanceClass = deriveRelevanceClass(event, { isPortfolioRelevant });
+  const relevanceClass = deriveRelevanceClass(event, eventRelevance.relevanceTier);
   const { badgeLabel, badgeTone } = deriveBadge(event, { isPortfolioRelevant, isHighImportance, urgencyClass });
   const sortTimestamp = calculateSortTimestamp(event);
 
@@ -135,9 +143,12 @@ function buildNewsEventCardModel(event, context = {}) {
     badgeLabel,
     badgeTone,
     relevanceClass,
+    relevanceTier: eventRelevance.relevanceTier,
+    relevanceReason: eventRelevance.reason,
     urgencyClass,
     timeLabel: formatTimeLabel(event, nowMs),
     isPortfolioRelevant,
+    isWatchlistRelevant,
     isHighImportance,
     isUpcoming: urgencyClass !== 'past' && urgencyClass !== 'none',
     isPast: urgencyClass === 'past',
@@ -148,13 +159,20 @@ function buildNewsEventCardModel(event, context = {}) {
 
 function buildNewsSectionSummary(events, context = {}) {
   const cards = Array.isArray(events) ? events : [];
+  const relevanceClassDistribution = cards.reduce((acc, event) => {
+    const key = String(event?.relevanceClass || 'neutral');
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
   return {
     key: context.key || 'section',
     title: context.title || context.key || 'Section',
     count: cards.length,
     highImportanceCount: cards.filter((event) => event.isHighImportance).length,
     upcomingCount: cards.filter((event) => event.isUpcoming).length,
-    portfolioRelevantCount: cards.filter((event) => event.isPortfolioRelevant).length
+    portfolioRelevantCount: cards.filter((event) => event.isPortfolioRelevant).length,
+    watchlistRelevantCount: cards.filter((event) => event.isWatchlistRelevant).length,
+    relevanceClassDistribution
   };
 }
 
@@ -231,10 +249,31 @@ function paginate(mode, cards, limit, cursor) {
 }
 
 function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
-  const { newsEventService, resolveUserTickerUniverse, listNewsSourceProfiles = () => [], logger = console } = deps;
+  const {
+    newsEventService,
+    resolveUserTickerUniverse,
+    resolveUserWatchlistTickerUniverse = () => new Set(),
+    getUserNewsPreferences = null,
+    listNewsSourceProfiles = () => [],
+    logger = console
+  } = deps;
   const startedAt = Date.now();
   const normalizedFilters = normalizeFilters(filters);
-  const context = { userId, userTickers: resolveUserTickerUniverse(userId), now: new Date().toISOString() };
+  const preferences = typeof getUserNewsPreferences === 'function' ? getUserNewsPreferences(userId) : { rankingMode: 'balanced' };
+  const rankingMode = preferences?.rankingMode || 'balanced';
+  const rankingProfile = getRankingModeProfile(rankingMode);
+  const userTickerUniverse = getUserTickerUniverse(userId, {
+    resolvePortfolioTickerUniverse: resolveUserTickerUniverse,
+    resolveWatchlistTickerUniverse: resolveUserWatchlistTickerUniverse
+  });
+  const context = {
+    userId,
+    userTickers: userTickerUniverse.portfolioTickers,
+    watchlistTickers: userTickerUniverse.watchlistTickers,
+    userTickerUniverse,
+    rankingMode,
+    now: new Date().toISOString()
+  };
 
   const rows = applyFilterRows(newsEventService.listUpcomingEvents({}), normalizedFilters);
   const cards = rows
@@ -265,13 +304,16 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance), {
     userId,
     now: context.now,
-    userTickers: context.userTickers,
+    userTickerUniverse,
+    rankingMode,
     sourceProfiles
   });
   const filteredForYouHeadlines = scoredHeadlines
     .filter((row) => row.score.sourceProfile.isAllowed && !row.score.sourceProfile.isMuted)
-    .filter((row) => row.score.totalScore >= FOR_YOU_HEADLINE_MIN_SCORE_THRESHOLD)
-    .filter((row) => row.event.isPortfolioRelevant || row.score.totalScore >= FOR_YOU_GLOBAL_HEADLINE_MIN_SCORE_THRESHOLD)
+    .filter((row) => row.score.totalScore >= rankingProfile.thresholds.forYouHeadlineMinScore)
+    .filter((row) => row.event.relevanceTier === 'portfolio'
+      || row.event.relevanceTier === 'watchlist'
+      || row.score.totalScore >= rankingProfile.thresholds.forYouGlobalMinScore)
     .map((row) => ({ ...row, card: row.event }));
   const dedupedForYou = collapseHeadlineDuplicates(filteredForYouHeadlines);
   const relevantHeadlines = dedupedForYou.kept
@@ -311,6 +353,7 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     counts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
     rankingDiagnostics: {
       ...buildRankingDiagnostics([], scoredHeadlines),
+      relevanceDiagnostics: buildUserRelevanceDiagnostics(scoredHeadlines.map((row) => row.event), { userId, rankingMode, userTickerUniverse }),
       duplicateCollapsedCount: dedupedForYou.suppressed,
       thresholdFilteredCount: Math.max(0, scoredHeadlines.length - filteredForYouHeadlines.length),
       sourceSuppressedCount: scoredHeadlines.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
@@ -386,10 +429,31 @@ function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
 }
 
 function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
-  const { newsEventService, resolveUserTickerUniverse, listNewsSourceProfiles = () => [], logger = console } = deps;
+  const {
+    newsEventService,
+    resolveUserTickerUniverse,
+    resolveUserWatchlistTickerUniverse = () => new Set(),
+    getUserNewsPreferences = null,
+    listNewsSourceProfiles = () => [],
+    logger = console
+  } = deps;
   const startedAt = Date.now();
   const normalizedFilters = normalizeFilters(filters);
-  const context = { userId, userTickers: resolveUserTickerUniverse(userId), now: new Date().toISOString() };
+  const preferences = typeof getUserNewsPreferences === 'function' ? getUserNewsPreferences(userId) : { rankingMode: 'balanced' };
+  const rankingMode = preferences?.rankingMode || 'balanced';
+  const rankingProfile = getRankingModeProfile(rankingMode);
+  const userTickerUniverse = getUserTickerUniverse(userId, {
+    resolvePortfolioTickerUniverse: resolveUserTickerUniverse,
+    resolveWatchlistTickerUniverse: resolveUserWatchlistTickerUniverse
+  });
+  const context = {
+    userId,
+    userTickers: userTickerUniverse.portfolioTickers,
+    watchlistTickers: userTickerUniverse.watchlistTickers,
+    userTickerUniverse,
+    rankingMode,
+    now: new Date().toISOString()
+  };
 
   const sourceProfiles = listNewsSourceProfiles();
   const allCards = applyFilterRows(newsEventService.listPublishedNews({}), normalizedFilters)
@@ -400,12 +464,13 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const rankedRows = rankNewsEvents(allCards, {
     userId,
     now: context.now,
-    userTickers: context.userTickers,
+    userTickerUniverse,
+    rankingMode,
     sourceProfiles
   });
   const eligibleRows = rankedRows
     .filter((row) => row.score.sourceProfile.isAllowed && !row.score.sourceProfile.isMuted)
-    .filter((row) => row.score.totalScore >= LATEST_MIN_SCORE_THRESHOLD)
+    .filter((row) => row.score.totalScore >= rankingProfile.thresholds.latestMinScore)
     .map((row) => ({ ...row, card: { ...row.event, rankingScore: row.score.totalScore, rankingBreakdown: row.score } }));
   const deduped = collapseHeadlineDuplicates(eligibleRows);
   const cards = deduped.kept.map((row) => row.card);
@@ -422,6 +487,7 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     counts: { headlines: cards.length },
     rankingDiagnostics: {
       ...buildRankingDiagnostics([], rankedRows),
+      relevanceDiagnostics: buildUserRelevanceDiagnostics(rankedRows.map((row) => row.event), { userId, rankingMode, userTickerUniverse }),
       duplicateCollapsedCount: deduped.suppressed,
       thresholdFilteredCount: Math.max(0, rankedRows.length - eligibleRows.length),
       sourceSuppressedCount: rankedRows.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
@@ -439,6 +505,7 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     diagnostics: {
       ranking: {
         ...buildRankingDiagnostics([], rankedRows),
+        relevanceDiagnostics: buildUserRelevanceDiagnostics(rankedRows.map((row) => row.event), { userId, rankingMode, userTickerUniverse }),
         duplicateCollapsedCount: deduped.suppressed,
         thresholdFilteredCount: Math.max(0, rankedRows.length - eligibleRows.length),
         sourceSuppressedCount: rankedRows.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
