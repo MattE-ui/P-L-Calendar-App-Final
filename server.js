@@ -29,7 +29,13 @@ const {
   getRelevanceDistribution,
   getThresholdDropoffStats,
   getNotificationDiagnostics,
-  getSourceContributionStats
+  getSourceContributionStats,
+  getDiagnosticsTrendSeries,
+  getBaselineComparison,
+  getRankingTrendSeries,
+  getThresholdTrendSeries,
+  getNotificationTrendSeries,
+  getSourceTrendSeries
 } = require('./services/news/newsDiagnosticsService');
 const {
   runNewsNotificationFanout,
@@ -3651,7 +3657,7 @@ function ensureNewsEventTables(db) {
 
 function resolveDiagnosticsTimeRange(rawValue) {
   const value = String(rawValue || '').trim().toLowerCase();
-  return ['1h', '24h', '7d'].includes(value) ? value : '24h';
+  return ['1h', '24h', '7d', '30d'].includes(value) ? value : '24h';
 }
 
 function appendBoundedSnapshot(list, snapshot, max = 336) {
@@ -18922,6 +18928,82 @@ app.get('/api/admin/news/diagnostics/sources', auth, requireAuthenticatedUser, r
   res.json({ data });
 });
 
+app.get('/api/admin/news/diagnostics/trends', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const interval = String(req.query?.interval || '').trim().toLowerCase();
+  const data = getDiagnosticsTrendSeries({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange,
+    interval
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/baselines', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const baselineWindow = String(req.query?.baselineWindow || req.query?.timeRange || '24h').trim().toLowerCase();
+  const data = getBaselineComparison({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    baselineWindow
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/ranking-trends', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const interval = String(req.query?.interval || '').trim().toLowerCase();
+  const data = getRankingTrendSeries({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange,
+    interval
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/threshold-trends', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const interval = String(req.query?.interval || '').trim().toLowerCase();
+  const data = getThresholdTrendSeries({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange,
+    interval
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/notification-trends', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const interval = String(req.query?.interval || '').trim().toLowerCase();
+  const data = getNotificationTrendSeries({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange,
+    interval
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/source-trends', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const interval = String(req.query?.interval || '').trim().toLowerCase();
+  const data = getSourceTrendSeries({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange,
+    interval
+  });
+  res.json({ data });
+});
+
 app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
   const db = loadDB();
   ensureNewsEventTables(db);
@@ -25764,8 +25846,18 @@ async function runHeadlineIngestionJob(trigger = 'scheduler') {
       const options = buildNewsDiagnosticsServiceOptions(nowIso, db);
       const rankingSummary = getRankingDiagnostics({ ...options, timeRange: '24h' });
       const thresholdSummary = getThresholdDropoffStats({ ...options, timeRange: '24h' });
+      const sourceSummary = getSourceContributionStats({ ...options, timeRange: '24h' });
+      const sourceRollups = (sourceSummary?.sources || []).reduce((acc, source) => {
+        acc[source.sourceName] = {
+          surfaced: Number(source.surfaced || 0),
+          suppressed: Number(source.suppressed || 0),
+          headlines: Number(source.headlines || 0),
+          trustTier: source?.trustTierDistribution?.high ? 'high' : (source?.trustTierDistribution?.medium ? 'medium' : 'low')
+        };
+        return acc;
+      }, {});
       db.newsDiagnosticsSnapshots.ranking = appendBoundedSnapshot(db.newsDiagnosticsSnapshots.ranking, { createdAt: nowIso, trigger, timeRange: '24h', summary: rankingSummary });
-      db.newsDiagnosticsSnapshots.thresholds = appendBoundedSnapshot(db.newsDiagnosticsSnapshots.thresholds, { createdAt: nowIso, trigger, timeRange: '24h', summary: thresholdSummary });
+      db.newsDiagnosticsSnapshots.thresholds = appendBoundedSnapshot(db.newsDiagnosticsSnapshots.thresholds, { createdAt: nowIso, trigger, timeRange: '24h', summary: { ...thresholdSummary, sourceRollups } });
       saveDB(db);
       console.info('[NewsDiagnostics][Summary]', {
         trigger,
@@ -25775,7 +25867,8 @@ async function runHeadlineIngestionJob(trigger = 'scheduler') {
           latest: thresholdSummary?.thresholds?.latest?.percentDropped || 0,
           forYou: thresholdSummary?.thresholds?.for_you?.percentDropped || 0,
           notification: thresholdSummary?.thresholds?.notification?.percentDropped || 0
-        }
+        },
+        topSourcesTracked: Object.keys(sourceRollups).length
       });
     } catch (error) {
       console.warn('[NewsDiagnostics] unable to persist ranking/threshold summary.', error?.message || error);
@@ -25892,11 +25985,30 @@ async function runNewsNotificationFanoutJob(trigger = 'scheduler') {
       blockReasons,
       byRankingMode,
       byRelevanceTier,
-      byEventType
+      byEventType,
+      byChannel: { ...(diagnostics?.dispatchTotalsByChannel || {}) },
+      channelErrors: { ...(diagnostics?.dispatchErrorsByChannel || {}) },
+      byDeliveryWindow: { ...(diagnostics?.totalsByDeliveryWindow || {}) },
+      byModeEligibility: Object.entries(diagnostics?.eligibility?.byMode || {}).reduce((acc, [mode, stats]) => {
+        acc[mode] = {
+          allowed: Number(stats?.allowed || 0),
+          blocked: Number(stats?.blocked || 0)
+        };
+        return acc;
+      }, {})
     };
     dbAfter.newsDiagnosticsSnapshots.notifications = appendBoundedSnapshot(dbAfter.newsDiagnosticsSnapshots.notifications, snapshot);
     saveDB(dbAfter);
     console.info('[NewsDiagnostics][NotificationSummary]', snapshot);
+    const baselineSummary = getBaselineComparison({
+      ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), dbAfter),
+      baselineWindow: '24h'
+    });
+    console.info('[NewsDiagnostics][BaselineSummary]', {
+      baselineWindow: baselineSummary?.metadata?.baselineWindow || '24h',
+      insufficientBaseline: !!baselineSummary?.metadata?.insufficientBaseline,
+      driftIndicators: baselineSummary?.driftIndicators || {}
+    });
 
     console.info('[NewsFanout] job run end.', {
       trigger,
