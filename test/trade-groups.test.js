@@ -443,6 +443,66 @@ test('derived fill identity dedupes repeated BUY events without fillId', () => {
   assert.match(String(db.tradeGroupAlerts[0].broker_event_key || ''), /^derived\|/);
 });
 
+test('trade-group alert dedupe key remains idempotent even after notification is read', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{
+    id: 'group-trim-idempotent',
+    leader_user_id: leader,
+    name: 'Trim Idempotent Group',
+    is_active: true,
+    created_at: now
+  }];
+  db.tradeGroupMembers = [
+    {
+      id: 'member-trim-leader',
+      group_id: 'group-trim-idempotent',
+      user_id: leader,
+      role: 'leader',
+      status: 'active',
+      joined_at: now
+    },
+    {
+      id: 'member-trim-recipient',
+      group_id: 'group-trim-idempotent',
+      user_id: member,
+      role: 'member',
+      status: 'active',
+      joined_at: now
+    }
+  ];
+  db.tradeGroupAlerts = [];
+  db.tradeGroupNotifications = [];
+  saveDB(db);
+
+  const trade = { id: 'trim-trade-idempotent', symbol: 'NVDA', source: 'manual', sizeUnits: 90 };
+  const eventKey = 'manual-trim:idempotent-1';
+  const first = emitTradeGroupTrimAlertForTrade(db, leader, trade, {
+    previousQty: 100,
+    newQty: 90,
+    fillPrice: 812.25,
+    trimDate: now,
+    eventKey
+  });
+  assert.equal(first.alertsCreated, 1);
+  assert.equal(first.notificationsCreated, 1);
+  assert.equal(db.tradeGroupNotifications.length, 1);
+
+  db.tradeGroupNotifications[0].is_read = true;
+  db.tradeGroupNotifications[0].read_at = new Date().toISOString();
+
+  const second = emitTradeGroupTrimAlertForTrade(db, leader, trade, {
+    previousQty: 100,
+    newQty: 90,
+    fillPrice: 812.25,
+    trimDate: now,
+    eventKey
+  });
+  assert.equal(second.alertsCreated, 0);
+  assert.equal(second.notificationsCreated, 0);
+  assert.equal(db.tradeGroupNotifications.length, 1);
+});
+
 test('does not create group alert when stop or risk is missing and blocks non-members', async () => {
   const created = await authedFetch(tokens.leader, '/api/social/trade-groups', {
     method: 'POST',
