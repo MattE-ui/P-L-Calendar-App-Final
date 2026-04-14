@@ -114,7 +114,9 @@ const TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS = Number(process.env.TWO_FACTOR_VER
 const TWO_FACTOR_TOTP_ALGORITHM = 'SHA1';
 const TWO_FACTOR_TOTP_DIGITS = 6;
 const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
-const TWO_FACTOR_TOTP_WINDOW_STEPS = 1;
+const TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP = String(process.env.TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP ?? 'true').toLowerCase() !== 'false';
+const TWO_FACTOR_TOTP_ALLOW_NEXT_STEP = String(process.env.TWO_FACTOR_TOTP_ALLOW_NEXT_STEP ?? 'false').toLowerCase() === 'true';
+const TWO_FACTOR_TOTP_WINDOW_STEPS = TWO_FACTOR_TOTP_ALLOW_NEXT_STEP ? 1 : 0;
 const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
 const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
 const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
@@ -137,6 +139,14 @@ const notificationPublicEnvPresence = {
   messagingSenderId: !!FCM_MESSAGING_SENDER_ID,
   appId: !!FCM_APP_ID,
   vapidKey: !!FCM_VAPID_KEY
+};
+
+const AUTH_COOKIE_NAME = 'auth_token';
+const AUTH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'Strict',
+  secure: !!process.env.RENDER,
+  path: '/'
 };
 const missingNotificationPublicEnv = Object.entries(notificationPublicEnvPresence)
   .filter(([, present]) => !present)
@@ -4422,21 +4432,43 @@ function cleanupExpiredGuests(db, now = new Date()) {
 }
 
 function auth(req, res, next) {
-  const token = req.cookies?.auth_token;
-  if (!token) return res.status(401).json({ error: 'Unauthenticated' });
+  const token = req.cookies?.[AUTH_COOKIE_NAME];
+  if (!token) {
+    console.info('[auth] protected request rejected', {
+      path: req.originalUrl?.split('?')[0] || req.path,
+      reason: 'missing_cookie',
+      hasAuthCookie: false
+    });
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
   const db = loadDB();
   db.sessionMetadata ||= {};
   const username = db.sessions[token];
-  if (!username) return res.status(401).json({ error: 'Unauthenticated' });
+  if (!username) {
+    console.info('[auth] protected request rejected', {
+      path: req.originalUrl?.split('?')[0] || req.path,
+      reason: 'unknown_session',
+      hasAuthCookie: true
+    });
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
   const user = db.users[username];
-  if (!user) return res.status(401).json({ error: 'Unauthenticated' });
+  if (!user) {
+    console.info('[auth] protected request rejected', {
+      path: req.originalUrl?.split('?')[0] || req.path,
+      reason: 'missing_user',
+      hasAuthCookie: true,
+      username
+    });
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
   if (user.guest && user.expiresAt) {
     const expiresAt = Date.parse(user.expiresAt);
     if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) {
       delete db.users[username];
       clearSessionsForUser(db, username);
       saveDB(db);
-      res.clearCookie('auth_token');
+      res.clearCookie(AUTH_COOKIE_NAME, AUTH_COOKIE_OPTIONS);
       return res.status(401).json({
         error: 'Guest session expired. Continue as Guest again or sign up.'
       });
@@ -7455,14 +7487,19 @@ function generateTotpToken(secret, counter) {
 
 function verifyTotpCode(secret, token) {
   const normalized = String(token || '').trim();
-  if (!/^\d{6}$/.test(normalized)) return false;
+  if (!/^\d{6}$/.test(normalized)) return { verified: false, matchedOffset: null };
   const nowCounter = Math.floor(Date.now() / 1000 / TWO_FACTOR_TOTP_PERIOD_SECONDS);
-  for (let offset = -TWO_FACTOR_TOTP_WINDOW_STEPS; offset <= TWO_FACTOR_TOTP_WINDOW_STEPS; offset += 1) {
+  const offsets = [
+    ...(TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP ? [-1] : []),
+    0,
+    ...(TWO_FACTOR_TOTP_WINDOW_STEPS > 0 && TWO_FACTOR_TOTP_ALLOW_NEXT_STEP ? [1] : [])
+  ];
+  for (const offset of offsets) {
     if (generateTotpToken(secret, nowCounter + offset) === normalized) {
-      return true;
+      return { verified: true, matchedOffset: offset };
     }
   }
-  return false;
+  return { verified: false, matchedOffset: null };
 }
 
 function getSecretDebugFingerprint(secret) {
@@ -7489,7 +7526,8 @@ function getTotpRuntimeDebug() {
       algorithm: TWO_FACTOR_TOTP_ALGORITHM,
       digits: TWO_FACTOR_TOTP_DIGITS,
       periodSeconds: TWO_FACTOR_TOTP_PERIOD_SECONDS,
-      windowSteps: TWO_FACTOR_TOTP_WINDOW_STEPS
+      allowPreviousStep: TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP,
+      allowNextStep: TWO_FACTOR_TOTP_ALLOW_NEXT_STEP
     }
   };
 }
@@ -12837,12 +12875,11 @@ function createSession(db, username, res, maxAgeMs = 7 * 24 * 60 * 60 * 1000, re
     ip: getClientIp(req || {})
   };
   saveDB(db);
-  res.cookie('auth_token', token, {
-    httpOnly: true,
-    sameSite: 'Strict',
-    secure: !!process.env.RENDER,
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    ...AUTH_COOKIE_OPTIONS,
     maxAge: maxAgeMs
   });
+  return token;
 }
 
 app.post('/api/signup', asyncHandler(async (req,res)=>{
@@ -13021,6 +13058,11 @@ app.post('/api/login', async (req,res)=>{
       expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
     };
     saveDB(db);
+    console.info('[2FA] Pending login challenge created.', {
+      username,
+      challengeId,
+      expiresAt: db.twoFactorLoginChallenges[challengeId].expiresAt
+    });
     return res.status(202).json({
       requiresTwoFactor: true,
       requires_2fa: true,
@@ -13033,7 +13075,16 @@ app.post('/api/login', async (req,res)=>{
     });
   }
   user.security.lastLoginAt = new Date().toISOString();
-  console.info('[2FA] Password login complete (2FA disabled).', { username });
+  console.info('[2FA] Password login complete (2FA disabled).', {
+    username,
+    authCookie: {
+      name: AUTH_COOKIE_NAME,
+      sameSite: AUTH_COOKIE_OPTIONS.sameSite,
+      secure: AUTH_COOKIE_OPTIONS.secure,
+      path: AUTH_COOKIE_OPTIONS.path,
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000
+    }
+  });
   createSession(db, username, res, 7 * 24 * 60 * 60 * 1000, req);
   saveDB(db);
   res.json({ ok: true, profileComplete: !!user.profileComplete });
@@ -13068,6 +13119,7 @@ app.post('/api/login/2fa', async (req, res) => {
     return res.status(429).json({ error: `Too many verification attempts. Try again in ${retryAfter} seconds.` });
   }
   let verified = false;
+  let matchedTotpOffset = null;
   if (method === 'backup_code') {
     const hashed = hashBackupCode(code.toUpperCase());
     const idx = user.security.twoFactorBackupCodeHashes.indexOf(hashed);
@@ -13081,22 +13133,45 @@ app.post('/api/login/2fa', async (req, res) => {
       username,
       secretFingerprint: getSecretDebugFingerprint(secret)
     });
-    verified = verifyTotpCode(secret, code);
+    const totpResult = verifyTotpCode(secret, code);
+    verified = !!totpResult.verified;
+    matchedTotpOffset = totpResult.matchedOffset;
   }
-  console.info('[2FA] Login verification attempt.', { username, method, success: verified });
+  console.info('[2FA] Login verification attempt.', {
+    username,
+    method,
+    success: verified,
+    matchedTotpOffset
+  });
   if (!verified) {
     saveDB(db);
     return res.status(400).json({ error: method === 'backup_code' ? 'Invalid backup code.' : 'Invalid authentication code.' });
   }
   delete db.twoFactorLoginChallenges[challengeId];
   user.security.lastLoginAt = new Date().toISOString();
+  console.info('[2FA] Finalizing login session after challenge verification.', {
+    username,
+    challengeId,
+    authCookie: {
+      name: AUTH_COOKIE_NAME,
+      sameSite: AUTH_COOKIE_OPTIONS.sameSite,
+      secure: AUTH_COOKIE_OPTIONS.secure,
+      path: AUTH_COOKIE_OPTIONS.path,
+      maxAgeMs: 7 * 24 * 60 * 60 * 1000
+    }
+  });
   createSession(db, username, res, 7 * 24 * 60 * 60 * 1000, req);
   saveDB(db);
-  res.json({ ok: true, profileComplete: !!user.profileComplete });
+  res.json({
+    ok: true,
+    profileComplete: !!user.profileComplete,
+    sessionFinalized: true,
+    twoFactorComplete: true
+  });
 });
 
 app.post('/api/logout', (req,res)=>{
-  const token = req.cookies?.auth_token;
+  const token = req.cookies?.[AUTH_COOKIE_NAME];
   const deviceId = typeof req.headers['x-device-id'] === 'string' ? req.headers['x-device-id'] : '';
   if (token) {
     const db = loadDB();
@@ -13115,7 +13190,7 @@ app.post('/api/logout', (req,res)=>{
     }
     saveDB(db);
   }
-  res.clearCookie('auth_token');
+  res.clearCookie(AUTH_COOKIE_NAME, AUTH_COOKIE_OPTIONS);
   res.json({ ok: true });
 });
 
@@ -13824,6 +13899,8 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   });
   const avatar = socialAvatarForUser(user);
   res.json({
+    authenticated: true,
+    twoFactorComplete: true,
     profileComplete: profileSummary.profileCompletionPercent === 100,
     portfolio: portfolioValue,
     portfolioValue,
@@ -13896,6 +13973,8 @@ app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
   const avatar = socialAvatarForUser(user);
   const completion = buildProfileCompletionSummary(user, sharedSummary.portfolioValue, sharedSummary.netDeposits.total);
   const payload = {
+    authenticated: true,
+    twoFactorComplete: true,
     profileComplete: completion.profileCompletionPercent === 100,
     portfolio: sharedSummary.portfolioValue,
     portfolioValue: sharedSummary.portfolioValue,
@@ -13920,6 +13999,12 @@ app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
     riskCapitalBase: sharedSummary.riskCapital.riskCapitalBase,
     riskCapital: serializeRiskCapitalSummary(sharedSummary.riskCapital)
   };
+  console.info('[auth] profile bootstrap auth evaluation.', {
+    username: req.username,
+    authenticated: true,
+    twoFactorComplete: true,
+    authCookiePresent: !!req.cookies?.[AUTH_COOKIE_NAME]
+  });
   req.perfDiag?.setMeta({
     accountCount: sharedSummary.accountAggregation.accountCount,
     resultCount: 1,
@@ -18370,8 +18455,15 @@ app.post('/api/security/2fa/verify', auth, (req, res) => {
     setupId,
     secretFingerprint: getSecretDebugFingerprint(secret)
   });
-  const verified = verifyTotpCode(secret, code);
-  console.info('[2FA] Setup verification attempt.', { username: req.username, setupId, success: verified, ...getTotpRuntimeDebug() });
+  const totpResult = verifyTotpCode(secret, code);
+  const verified = !!totpResult.verified;
+  console.info('[2FA] Setup verification attempt.', {
+    username: req.username,
+    setupId,
+    success: verified,
+    matchedTotpOffset: totpResult.matchedOffset,
+    ...getTotpRuntimeDebug()
+  });
   if (!verified) return res.status(400).json({ error: 'Invalid authentication code. If you refreshed or reopened setup, restart 2FA setup and scan the latest QR code.' });
   const backupCodes = generateBackupCodes(10);
   user.security.twoFactorSecretEnc = setup.secretEnc;
@@ -18854,7 +18946,7 @@ app.delete('/api/profile', auth, (req, res) => {
     }
   }
   saveDB(db);
-  res.clearCookie('auth_token');
+  res.clearCookie(AUTH_COOKIE_NAME, AUTH_COOKIE_OPTIONS);
   res.json({ ok: true });
 });
 

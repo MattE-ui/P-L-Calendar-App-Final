@@ -348,6 +348,10 @@ async function api(path, opts = {}) {
     data = {};
   }
   if (res.status === 401) {
+    console.info('[auth-redirect] dashboard request unauthenticated', {
+      path,
+      reason: data?.error || 'Unauthenticated'
+    });
     if (data?.error && data.error.includes('Guest session expired')) {
       window.location.href = '/login.html?expired=guest';
     } else {

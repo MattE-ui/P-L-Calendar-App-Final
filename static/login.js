@@ -108,6 +108,26 @@ function createLoginHandlers() {
     return res;
   }
 
+  async function waitForAuthenticatedSession({ maxAttempts = 6, delayMs = 150 } = {}) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const res = await fetch('/api/profile/bootstrap', { credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      const authenticated = res.ok && data?.authenticated === true;
+      const twoFactorComplete = res.ok && data?.twoFactorComplete === true;
+      console.info('[auth-hydration] post-login check', {
+        attempt,
+        status: res.status,
+        authenticated,
+        twoFactorComplete
+      });
+      if (authenticated && twoFactorComplete) return data;
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => window.setTimeout(resolve, delayMs));
+      }
+    }
+    throw new Error('Session was not fully ready. Please try again.');
+  }
+
   function parseTwoFactorChallenge(data = {}) {
     const requiresTwoFactor = data.requiresTwoFactor === true || data.requires_2fa === true;
     const challengeId = typeof data.challengeId === 'string'
@@ -146,7 +166,8 @@ function createLoginHandlers() {
       } else if (res.ok) {
         sessionStorage.removeItem('guestMode');
         localStorage.removeItem('guestMode');
-        window.location.href = data.profileComplete ? '/' : '/profile.html';
+        const session = await waitForAuthenticatedSession();
+        window.location.href = session.profileComplete ? '/' : '/profile.html';
       } else {
         setError(data.error || 'Login failed');
       }
@@ -184,7 +205,8 @@ function createLoginHandlers() {
       if (res.ok) {
         sessionStorage.removeItem('guestMode');
         localStorage.removeItem('guestMode');
-        window.location.href = data.profileComplete ? '/' : '/profile.html';
+        const session = await waitForAuthenticatedSession();
+        window.location.href = session.profileComplete ? '/' : '/profile.html';
       } else {
         setError(data.error || '2FA verification failed.');
       }
