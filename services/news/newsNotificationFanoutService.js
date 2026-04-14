@@ -238,10 +238,10 @@ function buildNewsNotificationDeepLink({ event, deliveryWindow, context = {} }) 
   let tab = 'news';
   if (isDigest) {
     tab = 'for-you';
+  } else if (eventType === 'earnings' || userScope) {
+    tab = 'for-you';
   } else if (sourceType === 'macro' || eventType === 'fomc' || eventType === 'cpi' || isScheduledSignal(event?.sourceType, event?.eventType)) {
     tab = 'calendar';
-  } else if (eventType === 'earnings' && userScope) {
-    tab = 'for-you';
   }
 
   const params = new URLSearchParams();
@@ -380,6 +380,11 @@ async function runNewsNotificationFanout(options = {}) {
       eventsAggregated: 0,
       batchesDispatched: 0
     },
+    deepLinkTabs: {
+      'for-you': 0,
+      calendar: 0,
+      news: 0
+    },
     errors: []
   };
 
@@ -441,6 +446,10 @@ async function runNewsNotificationFanout(options = {}) {
             deliveryWindow,
             context: { dedupeKey: keyFields.deliveryWindowKey }
           });
+          const deepLinkTab = new URLSearchParams(String(payload.deepLinkUrl || '').split('?')[1] || '').get('tab');
+          if (deepLinkTab && diagnostics.deepLinkTabs[deepLinkTab] !== undefined) {
+            diagnostics.deepLinkTabs[deepLinkTab] += 1;
+          }
 
           try {
             if (typeof dispatchChannelPayload === 'function') {
@@ -545,6 +554,10 @@ async function runNewsNotificationFanout(options = {}) {
           itemIds: digest.items.map((event) => event.id)
         }
       });
+      const deepLinkTab = new URLSearchParams(String(payload.deepLinkUrl || '').split('?')[1] || '').get('tab');
+      if (deepLinkTab && diagnostics.deepLinkTabs[deepLinkTab] !== undefined) {
+        diagnostics.deepLinkTabs[deepLinkTab] += 1;
+      }
 
       try {
         if (typeof dispatchChannelPayload === 'function') {
@@ -576,6 +589,7 @@ async function runNewsNotificationFanout(options = {}) {
     deliveryInserted: diagnostics.deliveryLog.inserted,
     deduped: diagnostics.deliveryLog.deduped,
     dispatchTotalsByChannel: diagnostics.dispatchTotalsByChannel,
+    deepLinkTabs: diagnostics.deepLinkTabs,
     digest: diagnostics.digest,
     errorCount: diagnostics.errors.length
   });
