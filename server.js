@@ -6788,6 +6788,7 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
 function buildSnapshots(history, initial, tradeJournal = {}, options = {}) {
   const snapshots = {};
   const records = [];
+  let firstRecordedDate = null;
   const selectedMonthKey = typeof options.selectedMonthKey === 'string' ? options.selectedMonthKey.trim() : '';
   const includeTrades = options.includeTrades !== false;
   for (const [monthKey, days] of Object.entries(history || {})) {
@@ -6817,6 +6818,9 @@ function buildSnapshots(history, initial, tradeJournal = {}, options = {}) {
   records.sort((a, b) => a.date.localeCompare(b.date));
   let baseline = Number.isFinite(initial) ? initial : null;
   records.forEach(record => {
+    if (!firstRecordedDate && record.end !== null) {
+      firstRecordedDate = record.date;
+    }
     const includeMonth = !selectedMonthKey || selectedMonthKey === record.monthKey;
     if (includeMonth) {
       if (!snapshots[record.monthKey]) snapshots[record.monthKey] = {};
@@ -6861,7 +6865,7 @@ function buildSnapshots(history, initial, tradeJournal = {}, options = {}) {
       snapshots[monthKey][dateKey].trades = safeTrades;
     }
   }
-  return snapshots;
+  return { snapshots, firstRecordedDate };
 }
 
 function refreshAnchors(user, history = ensurePortfolioHistory(user)) {
@@ -19612,7 +19616,11 @@ app.get('/api/pl', auth, (req,res)=>{
   const { baseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   const mapper = createTradeInstrumentMapper(db, req.username);
-  const snapshots = req.perfDiag?.timeSync('build_snapshots', () => buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades })) || buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades });
+  const snapshotBundle = req.perfDiag?.timeSync('build_snapshots', () => buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades })) || buildSnapshots(history, baseline, journal, { selectedMonthKey, includeTrades });
+  const snapshots = snapshotBundle?.snapshots || {};
+  const firstRecordedDate = typeof snapshotBundle?.firstRecordedDate === 'string' && snapshotBundle.firstRecordedDate
+    ? snapshotBundle.firstRecordedDate
+    : null;
   if (selectedMonthKey) {
     const monthEntries = snapshots[selectedMonthKey] || {};
     Object.values(monthEntries).forEach(entry => {
@@ -19639,7 +19647,20 @@ app.get('/api/pl', auth, (req,res)=>{
   if (mutated) saveDB(db);
   if (selectedMonthKey) {
     req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots[selectedMonthKey] || {}).length, cache: 'bypass' });
-    return res.json(snapshots[selectedMonthKey] || {});
+    const monthPayload = snapshots[selectedMonthKey] || {};
+    const originInWindow = !!(firstRecordedDate && firstRecordedDate.startsWith(`${selectedMonthKey}-`));
+    req.perfDiag?.setMeta({
+      dashboardOriginDateKnown: !!firstRecordedDate,
+      dashboardOriginTileInWindow: originInWindow
+    });
+    return res.json({
+      ...monthPayload,
+      __meta: {
+        firstRecordedDate,
+        selectedMonthKey,
+        originTileInWindow: originInWindow
+      }
+    });
   }
   req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots || {}).length, cache: 'bypass' });
   res.json(snapshots);
