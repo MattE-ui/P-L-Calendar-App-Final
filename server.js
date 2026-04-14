@@ -21685,13 +21685,113 @@ function computeActiveTradesFingerprint(user) {
   return `${bucketCount}:${tradeCount}:${openCount}:${ibkrLiveCount}:${digest}`;
 }
 
-function buildActiveTradesSnapshotPayload(snapshot) {
+function pickDefinedFields(source = {}, keys = []) {
+  const out = {};
+  keys.forEach((key) => {
+    if (source[key] !== undefined) out[key] = source[key];
+  });
+  return out;
+}
+
+const ACTIVE_TRADES_SUMMARY_FIELDS = [
+  'id',
+  'symbol',
+  'displaySymbol',
+  'displayTicker',
+  'brokerTicker',
+  'mappingScope',
+  'mappingId',
+  'sourceKey',
+  'createdAt',
+  'date',
+  'entry',
+  'stop',
+  'currency',
+  'sizeUnits',
+  'totalEnteredQuantity',
+  'totalExitedQuantity',
+  'openQuantity',
+  'status',
+  'riskPct',
+  'direction',
+  'livePrice',
+  'liveCurrency',
+  'unrealizedGBP',
+  'guaranteedPnlGBP',
+  'positionGBP',
+  'currentStop',
+  'currentStopSource',
+  'currentStopLastSyncedAt',
+  'currentStopStale',
+  'source',
+  'note',
+  'assetClass',
+  'optionType',
+  'optionStrike',
+  'optionExpiration',
+  'optionContracts',
+  'optionMultiplier',
+  'optionPremiumSource',
+  'optionQuoteProvider',
+  'optionUnavailableReason',
+  'trading212Isin',
+  'trading212Ticker',
+  'trading212Name',
+  'trading212Id',
+  'ibkrTicker',
+  'ibkrPositionId'
+];
+
+const ACTIVE_TRADES_DETAIL_ONLY_FIELDS = [
+  'optionQuoteDiagnostics',
+  'originalStopPrice',
+  'fees',
+  'slippage',
+  'fxFeeEligible',
+  'fxFeeRate',
+  'fxFeeImpactGBP',
+  'ibkrConid'
+];
+
+function serializeActiveTradeSummary(trade = {}) {
+  return pickDefinedFields(trade, ACTIVE_TRADES_SUMMARY_FIELDS);
+}
+
+function parseActiveTradesSerializerMode(query = {}) {
+  const detailRaw = String(query?.detail ?? query?.view ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'detail', 'full'].includes(detailRaw)) return 'detail';
+  return 'summary';
+}
+
+function buildActiveTradesSnapshotPayload(snapshot, {
+  mode = 'summary'
+} = {}) {
+  const responseMode = mode === 'detail' ? 'detail' : 'summary';
+  const detailTrades = Array.isArray(snapshot.trades) ? snapshot.trades : [];
+  const summaryTrades = Array.isArray(snapshot.tradesSummary)
+    ? snapshot.tradesSummary
+    : detailTrades.map(serializeActiveTradeSummary);
+  const responseTrades = responseMode === 'detail' ? detailTrades : summaryTrades;
+  const summaryBytes = Buffer.byteLength(JSON.stringify(summaryTrades));
+  const detailBytes = Buffer.byteLength(JSON.stringify(detailTrades));
+  const responseBytes = responseMode === 'detail' ? detailBytes : summaryBytes;
+  const bytesReduced = Math.max(0, detailBytes - summaryBytes);
+  const serializationTrimmed = bytesReduced > 0;
   return {
-    trades: snapshot.trades,
+    trades: responseTrades,
     liveOpenPnl: snapshot.liveOpenPnl,
     openLossPotential: snapshot.openLossPotential,
     liveOpenPnlMode: snapshot.liveOpenPnlMode,
     liveOpenPnlCurrency: snapshot.liveOpenPnlCurrency,
+    serialization: {
+      mode: responseMode,
+      activeTradesSummarySerializerUsed: responseMode === 'summary',
+      serializationTrimmed,
+      responseBytes,
+      detailResponseBytes: detailBytes,
+      responseBytesReduced: responseMode === 'summary' ? bytesReduced : 0,
+      detailFieldsDeferred: responseMode === 'summary' ? ACTIVE_TRADES_DETAIL_ONLY_FIELDS : []
+    },
     freshness: {
       generatedAt: snapshot.generatedAt,
       snapshotAgeMs: Math.max(0, Date.now() - snapshot.generatedAtMs),
@@ -21749,12 +21849,14 @@ async function computeActiveTradesSnapshot(username) {
   }
   const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
   const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, username));
+  const summarizedTrades = mappedTrades.map(serializeActiveTradeSummary);
   return {
     username,
     fingerprint,
     generatedAtMs: Date.now(),
     generatedAt: new Date().toISOString(),
     trades: mappedTrades,
+    tradesSummary: summarizedTrades,
     liveOpenPnl: liveOpenPnlGBP,
     openLossPotential: openLossPotentialGBP,
     liveOpenPnlMode,
@@ -23350,6 +23452,7 @@ app.get('/api/trades/active', auth, async (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
+  const serializerMode = parseActiveTradesSerializerMode(req.query || {});
   const forceRefresh = req.query?.refresh === '1' || req.query?.forceRefresh === '1';
   const fingerprint = req.perfDiag?.timeSync('active_fingerprint', () => computeActiveTradesFingerprint(user))
     || computeActiveTradesFingerprint(user);
@@ -23381,7 +23484,13 @@ app.get('/api/trades/active', auth, async (req, res) => {
       activeTradesSnapshotAgeMs: cacheAgeMs,
       refreshInProgress
     });
-    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true }, { mode: serializerMode });
+    req.perfDiag?.setMeta({
+      serializerMode: payload.serialization?.mode || serializerMode,
+      activeTradesSummarySerializerUsed: payload.serialization?.activeTradesSummarySerializerUsed === true,
+      serializationTrimmed: payload.serialization?.serializationTrimmed === true,
+      responseBytesReduced: payload.serialization?.responseBytesReduced || 0
+    });
     payload.freshness.refreshInProgress = refreshInProgress;
     return res.json(payload);
   }
@@ -23398,7 +23507,13 @@ app.get('/api/trades/active', auth, async (req, res) => {
       activeTradesSnapshotAgeMs: cacheAgeMs,
       refreshInProgress: true
     });
-    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+    const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true }, { mode: serializerMode });
+    req.perfDiag?.setMeta({
+      serializerMode: payload.serialization?.mode || serializerMode,
+      activeTradesSummarySerializerUsed: payload.serialization?.activeTradesSummarySerializerUsed === true,
+      serializationTrimmed: payload.serialization?.serializationTrimmed === true,
+      responseBytesReduced: payload.serialization?.responseBytesReduced || 0
+    });
     payload.freshness.refreshInProgress = true;
     return res.json(payload);
   }
@@ -23417,7 +23532,13 @@ app.get('/api/trades/active', auth, async (req, res) => {
         activeTradesSnapshotAgeMs: cacheAgeMs,
         refreshInProgress: true
       });
-      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true }, { mode: serializerMode });
+      req.perfDiag?.setMeta({
+        serializerMode: payload.serialization?.mode || serializerMode,
+        activeTradesSummarySerializerUsed: payload.serialization?.activeTradesSummarySerializerUsed === true,
+        serializationTrimmed: payload.serialization?.serializationTrimmed === true,
+        responseBytesReduced: payload.serialization?.responseBytesReduced || 0
+      });
       payload.freshness.refreshInProgress = true;
       return res.json(payload);
     }
@@ -23436,17 +23557,27 @@ app.get('/api/trades/active', auth, async (req, res) => {
         cache: 'snapshot_fallback_after_refresh_error',
         activeTradesSnapshotAgeMs: cacheAgeMs
       });
-      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true });
+      const payload = buildActiveTradesSnapshotPayload({ ...cached, cacheHit: true }, { mode: serializerMode });
+      req.perfDiag?.setMeta({
+        serializerMode: payload.serialization?.mode || serializerMode,
+        activeTradesSummarySerializerUsed: payload.serialization?.activeTradesSummarySerializerUsed === true,
+        serializationTrimmed: payload.serialization?.serializationTrimmed === true,
+        responseBytesReduced: payload.serialization?.responseBytesReduced || 0
+      });
       payload.freshness.refreshInProgress = Boolean(activeTradesRefreshLocks.get(req.username));
       return res.json(payload);
     }
     return res.status(503).json({ error: 'Active trades are temporarily unavailable.' });
   }
-  const freshPayload = buildActiveTradesSnapshotPayload({ ...snapshot, cacheHit: false });
+  const freshPayload = buildActiveTradesSnapshotPayload({ ...snapshot, cacheHit: false }, { mode: serializerMode });
   req.perfDiag?.setMeta({
     externalProviderDurationMs: Number(process.hrtime.bigint() - externalStart) / 1e6,
     resultCount: snapshot.trades.length,
-    cache: 'snapshot_refresh'
+    cache: 'snapshot_refresh',
+    serializerMode: freshPayload.serialization?.mode || serializerMode,
+    activeTradesSummarySerializerUsed: freshPayload.serialization?.activeTradesSummarySerializerUsed === true,
+    serializationTrimmed: freshPayload.serialization?.serializationTrimmed === true,
+    responseBytesReduced: freshPayload.serialization?.responseBytesReduced || 0
   });
   return res.json(freshPayload);
 });
