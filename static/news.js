@@ -126,6 +126,11 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     window.PerfDiagnostics?.log(`news-${event}`, payload);
   }
 
+  function diagnostics(event, payload = {}) {
+    console.info('[NewsPage:Diagnostics]', event, payload);
+    log(`diagnostics-${event}`, payload);
+  }
+
   async function api(path, opts = {}) {
     const method = (opts.method || 'GET').toUpperCase();
     const fetchPromise = fetch(path, { credentials: 'include', ...opts });
@@ -191,6 +196,15 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   function normalizePortfolioUpcomingEarnings(model = {}) {
     const items = Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings : [];
     return [...items].sort((a, b) => toSortableTimestamp(a) - toSortableTimestamp(b));
+  }
+
+  function getSectionItems(section = {}, model = {}) {
+    const sectionKey = section.summary?.key || '';
+    if (sectionKey === 'portfolioUpcomingEarnings') {
+      const normalized = normalizePortfolioUpcomingEarnings(model);
+      if (normalized.length) return normalized;
+    }
+    return Array.isArray(section.items) ? section.items : [];
   }
 
   function renderCard(item = {}) {
@@ -259,21 +273,35 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
     const model = tabState.model || {};
     const sections = buildSectionList(state.activeTab, model);
+    const sectionPayloadLengths = sections.map((section) => ({
+      key: section.summary?.key || 'unknown',
+      sectionItemsLength: Array.isArray(section.items) ? section.items.length : 0,
+      renderedItemsLength: getSectionItems(section, model).length
+    }));
+    const portfolioSection = sections.find((section) => section.summary?.key === 'portfolioUpcomingEarnings');
+    const portfolioRenderedItems = portfolioSection ? getSectionItems(portfolioSection, model) : [];
+    diagnostics('render-tab-state', {
+      tab: state.activeTab,
+      filters: { ...state.filters },
+      tabItemsLength: tabState.items.length,
+      rawPortfolioUpcomingEarningsLength: Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings.length : 0,
+      sectionPayloadLengths,
+      portfolioRenderedItemsLength: portfolioRenderedItems.length
+    });
 
     if (state.activeTab === 'news' && !tabState.items.length) {
       log('empty-state', { tab: state.activeTab, reason: 'latest-empty' });
       return renderEmpty('No headline ingestion yet', model?.emptyState?.message || 'Latest headlines are intentionally empty right now.');
     }
-    if (!tabState.items.length) {
+    const totalRenderedItems = sections.reduce((sum, section) => sum + getSectionItems(section, model).length, 0);
+    if (!totalRenderedItems) {
       log('empty-state', { tab: state.activeTab, reason: 'no-items' });
       return renderEmpty('No events to show', 'Try relaxing filters or check back soon.');
     }
 
     const sectionsHtml = sections.map((section) => {
       const sectionKey = section.summary?.key || '';
-      const items = sectionKey === 'portfolioUpcomingEarnings'
-        ? normalizePortfolioUpcomingEarnings(model)
-        : (Array.isArray(section.items) ? section.items : []);
+      const items = getSectionItems(section, model);
 
       if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
         return `
@@ -377,7 +405,32 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     if (tabState.loading) return;
 
     if (!reset && tabState.loaded && !append && tabState.lastFilterSignature === activeSignature) {
+      diagnostics('fetch-cache-hit', {
+        tab: tabKey,
+        activeSignature,
+        cachedItemsLength: tabState.items.length,
+        cachedPortfolioUpcomingEarningsLength: Array.isArray(tabState.model?.portfolioUpcomingEarnings) ? tabState.model.portfolioUpcomingEarnings.length : 0
+      });
       return;
+    }
+
+    diagnostics('fetch-begin', {
+      tab: tabKey,
+      append,
+      reset,
+      activeSignature,
+      usingCachedTabDataBeforeFetch: !!tabState.loaded,
+      existingItemsLength: tabState.items.length,
+      existingPortfolioUpcomingEarningsLength: Array.isArray(tabState.model?.portfolioUpcomingEarnings) ? tabState.model.portfolioUpcomingEarnings.length : 0
+    });
+
+    if (reset) {
+      tabState.loaded = false;
+      tabState.items = [];
+      tabState.model = null;
+      tabState.pagination = null;
+      tabState.lastFilterSignature = '';
+      diagnostics('fetch-reset-cleared-cache', { tab: tabKey });
     }
 
     tabState.loading = true;
@@ -392,6 +445,13 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
     try {
       const payload = await api(requestPath);
+      diagnostics('fetch-response', {
+        tab: tabKey,
+        append,
+        payloadDataLength: Array.isArray(payload?.data) ? payload.data.length : 0,
+        payloadSectionsLength: Array.isArray(payload?.sections) ? payload.sections.length : 0,
+        payloadPortfolioUpcomingEarningsLength: Array.isArray(payload?.portfolioUpcomingEarnings) ? payload.portfolioUpcomingEarnings.length : 0
+      });
       const previousItems = append ? tabState.items : [];
       tabState.items = mergeUniqueById(previousItems, payload?.data || []);
       tabState.pagination = payload?.pagination || null;
@@ -407,6 +467,13 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
           }))
           : []
       };
+      diagnostics('fetch-cache-overwrite', {
+        tab: tabKey,
+        append,
+        replacedCachedData: !append,
+        cachedItemsLengthAfterMerge: tabState.items.length,
+        cachedPortfolioUpcomingEarningsLength: Array.isArray(tabState.model?.portfolioUpcomingEarnings) ? tabState.model.portfolioUpcomingEarnings.length : 0
+      });
       tabState.lastFilterSignature = activeSignature;
       tabState.loaded = true;
       log('tab-fetch-end', { tab: tabKey, append, durationMs: Date.now() - startedAt, count: tabState.items.length, hasMore: !!tabState.pagination?.hasMore });
