@@ -8858,6 +8858,20 @@ function getRiskCapitalBase(user, options = {}) {
   return result;
 }
 
+function serializeRiskCapitalSummary(riskCapital = {}) {
+  return {
+    riskCapitalBase: Number.isFinite(Number(riskCapital.riskCapitalBase)) ? Number(riskCapital.riskCapitalBase) : 0,
+    featureAvailable: riskCapital.featureAvailable === true,
+    totalEligibleRiskCapital: Number.isFinite(Number(riskCapital.totalEligibleRiskCapital)) ? Number(riskCapital.totalEligibleRiskCapital) : 0,
+    selectedRiskCapital: Number.isFinite(Number(riskCapital.selectedRiskCapital)) ? Number(riskCapital.selectedRiskCapital) : 0,
+    selectionMode: String(riskCapital.selectionMode || 'default_portfolio'),
+    appliedSelection: riskCapital.appliedSelection === true,
+    fallbackReason: String(riskCapital.fallbackReason || 'default_risk_capital_path'),
+    selectedAccountIds: Array.isArray(riskCapital.selectedAccountIds) ? riskCapital.selectedAccountIds : [],
+    eligibleAccountIds: Array.isArray(riskCapital.eligibleAccountIds) ? riskCapital.eligibleAccountIds : []
+  };
+}
+
 function getPortfolioGBPForRisk(user) {
   const riskCapital = getRiskCapitalBase(user, {
     user: user?.username || null,
@@ -8905,6 +8919,7 @@ function buildTradingAccountsBootstrapPayload(user, username, db) {
       logDiagnostics: process.env.NODE_ENV !== 'production'
     })
     : riskCapital;
+  const riskCapitalSummary = serializeRiskCapitalSummary(resolvedRiskCapital);
 
   const ibkrCfg = user?.ibkr || {};
   if (ibkrCfg.mode === 'connector') updateIbkrConnectorStatus(ibkrCfg);
@@ -8930,7 +8945,7 @@ function buildTradingAccountsBootstrapPayload(user, username, db) {
           useSelectedTradingAccountsForRisk: !!settings.useSelectedTradingAccountsForRisk,
           selectedTradingAccountIdsForRisk: settings.selectedTradingAccountIdsForRisk || []
         },
-        riskCapital: resolvedRiskCapital
+        riskCapital: riskCapitalSummary
       },
       ibkr: {
         enabled: !!ibkrCfg.enabled,
@@ -13524,6 +13539,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
   const portfolioSnapshot = sharedSummary.portfolioSnapshot;
   const accountAggregation = sharedSummary.accountAggregation;
   const riskCapital = sharedSummary.riskCapital;
+  const riskCapitalSummary = serializeRiskCapitalSummary(riskCapital);
   const computedTotalFromAccounts = accountAggregation.portfolioValue;
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13572,10 +13588,15 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     activeTrades: trades.length,
     isGuest: !!user.guest,
     riskCapitalBase: riskCapital.riskCapitalBase,
-    riskCapital,
+    riskCapital: riskCapitalSummary,
     activeTradesDeferred: !includeActiveTrades
   };
-  req.perfDiag?.setMeta({ resultCount: trades.length, cache: 'bypass' });
+  req.perfDiag?.setMeta({
+    resultCount: trades.length,
+    cache: 'bypass',
+    summarySerializerUsed: true,
+    payloadTrimmed: true
+  });
   console.info('[trace][portfolio][response-payload-verification]', {
     endpoint: '/api/portfolio',
     computedTotalFromAccounts,
@@ -13710,6 +13731,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
   const accountAggregation = sharedSummary.accountAggregation;
   req.perfDiag?.setMeta({ accountCount: accountAggregation.accountCount, cache: 'bypass', requestScopedReuse: true });
   const riskCapital = sharedSummary.riskCapital;
+  const riskCapitalSummary = serializeRiskCapitalSummary(riskCapital);
   const { settings: riskSettings } = ensureRiskSettings(user);
   const manualPortfolioRaw = user.manualPortfolioBaseline;
   const manualPortfolioBaseline = Number(manualPortfolioRaw);
@@ -13778,7 +13800,7 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
       selectedTradingAccountIdsForRisk: riskSettings.selectedTradingAccountIdsForRisk || []
     },
     riskCapitalBase: riskCapital.riskCapitalBase,
-    riskCapital,
+    riskCapital: riskCapitalSummary,
     tradingAccounts: (Array.isArray(user.tradingAccounts) ? user.tradingAccounts : []).map(account => ({
       id: account.id,
       label: account.label || '',
@@ -13845,13 +13867,15 @@ app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
     multiTradingAccountsEnabled: !!user.multiTradingAccountsEnabled,
     investorAccountsEnabled: !!user.investorAccountsEnabled,
     investorPortalAvailable: true,
-    riskCapitalBase: sharedSummary.riskCapital.riskCapitalBase
+    riskCapitalBase: sharedSummary.riskCapital.riskCapitalBase,
+    riskCapital: serializeRiskCapitalSummary(sharedSummary.riskCapital)
   };
   req.perfDiag?.setMeta({
     accountCount: sharedSummary.accountAggregation.accountCount,
     resultCount: 1,
     requestScopedReuse: true,
     payloadTrimmed: true,
+    summarySerializerUsed: true,
     payloadBytes: Buffer.byteLength(JSON.stringify(payload))
   });
   res.json(payload);
@@ -14605,6 +14629,14 @@ function sanitizeWatchlistRow(db, watchlist, viewerUserId) {
       orderIndex: Number.isFinite(Number(item.order_index)) ? Number(item.order_index) : 0
     }))
   };
+}
+
+function sanitizeWatchlistDetailRow(db, watchlist, viewerUserId, options = {}) {
+  const includeItems = options.includeItems === true;
+  const full = sanitizeWatchlistRow(db, watchlist, viewerUserId);
+  if (includeItems) return full;
+  const { items, ...lean } = full;
+  return lean;
 }
 
 function sanitizeWatchlistSummaryRow(db, watchlist, viewerUserId) {
@@ -16839,7 +16871,7 @@ app.put('/api/group-chats/:groupId/roles/assignments', auth, (req, res) => {
 
 app.get('/api/watchlists', auth, (req, res) => {
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
-  req.perfDiag?.timeSync('social_tables_ensure', () => ensureSocialTables(db));
+  const socialMutated = req.perfDiag?.timeSync('social_tables_ensure', () => ensureSocialTables(db)) || false;
   const viewMode = String(req.query?.view || '').trim().toLowerCase();
   const isSummaryView = viewMode === 'summary';
   const memberGroupIds = new Set(
@@ -16857,7 +16889,7 @@ app.get('/api/watchlists', auth, (req, res) => {
       ? sanitizeWatchlistSummaryRow(db, item, req.username)
       : sanitizeWatchlistRow(db, item, req.username)));
   req.perfDiag?.setMeta({ resultCount: watchlists.length, cache: 'bypass', viewMode: isSummaryView ? 'summary' : 'full' });
-  saveDB(db);
+  if (socialMutated) saveDB(db);
   res.json({ watchlists });
 });
 
@@ -16868,11 +16900,14 @@ app.get('/api/watchlists/:watchlistId/detail', auth, (req, res) => {
   if (access.error === 'not_found') return res.status(404).json({ error: 'Watchlist not found.' });
   if (access.error === 'forbidden') return res.status(403).json({ error: 'Forbidden.' });
   const watchlist = access.watchlist;
-  const detail = sanitizeWatchlistRow(db, watchlist, req.username);
+  const includeItems = ['1', 'true', 'yes'].includes(String(req.query?.includeItems || '').toLowerCase());
+  const detail = sanitizeWatchlistDetailRow(db, watchlist, req.username, { includeItems });
   req.perfDiag?.setMeta({
     watchlistId: watchlist.id,
     sectionCount: detail.sectionCount || 0,
-    tickerCount: detail.tickerCount || 0
+    tickerCount: detail.tickerCount || 0,
+    detailSerializerUsed: true,
+    payloadTrimmed: !includeItems
   });
   res.json({ watchlist: detail });
 });
@@ -19625,7 +19660,7 @@ app.get('/api/pl', auth, (req,res)=>{
     const monthEntries = snapshots[selectedMonthKey] || {};
     Object.values(monthEntries).forEach(entry => {
       if (!entry || !Array.isArray(entry.trades)) return;
-      entry.trades = entry.trades.map(trade => mapper({ ...trade }));
+      entry.trades = entry.trades.map(trade => mapper(trade));
     });
     req.perfDiag?.setMeta({
       summaryModeUsed: true,
@@ -19639,7 +19674,7 @@ app.get('/api/pl', auth, (req,res)=>{
     Object.values(snapshots).forEach(monthEntries => {
       Object.values(monthEntries || {}).forEach(entry => {
         if (!entry || !Array.isArray(entry.trades)) return;
-        entry.trades = entry.trades.map(trade => mapper({ ...trade }));
+        entry.trades = entry.trades.map(trade => mapper(trade));
       });
     });
     req.perfDiag?.setMeta({ summaryModeUsed: false, includeTrades, requestScopedReuse: true });
@@ -21753,6 +21788,8 @@ function shapeTradeSummary(trade = {}) {
   delete summary.executions;
   delete summary.partialCloses;
   delete summary.importRawRows;
+  delete summary.tradeNotesTimeline;
+  delete summary.providerDebug;
   return summary;
 }
 
@@ -21795,6 +21832,8 @@ app.get('/api/trades', auth, async (req, res) => {
   const pageItems = filtered.slice(pageStart, pageEnd);
   const responseTrades = summaryMode ? pageItems.map(shapeTradeSummary) : pageItems;
   const payloadSizeBytes = Buffer.byteLength(JSON.stringify(responseTrades));
+  const untrimmedSizeBytes = summaryMode ? Buffer.byteLength(JSON.stringify(pageItems)) : payloadSizeBytes;
+  const serializationTrimmed = summaryMode && untrimmedSizeBytes > payloadSizeBytes;
   req.perfDiag?.setMeta({
     resultCount: responseTrades.length,
     cache: 'bypass',
@@ -21805,7 +21844,10 @@ app.get('/api/trades', auth, async (req, res) => {
     initialWindowSize: limit,
     returnedWindowSize: responseTrades.length,
     hasMore: pageEnd < total,
-    responsePayloadBytes: payloadSizeBytes
+    responsePayloadBytes: payloadSizeBytes,
+    summarySerializerUsed: summaryMode,
+    serializationTrimmed,
+    responseBytesReduced: summaryMode ? Math.max(0, untrimmedSizeBytes - payloadSizeBytes) : 0
   });
   res.json({
     trades: responseTrades,
