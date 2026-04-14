@@ -44,6 +44,35 @@ test('owned ticker universe resolves only active/open holdings', () => {
   assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
 });
 
+test('owned ticker universe includes missing-status active trades and normalizes raw broker tickers', () => {
+  const db = {
+    users: {
+      alice: {
+        ibkr: {
+          live: {
+            positions: [
+              { symbol: ' msft_us_eq ', quantity: 2 },
+              { symbol: 'ignore', quantity: 0 }
+            ]
+          }
+        }
+      }
+    },
+    trades: [
+      { username: 'alice', canonicalTicker: ' aapl ' },
+      { username: 'alice', ticker: ' nvda_us_eq ' },
+      { username: 'alice', status: 'closed', ticker: 'TSLA' },
+      { username: 'alice', ticker: '   ', closedAt: '2026-04-12T00:00:00.000Z' }
+    ]
+  };
+
+  const resolved = resolveOwnedTickerUniverse({ db, logger: createLogger() });
+  assert.deepEqual(resolved.aggregateTickers, ['AAPL', 'MSFT', 'NVDA']);
+  assert.deepEqual(resolved.tickerOwnerMap.AAPL, ['alice']);
+  assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['alice']);
+  assert.deepEqual(resolved.tickerOwnerMap.MSFT, ['alice']);
+});
+
 test('FMP row normalization returns earnings-shaped event', () => {
   const row = normalizeFmpEarningsRow({
     symbol: 'aapl',
