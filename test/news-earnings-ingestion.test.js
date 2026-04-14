@@ -265,6 +265,33 @@ test('fetchNasdaqEarningsEvents normalizes Nasdaq symbol for portfolio matching'
   assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
 });
 
+test('fetchNasdaqEarningsEvents matches portfolio ticker when Nasdaq row uses ticker field', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['BE'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [
+              { ticker: ' BE ', companyName: 'Bloom Energy', reportDate: '2026-07-28', time: 'after-hours' }
+            ]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'BE');
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
+  assert.equal(result.diagnostics.intersectionCount > 0, true);
+});
+
 test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL'],
