@@ -949,7 +949,6 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
       && notification.group_id === groupId
       && normalizeTradeGroupNotificationType(notification.type) === normalizedType
       && notification.dedupe_key === dedupeKey
-      && !notification.is_read
     ));
     if (duplicate) {
       console.info('[TradeGroup][Notifications] Existing in-app notification matched dedupe key; skipping create.', {
@@ -957,7 +956,8 @@ function createTradeGroupNotification(db, { userId, groupId, type, alertId = nul
         groupId,
         type: normalizedType,
         dedupeKey,
-        notificationId: duplicate.id
+        notificationId: duplicate.id,
+        duplicateReadState: duplicate.is_read === true ? 'read' : 'unread'
       });
       return null;
     }
@@ -1160,6 +1160,8 @@ function triggerPushForTradeGroupNotification(db, notification, { group = null }
     eventType: pushConfig.eventType,
     context: {
       ...pushConfig.context,
+      eventId: pushConfig.context?.eventId || `trade_group_notification:${notification.id}`,
+      correlationId: pushConfig.context?.correlationId || notification.correlation_id || `trade_group_notification:${notification.id}`,
       invocationSource: 'server.js#triggerPushForTradeGroupNotification'
     }
   })
@@ -1748,6 +1750,16 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
   const sourceTradeId = String(fillEvent?.sourceTradeId || '').trim();
   const leaderUser = db.users?.[leaderUsername];
   const sourceTrade = sourceTradeId && leaderUser ? findTradeById(leaderUser, sourceTradeId)?.trade : null;
+  if (side === 'SELL' && !sourceTradeId) {
+    console.info('[TradeGroup][SellAlert]', {
+      stage: 'sell_fill_missing_source_trade',
+      leader: leaderUsername,
+      ticker: String(fillEvent?.ticker || '').trim().toUpperCase() || null,
+      fillId: fillId || null,
+      brokerEventKey,
+      risk: 'cannot_link_fill_to_trade_for_cross-path_dedupe'
+    });
+  }
   if (side === 'SELL' && sourceTrade && hasTradeGroupSellAlertBeenEmittedForTrade(sourceTrade)) {
     logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'alert_skipped', { skipped: 'true', skipReason: 'trade_close_alert_already_emitted' });
     console.info('[TradeGroup][SellAlert]', {
