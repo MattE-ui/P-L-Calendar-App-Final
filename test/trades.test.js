@@ -329,6 +329,18 @@ test('active option trades use IBKR primary contract quote and never fall back t
   assert.equal(data.trades[0].sizeUnits, 200);
   assert.ok(Number.isFinite(data.trades[0].unrealizedGBP));
   assert.ok(data.trades[0].unrealizedGBP > 0);
+  assert.equal(data.serialization?.mode, 'summary');
+  assert.equal(data.serialization?.activeTradesSummarySerializerUsed, true);
+  assert.equal(data.serialization?.serializationTrimmed, true);
+  assert.ok(Number(data.serialization?.responseBytesReduced) > 0);
+  assert.equal(data.trades[0].optionQuoteDiagnostics, undefined);
+
+  const detail = await authedFetch('/api/trades/active?detail=1');
+  assert.equal(detail.res.status, 200);
+  assert.equal(detail.data.serialization?.mode, 'detail');
+  assert.equal(detail.data.serialization?.activeTradesSummarySerializerUsed, false);
+  assert.ok(detail.data.serialization?.detailResponseBytes >= detail.data.serialization?.responseBytes);
+  assert.ok(detail.data.trades[0].optionQuoteDiagnostics);
 });
 
 test('active option trades fall back to polygon contract previous close when IBKR cannot provide quote', async () => {
