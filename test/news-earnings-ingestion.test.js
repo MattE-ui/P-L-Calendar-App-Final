@@ -5,6 +5,7 @@ const { buildEventDedupeKey } = require('../services/news/newsEventService');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('../services/news/ownedTickerUniverseService');
 const {
   buildDateRange,
+  buildDateRangePlan,
   normalizeNasdaqEarningsRow,
   fetchNasdaqEarningsEvents
 } = require('../providers/earnings/nasdaqEarningsProvider');
@@ -125,6 +126,20 @@ test('buildDateRange iterates today through configured horizon', () => {
   assert.deepEqual(dates, ['2026-04-14', '2026-04-15', '2026-04-16']);
 });
 
+test('buildDateRange default horizon generates inclusive date count', () => {
+  const plan = buildDateRangePlan({ daysAhead: 2 });
+  assert.equal(plan.dates.length, 3);
+  assert.equal(plan.dates[0], plan.fromDate);
+  assert.equal(plan.dates[2], plan.toDate);
+});
+
+test('buildDateRangePlan returns empty list for invalid explicit range', () => {
+  const plan = buildDateRangePlan({ from: '2026-07-30', to: '2026-07-28' });
+  assert.equal(plan.strategy, 'explicit');
+  assert.equal(plan.isValidRange, false);
+  assert.deepEqual(plan.dates, []);
+});
+
 test('earnings ingestion tolerates provider failure', async () => {
   const diagnostics = await runEarningsIngestion({
     loadDB: () => ({ users: { alice: {} }, trades: [{ username: 'alice', status: 'open', canonicalTicker: 'AAPL' }] }),
@@ -219,6 +234,26 @@ test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
   assert.equal(result.rows.length, 0);
   assert.equal(result.diagnostics.totalRowsFetched, 0);
   assert.equal(result.diagnostics.rowsMatchedToPortfolio, 0);
+});
+
+test('fetchNasdaqEarningsEvents diagnostics show planned fetches for default horizon', async () => {
+  const loggerCalls = [];
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    daysAhead: 1,
+    logger: {
+      info: (...args) => loggerCalls.push(args),
+      warn: () => {},
+      error: () => {}
+    },
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
+  });
+
+  assert.equal(result.diagnostics.fetchAttemptsPlanned, 2);
+  assert.equal(result.diagnostics.generatedDateCount, 2);
+  assert.equal(result.diagnostics.fetchAttempts, 2);
+  assert.equal(result.diagnostics.datesFetched, 2);
+  assert.ok(loggerCalls.some((entry) => entry[0] === '[Earnings][Nasdaq] date plan computed.'));
 });
 
 test('fetchNasdaqEarningsEvents captures partial date failures', async () => {
