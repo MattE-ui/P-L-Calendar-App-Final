@@ -17,6 +17,7 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 const analytics = require('./lib/analytics');
 const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
 const { createNewsPreferenceService } = require('./services/news/newsPreferenceService');
+const { createNewsReadModelService } = require('./services/news/newsReadModelService');
 const { runMacroIngestion } = require('./services/news/macroIngestionService');
 const { runEarningsIngestion } = require('./services/news/earningsIngestionService');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
@@ -72,6 +73,11 @@ const newsPreferenceService = createNewsPreferenceService({
   ensureNewsEventTables,
   logger: console,
   resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId)
+});
+const newsReadModelService = createNewsReadModelService({
+  newsEventService,
+  resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId),
+  logger: console
 });
 const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
 const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
@@ -18242,6 +18248,19 @@ function sanitizeNewsEventForResponse(event) {
   };
 }
 
+function getNewsReadModelFilters(query = {}) {
+  const requestedSourceType = typeof query?.sourceType === 'string' ? query.sourceType.trim() : '';
+  const requestedEventType = typeof query?.eventType === 'string' ? query.eventType.trim() : '';
+  return {
+    sourceType: NEWS_EVENT_SOURCE_TYPES.includes(requestedSourceType) ? requestedSourceType : undefined,
+    eventType: NEWS_EVENT_TYPES.includes(requestedEventType) ? requestedEventType : undefined,
+    from: normalizeNewsApiDate(query?.from),
+    to: normalizeNewsApiDate(query?.to),
+    importance: query?.importance,
+    includePast: String(query?.includePast || '').toLowerCase() === 'true'
+  };
+}
+
 app.get('/api/news/events', auth, (req, res) => {
   const startedAt = Date.now();
   const requestedSourceType = typeof req.query?.sourceType === 'string' ? req.query.sourceType.trim() : '';
@@ -18316,6 +18335,36 @@ app.get('/api/news/events', auth, (req, res) => {
       ? { by: 'publishedAt', direction: 'desc' }
       : { by: 'scheduledAt', direction: 'asc' }
   });
+});
+
+app.get('/api/news/for-you', auth, (req, res) => {
+  const model = newsReadModelService.getForYouNewsModel({
+    userId: req.username,
+    limit: parseNewsEventsLimit(req.query?.limit),
+    cursor: typeof req.query?.cursor === 'string' ? req.query.cursor.trim() : '',
+    filters: getNewsReadModelFilters(req.query)
+  });
+  res.json(model);
+});
+
+app.get('/api/news/calendar', auth, (req, res) => {
+  const model = newsReadModelService.getCalendarNewsModel({
+    userId: req.username,
+    limit: parseNewsEventsLimit(req.query?.limit),
+    cursor: typeof req.query?.cursor === 'string' ? req.query.cursor.trim() : '',
+    filters: getNewsReadModelFilters(req.query)
+  });
+  res.json(model);
+});
+
+app.get('/api/news/latest', auth, (req, res) => {
+  const model = newsReadModelService.getLatestNewsModel({
+    userId: req.username,
+    limit: parseNewsEventsLimit(req.query?.limit),
+    cursor: typeof req.query?.cursor === 'string' ? req.query.cursor.trim() : '',
+    filters: getNewsReadModelFilters(req.query)
+  });
+  res.json(model);
 });
 
 app.get('/api/news/preferences', auth, (req, res) => {
