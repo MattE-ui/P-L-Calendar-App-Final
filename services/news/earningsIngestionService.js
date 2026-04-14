@@ -1,11 +1,11 @@
-const { fetchAlphaVantageEarningsEvents } = require('../../providers/earnings/alphaVantageEarningsProvider');
+const { fetchNasdaqEarningsEvents } = require('../../providers/earnings/nasdaqEarningsProvider');
 const { resolveOwnedTickerUniverse } = require('./ownedTickerUniverseService');
 
 async function runEarningsIngestion({
   loadDB,
   newsEventService,
   logger = console,
-  provider = fetchAlphaVantageEarningsEvents,
+  provider = fetchNasdaqEarningsEvents,
   trigger = 'unknown',
   from,
   to
@@ -134,6 +134,15 @@ async function runEarningsIngestion({
 
   diagnostics.completedAt = new Date().toISOString();
   diagnostics.elapsedMs = Date.now() - startedAtMs;
+
+  logger.info('[EarningsIngestion] provider diagnostics summary.', {
+    datesFetched: diagnostics.providerStatus.providerDiagnostics?.datesFetched || 0,
+    totalRowsFetched: diagnostics.providerStatus.providerDiagnostics?.totalRowsFetched || 0,
+    rowsMatchedToPortfolio: diagnostics.providerStatus.providerDiagnostics?.rowsMatchedToPortfolio || diagnostics.providerStatus.rowsParsed || 0,
+    rowsInserted: diagnostics.rowsInserted,
+    rowsSkipped: diagnostics.providerStatus.rowsSkipped || 0
+  });
+
   logger.info('[EarningsIngestion] run completed.', diagnostics);
   return diagnostics;
 }
