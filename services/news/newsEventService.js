@@ -77,10 +77,21 @@ function buildEventDedupeKey(input = {}) {
   const eventType = normalizeString(input.eventType) || 'unknown';
   const sourceExternalId = normalizeString(input.sourceExternalId) || '';
   const canonicalTicker = normalizeString(input.canonicalTicker || input.ticker) || '';
+  const country = normalizeString(input.country) || '';
+  const region = normalizeString(input.region) || '';
   const scheduledAt = normalizeIsoDate(input.scheduledAt) || '';
   const publishedAt = normalizeIsoDate(input.publishedAt) || '';
   const title = normalizeString(input.title) || '';
-  const raw = [sourceType, eventType, sourceExternalId, canonicalTicker, scheduledAt, publishedAt, title].join('|').toLowerCase();
+
+  const macroScheduledIdentity = (sourceType === 'macro' && scheduledAt)
+    ? [sourceType, eventType, country, region, scheduledAt]
+    : null;
+
+  const sourceIdentity = sourceExternalId
+    ? [sourceType, eventType, sourceExternalId]
+    : [sourceType, eventType, canonicalTicker, scheduledAt, publishedAt, title];
+
+  const raw = (macroScheduledIdentity || sourceIdentity).join('|').toLowerCase();
   if (!raw.replace(/\|/g, '').trim()) return null;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
