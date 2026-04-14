@@ -138,36 +138,44 @@ function detectThrottleHint(status, snippet) {
   return null;
 }
 
+function hasExpectedEarningsHeaders(rows) {
+  if (!rows.length) return false;
+  const firstRow = rows[0] || {};
+  return typeof firstRow.symbol === 'string' && typeof firstRow.reportDate === 'string';
+}
+
 async function fetchAlphaVantageEarningsEvents({
   tickers = [],
   horizon = process.env.ALPHA_VANTAGE_EARNINGS_HORIZON || DEFAULT_HORIZON,
   fetcher = global.fetch,
   logger = console,
-  apiKey = process.env.ALPHA_VANTAGE_API_KEY || process.env.ALPHAVANTAGE_API_KEY,
+  apiKey = process.env.ALPHA_VANTAGE_API_KEY,
   baseUrl = ALPHA_VANTAGE_EARNINGS_CALENDAR_URL,
-  maxSymbolsPerRun = process.env.ALPHA_VANTAGE_MAX_SYMBOLS_PER_RUN
+  maxSymbolsPerRun = process.env.ALPHA_VANTAGE_EARNINGS_MAX_SYMBOLS_PER_RUN
 } = {}) {
   const startedAt = Date.now();
   const normalizedHorizon = VALID_HORIZONS.has(String(horizon || '').trim()) ? String(horizon).trim() : DEFAULT_HORIZON;
   const tickerUniverse = Array.from(new Set((Array.isArray(tickers) ? tickers : []).map(normalizeTicker).filter(Boolean))).sort();
   const symbolLimit = clampMaxSymbolsPerRun(maxSymbolsPerRun);
   const symbolsRequested = tickerUniverse.slice(0, symbolLimit);
-  const symbolsDeferred = tickerUniverse.slice(symbolLimit);
+  const symbolsSkippedDueToCap = tickerUniverse.slice(symbolLimit);
 
   const diagnostics = {
     provider: 'alphaVantage',
     apiKeyPresent: Boolean(apiKey),
     horizon: normalizedHorizon,
-    tickersRequested: symbolsRequested,
-    tickersDeferred: symbolsDeferred,
+    symbolsRequested,
+    symbolsSkippedDueToCap,
     rowsReturned: 0,
     parsedRows: 0,
     skippedRows: 0,
     responseStatus: null,
     failureSnippet: null,
     throttleHint: null,
+    parseWarnings: [],
     callsAttempted: 0,
     callsCompleted: 0,
+    symbolFailures: [],
     elapsedMs: 0
   };
 
@@ -182,11 +190,11 @@ async function fetchAlphaVantageEarningsEvents({
     return { rows: [], diagnostics };
   }
 
-  if (symbolsDeferred.length) {
-    logger.info('[Earnings][AlphaVantage] deferred ticker batch to respect free-tier constraints.', {
+  if (symbolsSkippedDueToCap.length) {
+    logger.info('[Earnings][AlphaVantage] deferred symbol batch to respect free-tier constraints.', {
       requested: tickerUniverse.length,
       processed: symbolsRequested.length,
-      deferred: symbolsDeferred.length,
+      deferred: symbolsSkippedDueToCap.length,
       maxSymbolsPerRun: symbolLimit
     });
   }
@@ -201,33 +209,53 @@ async function fetchAlphaVantageEarningsEvents({
     url.searchParams.set('symbol', symbol);
     url.searchParams.set('apikey', apiKey);
 
-    const response = await fetcher(url.toString(), {
-      headers: { 'user-agent': 'pl-calendar-earnings-ingest/1.0' }
-    });
-
-    diagnostics.responseStatus = response?.status ?? null;
-    const bodyText = await response.text();
-
-    if (!response?.ok) {
-      diagnostics.failureSnippet = buildFailureSnippet(bodyText);
-      diagnostics.throttleHint = detectThrottleHint(response?.status, diagnostics.failureSnippet);
-      diagnostics.elapsedMs = Date.now() - startedAt;
-      const error = new Error(`Alpha Vantage earnings fetch failed with status ${response?.status || 'unknown'}.`);
-      error.diagnostics = diagnostics;
-      throw error;
+    let response;
+    let bodyText;
+    try {
+      response = await fetcher(url.toString(), {
+        headers: { 'user-agent': 'pl-calendar-earnings-ingest/1.0' }
+      });
+      diagnostics.responseStatus = response?.status ?? null;
+      bodyText = await response.text();
+    } catch (error) {
+      diagnostics.symbolFailures.push({ symbol, reason: error?.message || 'request_failed', responseStatus: null });
+      continue;
     }
 
     const snippet = buildFailureSnippet(bodyText);
-    const parsedRows = parseAlphaVantageCsv(bodyText);
-    if (!parsedRows.length && snippet) {
+    if (!response?.ok) {
       diagnostics.failureSnippet = snippet;
       diagnostics.throttleHint = detectThrottleHint(response?.status, snippet);
+      diagnostics.symbolFailures.push({
+        symbol,
+        reason: `http_${response?.status || 'unknown'}`,
+        responseStatus: response?.status ?? null
+      });
       if (diagnostics.throttleHint) {
-        diagnostics.elapsedMs = Date.now() - startedAt;
-        const error = new Error('Alpha Vantage earnings fetch appears throttled.');
-        error.diagnostics = diagnostics;
-        throw error;
+        diagnostics.parseWarnings.push(`throttle_or_rate_limit_detected:${symbol}`);
       }
+      continue;
+    }
+
+    const parsedRows = parseAlphaVantageCsv(bodyText);
+    if (!parsedRows.length && snippet) {
+      const throttleHint = detectThrottleHint(response?.status, snippet);
+      if (throttleHint) {
+        diagnostics.failureSnippet = snippet;
+        diagnostics.throttleHint = throttleHint;
+        diagnostics.symbolFailures.push({
+          symbol,
+          reason: throttleHint,
+          responseStatus: response?.status ?? null
+        });
+        diagnostics.parseWarnings.push(`throttle_or_rate_limit_detected:${symbol}`);
+        continue;
+      }
+      diagnostics.parseWarnings.push(`empty_csv_payload:${symbol}`);
+    }
+
+    if (parsedRows.length && !hasExpectedEarningsHeaders(parsedRows)) {
+      diagnostics.parseWarnings.push(`unexpected_csv_headers:${symbol}`);
     }
 
     diagnostics.callsCompleted += 1;
@@ -251,6 +279,14 @@ async function fetchAlphaVantageEarningsEvents({
   diagnostics.elapsedMs = Date.now() - startedAt;
 
   logger.info('[Earnings][AlphaVantage] fetch completed.', diagnostics);
+
+  if (!normalizedRows.length && diagnostics.symbolFailures.length === symbolsRequested.length) {
+    const firstFailure = diagnostics.symbolFailures[0];
+    const error = new Error(`Alpha Vantage earnings fetch failed for all symbols (${firstFailure?.reason || 'unknown_error'}).`);
+    error.diagnostics = diagnostics;
+    throw error;
+  }
+
   return { rows: normalizedRows, diagnostics };
 }
 
