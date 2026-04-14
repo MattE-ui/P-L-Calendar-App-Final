@@ -203,8 +203,7 @@ function buildDeliveryLogKeyFields({ userId, event, channel, deliveryWindow }) {
 function buildChannelPayload({ userId, event, channel, deliveryWindow, context = {} }) {
   const title = String(event?.title || 'Market update').trim() || 'Market update';
   const body = String(event?.summary || event?.body || '').trim() || 'New market event available.';
-  const tab = isScheduledSignal(event?.sourceType, event?.eventType) ? 'calendar' : 'latest';
-  const deepLinkUrl = `/news.html?tab=${encodeURIComponent(tab)}&eventId=${encodeURIComponent(String(event?.id || ''))}`;
+  const deepLinkUrl = buildNewsNotificationDeepLink({ event, deliveryWindow, context });
 
   return {
     userId,
@@ -226,6 +225,30 @@ function buildChannelPayload({ userId, event, channel, deliveryWindow, context =
       ...context
     }
   };
+}
+
+function buildNewsNotificationDeepLink({ event, deliveryWindow, context = {} }) {
+  const eventId = String(event?.id || '');
+  const windowKey = String(deliveryWindow?.key || '');
+  const isDigest = !!context?.digest || windowKey === WINDOW_KEY_DAILY_DIGEST || String(eventId).startsWith('digest:');
+  const sourceType = String(event?.sourceType || '').toLowerCase();
+  const eventType = String(event?.eventType || '').toLowerCase();
+  const userScope = context?.audienceScope === 'portfolio' || context?.portfolioOnly === true;
+
+  let tab = 'news';
+  if (isDigest) {
+    tab = 'for-you';
+  } else if (sourceType === 'macro' || eventType === 'fomc' || eventType === 'cpi' || isScheduledSignal(event?.sourceType, event?.eventType)) {
+    tab = 'calendar';
+  } else if (eventType === 'earnings' && userScope) {
+    tab = 'for-you';
+  }
+
+  const params = new URLSearchParams();
+  params.set('tab', tab);
+  if (eventId) params.set('eventId', eventId);
+  if (isDigest && context?.digestWindowKey) params.set('digestWindowKey', String(context.digestWindowKey));
+  return `/news.html?${params.toString()}`;
 }
 
 function selectChannelsFromPreferences(preferences) {
@@ -571,5 +594,6 @@ module.exports = {
   getDueDeliveryWindowsForEvent,
   shouldDeliverEventToUser,
   buildDeliveryLogKeyFields,
-  buildChannelPayload
+  buildChannelPayload,
+  buildNewsNotificationDeepLink
 };

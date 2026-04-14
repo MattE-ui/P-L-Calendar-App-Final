@@ -29,6 +29,7 @@ const {
   WINDOW_KEY_DAILY_DIGEST
 } = require('./services/news/newsNotificationFanoutService');
 const { createNewsNotificationDispatchService } = require('./services/news/newsNotificationDispatchService');
+const { runNewsNotificationOutboxProcessor } = require('./services/news/newsNotificationOutboxProcessor');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
 const {
   parseCsvTable,
@@ -69,6 +70,34 @@ function resolveUserTickerUniverse(db, userId) {
   return new Set(user?.tickerList || []);
 }
 
+function enqueueNewsNotificationOutboxItem(payload, channel) {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const nowIso = new Date().toISOString();
+  const item = {
+    id: crypto.randomUUID(),
+    userId: String(payload?.userId || '').trim(),
+    newsEventId: String(payload?.eventId || '').trim(),
+    channel,
+    payload: payload && typeof payload === 'object' ? payload : {},
+    status: 'pending',
+    attemptCount: 0,
+    maxAttempts: Number.isFinite(Number(payload?.maxAttempts)) ? Math.max(1, Number(payload.maxAttempts)) : 5,
+    nextAttemptAt: nowIso,
+    claimedAt: null,
+    claimedBy: null,
+    lastAttemptAt: null,
+    sentAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+  db.newsNotificationOutbox.push(item);
+  saveDB(db);
+  return { ok: true, channel, messageId: `outbox:${channel}:${item.id}`, queued: true };
+}
+
 const newsEventService = createNewsEventService({
   loadDB,
   saveDB,
@@ -92,45 +121,9 @@ const newsReadModelService = createNewsReadModelService({
 const newsNotificationDispatchService = createNewsNotificationDispatchService({
   logger: console,
   handlers: {
-    in_app: async (payload) => {
-      const db = loadDB();
-      ensureNewsEventTables(db);
-      db.newsNotificationOutbox.push({
-        id: crypto.randomUUID(),
-        channel: 'in_app',
-        payload,
-        createdAt: new Date().toISOString(),
-        status: 'ready'
-      });
-      saveDB(db);
-      return { ok: true, channel: 'in_app', messageId: `outbox:in_app:${crypto.randomUUID()}`, queued: true };
-    },
-    push: async (payload) => {
-      const db = loadDB();
-      ensureNewsEventTables(db);
-      db.newsNotificationOutbox.push({
-        id: crypto.randomUUID(),
-        channel: 'push',
-        payload,
-        createdAt: new Date().toISOString(),
-        status: 'ready'
-      });
-      saveDB(db);
-      return { ok: true, channel: 'push', messageId: `outbox:push:${crypto.randomUUID()}`, queued: true };
-    },
-    email: async (payload) => {
-      const db = loadDB();
-      ensureNewsEventTables(db);
-      db.newsNotificationOutbox.push({
-        id: crypto.randomUUID(),
-        channel: 'email',
-        payload,
-        createdAt: new Date().toISOString(),
-        status: 'ready'
-      });
-      saveDB(db);
-      return { ok: true, channel: 'email', messageId: `outbox:email:${crypto.randomUUID()}`, queued: true };
-    }
+    in_app: async (payload) => enqueueNewsNotificationOutboxItem(payload, 'in_app'),
+    push: async (payload) => enqueueNewsNotificationOutboxItem(payload, 'push'),
+    email: async (payload) => enqueueNewsNotificationOutboxItem(payload, 'email')
   }
 });
 const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
@@ -177,6 +170,11 @@ const EARNINGS_INGEST_INTERVAL_MS = (() => {
 const NEWS_NOTIFICATION_FANOUT_INTERVAL_MS = (() => {
   const parsed = Number(process.env.NEWS_NOTIFICATION_FANOUT_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < (60 * 1000)) return 5 * 60 * 1000;
+  return parsed;
+})();
+const NEWS_NOTIFICATION_OUTBOX_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.NEWS_NOTIFICATION_OUTBOX_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < (30 * 1000)) return 90 * 1000;
   return parsed;
 })();
 
@@ -3485,14 +3483,51 @@ function ensureNewsEventTables(db) {
   if (!Array.isArray(db.userNewsPreferences)) db.userNewsPreferences = [];
   if (!Array.isArray(db.userEventDeliveryLog)) db.userEventDeliveryLog = [];
   if (!Array.isArray(db.newsNotificationOutbox)) db.newsNotificationOutbox = [];
+  if (!Array.isArray(db.newsInAppNotifications)) db.newsInAppNotifications = [];
+  const nowIso = new Date().toISOString();
+  db.newsNotificationOutbox = db.newsNotificationOutbox.map((row) => {
+    const statusCandidate = String(row?.status || '').trim();
+    const status = ['pending', 'processing', 'sent', 'failed', 'dead_letter'].includes(statusCandidate)
+      ? statusCandidate
+      : (statusCandidate === 'ready' ? 'pending' : 'pending');
+    const attemptCount = Number.isFinite(Number(row?.attemptCount)) ? Math.max(0, Math.floor(Number(row.attemptCount))) : 0;
+    const maxAttempts = Number.isFinite(Number(row?.maxAttempts)) && Number(row.maxAttempts) > 0
+      ? Math.floor(Number(row.maxAttempts))
+      : 5;
+    return {
+      id: row?.id || crypto.randomUUID(),
+      userId: String(row?.userId || row?.payload?.userId || ''),
+      newsEventId: String(row?.newsEventId || row?.payload?.eventId || ''),
+      channel: String(row?.channel || row?.payload?.channel || ''),
+      payload: row?.payload && typeof row.payload === 'object' ? row.payload : {},
+      status,
+      attemptCount,
+      maxAttempts,
+      nextAttemptAt: row?.nextAttemptAt || row?.createdAt || nowIso,
+      claimedAt: row?.claimedAt || null,
+      claimedBy: row?.claimedBy || null,
+      lastAttemptAt: row?.lastAttemptAt || null,
+      sentAt: row?.sentAt || null,
+      lastErrorCode: row?.lastErrorCode || null,
+      lastErrorMessage: row?.lastErrorMessage || null,
+      createdAt: row?.createdAt || nowIso,
+      updatedAt: row?.updatedAt || row?.createdAt || nowIso
+    };
+  });
   if (!db.newsNotificationStatus || typeof db.newsNotificationStatus !== 'object') {
     db.newsNotificationStatus = {
       lastAttemptedRunAt: null,
       lastSuccessfulRunAt: null,
+      outboxLastAttemptedRunAt: null,
+      outboxLastSuccessfulRunAt: null,
       lastDiagnostics: null,
+      lastOutboxDiagnostics: null,
       recentErrorSummaries: []
     };
   }
+  db.newsNotificationStatus.outboxLastAttemptedRunAt ||= null;
+  db.newsNotificationStatus.outboxLastSuccessfulRunAt ||= null;
+  db.newsNotificationStatus.lastOutboxDiagnostics ||= null;
   if (!db.newsEventIndexCatalog || typeof db.newsEventIndexCatalog !== 'object') {
     db.newsEventIndexCatalog = {
       sourceType: true,
@@ -4673,6 +4708,198 @@ async function sendNotificationEvent(db, { userId, eventType, context = {}, only
   return log;
 }
 
+function buildNewsInAppRecord(payload = {}) {
+  const nowIso = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    userId: String(payload.userId || '').trim(),
+    newsEventId: String(payload.eventId || ''),
+    title: String(payload.title || 'Market update'),
+    summary: String(payload.summary || payload.body || ''),
+    body: String(payload.body || payload.summary || ''),
+    deepLinkUrl: String(payload.deepLinkUrl || '/news.html?tab=for-you'),
+    type: String(payload.eventType || 'news_update'),
+    badge: String(payload.metadata?.digest ? 'Digest' : 'News'),
+    channel: 'in_app',
+    metadata: payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {},
+    isRead: false,
+    readAt: null,
+    deliveredAt: nowIso,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+}
+
+async function deliverNewsOutboxInApp(payload) {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const record = buildNewsInAppRecord(payload);
+  if (!record.userId) {
+    return { ok: false, retryable: false, provider: 'in_app', statusCode: 'missing_user', details: 'Missing userId for in-app notification.' };
+  }
+  db.newsInAppNotifications.push(record);
+  saveDB(db);
+  return { ok: true, provider: 'in_app', messageId: record.id };
+}
+
+function buildNewsPushPayload(payload = {}) {
+  return {
+    title: String(payload.title || 'Market update'),
+    body: String(payload.body || payload.summary || 'New market update is available.'),
+    icon: DEFAULT_NOTIFICATION_ICON,
+    badge: DEFAULT_NOTIFICATION_ICON,
+    tag: `news-${String(payload.eventId || crypto.randomUUID())}`,
+    link: String(payload.deepLinkUrl || '/news.html?tab=for-you'),
+    data: {
+      type: 'news_update',
+      eventId: String(payload.eventId || ''),
+      userId: String(payload.userId || ''),
+      link: String(payload.deepLinkUrl || '/news.html?tab=for-you'),
+      category: 'news'
+    }
+  };
+}
+
+async function deliverNewsOutboxPush(payload) {
+  const db = loadDB();
+  ensureNotificationTables(db);
+  const userId = String(payload?.userId || '');
+  const devices = db.notificationDevices.filter((item) => item.userId === userId
+    && item.isActive !== false
+    && getEffectiveNotificationPermissionState(item) === 'granted'
+    && String(item.token || '').trim());
+  if (!devices.length) {
+    return {
+      ok: false,
+      retryable: false,
+      provider: 'push',
+      statusCode: 'no_active_devices',
+      details: 'No active push devices available.'
+    };
+  }
+
+  const pushPayload = buildNewsPushPayload(payload);
+  const deliveries = [];
+  for (const device of devices) {
+    try {
+      const messageId = await sendNotificationToDevice(db, device, pushPayload);
+      deliveries.push({ ok: true, deviceId: device.id, messageId });
+    } catch (error) {
+      deliveries.push({
+        ok: false,
+        deviceId: device.id,
+        code: String(error?.code || 'push_send_failed'),
+        message: error?.message || String(error)
+      });
+    }
+  }
+  saveDB(db);
+  const success = deliveries.some((item) => item.ok);
+  if (!success) {
+    const first = deliveries[0] || {};
+    const retryable = /unavailable|timeout|quota|internal|temporar/i.test(`${first.code || ''}:${first.message || ''}`);
+    return {
+      ok: false,
+      retryable,
+      provider: 'push',
+      statusCode: first.code || 'push_send_failed',
+      details: first.message || 'Push provider failure.'
+    };
+  }
+  return {
+    ok: true,
+    provider: 'push',
+    messageId: deliveries.find((item) => item.ok)?.messageId || null,
+    details: `${deliveries.filter((item) => item.ok).length}/${deliveries.length} device deliveries succeeded.`
+  };
+}
+
+async function deliverNewsOutboxEmail(payload) {
+  const emailAddress = String(loadDB()?.users?.[String(payload?.userId || '')]?.email || '').trim();
+  if (!emailAddress) {
+    return { ok: false, retryable: false, provider: 'email', statusCode: 'missing_email', details: 'User email unavailable.' };
+  }
+  if (!nodemailer || !process.env.EMAIL_SERVER || !process.env.EMAIL_PORT || !process.env.EMAIL_USERNAME || !process.env.EMAIL_PASSWORD) {
+    console.info('[NewsOutbox][Email] delivery adapter is stubbed due to missing provider configuration.', {
+      userId: payload?.userId || null
+    });
+    return { ok: false, retryable: false, provider: 'email', statusCode: 'provider_not_configured', details: 'Email provider not configured.' };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_SERVER,
+    port: Number(process.env.EMAIL_PORT),
+    secure: false,
+    auth: { user: process.env.EMAIL_USERNAME, pass: process.env.EMAIL_PASSWORD }
+  });
+
+  const isDigest = !!payload?.metadata?.digest;
+  const subject = isDigest
+    ? `Veracity daily digest: ${payload.title || 'News updates'}`
+    : `Veracity news alert: ${payload.title || 'Market update'}`;
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USERNAME,
+      to: emailAddress,
+      subject,
+      text: `${payload.body || payload.summary || ''}\n\nOpen in Veracity: ${payload.deepLinkUrl || '/news.html?tab=for-you'}`
+    });
+    return { ok: true, provider: 'email', messageId: info?.messageId || null };
+  } catch (error) {
+    const code = String(error?.code || 'email_send_failed');
+    const retryable = /timeout|temporar|unavailable|rate|connection/i.test(`${code}:${error?.message || ''}`);
+    return { ok: false, retryable, provider: 'email', statusCode: code, details: error?.message || String(error) };
+  }
+}
+
+async function dispatchNewsOutboxChannel(payload) {
+  const channel = String(payload?.channel || '').trim();
+  if (channel === 'in_app') return deliverNewsOutboxInApp(payload);
+  if (channel === 'push') return deliverNewsOutboxPush(payload);
+  if (channel === 'email') return deliverNewsOutboxEmail(payload);
+  return { ok: false, retryable: false, provider: channel || 'unknown', statusCode: 'unsupported_channel', details: `Unsupported channel ${channel}` };
+}
+
+function buildNewsOutboxStatusSnapshot(db) {
+  ensureNewsEventTables(db);
+  const rows = Array.isArray(db.newsNotificationOutbox) ? db.newsNotificationOutbox : [];
+  const counts = { pending: 0, processing: 0, sent: 0, failed: 0, dead_letter: 0 };
+  const countsByChannel = { in_app: 0, push: 0, email: 0 };
+  const retryBuckets = { attempts_1: 0, attempts_2_3: 0, attempts_4_plus: 0 };
+  const recentErrors = [];
+
+  rows.forEach((row) => {
+    const status = String(row?.status || 'pending');
+    counts[status] = (counts[status] || 0) + 1;
+    const channel = String(row?.channel || 'unknown');
+    countsByChannel[channel] = (countsByChannel[channel] || 0) + 1;
+    const attempts = Number(row?.attemptCount || 0);
+    if (attempts >= 4) retryBuckets.attempts_4_plus += 1;
+    else if (attempts >= 2) retryBuckets.attempts_2_3 += 1;
+    else if (attempts >= 1) retryBuckets.attempts_1 += 1;
+    if (row?.lastErrorCode || row?.lastErrorMessage) {
+      recentErrors.push({
+        id: row.id,
+        channel,
+        status,
+        lastErrorCode: row.lastErrorCode || null,
+        lastErrorMessage: row.lastErrorMessage || null,
+        attemptCount: attempts,
+        updatedAt: row.updatedAt || null
+      });
+    }
+  });
+
+  return {
+    counts,
+    countsByChannel,
+    retryBuckets,
+    recentErrorSummaries: recentErrors
+      .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))
+      .slice(0, 10)
+  };
+}
+
 // --- helpers ---
 function loadDB() {
   try {
@@ -4780,6 +5007,7 @@ function loadDB() {
       userNewsPreferences: [],
       userEventDeliveryLog: [],
       newsNotificationOutbox: [],
+      newsInAppNotifications: [],
       siteAnnouncements: [],
       siteAnnouncementStates: [],
       socialProfiles: [],
@@ -18450,6 +18678,33 @@ app.put('/api/news/preferences', auth, (req, res) => {
   res.json({ data: saved });
 });
 
+app.get('/api/news/notifications/in-app', auth, (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 25));
+  const unreadOnly = String(req.query?.unreadOnly || '').toLowerCase() === 'true';
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const rows = db.newsInAppNotifications
+    .filter((item) => item.userId === req.username && (!unreadOnly || !item.isRead))
+    .sort((a, b) => Date.parse(b.deliveredAt || b.createdAt || 0) - Date.parse(a.deliveredAt || a.createdAt || 0))
+    .slice(0, limit);
+  const unreadCount = db.newsInAppNotifications.filter((item) => item.userId === req.username && !item.isRead).length;
+  res.json({ data: rows, unreadCount });
+});
+
+app.post('/api/news/notifications/in-app/:id/read', auth, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const row = db.newsInAppNotifications.find((item) => item.id === req.params.id && item.userId === req.username);
+  if (!row) return res.status(404).json({ error: 'Notification not found.' });
+  if (!row.isRead) {
+    row.isRead = true;
+    row.readAt = new Date().toISOString();
+    row.updatedAt = row.readAt;
+    saveDB(db);
+  }
+  res.json({ data: row });
+});
+
 app.post('/api/admin/news/ingest/macro', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
   const diagnostics = await runMacroIngestionJob('admin_endpoint');
   console.info('[MacroIngestion][Admin] manual trigger completed.', {
@@ -18519,6 +18774,16 @@ app.post('/api/admin/news/notifications/fanout', auth, requireAuthenticatedUser,
   res.json({ data: diagnostics });
 }));
 
+app.post('/api/admin/news/notifications/process-outbox', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
+  const diagnostics = await runNewsNotificationOutboxProcessorJob('admin_endpoint');
+  console.info('[NewsOutbox][Admin] manual trigger completed.', {
+    userId: req.username,
+    success: !!diagnostics?.success,
+    elapsedMs: diagnostics?.elapsedMs || null
+  });
+  res.json({ data: diagnostics });
+}));
+
 app.get('/api/admin/news/notifications/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
   const db = loadDB();
   ensureNewsEventTables(db);
@@ -18552,6 +18817,26 @@ app.get('/api/admin/news/notifications/status', auth, requireAuthenticatedUser, 
           candidates: status.lastDiagnostics.candidateCounts || {}
         }
         : null
+    }
+  });
+});
+
+app.get('/api/admin/news/notifications/outbox-status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  const snapshot = buildNewsOutboxStatusSnapshot(db);
+  const status = db.newsNotificationStatus || {};
+  res.json({
+    data: {
+      pendingCount: snapshot.counts.pending || 0,
+      processingCount: snapshot.counts.processing || 0,
+      sentCount: snapshot.counts.sent || 0,
+      failedCount: snapshot.counts.failed || 0,
+      deadLetterCount: snapshot.counts.dead_letter || 0,
+      countsByChannel: snapshot.countsByChannel,
+      recentErrorSummaries: snapshot.recentErrorSummaries,
+      recentRetryCounts: snapshot.retryBuckets,
+      outboxLastAttemptedRunAt: status.outboxLastAttemptedRunAt || null,
+      outboxLastSuccessfulRunAt: status.outboxLastSuccessfulRunAt || null
     }
   });
 });
@@ -25070,6 +25355,8 @@ let earningsIngestionJobRunning = false;
 let earningsIngestionIntervalHandle = null;
 let newsNotificationFanoutJobRunning = false;
 let newsNotificationFanoutIntervalHandle = null;
+let newsNotificationOutboxJobRunning = false;
+let newsNotificationOutboxIntervalHandle = null;
 
 async function runMacroIngestionJob(trigger = 'scheduler') {
   if (macroIngestionJobRunning) {
@@ -25310,6 +25597,83 @@ function scheduleNewsNotificationFanoutJob() {
   }, NEWS_NOTIFICATION_FANOUT_INTERVAL_MS);
 }
 
+async function runNewsNotificationOutboxProcessorJob(trigger = 'scheduler') {
+  if (newsNotificationOutboxJobRunning) {
+    return { success: false, skipped: true, reason: 'already_running', trigger };
+  }
+  newsNotificationOutboxJobRunning = true;
+  const startedAt = Date.now();
+  try {
+    const db = loadDB();
+    ensureNewsEventTables(db);
+    db.newsNotificationStatus.outboxLastAttemptedRunAt = new Date().toISOString();
+    saveDB(db);
+
+    console.info('[NewsOutbox] job run start.', { trigger });
+    const diagnostics = await runNewsNotificationOutboxProcessor({
+      loadDB,
+      saveDB,
+      ensureNewsEventTables,
+      dispatchChannelPayload: (payload) => dispatchNewsOutboxChannel(payload),
+      logger: console,
+      now: new Date().toISOString(),
+      batchSize: Number(process.env.NEWS_NOTIFICATION_OUTBOX_BATCH_SIZE) || 50,
+      claimedBy: `job:${trigger}:${process.pid}`,
+      baseBackoffMs: Number(process.env.NEWS_NOTIFICATION_OUTBOX_BASE_BACKOFF_MS) || (60 * 1000)
+    });
+
+    const dbAfter = loadDB();
+    ensureNewsEventTables(dbAfter);
+    dbAfter.newsNotificationStatus.lastOutboxDiagnostics = diagnostics;
+    if (diagnostics.success) {
+      dbAfter.newsNotificationStatus.outboxLastSuccessfulRunAt = new Date().toISOString();
+    }
+    saveDB(dbAfter);
+
+    console.info('[NewsOutbox] job run end.', {
+      trigger,
+      elapsedMs: Date.now() - startedAt,
+      claimedCount: diagnostics?.claimedCount || 0,
+      sentCount: diagnostics?.sentCount || 0,
+      failedCount: diagnostics?.failedCount || 0,
+      retriedCount: diagnostics?.retriedCount || 0,
+      deadLetterCount: diagnostics?.deadLetterCount || 0,
+      countsByChannel: diagnostics?.countsByChannel || {}
+    });
+    return diagnostics;
+  } catch (error) {
+    console.error('[NewsOutbox] job run failed.', { trigger, error: error?.message || error });
+    return {
+      success: false,
+      skipped: false,
+      trigger,
+      error: error?.message || String(error),
+      elapsedMs: Date.now() - startedAt,
+      claimedCount: 0,
+      processedCount: 0,
+      sentCount: 0,
+      failedCount: 0,
+      retriedCount: 0,
+      deadLetterCount: 0,
+      countsByChannel: { in_app: 0, push: 0, email: 0 },
+      errors: [{ stage: 'job', error: error?.message || String(error) }]
+    };
+  } finally {
+    newsNotificationOutboxJobRunning = false;
+  }
+}
+
+function scheduleNewsNotificationOutboxProcessorJob() {
+  if (newsNotificationOutboxIntervalHandle) {
+    clearInterval(newsNotificationOutboxIntervalHandle);
+  }
+  newsNotificationOutboxIntervalHandle = setInterval(() => {
+    runNewsNotificationOutboxProcessorJob('scheduler').catch((error) => {
+      console.warn('[NewsOutbox] scheduled run failed.', error?.message || error);
+    });
+  }, NEWS_NOTIFICATION_OUTBOX_INTERVAL_MS);
+}
+
 let watchlistPreviousCloseReinforcementRunning = false;
 const WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT = Number(process.env.WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT) || 25;
 async function runWatchlistPreviousCloseReinforcement() {
@@ -25365,6 +25729,10 @@ if (require.main === module) {
     console.warn('[NewsFanout] startup run failed', error?.message || error);
   });
   scheduleNewsNotificationFanoutJob();
+  runNewsNotificationOutboxProcessorJob('startup').catch((error) => {
+    console.warn('[NewsOutbox] startup run failed', error?.message || error);
+  });
+  scheduleNewsNotificationOutboxProcessorJob();
   setInterval(runGuestCleanup, 60 * 60 * 1000);
   setInterval(() => {
     runWatchlistPreviousCloseReinforcement().catch((error) => {
@@ -25432,7 +25800,9 @@ module.exports = {
   getDisplayInstrumentIdentity,
   findRegistryEntry,
   runNewsNotificationFanoutJob,
-  scheduleNewsNotificationFanoutJob
+  scheduleNewsNotificationFanoutJob,
+  runNewsNotificationOutboxProcessorJob,
+  scheduleNewsNotificationOutboxProcessorJob
 };
 
 // global error handler
