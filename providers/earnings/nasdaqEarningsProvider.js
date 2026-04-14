@@ -131,7 +131,7 @@ function buildDateRange({ from, to, daysAhead = DEFAULT_DAYS_AHEAD } = {}) {
   return buildDateRangePlan({ from, to, daysAhead }).dates;
 }
 
-function buildDateRangePlan({ from, to, daysAhead = DEFAULT_DAYS_AHEAD } = {}) {
+function buildDateRangePlan({ from, to, daysAhead = DEFAULT_DAYS_AHEAD, nowMs = Date.now() } = {}) {
   const fromDate = normalizeDateOnly(from);
   const toDate = normalizeDateOnly(to);
   const normalizedDaysAhead = normalizeDaysAhead(daysAhead);
@@ -153,7 +153,7 @@ function buildDateRangePlan({ from, to, daysAhead = DEFAULT_DAYS_AHEAD } = {}) {
     };
   }
 
-  const todayDate = new Date().toISOString().slice(0, 10);
+  const todayDate = new Date(nowMs).toISOString().slice(0, 10);
   const startMs = parseDateToUtcMs(todayDate);
   const endMs = startMs + (normalizedDaysAhead * MS_PER_DAY);
   const dates = enumerateDateRangeInclusive(startMs, endMs);
@@ -247,9 +247,12 @@ async function fetchNasdaqEarningsEvents({
   baseUrl = NASDAQ_EARNINGS_CALENDAR_API_URL
 } = {}) {
   const startedAt = Date.now();
+  const envDaysAheadRaw = process.env.NASDAQ_EARNINGS_DAYS_AHEAD;
   const tickerUniverse = new Set((Array.isArray(tickers) ? tickers : []).map((item) => normalizeTicker(item)).filter(Boolean));
   const datePlan = buildDateRangePlan({ from, to, daysAhead });
   const requestedDates = datePlan.dates;
+  const strategyUsed = datePlan.strategy === 'explicit' ? 'explicit_range' : 'default_horizon';
+  const daysAheadSource = envDaysAheadRaw === undefined ? 'default' : 'env_override';
 
   const diagnostics = {
     provider: 'nasdaq',
@@ -258,8 +261,11 @@ async function fetchNasdaqEarningsEvents({
     fromDateComputed: datePlan.fromDate,
     toDateComputed: datePlan.toDate,
     dateRangeStrategy: datePlan.strategy,
+    strategyUsed,
     horizonDays: datePlan.daysAhead,
     daysAheadUsed: datePlan.daysAhead,
+    envDaysAheadRaw: envDaysAheadRaw ?? null,
+    daysAheadSource,
     isValidRange: datePlan.isValidRange,
     datesRequested: requestedDates,
     generatedDateCount: requestedDates.length,
@@ -301,6 +307,15 @@ async function fetchNasdaqEarningsEvents({
     dateRangeStrategy: diagnostics.dateRangeStrategy,
     isValidRange: diagnostics.isValidRange,
     portfolioTickersSample: diagnostics.portfolioTickersSample
+  });
+  logger.info('[Earnings][Nasdaq] live range summary.', {
+    daysAheadUsed: diagnostics.daysAheadUsed,
+    fromDateComputed: diagnostics.fromDateComputed,
+    toDateComputed: diagnostics.toDateComputed,
+    fetchAttemptsPlanned: diagnostics.fetchAttemptsPlanned,
+    envDaysAheadRaw: diagnostics.envDaysAheadRaw,
+    strategyUsed: diagnostics.strategyUsed,
+    daysAheadSource: diagnostics.daysAheadSource
   });
 
   if (!requestedDates.length || !tickerUniverse.size) {

@@ -139,6 +139,14 @@ test('buildDateRangePlan default horizon is widened for next earnings search', (
   assert.equal(plan.daysAhead, 45);
 });
 
+test('buildDateRangePlan default horizon includes day 45 (inclusive)', () => {
+  const plan = buildDateRangePlan({ nowMs: Date.parse('2026-04-14T12:00:00.000Z') });
+  assert.equal(plan.fromDate, '2026-04-14');
+  assert.equal(plan.toDate, '2026-05-29');
+  assert.equal(plan.dates.length, 46);
+  assert.equal(plan.dates.includes('2026-04-29'), true);
+});
+
 test('buildDateRangePlan returns empty list for invalid explicit range', () => {
   const plan = buildDateRangePlan({ from: '2026-07-30', to: '2026-07-28' });
   assert.equal(plan.strategy, 'explicit');
@@ -372,6 +380,43 @@ test('fetchNasdaqEarningsEvents diagnostics show planned fetches for default hor
   assert.equal(result.diagnostics.datesFetched, 2);
   assert.equal(result.diagnostics.daysAheadUsed, 1);
   assert.ok(loggerCalls.some((entry) => entry[0] === '[Earnings][Nasdaq] date plan computed.'));
+  const liveRangeLog = loggerCalls.find((entry) => entry[0] === '[Earnings][Nasdaq] live range summary.');
+  assert.ok(liveRangeLog);
+  assert.equal(liveRangeLog[1].strategyUsed, 'default_horizon');
+  assert.equal(liveRangeLog[1].daysAheadUsed, 1);
+});
+
+test('fetchNasdaqEarningsEvents uses env override when NASDAQ_EARNINGS_DAYS_AHEAD=7', async () => {
+  const originalEnv = process.env.NASDAQ_EARNINGS_DAYS_AHEAD;
+  process.env.NASDAQ_EARNINGS_DAYS_AHEAD = '7';
+  try {
+    const result = await fetchNasdaqEarningsEvents({
+      tickers: ['AAPL'],
+      logger: createLogger(),
+      fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
+    });
+    assert.equal(result.diagnostics.daysAheadUsed, 7);
+    assert.equal(result.diagnostics.fetchAttemptsPlanned, 8);
+    assert.equal(result.diagnostics.envDaysAheadRaw, '7');
+    assert.equal(result.diagnostics.daysAheadSource, 'env_override');
+  } finally {
+    if (originalEnv === undefined) delete process.env.NASDAQ_EARNINGS_DAYS_AHEAD;
+    else process.env.NASDAQ_EARNINGS_DAYS_AHEAD = originalEnv;
+  }
+});
+
+test('fetchNasdaqEarningsEvents explicit from/to keeps explicit range strategy', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-04-14',
+    to: '2026-04-16',
+    logger: createLogger(),
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
+  });
+  assert.equal(result.diagnostics.strategyUsed, 'explicit_range');
+  assert.equal(result.diagnostics.fetchAttemptsPlanned, 3);
+  assert.equal(result.diagnostics.fromDateComputed, '2026-04-14');
+  assert.equal(result.diagnostics.toDateComputed, '2026-04-16');
 });
 
 test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
