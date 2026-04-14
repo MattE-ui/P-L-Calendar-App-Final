@@ -216,6 +216,15 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     .filter((card) => card.isPortfolioRelevant && card.eventType !== 'earnings')
     .sort(sortStableByTimestampDesc)
     .slice(0, 20);
+  const publishedRows = typeof newsEventService.listPublishedNews === 'function'
+    ? newsEventService.listPublishedNews({ sourceType: 'news' })
+    : [];
+  const relevantHeadlines = applyFilterRows(publishedRows, normalizedFilters)
+    .map((event) => buildNewsEventCardModel(event, context))
+    .filter((card) => card.eventType === 'stock_news' && card.isPortfolioRelevant)
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
+    .sort(sortStableByTimestampDesc)
+    .slice(0, 5);
 
   const seen = new Set();
   const mixed = [];
@@ -236,6 +245,7 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const sectionsRaw = [
     { key: 'portfolioUpcomingEarnings', title: 'Portfolio Upcoming Earnings', items: portfolioUpcomingEarnings },
     { key: 'macroUpcoming', title: 'Macro Upcoming', items: macroUpcoming },
+    ...(relevantHeadlines.length ? [{ key: 'recentRelevantHeadlines', title: 'Recent Relevant Headlines', items: relevantHeadlines }] : []),
     ...(recentlyUpdatedRelevant.length ? [{ key: 'recentlyUpdatedRelevant', title: 'Recently Updated Relevant', items: recentlyUpdatedRelevant }] : [])
   ];
   const sections = sectionsRaw.map((section) => ({

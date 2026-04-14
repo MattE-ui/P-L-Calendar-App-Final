@@ -20,6 +20,7 @@ const { createNewsPreferenceService } = require('./services/news/newsPreferenceS
 const { createNewsReadModelService } = require('./services/news/newsReadModelService');
 const { runMacroIngestion } = require('./services/news/macroIngestionService');
 const { runEarningsIngestion } = require('./services/news/earningsIngestionService');
+const { runHeadlineIngestion, getHeadlineIngestionFeatureState } = require('./services/news/headlineIngestionService');
 const {
   runNewsNotificationFanout,
   WINDOW_KEY_IMMEDIATE,
@@ -175,6 +176,11 @@ const NEWS_NOTIFICATION_FANOUT_INTERVAL_MS = (() => {
 const NEWS_NOTIFICATION_OUTBOX_INTERVAL_MS = (() => {
   const parsed = Number(process.env.NEWS_NOTIFICATION_OUTBOX_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < (30 * 1000)) return 90 * 1000;
+  return parsed;
+})();
+const NEWS_HEADLINE_INGEST_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.NEWS_HEADLINE_INGEST_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < (60 * 1000)) return 15 * 60 * 1000;
   return parsed;
 })();
 
@@ -3551,6 +3557,13 @@ function ensureNewsEventTables(db) {
         lastSuccessfulRunAt: null,
         lastDiagnostics: null,
         lastProviderStatuses: []
+      },
+      headlines: {
+        lastAttemptedRunAt: null,
+        lastSuccessfulRunAt: null,
+        lastDiagnostics: null,
+        lastProviderStatuses: [],
+        providerStates: {}
       }
     };
   } else if (!db.newsIngestionStatus.macro || typeof db.newsIngestionStatus.macro !== 'object') {
@@ -3568,6 +3581,18 @@ function ensureNewsEventTables(db) {
       lastDiagnostics: null,
       lastProviderStatuses: []
     };
+  }
+  if (!db.newsIngestionStatus.headlines || typeof db.newsIngestionStatus.headlines !== 'object') {
+    db.newsIngestionStatus.headlines = {
+      lastAttemptedRunAt: null,
+      lastSuccessfulRunAt: null,
+      lastDiagnostics: null,
+      lastProviderStatuses: [],
+      providerStates: {}
+    };
+  } else {
+    db.newsIngestionStatus.headlines.providerStates ||= {};
+    db.newsIngestionStatus.headlines.lastProviderStatuses ||= [];
   }
 }
 
@@ -18725,11 +18750,22 @@ app.post('/api/admin/news/ingest/earnings', auth, requireAuthenticatedUser, requ
   res.json({ data: diagnostics });
 }));
 
+app.post('/api/admin/news/ingest/headlines', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
+  const diagnostics = await runHeadlineIngestionJob('admin_endpoint');
+  console.info('[HeadlineIngestion][Admin] manual trigger completed.', {
+    userId: req.username,
+    success: !!diagnostics?.success,
+    elapsedMs: diagnostics?.elapsedMs || null
+  });
+  res.json({ data: diagnostics });
+}));
+
 app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
   const db = loadDB();
   ensureNewsEventTables(db);
   const macroStatus = db.newsIngestionStatus?.macro || {};
   const earningsStatus = db.newsIngestionStatus?.earnings || {};
+  const headlineStatus = db.newsIngestionStatus?.headlines || {};
   const activeEvents = Array.isArray(db.newsEvents) ? db.newsEvents.filter((event) => event?.isActive !== false) : [];
   const macroCountsByEventType = activeEvents
     .filter((event) => event?.sourceType === 'macro')
@@ -18739,6 +18775,13 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
       return acc;
     }, {});
   const earningsCount = activeEvents.filter((event) => event?.eventType === 'earnings' || event?.sourceType === 'earnings').length;
+  const headlineCountsByEventType = activeEvents
+    .filter((event) => event?.eventType === 'stock_news' || event?.eventType === 'world_news')
+    .reduce((acc, event) => {
+      const key = String(event.eventType || 'unknown');
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
 
   res.json({
     data: {
@@ -18759,6 +18802,18 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
             aggregateTickersResolved: earningsStatus.lastDiagnostics.aggregateTickersResolved || 0
           }
           : null
+      },
+      headlines: {
+        featureState: getHeadlineIngestionFeatureState(),
+        lastAttemptedRunAt: headlineStatus.lastAttemptedRunAt || null,
+        lastSuccessfulRunAt: headlineStatus.lastSuccessfulRunAt || null,
+        lastProviderStatuses: Array.isArray(headlineStatus.lastProviderStatuses) ? headlineStatus.lastProviderStatuses : [],
+        countsByEventType: {
+          stock_news: headlineCountsByEventType.stock_news || 0,
+          world_news: headlineCountsByEventType.world_news || 0
+        },
+        providerStates: headlineStatus.providerStates || {},
+        capApplications: headlineStatus?.lastDiagnostics?.capApplications || null
       }
     }
   });
@@ -25353,6 +25408,8 @@ let macroIngestionJobRunning = false;
 let macroIngestionIntervalHandle = null;
 let earningsIngestionJobRunning = false;
 let earningsIngestionIntervalHandle = null;
+let headlineIngestionJobRunning = false;
+let headlineIngestionIntervalHandle = null;
 let newsNotificationFanoutJobRunning = false;
 let newsNotificationFanoutIntervalHandle = null;
 let newsNotificationOutboxJobRunning = false;
@@ -25502,6 +25559,76 @@ function scheduleEarningsIngestionJob() {
       console.warn('[EarningsIngestion] scheduled run failed.', error?.message || error);
     });
   }, EARNINGS_INGEST_INTERVAL_MS);
+}
+
+async function runHeadlineIngestionJob(trigger = 'scheduler') {
+  if (headlineIngestionJobRunning) {
+    return { success: false, skipped: true, reason: 'already_running', trigger };
+  }
+  headlineIngestionJobRunning = true;
+  const startedAt = Date.now();
+  try {
+    console.info('[HeadlineIngestion] job run start.', { trigger, featureState: getHeadlineIngestionFeatureState() });
+    const diagnostics = await runHeadlineIngestion({
+      trigger,
+      loadDB,
+      saveDB,
+      ensureNewsEventTables,
+      newsEventService,
+      logger: console
+    });
+    console.info('[HeadlineIngestion] job run end.', {
+      trigger,
+      elapsedMs: Date.now() - startedAt,
+      rowsInserted: diagnostics?.totals?.rowsInserted || 0,
+      rowsUpdated: diagnostics?.totals?.rowsUpdated || 0,
+      rowsDeduped: diagnostics?.totals?.rowsDeduped || 0,
+      capApplications: diagnostics?.capApplications || {}
+    });
+    return diagnostics;
+  } catch (error) {
+    console.error('[HeadlineIngestion] job run failed.', { trigger, error: error?.message || error });
+    return {
+      success: false,
+      skipped: false,
+      trigger,
+      error: error?.message || String(error),
+      elapsedMs: Date.now() - startedAt,
+      countsByEventType: { stock_news: 0, world_news: 0 },
+      totals: {
+        rowsFetched: 0,
+        rowsParsed: 0,
+        rowsValid: 0,
+        rowsSkipped: 0,
+        rowsMalformed: 0,
+        rowsFilteredByRelevance: 0,
+        rowsCapped: 0,
+        rowsInserted: 0,
+        rowsUpdated: 0,
+        rowsDeduped: 0
+      },
+      capApplications: {
+        runCapTrimmed: 0,
+        stockCapTrimmed: 0,
+        worldCapTrimmed: 0,
+        providerCapTrimmed: 0
+      },
+      providers: []
+    };
+  } finally {
+    headlineIngestionJobRunning = false;
+  }
+}
+
+function scheduleHeadlineIngestionJob() {
+  if (headlineIngestionIntervalHandle) {
+    clearInterval(headlineIngestionIntervalHandle);
+  }
+  headlineIngestionIntervalHandle = setInterval(() => {
+    runHeadlineIngestionJob('scheduler').catch((error) => {
+      console.warn('[HeadlineIngestion] scheduled run failed.', error?.message || error);
+    });
+  }, NEWS_HEADLINE_INGEST_INTERVAL_MS);
 }
 
 async function runNewsNotificationFanoutJob(trigger = 'scheduler') {
@@ -25725,6 +25852,10 @@ if (require.main === module) {
     console.warn('[EarningsIngestion] startup run failed', error?.message || error);
   });
   scheduleEarningsIngestionJob();
+  runHeadlineIngestionJob('startup').catch((error) => {
+    console.warn('[HeadlineIngestion] startup run failed', error?.message || error);
+  });
+  scheduleHeadlineIngestionJob();
   runNewsNotificationFanoutJob('startup').catch((error) => {
     console.warn('[NewsFanout] startup run failed', error?.message || error);
   });
@@ -25801,6 +25932,8 @@ module.exports = {
   findRegistryEntry,
   runNewsNotificationFanoutJob,
   scheduleNewsNotificationFanoutJob,
+  runHeadlineIngestionJob,
+  scheduleHeadlineIngestionJob,
   runNewsNotificationOutboxProcessorJob,
   scheduleNewsNotificationOutboxProcessorJob
 };
