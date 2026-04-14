@@ -4,11 +4,11 @@ const assert = require('node:assert/strict');
 const { buildEventDedupeKey } = require('../services/news/newsEventService');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('../services/news/ownedTickerUniverseService');
 const {
-  normalizeNasdaqEarningsRow,
+  computeDateRange,
+  normalizeFinnhubEarningsRow,
   selectNextUpcomingEarningsPerTicker,
-  extractEarningsDateFromApiPayload,
-  fetchNasdaqEarningsEvents
-} = require('../providers/earnings/nasdaqEarningsProvider');
+  fetchFinnhubEarningsEvents
+} = require('../providers/earnings/finnhubEarningsProvider');
 const { runEarningsIngestion } = require('../services/news/earningsIngestionService');
 
 function createLogger() {
@@ -49,101 +49,120 @@ test('owned ticker universe resolves only active/open holdings', () => {
   assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
 });
 
-test('normalizeNasdaqEarningsRow returns earnings-shaped event with ISO date', () => {
-  const row = normalizeNasdaqEarningsRow({
-    ticker: 'aapl',
-    earningsAnnouncementDate: 'Apr 29, 2026'
+test('normalizeFinnhubEarningsRow returns earnings-shaped event with ISO date', () => {
+  const row = normalizeFinnhubEarningsRow({
+    symbol: 'aapl',
+    date: '2026-04-29',
+    hour: 'amc',
+    epsEstimate: 1.8,
+    revenueEstimate: 12300000000
   }, { tickerUniverse: new Set(['AAPL']), nowMs: Date.parse('2026-04-01T00:00:00.000Z') });
 
   assert.equal(row.sourceType, 'earnings');
   assert.equal(row.eventType, 'earnings');
-  assert.equal(row.source, 'nasdaq');
+  assert.equal(row.source, 'finnhub');
   assert.equal(row.canonicalTicker, 'AAPL');
-  assert.equal(row.scheduledAt, '2026-04-29T16:00:00.000Z');
-  assert.match(row.sourceExternalId, /^nasdaq:earnings:AAPL:2026-04-29$/);
+  assert.equal(row.scheduledAt, '2026-04-29T21:00:00.000Z');
+  assert.match(row.sourceExternalId, /^finnhub:earnings:AAPL:2026-04-29$/);
 });
 
-test('extractEarningsDateFromApiPayload parses primary earningsDate path', () => {
-  const payload = { data: { earnings: { earningsDate: 'Apr 29, 2026' } } };
-  assert.equal(extractEarningsDateFromApiPayload(payload), '2026-04-29');
+test('computeDateRange builds default 45-day request window', () => {
+  const range = computeDateRange({ nowMs: Date.parse('2026-04-14T00:00:00.000Z') });
+  assert.equal(range.fromDate, '2026-04-14');
+  assert.equal(range.toDate, '2026-05-29');
 });
 
-test('extractEarningsDateFromApiPayload supports fallback reportDate paths', () => {
-  const payload = { data: { earnings: { calendar: [{ reportDate: '2026-05-03' }] } } };
-  assert.equal(extractEarningsDateFromApiPayload(payload), '2026-05-03');
-});
-
-test('fetchNasdaqEarningsEvents fetches one next event per ticker via API', async () => {
+test('fetchFinnhubEarningsEvents parses response and filters to portfolio tickers', async () => {
   const requests = [];
-  const result = await fetchNasdaqEarningsEvents({
+  const result = await fetchFinnhubEarningsEvents({
     tickers: ['AAPL', 'MSFT'],
+    apiKey: 'test-token',
     logger: createLogger(),
     fetcher: async (url, options) => {
-      requests.push({ url, options });
-      if (String(url).includes('/aapl/earnings')) {
-        return { ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Apr 29, 2026' } } }) };
-      }
-      if (String(url).includes('/msft/earnings')) {
-        return { ok: true, status: 200, json: async () => ({ data: { earnings: { reportDate: 'May 01, 2026' } } }) };
-      }
-      return { ok: false, status: 404, json: async () => ({}) };
+      requests.push({ url: String(url), options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          earningsCalendar: [
+            { symbol: 'AAPL', date: '2026-04-29', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 1.2 },
+            { symbol: 'AAPL', date: '2026-05-02', hour: 'bmo', quarter: 1, year: 2026, epsEstimate: 1.3 },
+            { symbol: 'TSLA', date: '2026-04-29', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 0.8 },
+            { symbol: 'MSFT', date: '2026-05-03', hour: 'bmo', quarter: 1, year: 2026, epsEstimate: 2.3 }
+          ]
+        })
+      };
     }
   });
 
   assert.equal(result.rows.length, 2);
   assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
-  assert.equal(result.diagnostics.tickersProcessed, 2);
-  assert.equal(result.diagnostics.successfulExtractions, 2);
-  assert.equal(result.diagnostics.failedExtractions, 0);
+  assert.equal(result.diagnostics.totalRowsFetched, 4);
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 3);
   assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
-  assert.equal(result.diagnostics.extractedDatesSample.length, 2);
-  assert.equal(requests[0].options.headers['User-Agent'], 'Mozilla/5.0');
-  assert.equal(requests[0].options.headers.Accept, 'application/json');
+  assert.equal(result.diagnostics.uniquePortfolioTickersMatched, 2);
+  assert.match(requests[0].url, /from=\d{4}-\d{2}-\d{2}/);
+  assert.match(requests[0].url, /to=\d{4}-\d{2}-\d{2}/);
+  assert.match(requests[0].url, /token=test-token/);
 });
 
-test('fetchNasdaqEarningsEvents skips ticker when API request fails', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL', 'NVDA'],
+test('fetchFinnhubEarningsEvents keeps only one next event per ticker', async () => {
+  const result = await fetchFinnhubEarningsEvents({
+    tickers: ['AAPL'],
+    apiKey: 'test-token',
     logger: createLogger(),
-    fetcher: async (url) => {
-      if (String(url).includes('/aapl/earnings')) {
-        return { ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Apr 29, 2026' } } }) };
-      }
-      return { ok: false, status: 503, json: async () => ({}) };
-    }
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        earningsCalendar: [
+          { symbol: 'AAPL', date: '2026-05-10', hour: 'amc' },
+          { symbol: 'AAPL', date: '2026-05-02', hour: 'bmo' }
+        ]
+      })
+    })
   });
 
   assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
-  assert.equal(result.diagnostics.tickersProcessed, 2);
-  assert.equal(result.diagnostics.successfulExtractions, 1);
-  assert.equal(result.diagnostics.failedExtractions, 1);
-  assert.equal(result.diagnostics.fetchFailures.length, 1);
+  assert.equal(result.rows[0].scheduledAt, '2026-05-02T13:00:00.000Z');
 });
 
-test('fetchNasdaqEarningsEvents skips ticker when earnings date is not found', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { earnings: {} } }) })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.successfulExtractions, 0);
-  assert.equal(result.diagnostics.failedExtractions, 1);
-  assert.equal(result.diagnostics.parseFailures[0].reason, 'earnings_date_not_found');
+test('fetchFinnhubEarningsEvents fails clearly when FINNHUB_API_KEY missing', async () => {
+  await assert.rejects(
+    () => fetchFinnhubEarningsEvents({
+      tickers: ['AAPL'],
+      apiKey: '',
+      logger: createLogger(),
+      fetcher: async () => ({ ok: true, status: 200, json: async () => ({ earningsCalendar: [] }) })
+    }),
+    (error) => {
+      assert.match(error.message, /FINNHUB_API_KEY/);
+      assert.equal(error.diagnostics.apiKeyPresent, false);
+      assert.equal(error.diagnostics.failureReason, 'missing_finnhub_api_key');
+      return true;
+    }
+  );
 });
 
-test('fetchNasdaqEarningsEvents returns no rows for past parsed date', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Jan 2, 2020' } } }) })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.failedExtractions, 1);
-  assert.equal(result.diagnostics.parseFailures[0].reason, 'dropped_past_date');
+test('fetchFinnhubEarningsEvents includes failure diagnostics on non-OK response', async () => {
+  await assert.rejects(
+    () => fetchFinnhubEarningsEvents({
+      tickers: ['AAPL'],
+      apiKey: 'test-token',
+      logger: createLogger(),
+      fetcher: async () => ({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: 'rate limit exceeded' })
+      })
+    }),
+    (error) => {
+      assert.match(error.message, /429/);
+      assert.equal(error.diagnostics.failureReason, 'http_429');
+      assert.match(error.diagnostics.failureBodySnippet, /rate limit/);
+      return true;
+    }
+  );
 });
 
 test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
@@ -198,7 +217,7 @@ test('portfolio relevance uses per-user earnings mapping', async () => {
       canonicalTicker: 'AAPL',
       title: 'Earnings: AAPL',
       scheduledAt: '2026-07-28T21:00:00.000Z',
-      sourceName: 'Nasdaq',
+      sourceName: 'Finnhub',
       sourceUrl: 'https://example.test',
       sourceExternalId: 'x'
     }]),
@@ -211,7 +230,7 @@ test('portfolio relevance uses per-user earnings mapping', async () => {
   assert.equal(isEventRelevantToUser(captured[0], 'bob'), false);
 });
 
-test('earnings ingestion captures provider diagnostics payload shape', async () => {
+test('earnings ingestion captures provider diagnostics payload shape and rowsInserted', async () => {
   const diagnostics = await runEarningsIngestion({
     loadDB: () => ({ users: { alice: {} }, trades: [{ username: 'alice', status: 'open', canonicalTicker: 'AAPL' }] }),
     newsEventService: {
@@ -227,16 +246,17 @@ test('earnings ingestion captures provider diagnostics payload shape', async () 
         canonicalTicker: 'AAPL',
         title: 'Earnings: AAPL',
         scheduledAt: '2026-07-28T16:00:00.000Z',
-        sourceName: 'Nasdaq',
+        sourceName: 'Finnhub',
         sourceUrl: 'https://example.test',
         sourceExternalId: 'x'
       }],
-      diagnostics: { tickersProcessed: 2, successfulExtractions: 1, failedExtractions: 1 }
+      diagnostics: { totalRowsFetched: 4, rowsMatchedToPortfolio: 2, nextEarningsPerTickerCount: 1 }
     }),
     trigger: 'test'
   });
 
   assert.equal(diagnostics.success, true);
-  assert.equal(diagnostics.providerStatus.providerDiagnostics.tickersProcessed, 2);
-  assert.equal(diagnostics.providerStatus.providerDiagnostics.successfulExtractions, 1);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.totalRowsFetched, 4);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.rowsMatchedToPortfolio, 2);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.rowsInserted, 1);
 });

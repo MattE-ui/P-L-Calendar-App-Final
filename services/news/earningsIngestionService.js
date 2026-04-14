@@ -1,11 +1,11 @@
-const { fetchNasdaqEarningsEvents } = require('../../providers/earnings/nasdaqEarningsProvider');
+const { fetchFinnhubEarningsEvents } = require('../../providers/earnings/finnhubEarningsProvider');
 const { resolveOwnedTickerUniverse } = require('./ownedTickerUniverseService');
 
 async function runEarningsIngestion({
   loadDB,
   newsEventService,
   logger = console,
-  provider = fetchNasdaqEarningsEvents,
+  provider = fetchFinnhubEarningsEvents,
   trigger = 'unknown',
   from,
   to
@@ -123,6 +123,9 @@ async function runEarningsIngestion({
       else diagnostics.rowsInserted += 1;
     }
     diagnostics.collisionsEncountered = Math.max(0, preparedRows.length - upserted.length);
+    if (diagnostics.providerStatus.providerDiagnostics && typeof diagnostics.providerStatus.providerDiagnostics === 'object') {
+      diagnostics.providerStatus.providerDiagnostics.rowsInserted = diagnostics.rowsInserted;
+    }
     diagnostics.success = diagnostics.providerStatus.success;
   } catch (error) {
     diagnostics.safeErrors.push(error?.message || String(error));
