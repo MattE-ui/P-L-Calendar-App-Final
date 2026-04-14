@@ -266,3 +266,52 @@ test('earnings ingestion captures provider diagnostics payload shape', async () 
   assert.equal(diagnostics.providerStatus.providerDiagnostics.apiKeyPresent, true);
   assert.equal(diagnostics.providerStatus.providerDiagnostics.horizon, '3month');
 });
+
+
+test('fetchAlphaVantageEarningsEvents builds per-symbol requests and enforces symbol cap deterministically', async () => {
+  const requestedUrls = [];
+  const result = await fetchAlphaVantageEarningsEvents({
+    tickers: ['msft', 'aapl', 'aapl', 'nvda'],
+    maxSymbolsPerRun: 2,
+    apiKey: 'test-key',
+    logger: createLogger(),
+    fetcher: async (url) => {
+      requestedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        text: async () => 'symbol,name,reportDate,fiscalDateEnding,estimate,currency\nAAPL,Apple Inc,2026-07-28,2026-06-30,1.22,USD'
+      };
+    }
+  });
+
+  assert.equal(requestedUrls.length, 2);
+  assert.match(requestedUrls[0], /symbol=AAPL/);
+  assert.match(requestedUrls[1], /symbol=MSFT/);
+  assert.deepEqual(result.diagnostics.symbolsRequested, ['AAPL', 'MSFT']);
+  assert.deepEqual(result.diagnostics.symbolsSkippedDueToCap, ['NVDA']);
+});
+
+test('fetchAlphaVantageEarningsEvents preserves partial success when one symbol fails', async () => {
+  const result = await fetchAlphaVantageEarningsEvents({
+    tickers: ['AAPL', 'MSFT'],
+    apiKey: 'test-key',
+    logger: createLogger(),
+    fetcher: async (url) => {
+      if (String(url).includes('symbol=AAPL')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => 'symbol,name,reportDate,fiscalDateEnding,estimate,currency\nAAPL,Apple Inc,2026-07-28,2026-06-30,1.22,USD'
+        };
+      }
+      return { ok: false, status: 429, text: async () => 'Rate limit exceeded' };
+    }
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
+  assert.equal(result.diagnostics.symbolFailures.length, 1);
+  assert.equal(result.diagnostics.symbolFailures[0].symbol, 'MSFT');
+  assert.equal(result.diagnostics.throttleHint, 'http_429');
+});
