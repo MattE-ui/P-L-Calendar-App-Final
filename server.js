@@ -8796,6 +8796,14 @@ function updateTrading212LayerMetadata(trade, {
   rates
 }) {
   if (!trade) return;
+  const existingOriginalStop = Number(trade.originalStopPrice);
+  const existingCurrentStop = Number(trade.currentStop);
+  const existingStop = Number(trade.stop);
+  const hasExistingCurrentStop = Number.isFinite(existingCurrentStop) && existingCurrentStop > 0;
+  const hasExistingOriginalStop = Number.isFinite(existingOriginalStop) && existingOriginalStop > 0;
+  const hasExistingStop = Number.isFinite(existingStop) && existingStop > 0;
+  const incomingAuthoritativeStop = Number.isFinite(stop) && stop > 0 ? stop : null;
+  const firstStopInitialization = !hasExistingCurrentStop && !hasExistingOriginalStop && !hasExistingStop;
   if (!trade.symbol) {
     trade.symbol = symbol;
   }
@@ -8818,17 +8826,38 @@ function updateTrading212LayerMetadata(trade, {
   if (Number.isFinite(currentPrice) && currentPrice > 0) {
     trade.lastSyncPrice = currentPrice;
   }
-  const nextStop = Number.isFinite(stop) && stop > 0 ? stop : (Number.isFinite(lowStop) ? lowStop : null);
-  if (Number.isFinite(nextStop) && nextStop > 0) {
-    trade.currentStop = nextStop;
-    if (Number.isFinite(stop) && stop > 0) {
-      trade.currentStopSource = 't212';
-      trade.currentStopStale = false;
+  const incomingBootstrapStop = incomingAuthoritativeStop ?? (Number.isFinite(lowStop) && lowStop > 0 ? lowStop : null);
+  if (incomingAuthoritativeStop !== null) {
+    trade.currentStop = incomingAuthoritativeStop;
+    trade.currentStopSource = 't212';
+    trade.currentStopStale = false;
+    if (!hasExistingOriginalStop) {
+      trade.originalStopPrice = incomingAuthoritativeStop;
     }
     if (trade.stopManualOverride !== true) {
-      trade.stop = nextStop;
+      trade.stop = incomingAuthoritativeStop;
+    }
+  } else if (firstStopInitialization && incomingBootstrapStop !== null) {
+    trade.currentStop = incomingBootstrapStop;
+    if (!hasExistingOriginalStop) {
+      trade.originalStopPrice = incomingBootstrapStop;
+    }
+    if (trade.stopManualOverride !== true) {
+      trade.stop = incomingBootstrapStop;
     }
   }
+  console.info('[TRADES][STOP_SYNC]', {
+    tradeId: trade.id || '',
+    provider: 'trading212',
+    sourcePath: 'automation_snapshot_reconcile',
+    existingOriginalStop: hasExistingOriginalStop ? existingOriginalStop : null,
+    existingCurrentStop: hasExistingCurrentStop ? existingCurrentStop : null,
+    incomingOriginalStop: incomingBootstrapStop,
+    incomingCurrentStop: incomingAuthoritativeStop,
+    persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
+    persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+    currentStopPreserved: incomingAuthoritativeStop === null && hasExistingCurrentStop
+  });
   recalculateTradeRiskFromImportedStop(trade, user, rates);
 }
 
@@ -11193,6 +11222,8 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
   }
   let updated = 0;
   for (const trade of openTrades) {
+    const existingOriginalStop = Number(trade.originalStopPrice);
+    const existingCurrentStop = Number(trade.currentStop);
     const relatedTrades = findRelatedTrading212Trades(openTrades, trade, accountId);
     const matched = matchStopOrderForTrade(trade, orders, { relatedTrades: [trade, ...relatedTrades] });
     const shouldAutoSync = trade.currentStopSource !== 'manual';
@@ -11205,6 +11236,20 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
       trade.currentStopLastSyncedAt = new Date().toISOString();
       trade.currentStopStale = true;
       trade.t212StopOrderId = '';
+      console.info('[TRADES][STOP_SYNC]', {
+        tradeId: trade.id || '',
+        provider: 'trading212',
+        sourcePath: 'automation_orders_sync',
+        existingOriginalStop: Number.isFinite(existingOriginalStop) ? existingOriginalStop : null,
+        existingCurrentStop: Number.isFinite(existingCurrentStop) ? existingCurrentStop : null,
+        incomingOriginalStop: null,
+        incomingCurrentStop: null,
+        persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
+        persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+        currentStopPreserved: false,
+        currentStopOverwritten: false,
+        markedStale: true
+      });
       updated += 1;
       continue;
     }
@@ -11223,6 +11268,23 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
     if (trade.stopManualOverride !== true) {
       trade.stop = stopPrice;
     }
+    if (!Number.isFinite(Number(trade.originalStopPrice)) || Number(trade.originalStopPrice) <= 0) {
+      trade.originalStopPrice = stopPrice;
+    }
+    console.info('[TRADES][STOP_SYNC]', {
+      tradeId: trade.id || '',
+      provider: 'trading212',
+      sourcePath: 'automation_orders_sync',
+      existingOriginalStop: Number.isFinite(existingOriginalStop) ? existingOriginalStop : null,
+      existingCurrentStop: Number.isFinite(existingCurrentStop) ? existingCurrentStop : null,
+      incomingOriginalStop: Number.isFinite(stopPrice) ? stopPrice : null,
+      incomingCurrentStop: Number.isFinite(stopPrice) ? stopPrice : null,
+      persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
+      persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
+      currentStopPreserved: Number.isFinite(existingCurrentStop) && existingCurrentStop === Number(trade.currentStop),
+      currentStopOverwritten: Number.isFinite(existingCurrentStop) && existingCurrentStop !== Number(trade.currentStop),
+      markedStale: false
+    });
     recalculateTradeRiskFromImportedStop(trade, user, rates);
     updated += 1;
   }
@@ -21707,6 +21769,16 @@ async function buildActiveTrades(user, rates = {}) {
     const sizeUnits = resolveTradeSizeUnits(trade);
     const entry = Number(trade.entry);
     const direction = trade.direction === 'short' ? 'short' : 'long';
+    const originalStopValue = Number(trade.originalStopPrice);
+    const stopValue = Number(trade.stop);
+    const currentStopValue = Number(trade.currentStop);
+    const originalStop = Number.isFinite(originalStopValue) && originalStopValue > 0
+      ? originalStopValue
+      : (Number.isFinite(stopValue) && stopValue > 0 ? stopValue : undefined);
+    const currentStop = Number.isFinite(currentStopValue) && currentStopValue > 0
+      ? currentStopValue
+      : undefined;
+    const displayStop = currentStop ?? originalStop;
     const slippage = Number(trade.slippage) || 0;
     const feesCurrency = Number(trade.fees) || 0;
     const fxFeeRate = Number(trade.fxFeeRate);
@@ -21747,7 +21819,7 @@ async function buildActiveTrades(user, rates = {}) {
         ibkrConid: trade.ibkrConid,
         ibkrPositionId: trade.ibkrPositionId,
         entry,
-        stop: Number(trade.stop),
+        stop: Number.isFinite(stopValue) ? stopValue : undefined,
         currency: tradeCurrency,
         sizeUnits,
         totalEnteredQuantity: Number(trade.totalEnteredQuantity) || sizeUnits,
@@ -21765,11 +21837,12 @@ async function buildActiveTrades(user, rates = {}) {
         unrealizedGBP: providerPnlGBP,
         guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
         positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
-        currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+        currentStop,
+        displayStop,
         currentStopSource: trade.currentStopSource,
         currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
         currentStopStale: trade.currentStopStale === true,
-        originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
+        originalStopPrice: originalStop,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
         note: trade.note,
         assetClass: trade.assetClass || 'stocks',
@@ -21858,7 +21931,7 @@ async function buildActiveTrades(user, rates = {}) {
         ibkrConid: trade.ibkrConid,
         ibkrPositionId: trade.ibkrPositionId,
         entry,
-        stop: Number(trade.stop),
+        stop: Number.isFinite(stopValue) ? stopValue : undefined,
         currency: tradeCurrency,
       sizeUnits,
       totalEnteredQuantity: Number(trade.totalEnteredQuantity) || sizeUnits,
@@ -21877,11 +21950,12 @@ async function buildActiveTrades(user, rates = {}) {
       unrealizedGBP: unrealizedGBP !== null ? unrealizedGBP : undefined,
       guaranteedPnlGBP: guaranteedPnlGBP !== null ? guaranteedPnlGBP : undefined,
       positionGBP: entryValueGBP !== null ? entryValueGBP : undefined,
-      currentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : undefined,
+      currentStop,
+      displayStop,
       currentStopSource: trade.currentStopSource,
       currentStopLastSyncedAt: trade.currentStopLastSyncedAt,
       currentStopStale: trade.currentStopStale === true,
-      originalStopPrice: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : undefined,
+      originalStopPrice: originalStop,
         source: trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual')),
         note: trade.note,
         assetClass: trade.assetClass || 'stocks',
@@ -22039,6 +22113,8 @@ const ACTIVE_TRADES_SUMMARY_FIELDS = [
   'guaranteedPnlGBP',
   'positionGBP',
   'currentStop',
+  'displayStop',
+  'originalStopPrice',
   'currentStopSource',
   'currentStopLastSyncedAt',
   'currentStopStale',
@@ -22063,7 +22139,6 @@ const ACTIVE_TRADES_SUMMARY_FIELDS = [
 
 const ACTIVE_TRADES_DETAIL_ONLY_FIELDS = [
   'optionQuoteDiagnostics',
-  'originalStopPrice',
   'fees',
   'slippage',
   'fxFeeEligible',
@@ -22096,6 +22171,18 @@ function buildActiveTradesSnapshotPayload(snapshot, {
   const responseBytes = responseMode === 'detail' ? detailBytes : summaryBytes;
   const bytesReduced = Math.max(0, detailBytes - summaryBytes);
   const serializationTrimmed = bytesReduced > 0;
+  responseTrades.forEach((trade) => {
+    if (!trade || typeof trade !== 'object') return;
+    const currentStop = Number(trade.currentStop);
+    const originalStop = Number(trade.originalStopPrice ?? trade.stop);
+    const displayStop = Number(trade.displayStop);
+    console.info('[TRADES][ACTIVE_API_SHAPING]', {
+      tradeId: trade.id || '',
+      originalStop: Number.isFinite(originalStop) ? originalStop : null,
+      currentStop: Number.isFinite(currentStop) ? currentStop : null,
+      displayStop: Number.isFinite(displayStop) ? displayStop : (Number.isFinite(currentStop) ? currentStop : (Number.isFinite(originalStop) ? originalStop : null))
+    });
+  });
   return {
     trades: responseTrades,
     liveOpenPnl: snapshot.liveOpenPnl,
@@ -24269,6 +24356,7 @@ module.exports = {
   buildTrading212PositionBudgetKey,
   consumeTrading212BuyFillBudget,
   findTrading212OpenTradeMatch,
+  updateTrading212LayerMetadata,
   upsertTrading212StopOrders,
   reconcileTrading212HistoricalExits,
   extractIbkrPortfolioValue,
