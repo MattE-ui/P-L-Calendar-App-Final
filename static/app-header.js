@@ -3,6 +3,93 @@
 
   const path = window.location.pathname || '/';
   const isDashboardRoute = path === '/' || path.endsWith('/index.html');
+  const QUICK_SETTINGS_PAGE_SELECTORS = {
+    dashboard: '#quick-settings-modal',
+    analytics: '#quick-settings-modal',
+    trades: '#trade-settings-modal',
+    transactions: '#transactions-settings-modal',
+    profile: '#quick-settings-modal'
+  };
+
+  function logMenu(eventName, payload = {}) {
+    window.PerfDiagnostics?.log(`app-menu-${eventName}`, payload);
+    if (window.localStorage?.getItem('debugAppMenu') === 'true') {
+      console.debug('[app-menu]', eventName, payload);
+    }
+  }
+
+  function getPageContext(currentPath) {
+    const normalizedPath = currentPath || '/';
+    const isDashboard = normalizedPath === '/' || normalizedPath.endsWith('/index.html');
+    const pageId = (() => {
+      if (normalizedPath.endsWith('/analytics.html')) return 'analytics';
+      if (normalizedPath.endsWith('/trades.html')) return 'trades';
+      if (normalizedPath.endsWith('/transactions.html')) return 'transactions';
+      if (normalizedPath.endsWith('/watchlists.html') || normalizedPath === '/watchlists' || normalizedPath.startsWith('/watchlists/')) return 'watchlists';
+      if (normalizedPath.endsWith('/social.html') || normalizedPath === '/social' || normalizedPath.startsWith('/social/')) return 'social';
+      if (normalizedPath.endsWith('/review.html') || normalizedPath === '/review' || normalizedPath.startsWith('/review/')) return 'review';
+      if (normalizedPath.endsWith('/profile.html')) return 'profile';
+      if (normalizedPath.startsWith('/profile/')) return 'profile-subpage';
+      if (isDashboard) return 'dashboard';
+      return 'unknown';
+    })();
+
+    const quickSettingsSelector = QUICK_SETTINGS_PAGE_SELECTORS[pageId];
+    const capabilities = {
+      pageId,
+      route: normalizedPath,
+      quickSettings: !!(quickSettingsSelector && document.querySelector(quickSettingsSelector)),
+      quickSettingsSelector: quickSettingsSelector || null
+    };
+    return capabilities;
+  }
+
+  const pageContext = getPageContext(path);
+  const menuDefinitions = [
+    {
+      id: 'quick-settings',
+      label: 'Settings',
+      icon: null,
+      global: false,
+      actionKey: 'open-quick-settings',
+      visibilityPredicate: (context) => !!context.quickSettings
+    },
+    {
+      id: 'devtools',
+      label: 'Devtools',
+      icon: null,
+      global: true,
+      actionKey: 'open-devtools',
+      visibilityPredicate: () => true
+    },
+    {
+      id: 'logout',
+      label: 'Logout',
+      icon: null,
+      global: true,
+      actionKey: 'logout',
+      className: 'app-shell-account-item--logout',
+      visibilityPredicate: () => true
+    }
+  ];
+
+  const visibleMenuItems = menuDefinitions.filter((item) => {
+    try {
+      return item.visibilityPredicate(pageContext);
+    } catch (_error) {
+      return false;
+    }
+  });
+  logMenu('capabilities-detected', {
+    pageId: pageContext.pageId,
+    route: pageContext.route,
+    quickSettings: pageContext.quickSettings,
+    quickSettingsSelector: pageContext.quickSettingsSelector
+  });
+  logMenu('items-rendered', {
+    pageId: pageContext.pageId,
+    items: visibleMenuItems.map((item) => item.id)
+  });
   const activeKey = (() => {
     if (path.endsWith('/analytics.html')) return 'analytics';
     if (path.endsWith('/trades.html')) return 'trades';
@@ -60,20 +147,29 @@
           Account
         </button>
         <div id="app-shell-account-menu" class="app-shell-account-menu" role="menu" aria-label="Account menu">
-          <button id="quick-settings-btn" class="ghost app-shell-account-item" type="button" role="menuitem">Settings</button>
+          ${visibleMenuItems.map((item) => `
+            <button
+              class="ghost app-shell-account-item ${item.className || ''}"
+              type="button"
+              role="menuitem"
+              data-app-menu-item-id="${item.id}"
+              data-app-menu-action="${item.actionKey}"
+              data-app-menu-global="${String(!!item.global)}"
+            >
+              ${item.label}
+            </button>
+          `).join('')}
           <div id="app-shell-owner-tools" class="app-shell-account-owner is-hidden">
             <p class="app-shell-account-owner__label">Admin tools</p>
             <a
               id="site-announcements-admin-btn"
-              class="ghost app-shell-account-item"
+              class="ghost app-shell-account-item is-hidden"
               href="/site-announcements-admin.html"
               role="menuitem"
             >
               Site announcements
             </a>
-            <button id="devtools-btn" class="ghost app-shell-account-item" type="button" role="menuitem">Devtools</button>
           </div>
-          <button id="logout-btn" class="ghost app-shell-account-item app-shell-account-item--logout" type="button" role="menuitem">Logout</button>
         </div>
       </div>
     </div>
@@ -138,6 +234,76 @@
     accountMenu.addEventListener('click', (event) => {
       if (event.target.closest('a,button')) closeAccountMenu();
     });
+  }
+
+  async function logoutFromGlobalMenu() {
+    try {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+    } catch (_error) {
+      // redirect anyway to preserve existing behavior.
+    }
+    window.sessionStorage?.removeItem('guestMode');
+    window.localStorage?.removeItem('guestMode');
+    window.location.href = '/login.html';
+  }
+
+  function openQuickSettingsFromGlobalMenu() {
+    if (!pageContext.quickSettings || !pageContext.quickSettingsSelector) {
+      logMenu('missing-handler-fallback', {
+        actionKey: 'open-quick-settings',
+        pageId: pageContext.pageId,
+        route: pageContext.route
+      });
+      return;
+    }
+    const targetModal = document.querySelector(pageContext.quickSettingsSelector);
+    if (!targetModal) {
+      logMenu('missing-handler-fallback', {
+        actionKey: 'open-quick-settings',
+        pageId: pageContext.pageId,
+        route: pageContext.route,
+        reason: 'modal-not-found'
+      });
+      return;
+    }
+    targetModal.classList.remove('hidden');
+  }
+
+  const globalMenuActions = {
+    'open-quick-settings': openQuickSettingsFromGlobalMenu,
+    'open-devtools': () => {
+      window.location.href = '/devtools.html';
+    },
+    logout: logoutFromGlobalMenu
+  };
+
+  if (!window.__APP_SHELL_MENU_BOUND__) {
+    document.addEventListener('click', (event) => {
+      const actionNode = event.target?.closest?.('[data-app-menu-action], #quick-settings-btn, #devtools-btn, #logout-btn');
+      if (!actionNode) return;
+      const actionKey = actionNode.getAttribute('data-app-menu-action')
+        || (actionNode.id === 'quick-settings-btn' ? 'open-quick-settings' : '')
+        || (actionNode.id === 'devtools-btn' ? 'open-devtools' : '')
+        || (actionNode.id === 'logout-btn' ? 'logout' : '');
+      if (!actionKey) return;
+      const action = globalMenuActions[actionKey];
+      if (!action) {
+        logMenu('missing-handler-fallback', {
+          actionKey,
+          pageId: pageContext.pageId,
+          route: pageContext.route
+        });
+        return;
+      }
+      logMenu('action-invoked', {
+        actionKey,
+        pageId: pageContext.pageId,
+        route: pageContext.route
+      });
+      event.preventDefault();
+      action(event);
+    });
+    window.__APP_SHELL_MENU_BOUND__ = true;
   }
 })();
 
@@ -371,16 +537,14 @@
 
 (function initOwnerActions() {
   const adminBtn = document.getElementById('site-announcements-admin-btn');
-  const devtoolsBtn = document.getElementById('devtools-btn');
   const ownerGroup = document.getElementById('app-shell-owner-tools');
-  if (!adminBtn || !devtoolsBtn || !ownerGroup) return;
+  if (!adminBtn || !ownerGroup) return;
 
   let lastOwnerVisibility = null;
   const setOwnerVisibility = (showOwnerTools) => {
     if (lastOwnerVisibility === showOwnerTools) return;
     lastOwnerVisibility = showOwnerTools;
     adminBtn.classList.toggle('is-hidden', !showOwnerTools);
-    devtoolsBtn.classList.toggle('is-hidden', !showOwnerTools);
     ownerGroup.classList.toggle('is-hidden', !showOwnerTools);
   };
 
