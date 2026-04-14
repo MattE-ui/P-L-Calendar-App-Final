@@ -17,6 +17,7 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 const analytics = require('./lib/analytics');
 const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
 const { createNewsPreferenceService } = require('./services/news/newsPreferenceService');
+const { runMacroIngestion } = require('./services/news/macroIngestionService');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -114,6 +115,12 @@ const T212_LEADER_ALERT_SYNC_TICK_MS = (() => {
   if (!Number.isFinite(parsed) || parsed < 5000) return 5000;
   return Math.min(parsed, 60000);
 })();
+const MACRO_INGEST_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.MACRO_INGEST_INTERVAL_MS);
+  if (!Number.isFinite(parsed) || parsed < (30 * 60 * 1000)) return 6 * 60 * 60 * 1000;
+  return parsed;
+})();
+
 const T212_LEADER_ALERT_MARKET_HOURS_INTERVAL_MS = (() => {
   const parsed = Number(process.env.T212_LEADER_ALERT_MARKET_HOURS_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < 5000) return 12000;
@@ -3426,6 +3433,23 @@ function ensureNewsEventTables(db) {
       publishedAt: true,
       canonicalTicker: true,
       dedupeKey: true
+    };
+  }
+  if (!db.newsIngestionStatus || typeof db.newsIngestionStatus !== 'object') {
+    db.newsIngestionStatus = {
+      macro: {
+        lastAttemptedRunAt: null,
+        lastSuccessfulRunAt: null,
+        lastDiagnostics: null,
+        lastProviderStatuses: []
+      }
+    };
+  } else if (!db.newsIngestionStatus.macro || typeof db.newsIngestionStatus.macro !== 'object') {
+    db.newsIngestionStatus.macro = {
+      lastAttemptedRunAt: null,
+      lastSuccessfulRunAt: null,
+      lastDiagnostics: null,
+      lastProviderStatuses: []
     };
   }
 }
@@ -18292,6 +18316,38 @@ app.put('/api/news/preferences', auth, (req, res) => {
   res.json({ data: saved });
 });
 
+app.post('/api/admin/news/ingest/macro', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
+  const diagnostics = await runMacroIngestionJob('admin_endpoint');
+  console.info('[MacroIngestion][Admin] manual trigger completed.', {
+    userId: req.username,
+    success: !!diagnostics?.success,
+    elapsedMs: diagnostics?.elapsedMs || null
+  });
+  res.json({ data: diagnostics });
+}));
+
+app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const macroStatus = db.newsIngestionStatus?.macro || {};
+  const macroCountsByEventType = (Array.isArray(db.newsEvents) ? db.newsEvents : [])
+    .filter((event) => event?.sourceType === 'macro' && event?.isActive !== false)
+    .reduce((acc, event) => {
+      const key = String(event.eventType || 'unknown');
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+  res.json({
+    data: {
+      lastAttemptedRunAt: macroStatus.lastAttemptedRunAt || null,
+      lastSuccessfulRunAt: macroStatus.lastSuccessfulRunAt || null,
+      lastProviderStatuses: Array.isArray(macroStatus.lastProviderStatuses) ? macroStatus.lastProviderStatuses : [],
+      macroCountsByEventType
+    }
+  });
+});
+
 app.get('/api/prefs', auth, (req, res) => {
   const db = loadDB();
   const user = db.users[req.username];
@@ -24800,6 +24856,76 @@ function runGuestCleanup() {
   if (mutated) saveDB(db);
 }
 
+let macroIngestionJobRunning = false;
+let macroIngestionIntervalHandle = null;
+
+async function runMacroIngestionJob(trigger = 'scheduler') {
+  if (macroIngestionJobRunning) {
+    return { success: false, skipped: true, reason: 'already_running', trigger };
+  }
+  macroIngestionJobRunning = true;
+  const startedAt = Date.now();
+  let diagnostics = null;
+  try {
+    const db = loadDB();
+    ensureNewsEventTables(db);
+    db.newsIngestionStatus.macro.lastAttemptedRunAt = new Date().toISOString();
+    saveDB(db);
+
+    console.info('[MacroIngestion] run start.', { trigger });
+    diagnostics = await runMacroIngestion({ newsEventService, logger: console });
+
+    const dbAfter = loadDB();
+    ensureNewsEventTables(dbAfter);
+    dbAfter.newsIngestionStatus.macro.lastDiagnostics = diagnostics;
+    dbAfter.newsIngestionStatus.macro.lastProviderStatuses = diagnostics.providers || [];
+    if (diagnostics.success) {
+      dbAfter.newsIngestionStatus.macro.lastSuccessfulRunAt = new Date().toISOString();
+    }
+    saveDB(dbAfter);
+
+    console.info('[MacroIngestion] run end.', {
+      trigger,
+      elapsedMs: Date.now() - startedAt,
+      rowsInserted: diagnostics?.totals?.rowsInserted || 0,
+      rowsUpdated: diagnostics?.totals?.rowsUpdated || 0,
+      rowsSkipped: diagnostics?.totals?.rowsSkipped || 0
+    });
+    return diagnostics;
+  } catch (error) {
+    console.error('[MacroIngestion] run failed.', { trigger, error: error?.message || error });
+    return {
+      success: false,
+      skipped: false,
+      trigger,
+      error: error?.message || String(error),
+      elapsedMs: Date.now() - startedAt,
+      providers: [],
+      totals: {
+        rowsFetched: 0,
+        rowsParsed: 0,
+        rowsInserted: 0,
+        rowsUpdated: 0,
+        rowsSkipped: 0,
+        collisionsEncountered: 0
+      }
+    };
+  } finally {
+    macroIngestionJobRunning = false;
+  }
+}
+
+function scheduleMacroIngestionJob() {
+  if (macroIngestionIntervalHandle) {
+    clearInterval(macroIngestionIntervalHandle);
+  }
+  macroIngestionIntervalHandle = setInterval(() => {
+    runMacroIngestionJob('scheduler').catch((error) => {
+      console.warn('[MacroIngestion] scheduled run failed.', error?.message || error);
+    });
+  }, MACRO_INGEST_INTERVAL_MS);
+}
+
 let watchlistPreviousCloseReinforcementRunning = false;
 const WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT = Number(process.env.WATCHLIST_PREV_CLOSE_REINFORCEMENT_LIMIT) || 25;
 async function runWatchlistPreviousCloseReinforcement() {
@@ -24843,6 +24969,10 @@ if (require.main === module) {
   runWatchlistPreviousCloseReinforcement().catch((error) => {
     console.warn('[WATCHLIST_PREV_CLOSE_CALC] startup reinforcement failed', error?.message || error);
   });
+  runMacroIngestionJob('startup').catch((error) => {
+    console.warn('[MacroIngestion] startup run failed', error?.message || error);
+  });
+  scheduleMacroIngestionJob();
   setInterval(runGuestCleanup, 60 * 60 * 1000);
   setInterval(() => {
     runWatchlistPreviousCloseReinforcement().catch((error) => {
