@@ -8,6 +8,8 @@ const state = {
   netDepositsBaselineGBP: 0,
   netDepositsTotalGBP: 0,
   firstEntryKey: null,
+  firstRecordedDateKey: null,
+  firstRecordedDateKnown: false,
   currency: 'GBP',
   riskCurrency: 'GBP',
   defaultRiskCurrency: 'GBP',
@@ -312,6 +314,18 @@ function normalizeDashboardHistoryPayload(raw, { historyScope = 'window' } = {})
     monthCount: Object.keys(normalized).length
   });
   return normalized;
+}
+
+function extractDashboardHistoryMeta(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const meta = raw.__meta && typeof raw.__meta === 'object' ? raw.__meta : null;
+  if (!meta) return {};
+  const firstRecordedDateRaw = typeof meta.firstRecordedDate === 'string' ? meta.firstRecordedDate.trim() : '';
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  return {
+    firstRecordedDateKey: datePattern.test(firstRecordedDateRaw) ? firstRecordedDateRaw : null,
+    originTileInWindow: meta.originTileInWindow === true
+  };
 }
 
 async function api(path, opts = {}) {
@@ -1505,7 +1519,16 @@ function computeLifetimeMetrics() {
   const knownTotalDeposits = Number.isFinite(state.netDepositsTotalGBP)
     ? state.netDepositsTotalGBP
     : baselineDeposits;
-  state.firstEntryKey = entries.length ? formatDate(entries[0].date) : null;
+  const computedFirstEntryKey = entries.length ? formatDate(entries[0].date) : null;
+  if (state.firstRecordedDateKnown && state.firstRecordedDateKey) {
+    state.firstEntryKey = state.firstRecordedDateKey;
+  } else if (state.historyLoadScope === 'full') {
+    state.firstEntryKey = computedFirstEntryKey;
+    state.firstRecordedDateKey = computedFirstEntryKey;
+    state.firstRecordedDateKnown = !!computedFirstEntryKey;
+  } else {
+    state.firstEntryKey = null;
+  }
   if (!entries.length) {
     const fallback = Number.isFinite(state.portfolioGBP) ? state.portfolioGBP : 0;
     const totalNetDeposits = Number.isFinite(knownTotalDeposits)
@@ -4281,6 +4304,16 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
   try {
     const plEndpoint = buildPlEndpoint({ historyScope, includeTrades: includeTradeHistory });
     const plRaw = await api(plEndpoint);
+    const historyMeta = extractDashboardHistoryMeta(plRaw);
+    if (historyMeta.firstRecordedDateKey) {
+      state.firstRecordedDateKey = historyMeta.firstRecordedDateKey;
+      state.firstRecordedDateKnown = true;
+      window.PerfDiagnostics?.log('dashboard-origin-date-known', {
+        historyScope,
+        firstRecordedDate: historyMeta.firstRecordedDateKey,
+        originTileInWindow: historyMeta.originTileInWindow === true
+      });
+    }
     state.data = normalizeDashboardHistoryPayload(plRaw, { historyScope });
     state.historyLoadScope = historyScope;
     state.deferredHistoryLoaded = historyScope === 'full';
