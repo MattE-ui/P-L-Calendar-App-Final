@@ -272,11 +272,46 @@ function getSelectedMonthQuery() {
   return `year=${selected.getFullYear()}&month=${String(selected.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function getSelectedMonthKey() {
+  const selected = state.selected instanceof Date ? state.selected : new Date();
+  return `${selected.getFullYear()}-${String(selected.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function buildPlEndpoint({ historyScope = 'window', includeTrades = true } = {}) {
   if (historyScope === 'full') {
     return `/api/pl?includeTrades=${includeTrades ? '1' : '0'}`;
   }
   return `/api/pl?${getSelectedMonthQuery()}&visibleWindowOnly=1&includeTrades=${includeTrades ? '1' : '0'}`;
+}
+
+function normalizeDashboardHistoryPayload(raw, { historyScope = 'window' } = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const entries = Object.entries(raw);
+  if (!entries.length) return {};
+  const monthKeyPattern = /^\d{4}-\d{2}$/;
+  const dateKeyPattern = /^\d{4}-\d{2}-\d{2}$/;
+  const monthKeyCount = entries.reduce((count, [key]) => (monthKeyPattern.test(key) ? count + 1 : count), 0);
+  if (monthKeyCount > 0) {
+    return raw;
+  }
+  const dateEntries = entries.filter(([key]) => dateKeyPattern.test(key));
+  if (!dateEntries.length) {
+    return {};
+  }
+  const normalized = {};
+  dateEntries.forEach(([dateKey, dayRecord]) => {
+    const monthKey = dateKey.slice(0, 7);
+    if (!normalized[monthKey]) normalized[monthKey] = {};
+    normalized[monthKey][dateKey] = dayRecord && typeof dayRecord === 'object' ? dayRecord : {};
+  });
+  window.PerfDiagnostics?.log('dashboard-calendar-summary-shape', {
+    historyScope,
+    responseShape: 'flat-day-map',
+    selectedMonthKey: getSelectedMonthKey(),
+    dayCount: dateEntries.length,
+    monthCount: Object.keys(normalized).length
+  });
+  return normalized;
 }
 
 async function api(path, opts = {}) {
@@ -4245,7 +4280,8 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
   };
   try {
     const plEndpoint = buildPlEndpoint({ historyScope, includeTrades: includeTradeHistory });
-    state.data = await api(plEndpoint);
+    const plRaw = await api(plEndpoint);
+    state.data = normalizeDashboardHistoryPayload(plRaw, { historyScope });
     state.historyLoadScope = historyScope;
     state.deferredHistoryLoaded = historyScope === 'full';
     window.PerfDiagnostics?.log('dashboard-history-summary-used', {
@@ -4376,7 +4412,7 @@ async function loadDeferredFullDashboardHistory(reason = 'post-render') {
   state.deferredHistoryLoadInFlight = true;
   try {
     const fullHistory = await api(buildPlEndpoint({ historyScope: 'full', includeTrades: true }));
-    state.data = fullHistory || {};
+    state.data = normalizeDashboardHistoryPayload(fullHistory, { historyScope: 'full' });
     state.historyLoadScope = 'full';
     state.deferredHistoryLoaded = true;
     computeLifetimeMetrics();
