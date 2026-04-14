@@ -171,63 +171,8 @@ async function loadRates() {
   }
 }
 
-function setupNavDrawer() {
-  const navToggle = document.getElementById('nav-toggle-btn');
-  const navDrawer = document.getElementById('nav-drawer');
-  const navOverlay = document.getElementById('nav-drawer-overlay');
-  const navClose = document.getElementById('nav-close-btn');
-  const setNavOpen = open => {
-    if (!navDrawer || !navOverlay || !navToggle) return;
-    navDrawer.classList.toggle('hidden', !open);
-    navOverlay.classList.toggle('hidden', !open);
-    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  navToggle?.addEventListener('click', () => {
-    if (!navDrawer || !navOverlay) return;
-    const isOpen = !navDrawer.classList.contains('hidden');
-    setNavOpen(!isOpen);
-  });
-  navClose?.addEventListener('click', () => setNavOpen(false));
-  navOverlay?.addEventListener('click', () => setNavOpen(false));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    setNavOpen(false);
-  });
-  return setNavOpen;
-}
-
 function bindNav() {
-  const closeNav = setupNavDrawer();
-  document.getElementById('calendar-btn')?.addEventListener('click', () => {
-    window.location.href = '/';
-  });
-  document.getElementById('analytics-btn')?.addEventListener('click', () => {
-    window.location.href = '/analytics.html';
-  });
-  document.getElementById('trades-btn')?.addEventListener('click', () => {
-    window.location.href = '/trades.html';
-  });
-  document.getElementById('transactions-btn')?.addEventListener('click', () => {
-    window.location.href = '/transactions.html';
-  });
-  document.getElementById('devtools-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
-    window.location.href = '/devtools.html';
-  });
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    try {
-      await api('/api/logout', logoutRequestOptions());
-    } catch (e) {
-      console.warn(e);
-    }
-    sessionStorage.removeItem('guestMode');
-    localStorage.removeItem('guestMode');
-    window.location.href = '/login.html';
-  });
-  document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
-    const modal = document.getElementById('quick-settings-modal');
+  document.addEventListener('app-menu:open-quick-settings', () => {
     const riskSel = document.getElementById('qs-risk-select');
     const curSel = document.getElementById('qs-currency-select');
     const applyPrefs = prefs => {
@@ -247,7 +192,6 @@ function bindNav() {
         .then(applyPrefs)
         .catch(err => console.warn('Failed to load ui prefs', err));
     }
-    modal?.classList.remove('hidden');
   });
   const closeQs = () => document.getElementById('quick-settings-modal')?.classList.add('hidden');
   document.getElementById('close-qs-btn')?.addEventListener('click', closeQs);
@@ -276,10 +220,10 @@ function bindNav() {
   api('/api/profile')
     .then(profile => {
       const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.toggle('is-hidden', !show));
     })
     .catch(() => {
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.add('is-hidden'));
     });
 }
 

@@ -35,16 +35,6 @@
     window.location.href = '/login.html';
   }
 
-  function wireGlobalActions() {
-    document.getElementById('logout-btn')?.addEventListener('click', logout);
-    document.getElementById('quick-settings-btn')?.addEventListener('click', () => {
-      window.location.href = '/profile/settings';
-    });
-    document.getElementById('devtools-btn')?.addEventListener('click', () => {
-      window.location.href = '/devtools.html';
-    });
-  }
-
   function setText(id, value) {
     const element = document.getElementById(id);
     if (element) element.textContent = value;
@@ -62,9 +52,7 @@
     api,
     setText,
     setStatus,
-    wireGlobalActions,
+    logout,
     isGuestSession
   };
-
-  wireGlobalActions();
 })();

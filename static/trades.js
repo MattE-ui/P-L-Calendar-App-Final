@@ -227,32 +227,6 @@ async function getBootstrapProfile({ consumer = 'trades' } = {}) {
   return api('/api/profile/bootstrap');
 }
 
-function setupNavDrawer() {
-  const navToggle = document.querySelector('#nav-toggle-btn');
-  const navDrawer = document.querySelector('#nav-drawer');
-  const navOverlay = document.querySelector('#nav-drawer-overlay');
-  const navClose = document.querySelector('#nav-close-btn');
-  const setNavOpen = open => {
-    if (!navDrawer || !navOverlay || !navToggle) return;
-    navDrawer.classList.toggle('hidden', !open);
-    navOverlay.classList.toggle('hidden', !open);
-    navOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
-    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  };
-  navToggle?.addEventListener('click', () => {
-    if (!navDrawer || !navOverlay) return;
-    const isOpen = !navDrawer.classList.contains('hidden');
-    setNavOpen(!isOpen);
-  });
-  navClose?.addEventListener('click', () => setNavOpen(false));
-  navOverlay?.addEventListener('click', () => setNavOpen(false));
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    setNavOpen(false);
-  });
-  return setNavOpen;
-}
-
 async function loadHeroMetrics() {
   try {
     const res = await api('/api/portfolio');
@@ -1198,34 +1172,15 @@ async function loadIbkrImportHistory() {
 }
 
 function bindNav() {
-  const closeNav = setupNavDrawer();
-  document.querySelector('#calendar-btn')?.addEventListener('click', () => window.location.href = '/');
-  document.querySelector('#analytics-btn')?.addEventListener('click', () => window.location.href = '/analytics.html');
-  document.querySelector('#transactions-btn')?.addEventListener('click', () => window.location.href = '/transactions.html');
-  document.querySelector('#profile-btn')?.addEventListener('click', () => window.location.href = '/profile.html');
-  document.querySelector('#devtools-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
-    window.location.href = '/devtools.html';
-  });
-  document.querySelector('#logout-btn')?.addEventListener('click', async () => {
-    await api('/api/logout', { method: 'POST' }).catch(() => {});
-    sessionStorage.removeItem('guestMode');
-    localStorage.removeItem('guestMode');
-    window.location.href = '/login.html';
-  });
-  document.querySelector('#quick-settings-btn')?.addEventListener('click', () => {
-    closeNav?.(false);
-    document.querySelector('#trade-settings-modal')?.classList.remove('hidden');
-  });
   getBootstrapProfile({ consumer: 'trades-nav-bootstrap' })
     .then(profile => {
       state.isAdmin = !!profile?.isAdmin;
       const show = profile?.username === 'mevs.0404@gmail.com' || profile?.username === 'dummy1';
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.toggle('is-hidden', !show));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.toggle('is-hidden', !show));
     })
     .catch(() => {
       state.isAdmin = false;
-      document.querySelectorAll('#devtools-btn').forEach(btn => btn.classList.add('is-hidden'));
+      document.querySelectorAll('[data-app-menu-item-id=\"devtools\"]').forEach(btn => btn.classList.add('is-hidden'));
     });
 }
 
