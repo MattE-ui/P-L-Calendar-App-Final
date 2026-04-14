@@ -112,6 +112,105 @@ const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
 const DASHBOARD_ROUTE = '/dashboard';
+
+const SOCIAL_ACTIVITY_DEBUG = (() => {
+  try {
+    return window.localStorage?.getItem('social-activity-debug') === '1'
+      || new URLSearchParams(window.location.search).get('socialActivityDebug') === '1';
+  } catch (_error) {
+    return false;
+  }
+})();
+
+function toNumericOrNull(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function normalizeTradeGroupActivityEvent(item = {}) {
+  const itemType = String(item?.type || '').trim().toLowerCase();
+  if (itemType === 'announcement' || String(item?.normalized_event_type || '').trim().toUpperCase() === 'ANNOUNCEMENT') {
+    return 'announcement';
+  }
+
+  const normalizedEventType = String(item?.normalized_event_type || '').trim().toUpperCase();
+  if (normalizedEventType === 'TRADE_TRIMMED') return 'trim';
+  if (normalizedEventType === 'TRADE_CLOSED') return 'close';
+  if (normalizedEventType === 'TRADE_OPENED') return 'open';
+
+  const eventType = String(item?.position_event_type || item?.event_type || '').trim().toUpperCase();
+  if (eventType === 'POSITION_TRIM') return 'trim';
+  if (eventType === 'POSITION_CLOSED') return 'close';
+  if (eventType === 'POSITION_OPENED') return 'open';
+  if (eventType === 'POSITION_STOP_MOVED' || eventType === 'STOP_MOVED') return 'stop_move';
+
+  const explicitSignals = [
+    item?.event_subtype,
+    item?.subtype,
+    item?.action,
+    item?.trade_action,
+    item?.action_type
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  const hasTrimSignal = explicitSignals.some((value) => /(trim|partial|partial_close|reduce|reduced|scale[_\s-]?out)/.test(value));
+  if (hasTrimSignal) return 'trim';
+  const hasCloseSignal = explicitSignals.some((value) => /(full[_\s-]?exit|full[_\s-]?close|close|closed|exit|exited)/.test(value));
+  if (hasCloseSignal) return 'close';
+
+  const classification = String(item?.alert_classification || '').trim().toLowerCase();
+  if (classification === 'partial_sell') return 'trim';
+  if (classification === 'full_close') return 'close';
+
+  const trimPct = toNumericOrNull(item?.trim_pct ?? item?.trim_percent ?? item?.percent ?? item?.percentage);
+  if (trimPct !== null) {
+    if (trimPct < 100) return 'trim';
+    if (trimPct >= 100) return 'close';
+  }
+
+  const remainingQuantity = toNumericOrNull(item?.remaining_quantity ?? item?.remainingQuantity ?? item?.position_remaining_quantity);
+  if (remainingQuantity !== null) {
+    if (remainingQuantity > 0) return 'trim';
+    if (remainingQuantity === 0) return 'close';
+  }
+
+  const quantityDelta = toNumericOrNull(item?.quantity_delta ?? item?.quantityDelta ?? item?.delta_quantity);
+  if (quantityDelta !== null && quantityDelta < 0 && remainingQuantity !== null) {
+    return remainingQuantity > 0 ? 'trim' : 'close';
+  }
+
+  const side = String(item?.side || '').trim().toUpperCase();
+  if (side === 'SELL') return 'close';
+  if (side === 'BUY') return 'open';
+  return 'other';
+}
+
+function getTradeGroupActivityOverviewLabel(item = {}, classification = normalizeTradeGroupActivityEvent(item)) {
+  if (classification === 'announcement') return 'Announcement';
+  if (classification === 'trim') {
+    const pct = toNumericOrNull(item?.trim_pct);
+    const ticker = String(item?.ticker || '').trim().toUpperCase();
+    if (pct !== null && ticker) return `Trimmed ${pct}% of ${ticker}`;
+    if (pct !== null) return `Trimmed ${pct}%`;
+    return 'Trimmed position';
+  }
+  if (classification === 'close') return 'Closed position';
+  if (classification === 'stop_move') return 'Stop moved';
+  return 'Opened position';
+}
+
+function logActivityNormalization(item, classification, renderedLabel) {
+  if (!SOCIAL_ACTIVITY_DEBUG) return;
+  console.info('[social-activity-normalized]', {
+    eventId: item?.id || null,
+    rawType: item?.type || null,
+    rawSubtype: item?.event_subtype || item?.subtype || null,
+    rawAction: item?.action || item?.trade_action || item?.action_type || null,
+    quantityDelta: item?.quantity_delta ?? item?.quantityDelta ?? null,
+    remainingQuantity: item?.remaining_quantity ?? item?.remainingQuantity ?? null,
+    trimPercentage: item?.trim_pct ?? item?.trim_percent ?? null,
+    normalizedClassification: classification,
+    renderedOverviewLabel: renderedLabel
+  });
+}
 const SOCIAL_PAGE_KIND = (() => {
   const path = String(window.location.pathname || '').toLowerCase();
   if (path === '/social/groups' || path.endsWith('/social-groups.html')) return 'groups';
@@ -807,23 +906,40 @@ function truncateActivitySummary(text, maxLength = 96) {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function summarizeSellActivity(item) {
+function summarizeSellActivity(item, classification = normalizeTradeGroupActivityEvent(item)) {
   const rawText = String(item?.text || '').trim();
   const lower = rawText.toLowerCase();
   const realizedPercent = Number(item?.pnl_percent ?? item?.realized_pnl_percent ?? item?.percent_change);
-  if (Number.isFinite(realizedPercent)) {
-    const sign = realizedPercent > 0 ? '+' : '';
-    return `Closed ${sign}${realizedPercent.toFixed(2)}%`;
+
+  if (classification === 'trim') {
+    const trimPct = toNumericOrNull(item?.trim_pct ?? item?.trim_percent);
+    const ticker = String(item?.ticker || '').trim().toUpperCase();
+    if (trimPct !== null && ticker) return `Trimmed ${trimPct}% of ${ticker}`;
+    if (trimPct !== null) return `Trimmed ${trimPct}%`;
+    if (rawText && !/(close|closed|exit|exited)/.test(lower)) return truncateActivitySummary(rawText, 60);
+    return 'Trimmed position';
   }
-  if (!rawText) return 'Closed position';
-  if (/(stopped out|hit stop|stop loss|closed at stop|at stop)/.test(lower)) return 'Closed at stop';
-  if (/(partial|partially|scale|scaled)/.test(lower)) return 'Partial close';
-  if (/(trim|trimmed|reduce|reduced)/.test(lower)) return 'Trimmed position';
-  if (/stop/.test(lower)) {
-    const stopMatch = rawText.match(/(?:to|at)\s*([0-9]+(?:\.[0-9]+)?)/i);
-    if (stopMatch?.[1]) return `Stop moved to ${Number(stopMatch[1]).toFixed(2)}`;
+
+  if (classification === 'close') {
+    if (Number.isFinite(realizedPercent)) {
+      const sign = realizedPercent > 0 ? '+' : '';
+      return `Closed ${sign}${realizedPercent.toFixed(2)}%`;
+    }
+    if (!rawText) return 'Closed position';
+    if (/(stopped out|hit stop|stop loss|closed at stop|at stop)/.test(lower)) return 'Closed at stop';
+    if (/(close|closed|exit|exited)/.test(lower)) return 'Closed position';
+  }
+
+  if (classification === 'stop_move') {
+    if (/stop/.test(lower)) {
+      const stopMatch = rawText.match(/(?:to|at)\s*([0-9]+(?:\.[0-9]+)?)/i);
+      if (stopMatch?.[1]) return `Stop moved to ${Number(stopMatch[1]).toFixed(2)}`;
+    }
     return 'Stop moved';
   }
+
+  if (!rawText) return classification === 'open' ? 'Opened position' : 'Position update';
+  if (/(partial|partially|scale|scaled|trim|trimmed|reduce|reduced)/.test(lower)) return 'Trimmed position';
   if (/(close|closed|exit|exited)/.test(lower)) return 'Closed position';
   return truncateActivitySummary(rawText, 60);
 }
@@ -1249,9 +1365,9 @@ function renderTradeGroupSection() {
         const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(delBtn); row.appendChild(actionWrap);
       }
     } else {
-      const isSell = String(item.side || '').toUpperCase() === 'SELL';
-      const isTrim = String(item.position_event_type || '').toUpperCase() === 'POSITION_TRIM'
-        || String(item.alert_classification || '').toLowerCase() === 'partial_sell';
+      const normalizedClassification = normalizeTradeGroupActivityEvent(item);
+      const isTrim = normalizedClassification === 'trim';
+      const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
       if (isTrim) row.classList.add('social-list-row--trim');
       const prefillPayload = normalizeAlertRiskPrefillPayload(item);
       const canSizeTrade = !isSell && !!prefillPayload;
@@ -1926,16 +2042,18 @@ function renderSocialOverview() {
       previewItems.forEach(item => {
         const row = document.createElement('article');
         row.className = 'social-list-row social-list-row--request social-list-row--activity';
+        const normalizedClassification = normalizeTradeGroupActivityEvent(item);
         const rawType = String(item.type || '').toLowerCase();
-        const side = String(item.side || '').toUpperCase();
-        const isAnnouncement = rawType === 'announcement';
-        const isSell = side === 'SELL' || rawType === 'closed';
-        const isBuy = side === 'BUY' && !isSell;
+        const isAnnouncement = normalizedClassification === 'announcement' || rawType === 'announcement';
+        const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
+        const isBuy = normalizedClassification === 'open';
         const badgeLabel = isAnnouncement
           ? 'ANNOUNCEMENT'
-          : isSell
-            ? 'SELL'
-            : 'BUY';
+          : normalizedClassification === 'trim'
+            ? 'TRIM'
+            : isSell
+              ? 'SELL'
+              : 'BUY';
         if (isBuy) row.classList.add('social-list-row--activity-buy');
         if (isSell) row.classList.add('social-list-row--activity-sell');
         if (isAnnouncement) row.classList.add('social-list-row--activity-announcement');
@@ -2010,7 +2128,9 @@ function renderSocialOverview() {
         } else if (isSell) {
           const summary = document.createElement('p');
           summary.className = 'social-activity-message social-activity-keyline';
-          summary.textContent = summarizeSellActivity(item);
+          summary.textContent = summarizeSellActivity(item, normalizedClassification);
+          const overviewLabel = getTradeGroupActivityOverviewLabel(item, normalizedClassification);
+          logActivityNormalization(item, normalizedClassification, overviewLabel);
           main.appendChild(summary);
         } else {
           const tradeRow = document.createElement('div');

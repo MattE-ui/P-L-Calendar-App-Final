@@ -743,13 +743,63 @@ function normalizeTradeGroupNotificationType(type) {
   return LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP[type] || '';
 }
 
-function normalizeTradeGroupAlertEventType(alert = {}) {
-  const side = String(alert?.side || '').trim().toUpperCase();
-  if (side !== 'SELL') return 'TRADE_OPENED';
+function normalizeTradeGroupActivityEvent(alert = {}) {
+  const itemType = String(alert?.type || '').trim().toLowerCase();
+  if (itemType === 'announcement') return 'announcement';
+
+  const normalizedEventType = String(alert?.normalized_event_type || '').trim().toUpperCase();
+  if (normalizedEventType === 'TRADE_TRIMMED') return 'trim';
+  if (normalizedEventType === 'TRADE_CLOSED') return 'close';
+  if (normalizedEventType === 'TRADE_OPENED') return 'open';
+
   const positionEventType = String(alert?.position_event_type || '').trim().toUpperCase();
+  if (positionEventType === 'POSITION_TRIM') return 'trim';
+  if (positionEventType === 'POSITION_CLOSED') return 'close';
+  if (positionEventType === 'POSITION_OPENED') return 'open';
+  if (positionEventType === 'POSITION_STOP_MOVED' || positionEventType === 'STOP_MOVED') return 'stop_move';
+
+  const explicitSignals = [
+    alert?.event_subtype,
+    alert?.subtype,
+    alert?.action,
+    alert?.trade_action,
+    alert?.action_type
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (explicitSignals.some((value) => /(trim|partial|partial_close|reduce|reduced|scale[_\s-]?out)/.test(value))) return 'trim';
+  if (explicitSignals.some((value) => /(full[_\s-]?exit|full[_\s-]?close|close|closed|exit|exited)/.test(value))) return 'close';
+
   const classification = String(alert?.alert_classification || '').trim().toLowerCase();
-  if (positionEventType === 'POSITION_TRIM' || classification === 'partial_sell') return 'TRADE_TRIMMED';
-  if (positionEventType === 'POSITION_CLOSED' || classification === 'full_close') return 'TRADE_CLOSED';
+  if (classification === 'partial_sell') return 'trim';
+  if (classification === 'full_close') return 'close';
+
+  const trimPct = Number(alert?.trim_pct ?? alert?.trim_percent ?? alert?.percent ?? alert?.percentage);
+  if (Number.isFinite(trimPct)) {
+    if (trimPct < 100) return 'trim';
+    if (trimPct >= 100) return 'close';
+  }
+
+  const remainingQty = Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity);
+  if (Number.isFinite(remainingQty)) {
+    if (remainingQty > 0) return 'trim';
+    if (remainingQty === 0) return 'close';
+  }
+
+  const quantityDelta = Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity);
+  if (Number.isFinite(quantityDelta) && quantityDelta < 0 && Number.isFinite(remainingQty)) {
+    return remainingQty > 0 ? 'trim' : 'close';
+  }
+
+  const side = String(alert?.side || '').trim().toUpperCase();
+  if (side === 'SELL') return 'close';
+  if (side === 'BUY') return 'open';
+  return 'other';
+}
+
+function normalizeTradeGroupAlertEventType(alert = {}) {
+  const classification = normalizeTradeGroupActivityEvent(alert);
+  if (classification === 'trim') return 'TRADE_TRIMMED';
+  if (classification === 'close') return 'TRADE_CLOSED';
+  if (classification === 'open') return 'TRADE_OPENED';
   return 'TRADE_REDUCED';
 }
 
@@ -24090,6 +24140,7 @@ module.exports = {
   updateIbkrLivePositions,
   applyIbkrHeartbeat,
   buildGroupCurrentPositions,
+  normalizeTradeGroupActivityEvent,
   resolveCanonicalTickerForTrade,
   createTradeGroupAlertsForNewTrade,
   emitTradeGroupSellAlertForClosedTrade,
