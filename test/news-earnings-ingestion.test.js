@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 
 const { buildEventDedupeKey } = require('../services/news/newsEventService');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('../services/news/ownedTickerUniverseService');
-const { normalizeFmpEarningsRow, fetchFmpEarningsEvents } = require('../providers/earnings/fmpEarningsProvider');
+const {
+  parseAlphaVantageCsv,
+  normalizeAlphaVantageEarningsRow,
+  fetchAlphaVantageEarningsEvents
+} = require('../providers/earnings/alphaVantageEarningsProvider');
 const { runEarningsIngestion } = require('../services/news/earningsIngestionService');
 
 function createLogger() {
@@ -98,20 +102,20 @@ test('owned ticker universe resolves trades persisted in per-user tradeJournal',
   assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
 });
 
-test('FMP row normalization returns earnings-shaped event', () => {
-  const row = normalizeFmpEarningsRow({
+test('Alpha Vantage row normalization returns earnings-shaped event', () => {
+  const row = normalizeAlphaVantageEarningsRow({
     symbol: 'aapl',
-    date: '2026-07-28',
-    time: 'amc',
-    eps: 1.22,
-    revenue: 1000
+    reportDate: '2026-07-28',
+    fiscalDateEnding: '2026-06-30',
+    estimate: '1.22',
+    currency: 'USD'
   }, { tickerUniverse: new Set(['AAPL']) });
 
   assert.equal(row.sourceType, 'earnings');
   assert.equal(row.eventType, 'earnings');
   assert.equal(row.canonicalTicker, 'AAPL');
-  assert.match(row.scheduledAt, /^2026-07-28T21:00:00\.000Z$/);
-  assert.match(row.sourceExternalId, /^fmp:earnings:AAPL:/);
+  assert.match(row.scheduledAt, /^2026-07-28T16:00:00\.000Z$/);
+  assert.match(row.sourceExternalId, /^alpha-vantage:earnings:AAPL:/);
 });
 
 test('earnings ingestion tolerates provider failure', async () => {
@@ -168,21 +172,97 @@ test('portfolio relevance uses per-user earnings mapping', async () => {
   assert.equal(isEventRelevantToUser(captured[0], 'bob'), false);
 });
 
-test('fetchFmpEarningsEvents filters rows to ticker universe', async () => {
-  const rows = await fetchFmpEarningsEvents({
+test('fetchAlphaVantageEarningsEvents filters rows to ticker universe', async () => {
+  const result = await fetchAlphaVantageEarningsEvents({
     tickers: ['AAPL'],
-    from: '2026-07-01',
-    to: '2026-08-01',
+    horizon: '3month',
     logger: createLogger(),
-    fetcher: async () => ({
+    apiKey: 'test-key',
+    fetcher: async (url) => ({
       ok: true,
-      json: async () => ([
-        { symbol: 'AAPL', date: '2026-07-28', time: 'amc' },
-        { symbol: 'MSFT', date: '2026-07-29', time: 'amc' }
-      ])
+      status: 200,
+      text: async () => {
+        if (String(url).includes('symbol=AAPL')) return 'symbol,name,reportDate,fiscalDateEnding,estimate,currency\nAAPL,Apple Inc,2026-07-28,2026-06-30,1.22,USD';
+        return 'symbol,name,reportDate,fiscalDateEnding,estimate,currency\nMSFT,Microsoft Corp,2026-07-29,2026-06-30,2.10,USD';
+      }
     })
   });
 
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
+  assert.equal(result.diagnostics.parsedRows, 1);
+});
+
+
+test('parseAlphaVantageCsv handles quoted fields and embedded commas', () => {
+  const rows = parseAlphaVantageCsv('symbol,name,reportDate,fiscalDateEnding,estimate,currency\nAAPL,"Apple, Inc.",2026-07-28,2026-06-30,1.22,USD');
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].canonicalTicker, 'AAPL');
+  assert.equal(rows[0].name, 'Apple, Inc.');
+});
+
+test('fetchAlphaVantageEarningsEvents fails clearly when API key is missing', async () => {
+  await assert.rejects(() => fetchAlphaVantageEarningsEvents({
+    tickers: ['AAPL'],
+    logger: createLogger(),
+    apiKey: ''
+  }), /Missing ALPHA_VANTAGE_API_KEY/);
+});
+
+test('fetchAlphaVantageEarningsEvents returns provider diagnostics on unauthorized response', async () => {
+  await assert.rejects(async () => {
+    await fetchAlphaVantageEarningsEvents({
+      tickers: ['AAPL'],
+      apiKey: 'test-key',
+      logger: createLogger(),
+      fetcher: async () => ({ ok: false, status: 401, text: async () => 'Unauthorized' })
+    });
+  }, (error) => {
+    assert.equal(error.diagnostics.responseStatus, 401);
+    assert.match(error.diagnostics.failureSnippet, /Unauthorized/);
+    return true;
+  });
+});
+
+test('fetchAlphaVantageEarningsEvents detects provider throttle hints', async () => {
+  await assert.rejects(async () => {
+    await fetchAlphaVantageEarningsEvents({
+      tickers: ['AAPL'],
+      apiKey: 'test-key',
+      logger: createLogger(),
+      fetcher: async () => ({ ok: true, status: 200, text: async () => 'Note: Thank you for using Alpha Vantage! Our standard API call frequency is 5 calls per minute.' })
+    });
+  }, (error) => {
+    assert.equal(error.diagnostics.throttleHint, 'provider_rate_limit_message');
+    return true;
+  });
+});
+
+test('earnings ingestion captures provider diagnostics payload shape', async () => {
+  const diagnostics = await runEarningsIngestion({
+    loadDB: () => ({ users: { alice: {} }, trades: [{ username: 'alice', status: 'open', canonicalTicker: 'AAPL' }] }),
+    newsEventService: {
+      listUpcomingEvents: () => [],
+      upsertManyEvents: (rows) => rows.map((row, index) => ({ ...row, dedupeKey: `k-${index}` }))
+    },
+    logger: createLogger(),
+    provider: async () => ({
+      rows: [{
+        sourceType: 'earnings',
+        eventType: 'earnings',
+        ticker: 'AAPL',
+        canonicalTicker: 'AAPL',
+        title: 'AAPL earnings',
+        scheduledAt: '2026-07-28T16:00:00.000Z',
+        sourceName: 'Alpha Vantage',
+        sourceUrl: 'https://example.test',
+        sourceExternalId: 'x'
+      }],
+      diagnostics: { apiKeyPresent: true, horizon: '3month', rowsReturned: 1, parsedRows: 1, skippedRows: 0 }
+    }),
+    trigger: 'test'
+  });
+
+  assert.equal(diagnostics.success, true);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.apiKeyPresent, true);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.horizon, '3month');
 });

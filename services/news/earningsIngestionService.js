@@ -1,11 +1,11 @@
-const { fetchFmpEarningsEvents } = require('../../providers/earnings/fmpEarningsProvider');
+const { fetchAlphaVantageEarningsEvents } = require('../../providers/earnings/alphaVantageEarningsProvider');
 const { resolveOwnedTickerUniverse } = require('./ownedTickerUniverseService');
 
 async function runEarningsIngestion({
   loadDB,
   newsEventService,
   logger = console,
-  provider = fetchFmpEarningsEvents,
+  provider = fetchAlphaVantageEarningsEvents,
   trigger = 'unknown',
   from,
   to
@@ -57,17 +57,30 @@ async function runEarningsIngestion({
 
     let normalizedRows = [];
     try {
-      normalizedRows = await provider({
+      const providerResult = await provider({
         tickers: universe.aggregateTickers,
         from,
         to,
         logger
       });
+
+      if (Array.isArray(providerResult)) {
+        normalizedRows = providerResult;
+      } else {
+        normalizedRows = Array.isArray(providerResult?.rows) ? providerResult.rows : [];
+        if (providerResult?.diagnostics && typeof providerResult.diagnostics === 'object') {
+          diagnostics.providerStatus.providerDiagnostics = providerResult.diagnostics;
+        }
+      }
+
       diagnostics.providerStatus.success = true;
       diagnostics.providerStatus.rowsFetched = Array.isArray(normalizedRows) ? normalizedRows.length : 0;
     } catch (error) {
       diagnostics.providerStatus.fetchFailed = true;
       diagnostics.providerStatus.error = error?.message || String(error);
+      if (error?.diagnostics && typeof error.diagnostics === 'object') {
+        diagnostics.providerStatus.providerDiagnostics = error.diagnostics;
+      }
       diagnostics.safeErrors.push(`provider:${diagnostics.providerStatus.error}`);
       logger.warn('[EarningsIngestion] provider failed.', {
         trigger,
