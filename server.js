@@ -15,6 +15,8 @@ try {
 }
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const analytics = require('./lib/analytics');
+const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
+const { createNewsPreferenceService } = require('./services/news/newsPreferenceService');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -45,6 +47,42 @@ if (typeof app.patch !== 'function' && typeof app.post === 'function') {
   app.patch = (...args) => app.post(...args);
 }
 const PORT = process.env.PORT || 3000;
+
+
+function resolveUserTickerUniverse(db, userId) {
+  const tickers = new Set();
+  const entries = Array.isArray(db?.trades) ? db.trades : [];
+  for (const trade of entries) {
+    if (trade?.username !== userId) continue;
+    const ticker = String(trade?.canonicalTicker || trade?.ticker || '').trim().toUpperCase();
+    if (ticker) tickers.add(ticker);
+  }
+  const watchlistItems = Array.isArray(db?.watchlistItems) ? db.watchlistItems : [];
+  const userWatchlistIds = new Set((Array.isArray(db?.watchlists) ? db.watchlists : [])
+    .filter((watchlist) => watchlist?.owner_user_id === userId)
+    .map((watchlist) => watchlist.id));
+  for (const item of watchlistItems) {
+    if (!userWatchlistIds.has(item?.watchlist_id)) continue;
+    const ticker = String(item?.canonical_ticker || item?.ticker || '').trim().toUpperCase();
+    if (ticker) tickers.add(ticker);
+  }
+  return tickers;
+}
+
+const newsEventService = createNewsEventService({
+  loadDB,
+  saveDB,
+  ensureNewsEventTables,
+  logger: console
+});
+
+const newsPreferenceService = createNewsPreferenceService({
+  loadDB,
+  saveDB,
+  ensureNewsEventTables,
+  logger: console,
+  resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId)
+});
 const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
 const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
 const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
@@ -183,6 +221,11 @@ const PERF_DIAGNOSTICS_ENV_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(
 const PERF_DIAGNOSTICS_QUERY_KEYS = ['perf', '__perf', 'debugPerf'];
 const PERF_DIAGNOSTICS_HEADER_KEY = 'x-perf-debug';
 const PERF_REQUEST_ID_HEADER = 'x-request-id';
+
+
+const NEWS_EVENT_SOURCE_TYPES = ['macro', 'earnings', 'news', 'social_post'];
+const NEWS_EVENT_TYPES = ['fomc', 'cpi', 'rate_decision', 'earnings', 'stock_news', 'world_news', 'internal_post'];
+const NEWS_EVENT_QUERY_MAX_LIMIT = 200;
 
 function estimatePayloadBytes(payload) {
   if (payload === undefined || payload === null) return 0;
@@ -3370,6 +3413,60 @@ function getNotificationPreferences(db, userId) {
   return existing;
 }
 
+
+function ensureNewsEventTables(db) {
+  if (!Array.isArray(db.newsEvents)) db.newsEvents = [];
+  if (!Array.isArray(db.userNewsPreferences)) db.userNewsPreferences = [];
+  if (!Array.isArray(db.userEventDeliveryLog)) db.userEventDeliveryLog = [];
+  if (!db.newsEventIndexCatalog || typeof db.newsEventIndexCatalog !== 'object') {
+    db.newsEventIndexCatalog = {
+      sourceType: true,
+      eventType: true,
+      scheduledAt: true,
+      publishedAt: true,
+      canonicalTicker: true,
+      dedupeKey: true
+    };
+  }
+}
+
+function appendUserEventDeliveryLog(db, payload = {}) {
+  ensureNewsEventTables(db);
+  const userId = typeof payload.userId === 'string' ? payload.userId.trim() : '';
+  const newsEventId = typeof payload.newsEventId === 'string' ? payload.newsEventId.trim() : '';
+  const deliveryChannel = typeof payload.deliveryChannel === 'string' ? payload.deliveryChannel.trim() : '';
+  const deliveryWindowKey = typeof payload.deliveryWindowKey === 'string' ? payload.deliveryWindowKey.trim() : '';
+  if (!userId || !newsEventId || !deliveryChannel || !deliveryWindowKey) {
+    return { inserted: false, reason: 'invalid_payload', row: null };
+  }
+  const existing = db.userEventDeliveryLog.find((item) => item.userId === userId
+    && item.newsEventId === newsEventId
+    && item.deliveryChannel === deliveryChannel
+    && item.deliveryWindowKey === deliveryWindowKey);
+  if (existing) {
+    console.info('[NewsEvents][DeliveryLog] duplicate prevented.', {
+      userId,
+      newsEventId,
+      deliveryChannel,
+      deliveryWindowKey
+    });
+    return { inserted: false, reason: 'duplicate', row: existing };
+  }
+  const nowIso = new Date().toISOString();
+  const row = {
+    id: payload.id || crypto.randomUUID(),
+    userId,
+    newsEventId,
+    deliveryChannel,
+    deliveryReason: typeof payload.deliveryReason === 'string' ? payload.deliveryReason : null,
+    deliveryWindowKey,
+    deliveredAt: payload.deliveredAt || nowIso,
+    createdAt: nowIso
+  };
+  db.userEventDeliveryLog.push(row);
+  return { inserted: true, reason: 'inserted', row };
+}
+
 function ensureNotificationTables(db) {
   if (!Array.isArray(db.notificationDevices)) db.notificationDevices = [];
   if (!Array.isArray(db.notificationEvents)) db.notificationEvents = [];
@@ -4518,6 +4615,7 @@ function loadDB() {
     db.investorSessions ||= {};
     ensureTwoFactorTables(db);
     ensureNotificationTables(db);
+    ensureNewsEventTables(db);
     ensureSiteAnnouncementTables(db);
     ensureSocialTables(db);
     let mutated = reconcileIbkrTokenSecret(db);
@@ -4572,6 +4670,9 @@ function loadDB() {
       twoFactorLoginChallenges: {},
       notificationDevices: [],
       notificationEvents: [],
+      newsEvents: [],
+      userNewsPreferences: [],
+      userEventDeliveryLog: [],
       siteAnnouncements: [],
       siteAnnouncementStates: [],
       socialProfiles: [],
@@ -18047,6 +18148,148 @@ app.post('/api/social/leaderboard/recompute', auth, (req, res) => {
   }
   saveDB(db);
   res.json({ ok: true, users: Object.keys(db.users || {}).length });
+});
+
+
+function normalizeNewsApiDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function parseNewsEventsLimit(raw) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 50;
+  return Math.min(Math.floor(parsed), NEWS_EVENT_QUERY_MAX_LIMIT);
+}
+
+function parseNewsEventsCursor(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed === 'object' && typeof parsed.offset === 'number' && parsed.offset >= 0) {
+      return parsed;
+    }
+  } catch (_error) {
+    return null;
+  }
+  return null;
+}
+
+function encodeNewsEventsCursor(payload) {
+  return Buffer.from(JSON.stringify(payload)).toString('base64');
+}
+
+function sanitizeNewsEventForResponse(event) {
+  return {
+    id: event.id,
+    sourceType: event.sourceType,
+    eventType: event.eventType,
+    title: event.title,
+    summary: event.summary,
+    body: event.body,
+    ticker: event.ticker,
+    canonicalTicker: event.canonicalTicker,
+    country: event.country,
+    region: event.region,
+    importance: event.importance,
+    scheduledAt: event.scheduledAt,
+    publishedAt: event.publishedAt,
+    sourceName: event.sourceName,
+    sourceUrl: event.sourceUrl,
+    sourceExternalId: event.sourceExternalId,
+    dedupeKey: event.dedupeKey,
+    metadataJson: event.metadataJson,
+    status: event.status,
+    isActive: event.isActive,
+    lastSeenAt: event.lastSeenAt,
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt
+  };
+}
+
+app.get('/api/news/events', auth, (req, res) => {
+  const startedAt = Date.now();
+  const requestedSourceType = typeof req.query?.sourceType === 'string' ? req.query.sourceType.trim() : '';
+  const requestedEventType = typeof req.query?.eventType === 'string' ? req.query.eventType.trim() : '';
+  const sourceType = NEWS_EVENT_SOURCE_TYPES.includes(requestedSourceType) ? requestedSourceType : '';
+  const eventType = NEWS_EVENT_TYPES.includes(requestedEventType) ? requestedEventType : '';
+  const ticker = typeof req.query?.ticker === 'string' ? req.query.ticker.trim().toUpperCase() : '';
+  const canonicalTicker = typeof req.query?.canonicalTicker === 'string' ? req.query.canonicalTicker.trim().toUpperCase() : '';
+  const from = normalizeNewsApiDate(req.query?.from);
+  const to = normalizeNewsApiDate(req.query?.to);
+  const importance = req.query?.importance;
+  const portfolioOnly = String(req.query?.portfolioOnly || '').toLowerCase() === 'true';
+  const limit = parseNewsEventsLimit(req.query?.limit);
+  const page = Number.isFinite(Number(req.query?.page)) && Number(req.query?.page) > 0 ? Number(req.query.page) : 1;
+  const cursor = parseNewsEventsCursor(req.query?.cursor);
+  const offset = cursor?.offset ?? ((page - 1) * limit);
+
+  const filters = {
+    sourceType: sourceType || undefined,
+    eventType: eventType || undefined,
+    ticker: ticker || undefined,
+    canonicalTicker: canonicalTicker || undefined,
+    from,
+    to,
+    importance
+  };
+
+  const looksScheduled = isScheduledSignal(sourceType, eventType);
+  const looksPublished = isPublishedSignal(sourceType, eventType);
+
+  let rows = looksPublished && !looksScheduled
+    ? newsEventService.listPublishedNews(filters)
+    : newsEventService.listUpcomingEvents(filters);
+
+  if (portfolioOnly) {
+    const db = loadDB();
+    const userTickers = resolveUserTickerUniverse(db, req.username);
+    rows = rows.filter((event) => {
+      const eventTicker = String(event.canonicalTicker || event.ticker || '').toUpperCase();
+      return eventTicker && userTickers.has(eventTicker);
+    });
+  }
+
+  const total = rows.length;
+  const pageRows = rows.slice(offset, offset + limit);
+  const nextOffset = offset + pageRows.length;
+  const nextCursor = nextOffset < total ? encodeNewsEventsCursor({ offset: nextOffset }) : null;
+
+  console.info('[NewsEvents][API] query complete.', {
+    userId: req.username,
+    durationMs: Date.now() - startedAt,
+    total,
+    returned: pageRows.length,
+    sourceType: sourceType || null,
+    eventType: eventType || null,
+    portfolioOnly
+  });
+
+  res.json({
+    data: pageRows.map(sanitizeNewsEventForResponse),
+    pagination: {
+      limit,
+      page,
+      total,
+      cursor: nextCursor
+    },
+    sort: looksPublished && !looksScheduled
+      ? { by: 'publishedAt', direction: 'desc' }
+      : { by: 'scheduledAt', direction: 'asc' }
+  });
+});
+
+app.get('/api/news/preferences', auth, (req, res) => {
+  const preferences = newsPreferenceService.getUserNewsPreferences(req.username);
+  res.json({ data: preferences });
+});
+
+app.put('/api/news/preferences', auth, (req, res) => {
+  const saved = newsPreferenceService.saveUserNewsPreferences(req.username, req.body || {});
+  res.json({ data: saved });
 });
 
 app.get('/api/prefs', auth, (req, res) => {
