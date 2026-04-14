@@ -9,6 +9,7 @@ const DEFAULT_TAB = 'for-you';
 const DEFAULT_LIMIT = 25;
 
 function normalizeTab(value) {
+  if (value === 'latest') return 'news';
   return NEWS_TABS[value] ? value : DEFAULT_TAB;
 }
 
@@ -47,6 +48,10 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     },
     preferences: null,
     preferencesDraft: null,
+    notificationCenter: {
+      items: [],
+      unreadCount: 0
+    },
     tabData: Object.keys(NEWS_TABS).reduce((acc, key) => {
       acc[key] = {
         loaded: false,
@@ -75,7 +80,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     prefsStatus: document.getElementById('news-preferences-status'),
     prefsClose: document.getElementById('close-news-preferences-btn'),
     prefsCancel: document.getElementById('cancel-news-preferences-btn'),
-    prefsSave: document.getElementById('save-news-preferences-btn')
+    prefsSave: document.getElementById('save-news-preferences-btn'),
+    notificationList: document.getElementById('news-notification-list'),
+    notificationUnread: document.getElementById('news-notification-unread-count')
   };
 
   const preferenceControls = [
@@ -260,6 +267,63 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     document.getElementById('news-load-more-btn')?.addEventListener('click', () => fetchTab(state.activeTab, { append: true }));
   }
 
+  function formatNotificationTime(value) {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Unknown time';
+    return parsed.toLocaleString();
+  }
+
+  function renderNotificationCenter() {
+    if (!els.notificationList || !els.notificationUnread) return;
+    const items = Array.isArray(state.notificationCenter.items) ? state.notificationCenter.items : [];
+    els.notificationUnread.textContent = String(state.notificationCenter.unreadCount || 0);
+    if (!items.length) {
+      els.notificationList.innerHTML = '<p class="helper">No delivered in-app news notifications yet.</p>';
+      return;
+    }
+    els.notificationList.innerHTML = items.map((item) => `
+      <article class="news-notification-item ${item.isRead ? '' : 'is-unread'}" data-notification-id="${item.id}">
+        <div class="news-notification-item__meta">
+          <span>${item.badge || 'News'}</span>
+          <span>${formatNotificationTime(item.deliveredAt || item.createdAt)}</span>
+        </div>
+        <h4>${item.title || 'Market update'}</h4>
+        <p>${item.summary || item.body || ''}</p>
+        <div class="news-notification-item__actions">
+          <a class="ghost" href="${item.deepLinkUrl || '/news.html?tab=for-you'}">Open</a>
+          ${item.isRead ? '' : '<button class="ghost" type="button" data-mark-read="true">Mark read</button>'}
+        </div>
+      </article>
+    `).join('');
+
+    els.notificationList.querySelectorAll('[data-mark-read="true"]').forEach((btn) => {
+      btn.addEventListener('click', async (event) => {
+        const card = event.target.closest('[data-notification-id]');
+        const notificationId = card?.getAttribute('data-notification-id');
+        if (!notificationId) return;
+        try {
+          await api(`/api/news/notifications/in-app/${encodeURIComponent(notificationId)}/read`, { method: 'POST' });
+          await loadInAppNotifications();
+        } catch (error) {
+          console.warn('[NewsPage] mark-read failed', error?.message || error);
+        }
+      });
+    });
+  }
+
+  async function loadInAppNotifications() {
+    try {
+      const payload = await api('/api/news/notifications/in-app?limit=12');
+      state.notificationCenter.items = Array.isArray(payload?.data) ? payload.data : [];
+      state.notificationCenter.unreadCount = Number(payload?.unreadCount || 0);
+    } catch (error) {
+      console.warn('[NewsPage] notification-center load failed', error?.message || error);
+      state.notificationCenter.items = [];
+      state.notificationCenter.unreadCount = 0;
+    }
+    renderNotificationCenter();
+  }
+
   async function fetchTab(tabKey, { append = false, reset = false } = {}) {
     const tabState = state.tabData[tabKey];
     const activeSignature = filterSignature();
@@ -418,7 +482,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     log('page-load-start', { tab: state.activeTab });
     bindEvents();
     renderLoading();
-    await Promise.all([loadPreferences(), fetchTab(state.activeTab)]);
+    await Promise.all([loadPreferences(), fetchTab(state.activeTab), loadInAppNotifications()]);
     renderTab();
     log('page-load-end', { tab: state.activeTab });
   }
