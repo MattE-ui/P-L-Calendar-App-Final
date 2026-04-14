@@ -151,6 +151,44 @@ test('eligibility uses preference gating and portfolio relevance', () => {
   assert.equal(decisionC.allowed, true);
 });
 
+test('headline immediate notifications require ranking threshold', () => {
+  const lowScoreHeadline = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: event({
+      sourceType: 'news',
+      eventType: 'world_news',
+      scheduledAt: null,
+      publishedAt: '2026-04-15T10:00:00.000Z',
+      importance: 5
+    }),
+    preferences: pref(),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => false
+  });
+  assert.equal(lowScoreHeadline.allowed, false);
+  assert.equal(lowScoreHeadline.reason, 'headline_ranking_threshold');
+
+  const highScoreHeadline = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: event({
+      sourceType: 'news',
+      eventType: 'stock_news',
+      canonicalTicker: 'AAPL',
+      scheduledAt: null,
+      publishedAt: '2026-04-15T10:00:00.000Z',
+      importance: 95
+    }),
+    preferences: pref(),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => true
+  });
+  assert.equal(highScoreHeadline.allowed, true);
+});
+
 test('fanout dedupes repeated runs and tolerates single-channel dispatch failure', async () => {
   const db = {
     users: { alice: {}, bob: {} },

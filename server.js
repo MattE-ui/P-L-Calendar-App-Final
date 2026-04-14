@@ -18,6 +18,8 @@ const analytics = require('./lib/analytics');
 const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
 const { createNewsPreferenceService } = require('./services/news/newsPreferenceService');
 const { createNewsReadModelService } = require('./services/news/newsReadModelService');
+const { createNewsSourceRegistryService } = require('./services/news/newsSourceRegistry');
+const { rankNewsEvents, buildRankingDiagnostics } = require('./services/news/newsRankingService');
 const { runMacroIngestion } = require('./services/news/macroIngestionService');
 const { runEarningsIngestion } = require('./services/news/earningsIngestionService');
 const { runHeadlineIngestion, getHeadlineIngestionFeatureState } = require('./services/news/headlineIngestionService');
@@ -113,9 +115,15 @@ const newsPreferenceService = createNewsPreferenceService({
   logger: console,
   resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId)
 });
+const newsSourceRegistryService = createNewsSourceRegistryService({
+  loadDB,
+  saveDB,
+  ensureNewsEventTables
+});
 const newsReadModelService = createNewsReadModelService({
   newsEventService,
   resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId),
+  listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
   logger: console
 });
 
@@ -3486,6 +3494,7 @@ function getNotificationPreferences(db, userId) {
 
 function ensureNewsEventTables(db) {
   if (!Array.isArray(db.newsEvents)) db.newsEvents = [];
+  if (!Array.isArray(db.newsSourceRegistry)) db.newsSourceRegistry = [];
   if (!Array.isArray(db.userNewsPreferences)) db.userNewsPreferences = [];
   if (!Array.isArray(db.userEventDeliveryLog)) db.userEventDeliveryLog = [];
   if (!Array.isArray(db.newsNotificationOutbox)) db.newsNotificationOutbox = [];
@@ -18760,6 +18769,22 @@ app.post('/api/admin/news/ingest/headlines', auth, requireAuthenticatedUser, req
   res.json({ data: diagnostics });
 }));
 
+app.get('/api/admin/news/sources', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const sources = newsSourceRegistryService.listSources();
+  res.json({ data: sources });
+});
+
+app.put('/api/admin/news/sources/:sourceName', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const sourceName = String(req.params?.sourceName || '').trim();
+  if (!sourceName) return res.status(400).json({ error: 'sourceName is required.' });
+  try {
+    const updated = newsSourceRegistryService.upsertSource(sourceName, req.body || {});
+    res.json({ data: updated });
+  } catch (error) {
+    res.status(400).json({ error: error?.message || 'Invalid source patch.' });
+  }
+});
+
 app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
   const db = loadDB();
   ensureNewsEventTables(db);
@@ -18782,6 +18807,11 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
+  const sourceProfiles = newsSourceRegistryService.listSources();
+  const rankedHeadlines = rankNewsEvents(
+    activeEvents.filter((event) => event?.eventType === 'stock_news' || event?.eventType === 'world_news'),
+    { sourceProfiles, now: new Date().toISOString() }
+  );
 
   res.json({
     data: {
@@ -18813,7 +18843,11 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
           world_news: headlineCountsByEventType.world_news || 0
         },
         providerStates: headlineStatus.providerStates || {},
-        capApplications: headlineStatus?.lastDiagnostics?.capApplications || null
+        capApplications: headlineStatus?.lastDiagnostics?.capApplications || null,
+        rankingDiagnostics: {
+          ...buildRankingDiagnostics([], rankedHeadlines),
+          sourceRegistryCount: sourceProfiles.length
+        }
       }
     }
   });

@@ -1,5 +1,6 @@
 const { isScheduledSignal, isPublishedSignal } = require('./newsEventService');
 const { NEWS_DELIVERY_CHANNELS } = require('./newsNotificationDispatchService');
+const { scoreNewsEvent } = require('./newsRankingService');
 
 const WINDOW_KEY_IMMEDIATE = 'immediate';
 const WINDOW_KEY_ONE_DAY_BEFORE = 'one_day_before';
@@ -165,6 +166,19 @@ function shouldDeliverEventToUser({ userId, event, preferences, now, deliveryWin
   const windowKey = String(deliveryWindow.key || '');
   if (windowKey !== WINDOW_KEY_DAILY_DIGEST && isNowWithinQuietHours(preferences, now)) {
     return { allowed: false, reason: 'quiet_hours' };
+  }
+
+  if (windowKey === WINDOW_KEY_IMMEDIATE && (event.eventType === 'stock_news' || event.eventType === 'world_news')) {
+    const threshold = Number.isFinite(Number(process.env.NEWS_NOTIFICATION_HEADLINE_MIN_SCORE))
+      ? Number(process.env.NEWS_NOTIFICATION_HEADLINE_MIN_SCORE)
+      : 0.5;
+    const isRelevant = typeof isEventRelevantToUser === 'function' ? !!isEventRelevantToUser(event, userId) : false;
+    const score = scoreNewsEvent(event, {
+      userId,
+      now,
+      isPortfolioRelevant: isRelevant
+    });
+    if (score.totalScore < threshold) return { allowed: false, reason: 'headline_ranking_threshold' };
   }
 
   if ((preferences.portfolioOnly || preferences.watchlistOnly) && typeof isEventRelevantToUser === 'function') {

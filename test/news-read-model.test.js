@@ -113,11 +113,57 @@ test('Latest model returns ingested headline items in deterministic order', () =
   const model = getLatestNewsModel({
     newsEventService: { listPublishedNews: () => events },
     resolveUserTickerUniverse: () => new Set(['AAPL']),
+    listNewsSourceProfiles: () => [],
     logger: { info: () => {} }
   }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
 
   assert.equal(model.emptyState.isHeadlineIngestionActive, true);
-  assert.deepEqual(model.data.map((item) => item.id), ['a', 'b']);
+  assert.deepEqual(model.data.map((item) => item.id), ['b', 'a']);
+});
+
+test('Latest model suppresses low-score and duplicate headlines after ranking', () => {
+  const events = [
+    { id: 'keep', sourceType: 'news', eventType: 'stock_news', title: 'Apple launches AI update', summary: '', importance: 90, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },
+    { id: 'dupe', sourceType: 'news', eventType: 'stock_news', title: 'Apple launches AI update', summary: '', importance: 80, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T11:30:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },
+    { id: 'muted', sourceType: 'news', eventType: 'world_news', title: 'General market color', summary: '', importance: 20, sourceName: 'NoisyWire', publishedAt: '2026-04-14T11:10:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+
+  const model = getLatestNewsModel({
+    newsEventService: { listPublishedNews: () => events },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    listNewsSourceProfiles: () => [
+      { sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 5, isAllowed: true, isMuted: false },
+      { sourceName: 'NoisyWire', trustTier: 'low', priorityBoost: -10, isAllowed: true, isMuted: true }
+    ],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  assert.deepEqual(model.data.map((item) => item.id), ['keep']);
+  assert.equal(model.diagnostics.ranking.duplicateCollapsedCount, 1);
+});
+
+test('For You headline section is bounded and includes only high-signal headlines', () => {
+  const published = [
+    { id: 'r1', sourceType: 'news', eventType: 'stock_news', title: 'AAPL raises guidance', summary: '', importance: 92, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T12:00:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },
+    { id: 'r2', sourceType: 'news', eventType: 'stock_news', title: 'AAPL raises guidance', summary: '', importance: 91, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T12:10:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },
+    { id: 'g1', sourceType: 'news', eventType: 'world_news', title: 'Fed signals global liquidity shift', summary: '', importance: 98, sourceName: 'TrustedWire', publishedAt: '2026-04-14T12:05:00.000Z', metadataJson: {}, status: 'active' },
+    { id: 'l1', sourceType: 'news', eventType: 'world_news', title: 'Minor market chatter', summary: '', importance: 20, sourceName: 'NoisyWire', publishedAt: '2026-04-14T12:06:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+
+  const model = getForYouNewsModel({
+    newsEventService: { listUpcomingEvents: () => [], listPublishedNews: () => published },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    listNewsSourceProfiles: () => [
+      { sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 10, isAllowed: true, isMuted: false },
+      { sourceName: 'NoisyWire', trustTier: 'low', priorityBoost: -10, isAllowed: true, isMuted: false }
+    ],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  const headlineSection = model.sections.find((section) => section.summary.key === 'recentRelevantHeadlines');
+  assert.ok(headlineSection);
+  assert.ok(headlineSection.items.length <= 5);
+  assert.deepEqual(headlineSection.items.map((item) => item.id), ['r1']);
 });
 
 test('Read model filters support portfolioOnly and highImportanceOnly without re-sorting', () => {
