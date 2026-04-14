@@ -20,6 +20,13 @@
             <option value="1h">Last 1h</option>
             <option value="24h" selected>Last 24h</option>
             <option value="7d">Last 7d</option>
+            <option value="30d">Last 30d</option>
+          </select>
+          <label for="trend-interval">Interval</label>
+          <select id="trend-interval">
+            <option value="">Auto</option>
+            <option value="hourly">Hourly</option>
+            <option value="daily">Daily</option>
           </select>
           <button id="refresh-button" type="button">Refresh</button>
         </div>
@@ -50,6 +57,36 @@
     <section class="tool-card devtools-card">
       <h3>Source contribution</h3>
       <pre id="sources-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Baseline comparison (current vs previous window)</h3>
+      <pre id="baseline-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Trend overview</h3>
+      <pre id="trends-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Ranking trends</h3>
+      <pre id="ranking-trends-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Threshold trends</h3>
+      <pre id="threshold-trends-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Notification trends</h3>
+      <pre id="notification-trends-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Source trends</h3>
+      <pre id="source-trends-panel" class="raw-json">Loading…</pre>
     </section>
   </main>
 
