@@ -188,12 +188,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
   }
 
-  function normalizePortfolioUpcomingEarnings(model = {}, sectionItems = []) {
-    const fallbackItems = Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings : [];
-    const sourceItems = Array.isArray(sectionItems) && sectionItems.length ? sectionItems : fallbackItems;
-    return [...sourceItems]
-      .filter(Boolean)
-      .sort((a, b) => toSortableTimestamp(a) - toSortableTimestamp(b));
+  function normalizePortfolioUpcomingEarnings(model = {}) {
+    const items = Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings : [];
+    return [...items].sort((a, b) => toSortableTimestamp(a) - toSortableTimestamp(b));
   }
 
   function renderCard(item = {}) {
@@ -275,7 +272,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const sectionsHtml = sections.map((section) => {
       const sectionKey = section.summary?.key || '';
       const items = sectionKey === 'portfolioUpcomingEarnings'
-        ? normalizePortfolioUpcomingEarnings(model, section.items)
+        ? normalizePortfolioUpcomingEarnings(model)
         : (Array.isArray(section.items) ? section.items : []);
 
       if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
