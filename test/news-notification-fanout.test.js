@@ -82,6 +82,40 @@ test('published events trigger immediate window only', () => {
   assert.deepEqual(windows.map((item) => item.key).filter((key) => key !== WINDOW_KEY_DAILY_DIGEST), [WINDOW_KEY_IMMEDIATE]);
 });
 
+test('world headline immediate delivery respects worldNewsEnabled preference', () => {
+  const decisionDisabled = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: event({
+      sourceType: 'news',
+      eventType: 'world_news',
+      scheduledAt: null,
+      publishedAt: '2026-04-15T10:00:00.000Z'
+    }),
+    preferences: pref({ worldNewsEnabled: false }),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => true
+  });
+  assert.equal(decisionDisabled.allowed, false);
+
+  const decisionEnabled = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: event({
+      sourceType: 'news',
+      eventType: 'world_news',
+      scheduledAt: null,
+      publishedAt: '2026-04-15T10:00:00.000Z'
+    }),
+    preferences: pref({ worldNewsEnabled: true }),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => true
+  });
+  assert.equal(decisionEnabled.allowed, true);
+});
+
 test('eligibility uses preference gating and portfolio relevance', () => {
   const decisionA = shouldDeliverEventToUser({
     userId: 'alice',

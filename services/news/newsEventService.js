@@ -34,6 +34,17 @@ function normalizeMetadata(value) {
   return value;
 }
 
+function normalizeTitleForDedupe(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, '\'')
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeEvent(input = {}, existing = null) {
   const nowIso = new Date().toISOString();
   const sourceType = SOURCE_TYPES.includes(String(input.sourceType || '').trim())
@@ -82,6 +93,9 @@ function buildEventDedupeKey(input = {}) {
   const scheduledAt = normalizeIsoDate(input.scheduledAt) || '';
   const publishedAt = normalizeIsoDate(input.publishedAt) || '';
   const title = normalizeString(input.title) || '';
+  const sourceName = normalizeString(input.sourceName) || '';
+  const normalizedHeadline = normalizeTitleForDedupe(title);
+  const publishedAtHour = publishedAt ? publishedAt.slice(0, 13) : '';
 
   const macroScheduledIdentity = (sourceType === 'macro' && scheduledAt)
     ? [sourceType, eventType, country, region, scheduledAt]
@@ -92,8 +106,8 @@ function buildEventDedupeKey(input = {}) {
     : null;
 
   const sourceIdentity = sourceExternalId
-    ? [sourceType, eventType, sourceExternalId]
-    : [sourceType, eventType, canonicalTicker, scheduledAt, publishedAt, title];
+    ? [sourceType, eventType, sourceName, sourceExternalId]
+    : [sourceType, eventType, sourceName, canonicalTicker, scheduledAt, publishedAtHour, normalizedHeadline || title];
 
   const raw = (macroScheduledIdentity || earningsScheduledIdentity || sourceIdentity).join('|').toLowerCase();
   if (!raw.replace(/\|/g, '').trim()) return null;

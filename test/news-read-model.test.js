@@ -104,6 +104,22 @@ test('Latest model is minimal/empty before headline ingestion exists', () => {
   assert.ok(model.emptyState.message);
 });
 
+test('Latest model returns ingested headline items in deterministic order', () => {
+  const events = [
+    { id: 'b', sourceType: 'news', eventType: 'stock_news', title: 'B', summary: '', importance: 85, canonicalTicker: 'AAPL', publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },
+    { id: 'a', sourceType: 'news', eventType: 'world_news', title: 'A', summary: '', importance: 90, publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+
+  const model = getLatestNewsModel({
+    newsEventService: { listPublishedNews: () => events },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  assert.equal(model.emptyState.isHeadlineIngestionActive, true);
+  assert.deepEqual(model.data.map((item) => item.id), ['a', 'b']);
+});
+
 test('Read model filters support portfolioOnly and highImportanceOnly without re-sorting', () => {
   const events = [
     {
