@@ -222,6 +222,34 @@ test('fetchNasdaqEarningsEvents filters rows to ticker universe', async () => {
   assert.equal(result.diagnostics.rowsMatchedToPortfolio, 1);
 });
 
+test('fetchNasdaqEarningsEvents normalizes Nasdaq symbol for portfolio matching', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [
+              { symbol: ' AAPL ', companyName: 'Apple', reportDate: '2026-07-28', time: 'after-hours' },
+              { symbol: null, companyName: 'Invalid', reportDate: '2026-07-28', time: 'after-hours' }
+            ]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].ticker, 'AAPL');
+  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
+});
+
 test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL'],
