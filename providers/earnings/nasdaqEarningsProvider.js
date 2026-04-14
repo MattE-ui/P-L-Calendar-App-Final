@@ -1,7 +1,7 @@
-const NASDAQ_EARNINGS_SOURCE_URL = 'https://www.nasdaq.com/market-activity/earnings';
-const NASDAQ_EARNINGS_TICKER_URL_BASE = 'https://www.nasdaq.com/market-activity/stocks';
+const NASDAQ_EARNINGS_SOURCE_URL = 'https://api.nasdaq.com/api/company';
+const NASDAQ_EARNINGS_TICKER_URL_BASE = 'https://api.nasdaq.com/api/company';
 
-const MONTH_NAME_DATE_RE = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/i;
+const DATE_FIELD_HINTS = ['earningsdate', 'reportdate', 'date'];
 
 function normalizeTicker(raw) {
   return String(raw || '').trim().toUpperCase().replace(/[^A-Z0-9.\-_]/g, '');
@@ -50,58 +50,64 @@ function toCsvPreview(values, limit = 12) {
     .join(', ');
 }
 
-function decodeHtmlEntities(raw = '') {
-  return String(raw)
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
+function buildTickerEarningsUrl(baseUrl, ticker) {
+  const safeTicker = encodeURIComponent(String(ticker || '').trim().toLowerCase());
+  return `${String(baseUrl).replace(/\/$/, '')}/${safeTicker}/earnings`;
 }
 
-function extractFirstMonthNameDate(raw = '') {
-  const match = String(raw).match(MONTH_NAME_DATE_RE);
-  return match ? match[0] : null;
-}
+function extractDateCandidate(value, depth = 0) {
+  if (depth > 5 || value === null || value === undefined) return null;
 
-function extractEarningsAnnouncementDateFromHtml(html = '') {
-  const rawHtml = String(html || '');
-  if (!rawHtml.trim()) return null;
+  const direct = parseFlexibleDateOnly(value);
+  if (direct) return direct;
 
-  const decoded = decodeHtmlEntities(rawHtml);
-  const compactHtml = decoded.replace(/\s+/g, ' ');
-
-  const labeledBlockPattern = /earnings\s+announcement\*?[^A-Za-z0-9]{0,80}(.{0,220})/ig;
-  let labeledBlockMatch = labeledBlockPattern.exec(compactHtml);
-  while (labeledBlockMatch) {
-    const candidate = extractFirstMonthNameDate(labeledBlockMatch[1] || '');
-    if (candidate) return candidate;
-    labeledBlockMatch = labeledBlockPattern.exec(compactHtml);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = extractDateCandidate(item, depth + 1);
+      if (candidate) return candidate;
+    }
+    return null;
   }
 
-  const textOnly = compactHtml
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  if (typeof value !== 'object') return null;
 
-  const labelMatch = /earnings\s+announcement\*?/i.exec(textOnly);
-  if (labelMatch && Number.isFinite(labelMatch.index)) {
-    const windowStart = Math.max(0, labelMatch.index);
-    const windowEnd = Math.min(textOnly.length, labelMatch.index + 260);
-    const localWindow = textOnly.slice(windowStart, windowEnd);
-    const localDate = extractFirstMonthNameDate(localWindow);
-    if (localDate) return localDate;
+  const prioritizedKeys = ['earningsDate', 'reportDate', 'date', 'value'];
+  for (const key of prioritizedKeys) {
+    const candidate = extractDateCandidate(value[key], depth + 1);
+    if (candidate) return candidate;
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    const normalizedKey = String(key || '').toLowerCase();
+    if (!DATE_FIELD_HINTS.some((hint) => normalizedKey.includes(hint))) continue;
+    const candidate = extractDateCandidate(nested, depth + 1);
+    if (candidate) return candidate;
+  }
+
+  for (const nested of Object.values(value)) {
+    const candidate = extractDateCandidate(nested, depth + 1);
+    if (candidate) return candidate;
   }
 
   return null;
 }
 
-function buildTickerEarningsUrl(baseUrl, ticker) {
-  const safeTicker = encodeURIComponent(String(ticker || '').trim().toLowerCase());
-  return `${String(baseUrl).replace(/\/$/, '')}/${safeTicker}/earnings`;
+function extractEarningsDateFromApiPayload(payload) {
+  const prioritizedCandidates = [
+    payload?.data?.earnings?.earningsDate,
+    payload?.data?.earnings?.reportDate,
+    payload?.data?.earningsDate,
+    payload?.data?.reportDate,
+    payload?.earningsDate,
+    payload?.reportDate
+  ];
+
+  for (const candidate of prioritizedCandidates) {
+    const date = extractDateCandidate(candidate);
+    if (date) return date;
+  }
+
+  return extractDateCandidate(payload?.data?.earnings || payload?.data || payload);
 }
 
 function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
@@ -116,7 +122,7 @@ function normalizeNasdaqEarningsRowWithReason(row, { tickerUniverse = null, nowM
   const canonicalTicker = ticker;
   if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(canonicalTicker)) return { row: null, reason: 'dropped_not_in_portfolio' };
 
-  const reportDate = parseFlexibleDateOnly(row?.reportDate || row?.earningsAnnouncementDate || row?.date);
+  const reportDate = parseFlexibleDateOnly(row?.reportDate || row?.earningsDate || row?.earningsAnnouncementDate || row?.date);
   if (!reportDate) return { row: null, reason: 'dropped_invalid_date' };
 
   const scheduledAt = parseScheduledAt(reportDate);
@@ -205,7 +211,7 @@ async function fetchNasdaqEarningsEvents({
   const tickerUniverse = new Set((Array.isArray(tickers) ? tickers : []).map((item) => normalizeTicker(item)).filter(Boolean));
   const diagnostics = {
     provider: 'nasdaq',
-    strategyUsed: 'per_ticker_page_scrape',
+    strategyUsed: 'company_earnings_api',
     tickersProcessed: 0,
     successfulExtractions: 0,
     failedExtractions: 0,
@@ -235,8 +241,8 @@ async function fetchNasdaqEarningsEvents({
     try {
       response = await fetcher(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          'User-Agent': 'Mozilla/5.0',
+          Accept: 'application/json'
         }
       });
     } catch (error) {
@@ -251,32 +257,25 @@ async function fetchNasdaqEarningsEvents({
       continue;
     }
 
-    let html = '';
+    let payload = null;
     try {
-      html = typeof response?.text === 'function' ? await response.text() : '';
+      payload = typeof response?.json === 'function' ? await response.json() : null;
     } catch (error) {
       diagnostics.failedExtractions += 1;
       diagnostics.fetchFailures.push({ ticker: canonicalTicker, reason: 'body_read_failed' });
       continue;
     }
 
-    const earningsAnnouncementDateText = extractEarningsAnnouncementDateFromHtml(html);
-    if (!earningsAnnouncementDateText) {
-      diagnostics.failedExtractions += 1;
-      diagnostics.parseFailures.push({ ticker: canonicalTicker, reason: 'earnings_announcement_date_not_found' });
-      continue;
-    }
-
-    const parsedDate = parseFlexibleDateOnly(earningsAnnouncementDateText);
+    const parsedDate = extractEarningsDateFromApiPayload(payload);
     if (!parsedDate) {
       diagnostics.failedExtractions += 1;
-      diagnostics.parseFailures.push({ ticker: canonicalTicker, reason: 'earnings_announcement_date_invalid', rawDate: earningsAnnouncementDateText });
+      diagnostics.parseFailures.push({ ticker: canonicalTicker, reason: 'earnings_date_not_found' });
       continue;
     }
 
     const normalized = normalizeNasdaqEarningsRowWithReason({
       ticker: canonicalTicker,
-      earningsAnnouncementDate: parsedDate
+      earningsDate: parsedDate
     }, {
       tickerUniverse,
       nowMs: startedAt
@@ -326,6 +325,6 @@ module.exports = {
   buildDateRangePlan,
   normalizeNasdaqEarningsRow,
   selectNextUpcomingEarningsPerTicker,
-  extractEarningsAnnouncementDateFromHtml,
+  extractEarningsDateFromApiPayload,
   fetchNasdaqEarningsEvents
 };

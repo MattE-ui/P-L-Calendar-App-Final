@@ -6,7 +6,7 @@ const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('../servic
 const {
   normalizeNasdaqEarningsRow,
   selectNextUpcomingEarningsPerTicker,
-  extractEarningsAnnouncementDateFromHtml,
+  extractEarningsDateFromApiPayload,
   fetchNasdaqEarningsEvents
 } = require('../providers/earnings/nasdaqEarningsProvider');
 const { runEarningsIngestion } = require('../services/news/earningsIngestionService');
@@ -63,28 +63,30 @@ test('normalizeNasdaqEarningsRow returns earnings-shaped event with ISO date', (
   assert.match(row.sourceExternalId, /^nasdaq:earnings:AAPL:2026-04-29$/);
 });
 
-test('extractEarningsAnnouncementDateFromHtml parses date near label', () => {
-  const html = '<div><h3>Earnings announcement*</h3><p>Apr 29, 2026</p></div>';
-  assert.equal(extractEarningsAnnouncementDateFromHtml(html), 'Apr 29, 2026');
+test('extractEarningsDateFromApiPayload parses primary earningsDate path', () => {
+  const payload = { data: { earnings: { earningsDate: 'Apr 29, 2026' } } };
+  assert.equal(extractEarningsDateFromApiPayload(payload), '2026-04-29');
 });
 
-test('extractEarningsAnnouncementDateFromHtml handles entity-heavy HTML defensively', () => {
-  const html = '<section>Earnings&nbsp;announcement*<span>&nbsp;</span><strong>May 3, 2026</strong></section>';
-  assert.equal(extractEarningsAnnouncementDateFromHtml(html), 'May 3, 2026');
+test('extractEarningsDateFromApiPayload supports fallback reportDate paths', () => {
+  const payload = { data: { earnings: { calendar: [{ reportDate: '2026-05-03' }] } } };
+  assert.equal(extractEarningsDateFromApiPayload(payload), '2026-05-03');
 });
 
-test('fetchNasdaqEarningsEvents scrapes one next event per ticker page', async () => {
+test('fetchNasdaqEarningsEvents fetches one next event per ticker via API', async () => {
+  const requests = [];
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL', 'MSFT'],
     logger: createLogger(),
-    fetcher: async (url) => {
-      if (String(url).includes('/aapl/')) {
-        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* Apr 29, 2026</div>' };
+    fetcher: async (url, options) => {
+      requests.push({ url, options });
+      if (String(url).includes('/aapl/earnings')) {
+        return { ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Apr 29, 2026' } } }) };
       }
-      if (String(url).includes('/msft/')) {
-        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* May 01, 2026</div>' };
+      if (String(url).includes('/msft/earnings')) {
+        return { ok: true, status: 200, json: async () => ({ data: { earnings: { reportDate: 'May 01, 2026' } } }) };
       }
-      return { ok: false, status: 404, text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}) };
     }
   });
 
@@ -95,17 +97,19 @@ test('fetchNasdaqEarningsEvents scrapes one next event per ticker page', async (
   assert.equal(result.diagnostics.failedExtractions, 0);
   assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
   assert.equal(result.diagnostics.extractedDatesSample.length, 2);
+  assert.equal(requests[0].options.headers['User-Agent'], 'Mozilla/5.0');
+  assert.equal(requests[0].options.headers.Accept, 'application/json');
 });
 
-test('fetchNasdaqEarningsEvents skips ticker when page fails', async () => {
+test('fetchNasdaqEarningsEvents skips ticker when API request fails', async () => {
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL', 'NVDA'],
     logger: createLogger(),
     fetcher: async (url) => {
-      if (String(url).includes('/aapl/')) {
-        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* Apr 29, 2026</div>' };
+      if (String(url).includes('/aapl/earnings')) {
+        return { ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Apr 29, 2026' } } }) };
       }
-      return { ok: false, status: 503, text: async () => '' };
+      return { ok: false, status: 503, json: async () => ({}) };
     }
   });
 
@@ -121,20 +125,20 @@ test('fetchNasdaqEarningsEvents skips ticker when earnings date is not found', a
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL'],
     logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, text: async () => '<html><body>No earnings date available</body></html>' })
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { earnings: {} } }) })
   });
 
   assert.equal(result.rows.length, 0);
   assert.equal(result.diagnostics.successfulExtractions, 0);
   assert.equal(result.diagnostics.failedExtractions, 1);
-  assert.equal(result.diagnostics.parseFailures[0].reason, 'earnings_announcement_date_not_found');
+  assert.equal(result.diagnostics.parseFailures[0].reason, 'earnings_date_not_found');
 });
 
 test('fetchNasdaqEarningsEvents returns no rows for past parsed date', async () => {
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL'],
     logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, text: async () => '<div>Earnings announcement* Jan 2, 2020</div>' })
+    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { earnings: { earningsDate: 'Jan 2, 2020' } } }) })
   });
 
   assert.equal(result.rows.length, 0);
