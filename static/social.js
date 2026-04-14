@@ -92,6 +92,7 @@ const socialState = {
   friendStateSignature: '',
   socialOverviewSignature: '',
   tradeGroupFeedSignature: '',
+  tradeGroupDetailRenderSignature: '',
   pendingRefreshTimers: new Map()
 };
 
@@ -164,6 +165,44 @@ async function socialApi(path, opts = {}) {
 
 function getEl(id) {
   return document.getElementById(id);
+}
+
+function computeTradeGroupDetailRenderSignature(groupId, summaryOnly = false) {
+  const memberSignature = socialState.selectedTradeGroupMembers
+    .map((member) => `${member?.user_id || ''}:${member?.status || ''}:${member?.role || ''}`)
+    .join('|');
+  const inviteSignature = socialState.selectedTradeGroupPendingInvites
+    .map((invite) => invite?.invite_id || invite?.id || '')
+    .join('|');
+  const positionSignature = socialState.selectedTradeGroupPositions
+    .slice(0, 12)
+    .map((position) => `${position?.ticker || ''}:${position?.status || ''}:${position?.updated_at || position?.created_at || ''}`)
+    .join('|');
+  const feedSignature = socialState.selectedTradeGroupAlerts
+    .slice(0, 12)
+    .map((item) => item?.id || item?.created_at || '')
+    .join('|');
+  const watchlistSignature = socialState.selectedTradeGroupWatchlists
+    .map((watchlist) => `${watchlist?.id || ''}:${watchlist?.updatedAt || watchlist?.createdAt || ''}`)
+    .join('|');
+  const myWatchlistsSignature = socialState.myWatchlists
+    .map((watchlist) => `${watchlist?.id || ''}:${watchlist?.updatedAt || watchlist?.createdAt || ''}`)
+    .join('|');
+  const eligibleSignature = socialState.eligibleTradeGroupFriends
+    .map((friend) => `${friend?.user_id || ''}:${friend?.nickname || ''}`)
+    .join('|');
+  return [
+    groupId,
+    summaryOnly ? 'summary' : 'full',
+    socialState.selectedTradeGroupRole || '',
+    memberSignature,
+    inviteSignature,
+    positionSignature,
+    feedSignature,
+    watchlistSignature,
+    myWatchlistsSignature,
+    eligibleSignature
+  ].join('||');
 }
 
 function normalizeAlertRiskPrefillPayload(alert = {}) {
@@ -1370,6 +1409,16 @@ async function loadTradeGroupDetail(groupId, opts = {}) {
     socialState.selectedTradeGroupWatchlistDetailById = {};
     socialState.myWatchlists = [];
   }
+  const nextRenderSignature = computeTradeGroupDetailRenderSignature(groupId, summaryOnly);
+  if (socialState.tradeGroupDetailRenderSignature === nextRenderSignature) {
+    logSocialPerf('social-refresh-skipped', {
+      reason: 'trade-group-render-signature-match',
+      summaryOnly,
+      refreshReason
+    });
+    return;
+  }
+  socialState.tradeGroupDetailRenderSignature = nextRenderSignature;
   renderTradeGroupSection();
 }
 

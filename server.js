@@ -15759,50 +15759,66 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
     ? Math.max(1, Math.min(maxFeedLimit, requestedFeedLimit))
     : defaultFeedLimit;
   const leaderIdentity = socialIdentityForUser(db, access.group.leader_user_id);
-  const alerts = db.tradeGroupAlerts
-    .filter(alert => alert.group_id === access.group.id)
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, 25)
-    .map(alert => ({
-      id: alert.id,
-      type: 'alert',
-      ticker: alert.ticker,
-      side: alert.side || 'BUY',
-      alert_classification: alert.alert_classification || 'buy',
-      position_event_type: alert.position_event_type || null,
-      normalized_event_type: normalizeTradeGroupAlertEventType(alert),
-      entry_price: alert.entry_price,
-      fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
-      trim_pct: alert.trim_pct ?? null,
-      quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.quantity ?? null),
-      remaining_quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.remaining_quantity ?? null),
-      realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
-      realized_return_pct: alert.realized_return_pct ?? null,
-      stop_triggered: alert.stop_triggered === true,
-      stop_price: alert.stop_price,
-      risk_pct: alert.risk_pct,
-      created_at: alert.created_at,
-      leader_nickname: leaderIdentity.nickname || 'Unknown trader',
-      leader_avatar_url: leaderIdentity.avatar_url,
-      leader_avatar_initials: leaderIdentity.avatar_initials
-    }));
-  const announcements = db.tradeGroupAnnouncements
-    .filter(item => item.group_id === access.group.id)
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, 25)
-    .map(item => ({
-      id: item.id,
-      type: 'announcement',
-      text: item.text,
-      created_at: item.created_at,
-      leader_nickname: leaderIdentity.nickname || 'Unknown trader',
-      leader_avatar_url: leaderIdentity.avatar_url,
-      leader_avatar_initials: leaderIdentity.avatar_initials
-    }));
-  const feed = includeFeed
-    ? [...alerts, ...announcements]
+  const mapTradeGroupAlert = (alert) => ({
+    id: alert.id,
+    type: 'alert',
+    ticker: alert.ticker,
+    side: alert.side || 'BUY',
+    alert_classification: alert.alert_classification || 'buy',
+    position_event_type: alert.position_event_type || null,
+    normalized_event_type: normalizeTradeGroupAlertEventType(alert),
+    entry_price: alert.entry_price,
+    fill_price: alert.fill_price ?? (String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.entry_price ?? null)),
+    trim_pct: alert.trim_pct ?? null,
+    quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.quantity ?? null),
+    remaining_quantity: String(alert.side || '').toUpperCase() === 'SELL' ? null : (alert.remaining_quantity ?? null),
+    realized_pnl_gbp: alert.realized_pnl_gbp ?? null,
+    realized_return_pct: alert.realized_return_pct ?? null,
+    stop_triggered: alert.stop_triggered === true,
+    stop_price: alert.stop_price,
+    risk_pct: alert.risk_pct,
+    created_at: alert.created_at,
+    leader_nickname: leaderIdentity.nickname || 'Unknown trader',
+    leader_avatar_url: leaderIdentity.avatar_url,
+    leader_avatar_initials: leaderIdentity.avatar_initials
+  });
+  const mapTradeGroupAnnouncement = (item) => ({
+    id: item.id,
+    type: 'announcement',
+    text: item.text,
+    created_at: item.created_at,
+    leader_nickname: leaderIdentity.nickname || 'Unknown trader',
+    leader_avatar_url: leaderIdentity.avatar_url,
+    leader_avatar_initials: leaderIdentity.avatar_initials
+  });
+  const feedSourceLimit = view === 'summary' ? feedLimit : 25;
+  const includeFullFeedCollections = view !== 'summary' && includeFeed;
+  const alertRows = includeFeed
+    ? db.tradeGroupAlerts
+      .filter((alert) => alert.group_id === access.group.id)
       .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
-      .slice(0, feedLimit)
+      .slice(0, feedSourceLimit)
+    : [];
+  const announcementRows = includeFeed
+    ? db.tradeGroupAnnouncements
+      .filter((item) => item.group_id === access.group.id)
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, feedSourceLimit)
+    : [];
+  const alerts = includeFullFeedCollections ? alertRows.map(mapTradeGroupAlert) : [];
+  const announcements = includeFullFeedCollections ? announcementRows.map(mapTradeGroupAnnouncement) : [];
+  const feed = includeFeed
+    ? (view === 'summary'
+      ? [
+        ...alertRows.map((item) => ({ kind: 'alert', item })),
+        ...announcementRows.map((item) => ({ kind: 'announcement', item }))
+      ]
+        .sort((a, b) => String(b.item?.created_at || '').localeCompare(String(a.item?.created_at || '')))
+        .slice(0, feedLimit)
+        .map((entry) => (entry.kind === 'announcement' ? mapTradeGroupAnnouncement(entry.item) : mapTradeGroupAlert(entry.item)))
+      : [...alerts, ...announcements]
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+        .slice(0, feedLimit))
     : [];
   if (view === 'summary') {
     req.perfDiag?.setMeta({
@@ -15810,6 +15826,7 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
       payloadTrimmed: true,
       socialSummarySerializerUsed: true,
       groupDetailDeferred: true,
+      socialFeedSourceLimit: feedSourceLimit,
       resultCount: 1
     });
     saveDB(db);
@@ -15848,6 +15865,7 @@ app.get('/api/social/trade-groups/:groupId', auth, (req, res) => {
     payloadTrimmed: !(includeMembers && includePendingInvites && includePositions && includeFeed),
     socialSummarySerializerUsed: false,
     groupDetailDeferred: !(includeMembers && includePendingInvites && includePositions),
+    socialFeedSourceLimit: includeFeed ? feedSourceLimit : 0,
     resultCount: 1
   });
   res.json({
