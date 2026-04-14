@@ -364,7 +364,17 @@ h1, h2, h3, h4 {
   width: 45%;
   height: 100%;
   background: linear-gradient(90deg, rgba(11,191,122,0.08), rgba(11,191,122,0.85), rgba(11,191,122,0.08));
+  /* Diagnostic: keep shimmer paused by default so visibility classes control runtime lifecycle. */
   animation: dashboardLoadingShimmer 1.5s ease-in-out infinite;
+  animation-play-state: paused;
+  will-change: transform, opacity;
+}
+.dashboard-loading-overlay.is-visible .dashboard-loading-overlay__progress-line {
+  animation-play-state: running;
+}
+.dashboard-loading-overlay.hidden .dashboard-loading-overlay__progress-line,
+.dashboard-loading-overlay.is-exiting .dashboard-loading-overlay__progress-line {
+  animation-play-state: paused;
 }
 @keyframes dashboardLoadingShimmer {
   0% { transform: translateX(-130%); opacity: 0.55; }
@@ -3543,6 +3553,19 @@ textarea {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  /*
+    Diagnostic/root-cause guard:
+    The global reduced-motion reset above was collapsing this loader shimmer to a single frame,
+    which made the progress bar look frozen while the overlay stayed visible.
+  */
+  .dashboard-loading-overlay__progress-line {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+    animation-play-state: paused !important;
+  }
+  .dashboard-loading-overlay.is-visible .dashboard-loading-overlay__progress-line {
+    animation-play-state: running !important;
   }
 }
 
