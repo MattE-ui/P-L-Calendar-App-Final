@@ -147,6 +147,68 @@ function buildRequestUrl(baseUrl, date) {
   return url.toString();
 }
 
+function safeSnippet(raw, max = 300) {
+  const value = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+function detectResponseFormat(contentType, bodyText) {
+  const type = String(contentType || '').toLowerCase();
+  const text = String(bodyText || '').trim();
+
+  if (type.includes('application/json')) return 'json';
+  if (type.includes('text/html')) return 'html';
+  if (type.startsWith('text/')) return 'text';
+
+  if (text.startsWith('{') || text.startsWith('[')) return 'json';
+  if (text.startsWith('<!doctype html') || text.startsWith('<html') || text.startsWith('<head') || text.startsWith('<body')) return 'html';
+  if (text) return 'text';
+  return 'unknown';
+}
+
+function classifyNonJsonShape(detectedFormat, bodySnippet) {
+  const snippet = String(bodySnippet || '').toLowerCase();
+  if (detectedFormat === 'html') {
+    if (
+      snippet.includes('access denied')
+      || snippet.includes('captcha')
+      || snippet.includes('cloudflare')
+      || snippet.includes('bot')
+      || snippet.includes('verify you are human')
+    ) {
+      return 'anti_bot_html';
+    }
+    return 'unexpected_html';
+  }
+  if (detectedFormat === 'text') return 'non_json_text';
+  return 'unknown_response_format';
+}
+
+function extractRowsFromNasdaqPayload(payload) {
+  const candidates = [
+    ['data', 'calendar', 'rows'],
+    ['data', 'rows'],
+    ['data', 'data', 'rows'],
+    ['data', 'earnings', 'rows'],
+    ['calendar', 'rows'],
+    ['earnings', 'rows'],
+    ['rows']
+  ];
+
+  for (const path of candidates) {
+    let current = payload;
+    for (const segment of path) {
+      current = current?.[segment];
+    }
+    if (Array.isArray(current)) {
+      return { rows: current, path: path.join('.') };
+    }
+  }
+
+  return { rows: null, path: null };
+}
+
 async function fetchNasdaqEarningsEvents({
   tickers = [],
   from,
@@ -178,9 +240,15 @@ async function fetchNasdaqEarningsEvents({
     datesFetched: 0,
     fetchFailures: [],
     unexpectedResponseShapes: [],
+    unexpectedResponseShapeReasons: [],
     totalRowsFetched: 0,
+    rowsExtractedBeforePortfolioFilter: 0,
     rowsMatchedToPortfolio: 0,
     rowsSkipped: 0,
+    successfulJsonResponses: 0,
+    htmlResponses: 0,
+    nonJsonTextResponses: 0,
+    unknownFormatResponses: 0,
     elapsedMs: 0
   };
 
@@ -231,25 +299,81 @@ async function fetchNasdaqEarningsEvents({
       continue;
     }
 
+    const contentType = response?.headers?.get?.('content-type') || response?.headers?.['content-type'] || null;
+    let responseText = '';
+    try {
+      if (typeof response?.text === 'function') {
+        responseText = await response.text();
+      } else if (typeof response?.json === 'function') {
+        const fallbackJson = await response.json();
+        responseText = JSON.stringify(fallbackJson);
+      }
+    } catch (error) {
+      diagnostics.fetchFailures.push({ date, reason: 'body_read_failed' });
+      logger.warn('[Earnings][Nasdaq] failed to read response body.', { date, url, status: response?.status ?? null, error: error?.message || error });
+      continue;
+    }
+
+    const bodySnippet = safeSnippet(responseText, 300);
+    const detectedFormat = detectResponseFormat(contentType, responseText);
+    const perAttemptDiagnostics = {
+      date,
+      url,
+      status: response?.status ?? null,
+      contentType,
+      bodySnippet,
+      detectedFormat
+    };
+
+    if (detectedFormat === 'html') diagnostics.htmlResponses += 1;
+    else if (detectedFormat === 'text') diagnostics.nonJsonTextResponses += 1;
+    else if (detectedFormat === 'unknown') diagnostics.unknownFormatResponses += 1;
+
+    if (detectedFormat !== 'json') {
+      const reason = classifyNonJsonShape(detectedFormat, bodySnippet);
+      diagnostics.unexpectedResponseShapes.push({ date, reason, detectedFormat, contentType, bodySnippet });
+      diagnostics.unexpectedResponseShapeReasons.push(reason);
+      logger.warn('[Earnings][Nasdaq] unexpected response shape.', { ...perAttemptDiagnostics, reason });
+      continue;
+    }
+
     let payload;
     try {
-      payload = await response.json();
+      payload = JSON.parse(responseText);
+      diagnostics.successfulJsonResponses += 1;
     } catch (error) {
       diagnostics.fetchFailures.push({ date, reason: 'invalid_json' });
-      logger.warn('[Earnings][Nasdaq] invalid JSON payload.', { date, error: error?.message || error });
+      logger.warn('[Earnings][Nasdaq] invalid JSON payload.', { ...perAttemptDiagnostics, error: error?.message || error });
       continue;
     }
 
-    const rows = payload?.data?.calendar?.rows;
-    if (!Array.isArray(rows)) {
-      diagnostics.unexpectedResponseShapes.push({ date, reason: 'data.calendar.rows_missing' });
-      logger.warn('[Earnings][Nasdaq] unexpected response shape.', { date, url, status: response?.status ?? null });
+    const topLevelKeys = payload && typeof payload === 'object' && !Array.isArray(payload) ? Object.keys(payload).slice(0, 20) : [];
+    const extracted = extractRowsFromNasdaqPayload(payload);
+    if (!Array.isArray(extracted.rows)) {
+      const reason = 'rows_not_found_in_known_paths';
+      diagnostics.unexpectedResponseShapes.push({
+        date,
+        reason,
+        detectedFormat,
+        contentType,
+        topLevelKeys,
+        bodySnippet
+      });
+      diagnostics.unexpectedResponseShapeReasons.push(reason);
+      logger.warn('[Earnings][Nasdaq] unexpected response shape.', { ...perAttemptDiagnostics, topLevelKeys, reason });
       continue;
     }
 
-    logger.info('[Earnings][Nasdaq] parsed rows for date.', { date, url, status: response?.status ?? null, rowsReturned: rows.length });
+    const rows = extracted.rows;
+    logger.info('[Earnings][Nasdaq] parsed rows for date.', {
+      ...perAttemptDiagnostics,
+      topLevelKeys,
+      rowsReturned: rows.length,
+      rowsPath: extracted.path
+    });
     diagnostics.datesFetched += 1;
     diagnostics.totalRowsFetched += rows.length;
+    diagnostics.rowsExtractedBeforePortfolioFilter += rows.length;
 
     for (const row of rows) {
       const normalized = normalizeNasdaqEarningsRow(row, { tickerUniverse });
@@ -263,6 +387,22 @@ async function fetchNasdaqEarningsEvents({
   }
 
   diagnostics.elapsedMs = Date.now() - startedAt;
+  const compactUnexpectedReasons = Object.entries(
+    diagnostics.unexpectedResponseShapeReasons.reduce((acc, reason) => {
+      acc[reason] = (acc[reason] || 0) + 1;
+      return acc;
+    }, {})
+  ).map(([reason, count]) => `${reason}:${count}`);
+
+  logger.info('[Earnings][Nasdaq] parse summary.', {
+    datesFetched: diagnostics.datesFetched,
+    fetchAttempts: diagnostics.fetchAttempts,
+    successfulJsonResponses: diagnostics.successfulJsonResponses,
+    htmlResponses: diagnostics.htmlResponses,
+    rowsExtractedBeforePortfolioFilter: diagnostics.rowsExtractedBeforePortfolioFilter,
+    rowsMatchedToPortfolio: diagnostics.rowsMatchedToPortfolio,
+    unexpectedResponseShapes: compactUnexpectedReasons
+  });
 
   logger.info('[Earnings][Nasdaq] fetch completed.', diagnostics);
 

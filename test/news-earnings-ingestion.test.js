@@ -236,6 +236,88 @@ test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
   assert.equal(result.diagnostics.rowsMatchedToPortfolio, 0);
 });
 
+test('fetchNasdaqEarningsEvents supports alternate nested shape data.rows', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name === 'content-type' ? 'application/json; charset=utf-8' : null) },
+      text: async () => JSON.stringify({
+        data: {
+          rows: [{ symbol: 'AAPL', companyName: 'Apple', reportDate: '2026-07-28', time: 'after-hours' }]
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.diagnostics.totalRowsFetched, 1);
+});
+
+test('fetchNasdaqEarningsEvents classifies HTML anti-bot responses', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name === 'content-type' ? 'text/html' : null) },
+      text: async () => '<html><body>Access denied. Please verify you are human.</body></html>'
+    })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.htmlResponses, 1);
+  assert.equal(result.diagnostics.unexpectedResponseShapes[0].reason, 'anti_bot_html');
+});
+
+test('fetchNasdaqEarningsEvents treats empty valid JSON as parsed but empty', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) },
+      text: async () => JSON.stringify({ data: { calendar: { rows: [] } } })
+    })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.successfulJsonResponses, 1);
+  assert.equal(result.diagnostics.totalRowsFetched, 0);
+  assert.equal(result.diagnostics.unexpectedResponseShapes.length, 0);
+});
+
+test('fetchNasdaqEarningsEvents captures unexpected JSON shape diagnostics', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) },
+      text: async () => JSON.stringify({ payload: { records: [] } })
+    })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.successfulJsonResponses, 1);
+  assert.equal(result.diagnostics.unexpectedResponseShapes.length, 1);
+  assert.deepEqual(result.diagnostics.unexpectedResponseShapes[0].topLevelKeys, ['payload']);
+  assert.equal(result.diagnostics.unexpectedResponseShapes[0].reason, 'rows_not_found_in_known_paths');
+});
+
 test('fetchNasdaqEarningsEvents diagnostics show planned fetches for default horizon', async () => {
   const loggerCalls = [];
   const result = await fetchNasdaqEarningsEvents({
