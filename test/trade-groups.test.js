@@ -12,6 +12,7 @@ const {
   saveDB,
   loadDB,
   buildGroupCurrentPositions,
+  normalizeTradeGroupActivityEvent,
   emitTradeGroupSellAlertForClosedTrade,
   emitTradeGroupTrimAlertForTrade,
   emitTradeGroupAlertFromTrading212Fill,
@@ -342,6 +343,55 @@ test('manual trim unread payload and notification body are trim-specific (not cl
   assert.equal(/closed/i.test(trimPush.body || ''), false);
 });
 
+
+
+test('normalizeTradeGroupActivityEvent classifies trim and close semantics consistently', () => {
+  assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', remaining_quantity: 3, trim_pct: 10 }), 'trim');
+  assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', event_subtype: 'trim' }), 'trim');
+  assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', remaining_quantity: 0 }), 'close');
+  assert.equal(normalizeTradeGroupActivityEvent({ type: 'announcement' }), 'announcement');
+});
+
+test('summary and full trade-group feeds keep trim classification aligned for same event', async () => {
+  const groupId = await createAcceptedGroup();
+
+  const tradeCreate = await authedFetch(tokens.leader, '/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entry: 50,
+      stop: 45,
+      riskPct: 1,
+      symbol: 'BE',
+      date: '2026-04-03'
+    })
+  });
+  assert.equal(tradeCreate.res.status, 200);
+  const tradeId = tradeCreate.data.trade.id;
+
+  const trimRes = await authedFetch(tokens.leader, `/api/trades/${tradeId}/trim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      units: 1,
+      price: 55,
+      date: '2026-04-04'
+    })
+  });
+  assert.equal(trimRes.res.status, 200);
+
+  const summary = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}?view=summary&feed_limit=8`);
+  assert.equal(summary.res.status, 200);
+  const full = await authedFetch(tokens.leader, `/api/social/trade-groups/${groupId}`);
+  assert.equal(full.res.status, 200);
+
+  const summaryTrim = summary.data.feed.find((item) => item.type === 'alert' && item.ticker === 'BE' && item.side === 'SELL');
+  const fullTrim = full.data.feed.find((item) => item.type === 'alert' && item.ticker === 'BE' && item.side === 'SELL');
+  assert.ok(summaryTrim);
+  assert.ok(fullTrim);
+  assert.equal(summaryTrim.normalized_event_type, 'TRADE_TRIMMED');
+  assert.equal(fullTrim.normalized_event_type, 'TRADE_TRIMMED');
+});
 test('coalesceTrading212FillEvents merges nearby partial sell fills with weighted average price', () => {
   const merged = coalesceTrading212FillEvents([
     { fillId: 'f1', orderId: 'o-1', accountId: 'acc', sourceTradeId: 'trade-1', side: 'SELL', ticker: 'SOUN', quantity: 10, fillPrice: 7.0, remainingQuantity: 90, tradeStatus: 'open', filledAt: '2026-04-08T10:00:00.000Z' },
