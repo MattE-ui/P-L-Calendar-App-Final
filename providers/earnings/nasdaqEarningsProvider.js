@@ -14,6 +14,30 @@ function normalizeDateOnly(raw) {
   return value;
 }
 
+function parseFlexibleDateOnly(raw) {
+  if (raw === null || raw === undefined) return null;
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) return raw.toISOString().slice(0, 10);
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const date = new Date(raw);
+    return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+  }
+
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  const strict = normalizeDateOnly(value);
+  if (strict) return strict;
+  const isoLike = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  if (isoLike) return isoLike[1];
+  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+  if (mdy) {
+    const [, mm, dd, yyyy] = mdy;
+    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  }
+  const parsedMs = Date.parse(value);
+  if (Number.isNaN(parsedMs)) return null;
+  return new Date(parsedMs).toISOString().slice(0, 10);
+}
+
 function normalizeDaysAhead(raw) {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DAYS_AHEAD;
@@ -49,11 +73,47 @@ function parseSessionTime(raw) {
 }
 
 function parseScheduledAt(dateOnly, sessionTime) {
-  const date = normalizeDateOnly(dateOnly);
+  const date = parseFlexibleDateOnly(dateOnly);
   if (!date) return null;
   if (sessionTime === 'pre-market') return `${date}T12:00:00.000Z`;
   if (sessionTime === 'after-hours') return `${date}T21:00:00.000Z`;
   return `${date}T16:00:00.000Z`;
+}
+
+function collectEarningsDateCandidates(row) {
+  const flattenValue = (value) => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'string' || typeof value === 'number' || value instanceof Date) return value;
+    if (typeof value === 'object') {
+      return value.date ?? value.value ?? value.raw ?? null;
+    }
+    return null;
+  };
+  const fromRow = (field) => flattenValue(row?.[field]);
+  return [
+    { field: 'reportDate', value: fromRow('reportDate') },
+    { field: 'date', value: fromRow('date') },
+    { field: 'earningsDate', value: fromRow('earningsDate') },
+    { field: 'asOf', value: fromRow('asOf') },
+    { field: 'announcementDate', value: fromRow('announcementDate') },
+    { field: 'calendar.reportDate', value: flattenValue(row?.calendar?.reportDate) },
+    { field: 'calendar.date', value: flattenValue(row?.calendar?.date) }
+  ];
+}
+
+function resolveNasdaqReportDate(row) {
+  const candidates = collectEarningsDateCandidates(row);
+  for (const candidate of candidates) {
+    const dateOnly = parseFlexibleDateOnly(candidate.value);
+    if (dateOnly) {
+      return { reportDate: dateOnly, dateFieldUsed: candidate.field, rawDateValue: candidate.value, candidates };
+    }
+  }
+  const firstPresent = candidates.find((candidate) => candidate.value !== null && candidate.value !== undefined);
+  if (firstPresent) {
+    return { reportDate: null, dateFieldUsed: firstPresent.field, rawDateValue: firstPresent.value, candidates };
+  }
+  return { reportDate: null, dateFieldUsed: null, rawDateValue: null, candidates };
 }
 
 function firstNonEmptyString(values = []) {
@@ -90,26 +150,46 @@ function toCsvPreview(values, limit = 12) {
 }
 
 function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
-  if (!row) return null;
-  const rawSymbol = extractRawNasdaqSymbol(row);
-  if (!rawSymbol) return null;
-  const ticker = normalizeTicker(rawSymbol);
-  if (!ticker) return null;
-  const canonicalTicker = ticker.toUpperCase();
-  if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(canonicalTicker)) return null;
+  const normalized = normalizeNasdaqEarningsRowWithReason(row, { tickerUniverse });
+  return normalized.row;
+}
 
-  const reportDate = normalizeDateOnly(row?.reportDate);
-  if (!reportDate) return null;
+function normalizeNasdaqEarningsRowWithReason(row, { tickerUniverse = null, nowMs = Date.now() } = {}) {
+  if (!row) return { row: null, reason: 'dropped_invalid_row' };
+  const rawSymbol = extractRawNasdaqSymbol(row);
+  if (!rawSymbol) return { row: null, reason: 'dropped_missing_symbol' };
+  const ticker = normalizeTicker(rawSymbol);
+  if (!ticker) return { row: null, reason: 'dropped_missing_symbol' };
+  const canonicalTicker = ticker.toUpperCase();
+  if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(canonicalTicker)) return { row: null, reason: 'dropped_not_in_portfolio' };
+
+  const reportDateResolution = resolveNasdaqReportDate(row);
+  const reportDate = reportDateResolution.reportDate;
+  if (!reportDate) {
+    const hasRawDate = reportDateResolution.candidates.some((candidate) => candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim() !== '');
+    return {
+      row: null,
+      reason: hasRawDate ? 'dropped_invalid_date' : 'dropped_missing_date',
+      debug: { reportDateResolution, canonicalTicker }
+    };
+  }
 
   const sessionTime = parseSessionTime(row?.time);
   const scheduledAt = parseScheduledAt(reportDate, sessionTime);
-  if (!scheduledAt) return null;
-
-  const nowMs = Date.now();
+  if (!scheduledAt) return { row: null, reason: 'dropped_missing_scheduledAt', debug: { reportDateResolution, canonicalTicker } };
   const scheduledMs = new Date(scheduledAt).getTime();
+  if (!Number.isFinite(scheduledMs)) {
+    return { row: null, reason: 'dropped_invalid_date', debug: { reportDateResolution, canonicalTicker, scheduledAt } };
+  }
+  if (scheduledMs <= nowMs) {
+    return { row: null, reason: 'dropped_past_date', debug: { reportDateResolution, canonicalTicker, scheduledAt } };
+  }
   const companyName = String(row?.companyName || '').trim();
 
   return {
+    reason: 'kept_future_match',
+    debug: { reportDateResolution, canonicalTicker, scheduledAt },
+    row: {
     sourceType: 'earnings',
     eventType: 'earnings',
     ticker,
@@ -134,6 +214,7 @@ function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
       fiscalQuarterEnding: normalizeDateOnly(row?.fiscalQuarterEnding),
       raw: row
     }
+  }
   };
 }
 
@@ -317,6 +398,16 @@ async function fetchNasdaqEarningsEvents({
     nextEarningsPerTickerCount: 0,
     rowsSkipped: 0,
     rowsSkippedPastDate: 0,
+    postIntersectionDropReasons: {
+      dropped_missing_date: 0,
+      dropped_invalid_date: 0,
+      dropped_past_date: 0,
+      dropped_missing_scheduledAt: 0,
+      dropped_next_event_selection: 0,
+      kept_future_match: 0
+    },
+    intersectionRowSamples: [],
+    dateFieldUsageCounts: {},
     extractedSymbolsSample: [],
     extractedSymbolsSampleCsv: '',
     portfolioTickersSample: Array.from(tickerUniverse).slice(0, 10),
@@ -484,17 +575,46 @@ async function fetchNasdaqEarningsEvents({
       if (normalizedRowSampleCandidates.length < 3) {
         normalizedRowSampleCandidates.push(symbolDiagnostics);
       }
-      const normalized = normalizeNasdaqEarningsRow(row, { tickerUniverse });
-      if (!normalized) {
+      const isPortfolioIntersection = Boolean(symbolDiagnostics.normalizedCanonicalTicker && tickerUniverse.has(symbolDiagnostics.normalizedCanonicalTicker));
+      const normalized = normalizeNasdaqEarningsRowWithReason(row, { tickerUniverse, nowMs: startedAt });
+      if (isPortfolioIntersection) {
+        const reason = normalized?.reason || 'dropped_invalid_date';
+        if (Object.prototype.hasOwnProperty.call(diagnostics.postIntersectionDropReasons, reason)) {
+          diagnostics.postIntersectionDropReasons[reason] += 1;
+        }
+        const dateResolution = resolveNasdaqReportDate(row);
+        if (dateResolution.dateFieldUsed) {
+          diagnostics.dateFieldUsageCounts[dateResolution.dateFieldUsed] = (diagnostics.dateFieldUsageCounts[dateResolution.dateFieldUsed] || 0) + 1;
+        }
+        if (diagnostics.intersectionRowSamples.length < 5) {
+          diagnostics.intersectionRowSamples.push({
+            rawSymbol: symbolDiagnostics.rawSymbol,
+            rawTicker: symbolDiagnostics.rawTicker,
+            rawSecuritySymbol: symbolDiagnostics.rawSecuritySymbol,
+            normalizedTicker: symbolDiagnostics.normalizedCanonicalTicker,
+            rawDateFields: dateResolution.candidates.reduce((acc, candidate) => {
+              if (candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim() !== '') {
+                acc[candidate.field] = candidate.value;
+              }
+              return acc;
+            }, {}),
+            scheduledAtParsed: normalized?.row?.scheduledAt || null,
+            dropReason: reason === 'kept_future_match' ? null : reason
+          });
+        }
+      }
+      if (!normalized?.row) {
         diagnostics.rowsSkipped += 1;
         continue;
       }
       diagnostics.rowsMatchedToPortfolio += 1;
-      matchedRows.push(normalized);
+      matchedRows.push(normalized.row);
     }
   }
 
   const dedupedNext = selectNextUpcomingEarningsPerTicker(matchedRows);
+  diagnostics.postIntersectionDropReasons.dropped_next_event_selection = Math.max(matchedRows.length - dedupedNext.rows.length, 0);
+  diagnostics.postIntersectionDropReasons.kept_future_match = matchedRows.length;
   const matchedTickers = new Set(dedupedNext.nextEarningsTickers);
   const unmatchedPortfolioTickers = Array.from(tickerUniverse).filter((ticker) => !matchedTickers.has(ticker));
   diagnostics.rowsSkippedPastDate = dedupedNext.skippedPastRows.length;
@@ -536,6 +656,9 @@ async function fetchNasdaqEarningsEvents({
     nextEarningsPerTickerCount: diagnostics.nextEarningsPerTickerCount,
     rowsMismatchedToPortfolio: diagnostics.rowsMismatchedToPortfolio,
     rowsSkippedPastDate: diagnostics.rowsSkippedPastDate,
+    postIntersectionDropReasons: diagnostics.postIntersectionDropReasons,
+    intersectionRowSamples: diagnostics.intersectionRowSamples,
+    dateFieldUsageCounts: diagnostics.dateFieldUsageCounts,
     extractedSymbolSetSize: diagnostics.extractedSymbolSetSize,
     portfolioTickerSetSize: diagnostics.portfolioTickerSetSize,
     intersectionCount: diagnostics.intersectionCount,

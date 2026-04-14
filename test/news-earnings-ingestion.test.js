@@ -122,6 +122,18 @@ test('Nasdaq row normalization returns earnings-shaped event', () => {
   assert.match(row.sourceExternalId, /^nasdaq:earnings:AAPL:2026-07-28$/);
 });
 
+test('Nasdaq row normalization supports live-like nested announcementDate field', () => {
+  const row = normalizeNasdaqEarningsRow({
+    symbol: 'be',
+    companyName: 'Bloom Energy',
+    announcementDate: { value: '2026-07-30T00:00:00' },
+    time: 'After Market Close'
+  }, { tickerUniverse: new Set(['BE']) });
+
+  assert.equal(row.canonicalTicker, 'BE');
+  assert.equal(row.scheduledAt, '2026-07-30T21:00:00.000Z');
+});
+
 test('buildDateRange iterates today through configured horizon', () => {
   const dates = buildDateRange({ from: '2026-04-14', to: '2026-04-16' });
   assert.deepEqual(dates, ['2026-04-14', '2026-04-15', '2026-04-16']);
@@ -292,6 +304,58 @@ test('fetchNasdaqEarningsEvents matches portfolio ticker when Nasdaq row uses ti
   assert.equal(result.diagnostics.intersectionCount > 0, true);
 });
 
+test('fetchNasdaqEarningsEvents keeps intersecting ticker with valid future date', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['GLW'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [{ symbol: 'GLW', earningsDate: '2026-08-01T00:00:00', time: 'bmo' }]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'GLW');
+  assert.equal(result.diagnostics.postIntersectionDropReasons.kept_future_match, 1);
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
+});
+
+test('fetchNasdaqEarningsEvents drops intersecting ticker with invalid/missing date and tracks reason', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['SNDK'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [
+              { symbol: 'SNDK', reportDate: '', time: 'after-hours' },
+              { symbol: 'SNDK', reportDate: 'not-a-date', time: 'after-hours' }
+            ]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_missing_date, 1);
+  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_invalid_date, 1);
+});
+
 test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
   const result = await fetchNasdaqEarningsEvents({
     tickers: ['AAPL'],
@@ -457,6 +521,33 @@ test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker',
   assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, '2026-07-29T16:00:00.000Z');
 });
 
+test('fetchNasdaqEarningsEvents keeps earliest future row for same ticker and tracks next-event drop', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    from: '2026-07-28',
+    to: '2026-07-28',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          calendar: {
+            rows: [
+              { symbol: 'AAPL', reportDate: '2026-07-30', time: 'after-hours' },
+              { symbol: 'AAPL', reportDate: '2026-07-29', time: 'after-hours' }
+            ]
+          }
+        }
+      })
+    })
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].scheduledAt, '2026-07-29T21:00:00.000Z');
+  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_next_event_selection, 1);
+});
+
 test('selectNextUpcomingEarningsPerTicker ignores rows in the past', () => {
   const result = selectNextUpcomingEarningsPerTicker([
     { canonicalTicker: 'AAPL', scheduledAt: '2026-07-20T16:00:00.000Z' },
@@ -502,10 +593,10 @@ test('fetchNasdaqEarningsEvents returns one next-upcoming event per matched tick
   assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
   assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, `${nextDate}T21:00:00.000Z`);
   assert.equal(result.diagnostics.rowsExtractedBeforePortfolioFilter, 5);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 4);
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 3);
   assert.equal(result.diagnostics.uniquePortfolioTickersMatched, 2);
   assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
-  assert.equal(result.diagnostics.rowsSkippedPastDate, 1);
+  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_past_date, 1);
   assert.deepEqual(result.diagnostics.unmatchedPortfolioTickersSample, ['NVDA']);
 });
 
