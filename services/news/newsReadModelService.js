@@ -282,9 +282,65 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
     .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance);
 
-  const portfolioUpcomingEarnings = cards
-    .filter((card) => card.eventType === 'earnings' && card.isPortfolioRelevant && card.isUpcoming)
+  const currentServerTime = new Date().toISOString();
+  const portfolioEarningsCandidates = cards
+    .filter((card) => card.eventType === 'earnings' && card.isPortfolioRelevant);
+  const droppedPortfolioEarnings = [];
+  const portfolioUpcomingEarnings = portfolioEarningsCandidates
+    .filter((card) => {
+      const rawScheduledAt = card?.scheduledAt;
+      const rawScheduledAtType = rawScheduledAt === undefined
+        ? 'undefined'
+        : rawScheduledAt instanceof Date
+          ? 'date'
+          : typeof rawScheduledAt;
+      if (card.isUpcoming) return true;
+      let reason = 'unknown';
+      if (rawScheduledAt === undefined || rawScheduledAt === null || rawScheduledAt === '') {
+        reason = 'missing_field';
+      } else {
+        const parsedTs = Date.parse(rawScheduledAt);
+        if (!Number.isFinite(parsedTs)) reason = 'invalid_date';
+        else if (parsedTs < Date.parse(currentServerTime)) reason = 'past_date';
+      }
+      droppedPortfolioEarnings.push({
+        ticker: card.ticker || card.canonicalTicker || null,
+        scheduledAt: rawScheduledAt,
+        rawScheduledAtType,
+        reason
+      });
+      return false;
+    })
     .sort(sortStableByTimestampAsc);
+
+  logger.info('[EARNINGS DEBUG] pre-filter', {
+    currentServerTime,
+    totalEarningsEventsCount: portfolioEarningsCandidates.length,
+    earningsEventsSample: portfolioEarningsCandidates.slice(0, 10).map((card) => ({
+      ticker: card.ticker || card.canonicalTicker || null,
+      scheduledAt: card.scheduledAt,
+      rawScheduledAtType: card?.scheduledAt === undefined
+        ? 'undefined'
+        : card.scheduledAt instanceof Date
+          ? 'date'
+          : typeof card.scheduledAt
+    }))
+  });
+
+  logger.info('[EARNINGS DEBUG] post-filter', {
+    currentServerTime,
+    portfolioUpcomingEarningsLength: portfolioUpcomingEarnings.length,
+    kept: portfolioUpcomingEarnings.map((card) => ({
+      ticker: card.ticker || card.canonicalTicker || null,
+      scheduledAt: card.scheduledAt,
+      rawScheduledAtType: card?.scheduledAt === undefined
+        ? 'undefined'
+        : card.scheduledAt instanceof Date
+          ? 'date'
+          : typeof card.scheduledAt
+    })),
+    dropped: droppedPortfolioEarnings
+  });
 
   const macroUpcoming = cards
     .filter((card) => card.sourceType === 'macro' && card.isHighImportance && card.isUpcoming)
