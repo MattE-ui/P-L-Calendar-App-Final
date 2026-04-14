@@ -104,6 +104,47 @@ test('Latest model is minimal/empty before headline ingestion exists', () => {
   assert.ok(model.emptyState.message);
 });
 
+test('Read model filters support portfolioOnly and highImportanceOnly without re-sorting', () => {
+  const events = [
+    {
+      id: 'portfolio-high',
+      sourceType: 'earnings',
+      eventType: 'earnings',
+      title: 'AAPL earnings',
+      summary: '',
+      canonicalTicker: 'AAPL',
+      importance: 90,
+      scheduledAt: isoFromNow(1),
+      metadataJson: { relevanceUserIds: ['alice'] },
+      status: 'active'
+    },
+    {
+      id: 'macro-low',
+      sourceType: 'macro',
+      eventType: 'cpi',
+      title: 'CPI',
+      summary: '',
+      importance: 50,
+      scheduledAt: isoFromNow(2),
+      metadataJson: {},
+      status: 'active'
+    }
+  ];
+
+  const model = getForYouNewsModel({
+    newsEventService: { listUpcomingEvents: () => events },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    logger: { info: () => {} }
+  }, {
+    userId: 'alice',
+    limit: 10,
+    cursor: null,
+    filters: { portfolioOnly: true, highImportanceOnly: true }
+  });
+
+  assert.deepEqual(model.data.map((item) => item.id), ['portfolio-high']);
+});
+
 test('Authenticated /api/news/for-you shapes portfolio relevance', async () => {
   fs.rmSync(DATA_FILE, { force: true });
   saveDB({

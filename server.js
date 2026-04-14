@@ -13289,6 +13289,8 @@ app.get('/trades.html', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.ht
 app.get('/trades', (req,res)=>{ res.sendFile(path.join(__dirname,'trades.html')); });
 app.get('/transactions.html', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
 app.get('/transactions', (req,res)=>{ res.sendFile(path.join(__dirname,'transactions.html')); });
+app.get('/news.html', (req,res)=>{ res.sendFile(path.join(__dirname,'news.html')); });
+app.get('/news', (req,res)=>{ res.sendFile(path.join(__dirname,'news.html')); });
 app.get('/watchlists.html', (req,res)=>{ res.sendFile(path.join(__dirname,'watchlists.html')); });
 app.get('/watchlists', (req,res)=>{ res.sendFile(path.join(__dirname,'watchlists.html')); });
 app.get('/review.html', (req,res)=>{ res.sendFile(path.join(__dirname,'review.html')); });
@@ -18257,7 +18259,9 @@ function getNewsReadModelFilters(query = {}) {
     from: normalizeNewsApiDate(query?.from),
     to: normalizeNewsApiDate(query?.to),
     importance: query?.importance,
-    includePast: String(query?.includePast || '').toLowerCase() === 'true'
+    includePast: String(query?.includePast || '').toLowerCase() === 'true',
+    portfolioOnly: String(query?.portfolioOnly || '').toLowerCase() === 'true',
+    highImportanceOnly: String(query?.highImportanceOnly || '').toLowerCase() === 'true'
   };
 }
 
