@@ -183,6 +183,19 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return `news-card-badge--${tone || 'neutral'}`;
   }
 
+  function toSortableTimestamp(item = {}) {
+    const parsed = Date.parse(item?.scheduledAt || item?.sortTimestamp || item?.publishedAt || '');
+    return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+  }
+
+  function normalizePortfolioUpcomingEarnings(model = {}, sectionItems = []) {
+    const fallbackItems = Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings : [];
+    const sourceItems = Array.isArray(sectionItems) && sectionItems.length ? sectionItems : fallbackItems;
+    return [...sourceItems]
+      .filter(Boolean)
+      .sort((a, b) => toSortableTimestamp(a) - toSortableTimestamp(b));
+  }
+
   function renderCard(item = {}) {
     const marker = [
       item.isPortfolioRelevant ? '<span class="pill">Portfolio</span>' : '',
@@ -260,13 +273,31 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     }
 
     const sectionsHtml = sections.map((section) => {
-      const items = Array.isArray(section.items) ? section.items : [];
+      const sectionKey = section.summary?.key || '';
+      const items = sectionKey === 'portfolioUpcomingEarnings'
+        ? normalizePortfolioUpcomingEarnings(model, section.items)
+        : (Array.isArray(section.items) ? section.items : []);
+
+      if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
+        return `
+          <section class="news-section">
+            <div class="section-header">
+              <h3>${section.summary?.title || 'Portfolio Upcoming Earnings'}</h3>
+              <span class="pill">0</span>
+            </div>
+            <div class="news-empty-state">
+              <p>No upcoming earnings for your portfolio right now.</p>
+            </div>
+          </section>
+        `;
+      }
+
       if (!items.length) return '';
       return `
         <section class="news-section">
           <div class="section-header">
             <h3>${section.summary?.title || 'Section'}</h3>
-            <span class="pill">${section.summary?.count || items.length}</span>
+            <span class="pill">${items.length}</span>
           </div>
           <div class="news-card-list">
             ${items.map(renderCard).join('')}
