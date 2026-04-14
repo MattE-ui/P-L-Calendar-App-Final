@@ -4389,6 +4389,12 @@ function getClientIp(req) {
   return req.ip || req.connection?.remoteAddress || 'unknown';
 }
 
+function getSessionIdForLogs(token) {
+  if (typeof token !== 'string' || !token) return null;
+  if (token.length <= 12) return token;
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
 function applyGuestRateLimit(req) {
   const key = getClientIp(req);
   const now = Date.now();
@@ -4480,9 +4486,7 @@ function auth(req, res, next) {
   req.authToken = token;
   const sessionMeta = db.sessionMetadata[token];
   if (sessionMeta && typeof sessionMeta === 'object') {
-    sessionMeta.lastActiveAt = new Date().toISOString();
     req.sessionMeta = sessionMeta;
-    saveDB(db);
   }
   next();
 }
@@ -7391,6 +7395,15 @@ function clearExpiredTwoFactorChallenges(db) {
   const now = Date.now();
   for (const [id, challenge] of Object.entries(db.twoFactorLoginChallenges)) {
     if (!challenge || !challenge.expiresAt || Date.parse(challenge.expiresAt) <= now) {
+      delete db.twoFactorLoginChallenges[id];
+    }
+  }
+}
+
+function clearTwoFactorChallengesForUsername(db, username) {
+  ensureTwoFactorTables(db);
+  for (const [id, challenge] of Object.entries(db.twoFactorLoginChallenges)) {
+    if (challenge?.username === username) {
       delete db.twoFactorLoginChallenges[id];
     }
   }
@@ -13051,9 +13064,12 @@ app.post('/api/login', async (req,res)=>{
   ensureTwoFactorTables(db);
   clearExpiredTwoFactorChallenges(db);
   if (user.security.twoFactorEnabled) {
+    clearTwoFactorChallengesForUsername(db, username);
+    const authSessionToken = typeof req.cookies?.[AUTH_COOKIE_NAME] === 'string' ? req.cookies[AUTH_COOKIE_NAME] : '';
     const challengeId = crypto.randomUUID();
     db.twoFactorLoginChallenges[challengeId] = {
       username,
+      authSessionToken,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + (10 * 60 * 1000)).toISOString()
     };
@@ -13061,7 +13077,8 @@ app.post('/api/login', async (req,res)=>{
     console.info('[2FA] Pending login challenge created.', {
       username,
       challengeId,
-      expiresAt: db.twoFactorLoginChallenges[challengeId].expiresAt
+      expiresAt: db.twoFactorLoginChallenges[challengeId].expiresAt,
+      sessionId: getSessionIdForLogs(authSessionToken)
     });
     return res.status(202).json({
       requiresTwoFactor: true,
@@ -13094,8 +13111,10 @@ app.post('/api/login/2fa', async (req, res) => {
   const challengeId = typeof req.body?.challengeId === 'string' ? req.body.challengeId : '';
   const code = typeof req.body?.code === 'string' ? req.body.code.trim().replace(/\s+/g, '') : '';
   const method = req.body?.method === 'backup_code' ? 'backup_code' : 'totp';
+  const authSessionToken = typeof req.cookies?.[AUTH_COOKIE_NAME] === 'string' ? req.cookies[AUTH_COOKIE_NAME] : '';
   console.info('[2FA] Login verify request received.', {
     challengeIdPresent: !!challengeId,
+    sessionId: getSessionIdForLogs(authSessionToken),
     method,
     codeLength: code.length,
     codeLooksNumeric: /^\d+$/.test(code),
@@ -13104,9 +13123,36 @@ app.post('/api/login/2fa', async (req, res) => {
   if (!challengeId || !code) return res.status(400).json({ error: 'Challenge and code are required.' });
   const db = loadDB();
   ensureTwoFactorTables(db);
-  clearExpiredTwoFactorChallenges(db);
   const challenge = db.twoFactorLoginChallenges[challengeId];
-  if (!challenge) return res.status(400).json({ error: '2FA challenge expired. Please log in again.' });
+  if (!challenge) {
+    console.info('[2FA] Challenge rejected during verify.', {
+      challengeId,
+      sessionId: getSessionIdForLogs(authSessionToken),
+      reason: 'missing_challenge'
+    });
+    return res.status(400).json({ error: '2FA challenge expired. Please log in again.' });
+  }
+  const expiresAtMs = challenge.expiresAt ? Date.parse(challenge.expiresAt) : NaN;
+  if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) {
+    delete db.twoFactorLoginChallenges[challengeId];
+    saveDB(db);
+    console.info('[2FA] Challenge rejected during verify.', {
+      challengeId,
+      sessionId: getSessionIdForLogs(authSessionToken),
+      reason: Number.isNaN(expiresAtMs) ? 'invalid_expiry' : 'ttl_expired',
+      challengeExpiresAt: challenge.expiresAt || null
+    });
+    return res.status(400).json({ error: '2FA challenge expired. Please log in again.' });
+  }
+  const challengeSessionId = getSessionIdForLogs(challenge.authSessionToken);
+  const sessionMatchesChallenge = !challenge.authSessionToken || challenge.authSessionToken === authSessionToken;
+  if (!sessionMatchesChallenge) {
+    console.warn('[2FA] Verify request session differs from challenge creation session.', {
+      challengeId,
+      challengeSessionId,
+      verifySessionId: getSessionIdForLogs(authSessionToken)
+    });
+  }
   const username = challenge.username;
   const user = db.users?.[username];
   if (!user) return res.status(400).json({ error: '2FA challenge is invalid.' });
@@ -13141,7 +13187,9 @@ app.post('/api/login/2fa', async (req, res) => {
     username,
     method,
     success: verified,
-    matchedTotpOffset
+    matchedTotpOffset,
+    challengePresent: true,
+    sessionMatchesChallenge
   });
   if (!verified) {
     saveDB(db);
@@ -13968,7 +14016,6 @@ app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
     username: req.username,
     staleDisplayedValue: req.query?.staleDisplayedValue
   });
-  if (sharedSummary.mutated) saveDB(db);
   const role = getUserRole(user, req.username);
   const avatar = socialAvatarForUser(user);
   const completion = buildProfileCompletionSummary(user, sharedSummary.portfolioValue, sharedSummary.netDeposits.total);
@@ -14003,7 +14050,10 @@ app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
     username: req.username,
     authenticated: true,
     twoFactorComplete: true,
-    authCookiePresent: !!req.cookies?.[AUTH_COOKIE_NAME]
+    authCookiePresent: !!req.cookies?.[AUTH_COOKIE_NAME],
+    sessionId: getSessionIdForLogs(req.cookies?.[AUTH_COOKIE_NAME] || ''),
+    bootstrapAttemptedMutation: !!sharedSummary.mutated,
+    bootstrapPersistedMutation: false
   });
   req.perfDiag?.setMeta({
     accountCount: sharedSummary.accountAggregation.accountCount,
