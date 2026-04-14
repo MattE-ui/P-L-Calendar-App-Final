@@ -1,8 +1,14 @@
 const { isScheduledSignal, isPublishedSignal } = require('./newsEventService');
 const { isEventRelevantToUser } = require('./ownedTickerUniverseService');
+const { rankNewsEvents, buildRankingDiagnostics } = require('./newsRankingService');
 
 const READ_MODEL_MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 25;
+const LATEST_MIN_SCORE_THRESHOLD = 0.2;
+const FOR_YOU_HEADLINE_MIN_SCORE_THRESHOLD = 0.5;
+const FOR_YOU_GLOBAL_HEADLINE_MIN_SCORE_THRESHOLD = 0.82;
+const FOR_YOU_MAX_RELEVANT_HEADLINES = 5;
+const DUPLICATE_PUBLISHED_WINDOW_MS = 2 * 60 * 60 * 1000;
 
 function normalizeIsoDate(value) {
   if (!value) return null;
@@ -160,6 +166,39 @@ function sortStableByTimestampDesc(a, b) {
   return b.sortTimestamp.localeCompare(a.sortTimestamp) || a.id.localeCompare(b.id);
 }
 
+function normalizeHeadlineTitle(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function collapseHeadlineDuplicates(rows = []) {
+  const kept = [];
+  const seenKeys = new Map();
+  let suppressed = 0;
+  for (const row of rows) {
+    const card = row.card;
+    const normalizedTitle = normalizeHeadlineTitle(card?.title);
+    const ticker = String(card?.canonicalTicker || card?.ticker || '').toUpperCase() || 'GLOBAL';
+    const publishedAtMs = Date.parse(card?.publishedAt || card?.sortTimestamp || 0);
+    const bucket = Number.isFinite(publishedAtMs) ? Math.floor(publishedAtMs / DUPLICATE_PUBLISHED_WINDOW_MS) : 0;
+    const dedupeKey = `${ticker}|${normalizedTitle}|${bucket}`;
+    if (!normalizedTitle) {
+      kept.push(row);
+      continue;
+    }
+    if (seenKeys.has(dedupeKey)) {
+      suppressed += 1;
+      continue;
+    }
+    seenKeys.set(dedupeKey, row.card.id);
+    kept.push(row);
+  }
+  return { kept, suppressed };
+}
+
 function applyFilterRows(rows, filters) {
   return rows.filter((event) => {
     if (filters.sourceType && event.sourceType !== filters.sourceType) return false;
@@ -192,7 +231,7 @@ function paginate(mode, cards, limit, cursor) {
 }
 
 function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
-  const { newsEventService, resolveUserTickerUniverse, logger = console } = deps;
+  const { newsEventService, resolveUserTickerUniverse, listNewsSourceProfiles = () => [], logger = console } = deps;
   const startedAt = Date.now();
   const normalizedFilters = normalizeFilters(filters);
   const context = { userId, userTickers: resolveUserTickerUniverse(userId), now: new Date().toISOString() };
@@ -219,12 +258,25 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const publishedRows = typeof newsEventService.listPublishedNews === 'function'
     ? newsEventService.listPublishedNews({ sourceType: 'news' })
     : [];
-  const relevantHeadlines = applyFilterRows(publishedRows, normalizedFilters)
+  const sourceProfiles = listNewsSourceProfiles();
+  const scoredHeadlines = rankNewsEvents(applyFilterRows(publishedRows, normalizedFilters)
     .map((event) => buildNewsEventCardModel(event, context))
-    .filter((card) => card.eventType === 'stock_news' && card.isPortfolioRelevant)
-    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
-    .sort(sortStableByTimestampDesc)
-    .slice(0, 5);
+    .filter((card) => card.eventType === 'stock_news' || card.eventType === 'world_news')
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance), {
+    userId,
+    now: context.now,
+    userTickers: context.userTickers,
+    sourceProfiles
+  });
+  const filteredForYouHeadlines = scoredHeadlines
+    .filter((row) => row.score.sourceProfile.isAllowed && !row.score.sourceProfile.isMuted)
+    .filter((row) => row.score.totalScore >= FOR_YOU_HEADLINE_MIN_SCORE_THRESHOLD)
+    .filter((row) => row.event.isPortfolioRelevant || row.score.totalScore >= FOR_YOU_GLOBAL_HEADLINE_MIN_SCORE_THRESHOLD)
+    .map((row) => ({ ...row, card: row.event }));
+  const dedupedForYou = collapseHeadlineDuplicates(filteredForYouHeadlines);
+  const relevantHeadlines = dedupedForYou.kept
+    .map((row) => ({ ...row.card, rankingScore: row.score.totalScore, rankingBreakdown: row.score }))
+    .slice(0, FOR_YOU_MAX_RELEVANT_HEADLINES);
 
   const seen = new Set();
   const mixed = [];
@@ -257,6 +309,12 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     userId,
     filters: normalizedFilters,
     counts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
+    rankingDiagnostics: {
+      ...buildRankingDiagnostics([], scoredHeadlines),
+      duplicateCollapsedCount: dedupedForYou.suppressed,
+      thresholdFilteredCount: Math.max(0, scoredHeadlines.length - filteredForYouHeadlines.length),
+      sourceSuppressedCount: scoredHeadlines.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
+    },
     durationMs: Date.now() - startedAt,
     pagination: paged.pagination
   });
@@ -328,17 +386,29 @@ function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
 }
 
 function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
-  const { newsEventService, resolveUserTickerUniverse, logger = console } = deps;
+  const { newsEventService, resolveUserTickerUniverse, listNewsSourceProfiles = () => [], logger = console } = deps;
   const startedAt = Date.now();
   const normalizedFilters = normalizeFilters(filters);
   const context = { userId, userTickers: resolveUserTickerUniverse(userId), now: new Date().toISOString() };
 
-  const cards = applyFilterRows(newsEventService.listPublishedNews({}), normalizedFilters)
+  const sourceProfiles = listNewsSourceProfiles();
+  const allCards = applyFilterRows(newsEventService.listPublishedNews({}), normalizedFilters)
     .filter((event) => isPublishedSignal(event.sourceType, event.eventType))
     .map((event) => buildNewsEventCardModel(event, context))
     .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
-    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
-    .sort(sortStableByTimestampDesc);
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance);
+  const rankedRows = rankNewsEvents(allCards, {
+    userId,
+    now: context.now,
+    userTickers: context.userTickers,
+    sourceProfiles
+  });
+  const eligibleRows = rankedRows
+    .filter((row) => row.score.sourceProfile.isAllowed && !row.score.sourceProfile.isMuted)
+    .filter((row) => row.score.totalScore >= LATEST_MIN_SCORE_THRESHOLD)
+    .map((row) => ({ ...row, card: { ...row.event, rankingScore: row.score.totalScore, rankingBreakdown: row.score } }));
+  const deduped = collapseHeadlineDuplicates(eligibleRows);
+  const cards = deduped.kept.map((row) => row.card);
 
   const paged = paginate('latest', cards, limit, cursor);
   const sections = [{
@@ -350,6 +420,12 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     userId,
     filters: normalizedFilters,
     counts: { headlines: cards.length },
+    rankingDiagnostics: {
+      ...buildRankingDiagnostics([], rankedRows),
+      duplicateCollapsedCount: deduped.suppressed,
+      thresholdFilteredCount: Math.max(0, rankedRows.length - eligibleRows.length),
+      sourceSuppressedCount: rankedRows.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
+    },
     durationMs: Date.now() - startedAt,
     pagination: paged.pagination
   });
@@ -360,8 +436,16 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     sections,
     sectionCounts: { headlines: cards.length },
     data: paged.items,
+    diagnostics: {
+      ranking: {
+        ...buildRankingDiagnostics([], rankedRows),
+        duplicateCollapsedCount: deduped.suppressed,
+        thresholdFilteredCount: Math.max(0, rankedRows.length - eligibleRows.length),
+        sourceSuppressedCount: rankedRows.filter((row) => !row.score.sourceProfile.isAllowed || row.score.sourceProfile.isMuted).length
+      }
+    },
     emptyState: {
-      isHeadlineIngestionActive: cards.length > 0,
+      isHeadlineIngestionActive: allCards.length > 0,
       message: cards.length ? null : 'Headline news ingestion is not active yet. Latest news is intentionally minimal.'
     },
     pagination: paged.pagination
