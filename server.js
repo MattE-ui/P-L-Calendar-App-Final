@@ -1370,6 +1370,25 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
 } = {}) {
   ensureSocialTables(db);
   const closureEventKey = buildTradeGroupClosureEventKey(trade, reason);
+  const snapshotNowIso = new Date().toISOString();
+  const closeFingerprintMeta = buildTrading212CloseBusinessFingerprint({
+    accountId: String(trade?.trading212AccountId || '').trim(),
+    canonicalTicker: resolveCanonicalTickerForTrade(trade) || '',
+    brokerTicker: String(trade?.symbol || trade?.trading212Ticker || '').trim(),
+    isin: String(trade?.isin || trade?.instrumentIsin || '').trim(),
+    instrumentId: String(trade?.trading212Id || trade?.trading212PositionKey || '').trim(),
+    side: 'SELL',
+    classification,
+    quantity: Number(trade?.sizeUnits),
+    remainingQuantity: 0,
+    sourceTradeId: String(trade?.id || '').trim(),
+    providerEventId: '',
+    providerOrderId: '',
+    providerEventKey: closureEventKey,
+    filledAt: String(trade?.closedAt || trade?.closeDate || '').trim(),
+    reconciliationTimestamp: snapshotNowIso
+  });
+  const businessFingerprint = closeFingerprintMeta.fingerprint;
   if (hasTradeGroupSellAlertBeenEmittedForTrade(trade, closureEventKey)) {
     console.info('[TradeGroup][SellAlert]', {
       stage: 'sell_alert_skipped',
@@ -1378,7 +1397,10 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
       ticker: resolveCanonicalTickerForTrade(trade) || null,
       reason: 'duplicate',
       skipReason: 'trade_already_marked_emitted',
-      closureEventKey
+      closureEventKey,
+      reconciliationPath: 'snapshot_disappearance',
+      businessFingerprint: businessFingerprint || null,
+      fingerprintInputs: closeFingerprintMeta.components
     });
     return { alertsCreated: 0, notificationsCreated: 0, duplicates: 1 };
   }
@@ -1400,16 +1422,31 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
   let alertsCreated = 0;
   let notificationsCreated = 0;
   let duplicates = 0;
-  const nowIso = new Date().toISOString();
   for (const group of groups) {
     const duplicate = db.tradeGroupAlerts.find((alert) => (
       alert.group_id === group.id
-      && alert.source_trade_id === trade.id
-      && String(alert.side || '').toUpperCase() === 'SELL'
-      && String(alert.closure_event_key || '') === closureEventKey
+      && (
+        (businessFingerprint && String(alert.business_event_fingerprint || '') === businessFingerprint)
+        || (
+          alert.source_trade_id === trade.id
+          && String(alert.side || '').toUpperCase() === 'SELL'
+          && String(alert.closure_event_key || '') === closureEventKey
+        )
+      )
     ));
     if (duplicate) {
       duplicates += 1;
+      console.info('[TradeGroup][SellAlert]', {
+        stage: 'sell_alert_deduped',
+        reconciliationPath: 'snapshot_disappearance',
+        leader: leaderUsername,
+        groupId: group.id,
+        sourceTradeLinked: true,
+        businessFingerprint: businessFingerprint || null,
+        fingerprintInputs: closeFingerprintMeta.components,
+        duplicateAlertId: duplicate.id,
+        emissionDecision: 'deduped'
+      });
       continue;
     }
     const alert = {
@@ -1422,9 +1459,10 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
       side: 'SELL',
       alert_classification: classification || 'full_close',
       position_event_type: 'POSITION_CLOSED',
+      business_event_fingerprint: businessFingerprint || null,
       closure_event_key: closureEventKey,
       closure_reason: String(reason || '').trim() || null,
-      created_at: nowIso
+      created_at: snapshotNowIso
     };
     db.tradeGroupAlerts.push(alert);
     createGroupTradeEventSystemMessage(db, group.id, leaderUsername, alert);
@@ -1446,7 +1484,9 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
         groupId: group.id,
         type: 'trade_group_alert',
         alertId: alert.id,
-        dedupeKey: `trade-close:${closureEventKey}:${group.id}`
+        dedupeKey: businessFingerprint
+          ? `trade-close:${businessFingerprint}:${group.id}`
+          : `trade-close:${closureEventKey}:${group.id}`
       });
       if (created) {
         notificationsCreated += 1;
@@ -1459,11 +1499,14 @@ function emitTradeGroupSellAlertForClosedTrade(db, leaderUsername, trade, {
   }
   console.info('[TradeGroup][SellAlert]', {
     stage: alertsCreated > 0 ? 'sell_alert_emitted' : 'sell_alert_skipped',
+    reconciliationPath: 'snapshot_disappearance',
     leader: leaderUsername,
     tradeId: trade?.id || null,
     ticker,
     reason: String(reason || '').trim() || null,
     closureEventKey,
+    businessFingerprint: businessFingerprint || null,
+    fingerprintInputs: closeFingerprintMeta.components,
     alertsCreated,
     notificationsCreated,
     duplicates,
@@ -1682,6 +1725,90 @@ function buildTrading212FillEventKey(fillEvent = {}) {
   ].join('|');
 }
 
+function normalizeTrading212CloseFingerprintQuantity(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 'na';
+  return String(Number(num.toFixed(6)));
+}
+
+function buildTrading212CloseBusinessFingerprint({
+  accountId = '',
+  canonicalTicker = '',
+  brokerTicker = '',
+  isin = '',
+  instrumentId = '',
+  side = '',
+  classification = '',
+  quantity = null,
+  remainingQuantity = null,
+  sourceTradeId = '',
+  providerEventId = '',
+  providerOrderId = '',
+  providerEventKey = '',
+  filledAt = '',
+  reconciliationTimestamp = ''
+} = {}) {
+  const normalizedSide = String(side || '').trim().toUpperCase();
+  if (normalizedSide !== 'SELL') {
+    return {
+      fingerprint: '',
+      components: { reason: 'non_sell' }
+    };
+  }
+  const normalizedClassification = String(classification || '').trim().toLowerCase() || 'sell';
+  const instrumentIdentity = (() => {
+    const canonical = String(canonicalTicker || '').trim().toUpperCase();
+    if (canonical) return `canonical:${canonical}`;
+    const normalizedIsin = String(isin || '').trim().toUpperCase();
+    if (normalizedIsin) return `isin:${normalizedIsin}`;
+    const normalizedInstrumentId = String(instrumentId || '').trim();
+    if (normalizedInstrumentId) return `instrument:${normalizedInstrumentId}`;
+    const normalizedBrokerTicker = String(brokerTicker || '').trim().toUpperCase();
+    if (normalizedBrokerTicker) return `broker_ticker:${normalizedBrokerTicker}`;
+    return 'unknown-instrument';
+  })();
+  const fillTs = String(filledAt || '').trim();
+  const reconcileTs = String(reconciliationTimestamp || '').trim();
+  const eventDateIso = (() => {
+    const parsedFill = Date.parse(fillTs);
+    if (Number.isFinite(parsedFill)) return new Date(parsedFill).toISOString().slice(0, 10);
+    const parsedReconcile = Date.parse(reconcileTs);
+    if (Number.isFinite(parsedReconcile)) return new Date(parsedReconcile).toISOString().slice(0, 10);
+    return 'unknown-date';
+  })();
+  const quantityKey = normalizeTrading212CloseFingerprintQuantity(quantity);
+  const remainingKey = normalizeTrading212CloseFingerprintQuantity(remainingQuantity);
+  const sourceTradeKey = String(sourceTradeId || '').trim();
+  const providerKey = String(providerEventId || providerEventKey || '').trim();
+  const providerOrderKey = String(providerOrderId || '').trim();
+  const accountKey = String(accountId || '').trim() || 'default';
+  const components = {
+    accountKey,
+    instrumentIdentity,
+    side: normalizedSide,
+    classification: normalizedClassification,
+    quantityKey,
+    remainingKey,
+    eventDateIso,
+    sourceTradeKey: sourceTradeKey || null,
+    providerKey: providerKey || null,
+    providerOrderKey: providerOrderKey || null
+  };
+  // Keep canonical business key stable across snapshot-disappearance and history-fill paths.
+  // Source/provider identifiers are retained for observability but not required for equality.
+  const fingerprint = [
+    't212-close-biz-v1',
+    accountKey,
+    instrumentIdentity,
+    normalizedSide,
+    normalizedClassification,
+    quantityKey,
+    remainingKey,
+    eventDateIso
+  ].join('|');
+  return { fingerprint, components };
+}
+
 function logTrading212SellAlertLifecycle(leaderUsername, fillEvent = {}, stage = '', extras = {}) {
   if (String(fillEvent?.side || '').toUpperCase() !== 'SELL') return;
   const payload = {
@@ -1750,6 +1877,24 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
   const sourceTradeId = String(fillEvent?.sourceTradeId || '').trim();
   const leaderUser = db.users?.[leaderUsername];
   const sourceTrade = sourceTradeId && leaderUser ? findTradeById(leaderUser, sourceTradeId)?.trade : null;
+  const closeFingerprintMeta = buildTrading212CloseBusinessFingerprint({
+    accountId: String(fillEvent?.accountId || '').trim(),
+    canonicalTicker: String(fillEvent?.ticker || '').trim(),
+    brokerTicker: String(fillEvent?.ticker || '').trim(),
+    isin: String(fillEvent?.instrumentIsin || fillEvent?.isin || '').trim(),
+    instrumentId: String(fillEvent?.instrumentId || fillEvent?.providerInstrumentId || '').trim(),
+    side,
+    classification,
+    quantity: fillEvent?.quantity,
+    remainingQuantity: fillEvent?.remainingQuantity,
+    sourceTradeId,
+    providerEventId: fillId,
+    providerOrderId: String(fillEvent?.orderId || '').trim(),
+    providerEventKey: brokerEventKey,
+    filledAt: String(fillEvent?.filledAt || '').trim(),
+    reconciliationTimestamp: nowIso
+  });
+  const businessFingerprint = closeFingerprintMeta.fingerprint;
   if (side === 'SELL' && !sourceTradeId) {
     console.info('[TradeGroup][SellAlert]', {
       stage: 'sell_fill_missing_source_trade',
@@ -1757,7 +1902,9 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       ticker: String(fillEvent?.ticker || '').trim().toUpperCase() || null,
       fillId: fillId || null,
       brokerEventKey,
-      risk: 'cannot_link_fill_to_trade_for_cross-path_dedupe'
+      risk: 'cannot_link_fill_to_trade_for_cross-path_dedupe',
+      businessFingerprint: businessFingerprint || null,
+      fingerprintInputs: closeFingerprintMeta.components
     });
   }
   if (side === 'SELL' && sourceTrade && hasTradeGroupSellAlertBeenEmittedForTrade(sourceTrade)) {
@@ -1778,16 +1925,37 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
   for (const group of groups) {
     const duplicate = db.tradeGroupAlerts.find(alert => (
       alert.group_id === group.id
-      && alert.broker_source === 'trading212'
       && (
-        (fillId && alert.broker_fill_id === fillId)
-        || alert.broker_event_key === brokerEventKey
+        (businessFingerprint && String(alert.business_event_fingerprint || '') === businessFingerprint)
+        || (
+          alert.broker_source === 'trading212'
+          && (
+            (fillId && alert.broker_fill_id === fillId)
+            || alert.broker_event_key === brokerEventKey
+          )
+        )
       )
     ));
     if (duplicate) {
       duplicates += 1;
-      logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'alert_skipped', { groupId: group.id, skipped: 'true', skipReason: 'duplicate' });
+      logTrading212SellAlertLifecycle(leaderUsername, { ...fillEvent, classification }, 'alert_skipped', {
+        groupId: group.id,
+        skipped: 'true',
+        skipReason: businessFingerprint && String(duplicate.business_event_fingerprint || '') === businessFingerprint
+          ? 'business_fingerprint_duplicate'
+          : 'duplicate'
+      });
       console.info(`[TradeGroup][LeaderSync] alert skipped as duplicate leader=${leaderUsername} group=${group.id} fillId=${fillId || 'n/a'} eventKey=${brokerEventKey}`);
+      console.info('[TradeGroup][SellAlert]', {
+        stage: 'sell_alert_deduped',
+        reconciliationPath: 'history_fill',
+        leader: leaderUsername,
+        groupId: group.id,
+        sourceTradeLinked: Boolean(sourceTradeId),
+        businessFingerprint: businessFingerprint || null,
+        fingerprintInputs: closeFingerprintMeta.components,
+        duplicateAlertId: duplicate.id
+      });
       continue;
     }
     const alert = {
@@ -1799,6 +1967,7 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       broker_fill_id: fillId,
       broker_event_key: brokerEventKey,
       broker_order_id: String(fillEvent?.orderId || '').trim() || null,
+      business_event_fingerprint: businessFingerprint || null,
       account_id: String(fillEvent?.accountId || '').trim() || null,
       ticker: fillEvent?.ticker || '',
       side,
@@ -1825,6 +1994,18 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       trimPct: trimPercent,
       selectedFillPrice: fillPrice
     });
+    if (side === 'SELL') {
+      console.info('[TradeGroup][SellAlert]', {
+        stage: 'sell_alert_emitted',
+        reconciliationPath: 'history_fill',
+        leader: leaderUsername,
+        groupId: group.id,
+        sourceTradeLinked: Boolean(sourceTradeId),
+        businessFingerprint: businessFingerprint || null,
+        fingerprintInputs: closeFingerprintMeta.components,
+        emissionDecision: 'emitted'
+      });
+    }
     console.info(`[TradeGroup][LeaderSync] alert emitted leader=${leaderUsername} group=${group.id} fillId=${fillId || 'n/a'} eventKey=${brokerEventKey} side=${side} classification=${classification}`);
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== leaderUsername);
@@ -1834,7 +2015,9 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
         groupId: group.id,
         type: 'trade_group_alert',
         alertId: alert.id,
-        dedupeKey: `t212-fill:${brokerEventKey}:${group.id}`
+        dedupeKey: side === 'SELL' && businessFingerprint
+          ? `t212-close:${businessFingerprint}:${group.id}`
+          : `t212-fill:${brokerEventKey}:${group.id}`
       });
       if (created) {
         notificationsCreated += 1;
@@ -10154,6 +10337,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         accountId,
         side: fill.side,
         ticker: baseTicker,
+        instrumentIsin: String(fill.instrumentIsin || fill.fill?.instrument?.isin || '').trim(),
+        instrumentId: String(fill.instrumentId || fill.fill?.instrument?.id || '').trim(),
         fillPrice: Number(fill.fillPrice),
         quantity: Number(fill.quantity),
         remainingQuantity: null,
@@ -10176,6 +10361,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
           accountId,
           side: fill.side,
           ticker: baseTicker,
+          instrumentIsin: String(fill.instrumentIsin || fill.fill?.instrument?.isin || '').trim(),
+          instrumentId: String(fill.instrumentId || fill.fill?.instrument?.id || '').trim(),
           fillPrice: Number(fill.fillPrice),
           quantity: Number(fill.quantity),
           remainingQuantity: null,
@@ -10249,6 +10436,8 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         accountId,
         side: fill.side,
         ticker,
+        instrumentIsin: String(fill.instrumentIsin || fill.fill?.instrument?.isin || '').trim(),
+        instrumentId: String(fill.instrumentId || fill.fill?.instrument?.id || '').trim(),
         fillPrice: Number(fill.fillPrice),
         quantity: matchedQty,
         remainingQuantity: Number.isFinite(remainingQuantity) ? remainingQuantity : null,
