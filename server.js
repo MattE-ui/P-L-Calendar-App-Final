@@ -73,6 +73,29 @@ function resolveUserTickerUniverse(db, userId) {
   return new Set(user?.tickerList || []);
 }
 
+function resolveUserWatchlistTickerUniverse(db, userId) {
+  const tickers = new Set();
+  const watchlists = Array.isArray(db?.watchlists) ? db.watchlists : [];
+  const watchlistItems = Array.isArray(db?.watchlistItems) ? db.watchlistItems : [];
+  const ownedWatchlistIds = new Set(
+    watchlists
+      .filter((row) => row?.owner_user_id === userId)
+      .map((row) => row.id)
+      .filter(Boolean)
+  );
+
+  for (const item of watchlistItems) {
+    if (!ownedWatchlistIds.has(item?.watchlist_id)) continue;
+    const normalized = String(item?.canonical_ticker || item?.ticker || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9.\\-_]/g, '');
+    if (!normalized) continue;
+    tickers.add(normalized);
+  }
+  return tickers;
+}
+
 function enqueueNewsNotificationOutboxItem(payload, channel) {
   const db = loadDB();
   ensureNewsEventTables(db);
@@ -113,7 +136,8 @@ const newsPreferenceService = createNewsPreferenceService({
   saveDB,
   ensureNewsEventTables,
   logger: console,
-  resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId)
+  resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId),
+  resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(loadDB(), userId)
 });
 const newsSourceRegistryService = createNewsSourceRegistryService({
   loadDB,
@@ -123,6 +147,8 @@ const newsSourceRegistryService = createNewsSourceRegistryService({
 const newsReadModelService = createNewsReadModelService({
   newsEventService,
   resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId),
+  resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(loadDB(), userId),
+  getUserNewsPreferences: (userId) => newsPreferenceService.getUserNewsPreferences(userId),
   listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
   logger: console
 });
@@ -25685,6 +25711,9 @@ async function runNewsNotificationFanoutJob(trigger = 'scheduler') {
       getUserNewsPreferences: (userId) => newsPreferenceService.getUserNewsPreferences(userId),
       shouldNotifyUserForEvent: (userId, event) => newsPreferenceService.shouldNotifyUserForEvent(userId, event),
       isEventRelevantToUser: (event, userId) => isEventRelevantToUser(event, userId),
+      resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(loadDB(), userId),
+      resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(loadDB(), userId),
+      listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
       appendUserEventDeliveryLog,
       dispatchChannelPayload: (payload) => newsNotificationDispatchService.dispatchChannelPayload(payload),
       logger: console,

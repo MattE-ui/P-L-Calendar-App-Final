@@ -1,11 +1,32 @@
 const { resolveSourceProfile, TRUST_TIER_BASE_SCORES } = require('./newsSourceRegistry');
+const {
+  getUserEventRelevance,
+  RELEVANCE_TIERS,
+  resolveRankingMode
+} = require('./newsUserRelevanceService');
 
-const RANKING_WEIGHTS = Object.freeze({
-  relevance: 0.55,
-  recency: 0.2,
-  source: 0.15,
-  importance: 0.1
+const RANKING_MODE_PROFILES = Object.freeze({
+  strict_signal: Object.freeze({
+    mode: 'strict_signal',
+    weights: Object.freeze({ relevance: 0.64, recency: 0.16, source: 0.13, importance: 0.07 }),
+    thresholds: Object.freeze({ latestMinScore: 0.32, forYouHeadlineMinScore: 0.58, forYouGlobalMinScore: 0.91, notificationHeadlineMinScore: 0.75 })
+  }),
+  balanced: Object.freeze({
+    mode: 'balanced',
+    weights: Object.freeze({ relevance: 0.55, recency: 0.2, source: 0.15, importance: 0.1 }),
+    thresholds: Object.freeze({ latestMinScore: 0.2, forYouHeadlineMinScore: 0.5, forYouGlobalMinScore: 0.82, notificationHeadlineMinScore: 0.6 })
+  }),
+  discovery: Object.freeze({
+    mode: 'discovery',
+    weights: Object.freeze({ relevance: 0.48, recency: 0.24, source: 0.16, importance: 0.12 }),
+    thresholds: Object.freeze({ latestMinScore: 0.18, forYouHeadlineMinScore: 0.46, forYouGlobalMinScore: 0.78, notificationHeadlineMinScore: 0.48 })
+  })
 });
+
+function getRankingModeProfile(mode) {
+  const resolved = resolveRankingMode(mode);
+  return RANKING_MODE_PROFILES[resolved] || RANKING_MODE_PROFILES.balanced;
+}
 
 function normalizeIsoDate(value) {
   if (!value) return null;
@@ -20,13 +41,16 @@ function clamp01(value) {
 }
 
 function computeRelevanceScore(event, context = {}) {
-  if (typeof context.isPortfolioRelevant === 'boolean') return context.isPortfolioRelevant ? 1 : 0;
-  const userTickers = context.userTickers instanceof Set ? context.userTickers : new Set();
-  const ticker = String(event?.canonicalTicker || event?.ticker || '').toUpperCase();
-  const mapped = Array.isArray(event?.metadataJson?.relevanceUserIds) && context.userId
-    ? event.metadataJson.relevanceUserIds.includes(context.userId)
-    : false;
-  return ticker && userTickers.has(ticker) || mapped ? 1 : 0;
+  const relevance = getUserEventRelevance(event, {
+    ...context,
+    sourceProfile: context.sourceProfile
+  });
+
+  return {
+    relevanceScore: relevance.relevanceScore,
+    relevanceTier: relevance.relevanceTier,
+    relevanceReason: relevance.reason
+  };
 }
 
 function computeRecencyScore(event, context = {}) {
@@ -58,22 +82,29 @@ function computeImportanceScore(event) {
 }
 
 function scoreNewsEvent(event, context = {}) {
-  const relevanceScore = computeRelevanceScore(event, context);
-  const recencyScore = computeRecencyScore(event, context);
+  const modeProfile = getRankingModeProfile(context.rankingMode);
   const { sourceScore, sourceProfile } = computeSourceScore(event, context);
+  const { relevanceScore, relevanceTier, relevanceReason } = computeRelevanceScore(event, {
+    ...context,
+    sourceProfile
+  });
+  const recencyScore = computeRecencyScore(event, context);
   const importanceScore = computeImportanceScore(event);
 
   const totalScore = clamp01(
-    (relevanceScore * RANKING_WEIGHTS.relevance)
-    + (recencyScore * RANKING_WEIGHTS.recency)
-    + (sourceScore * RANKING_WEIGHTS.source)
-    + (importanceScore * RANKING_WEIGHTS.importance)
+    (relevanceScore * modeProfile.weights.relevance)
+    + (recencyScore * modeProfile.weights.recency)
+    + (sourceScore * modeProfile.weights.source)
+    + (importanceScore * modeProfile.weights.importance)
   );
 
   return {
     eventId: String(event?.id || ''),
+    rankingMode: modeProfile.mode,
     totalScore,
     relevanceScore,
+    relevanceTier,
+    relevanceReason,
     recencyScore,
     sourceScore,
     importanceScore,
@@ -96,10 +127,10 @@ function rankNewsEvents(events = [], context = {}) {
   });
 }
 
-function buildRankingDiagnostics(events = [], scoredRows = []) {
+function buildRankingDiagnostics(events = [], scoredRows = [], context = {}) {
   const rows = Array.isArray(scoredRows) && scoredRows.length
     ? scoredRows
-    : rankNewsEvents(events, {});
+    : rankNewsEvents(events, context);
   const totals = rows.map((row) => Number(row?.score?.totalScore || 0));
   const min = totals.length ? Math.min(...totals) : 0;
   const max = totals.length ? Math.max(...totals) : 0;
@@ -117,6 +148,16 @@ function buildRankingDiagnostics(events = [], scoredRows = []) {
     acc[source].avgScore += Number(row?.score?.totalScore || 0);
     return acc;
   }, {});
+  const relevanceBreakdown = rows.reduce((acc, row) => {
+    const tier = row?.score?.relevanceTier || RELEVANCE_TIERS.NEUTRAL;
+    acc[tier] = (acc[tier] || 0) + 1;
+    return acc;
+  }, {
+    [RELEVANCE_TIERS.PORTFOLIO]: 0,
+    [RELEVANCE_TIERS.WATCHLIST]: 0,
+    [RELEVANCE_TIERS.GLOBAL_HIGH_SIGNAL]: 0,
+    [RELEVANCE_TIERS.NEUTRAL]: 0
+  });
 
   for (const source of Object.keys(sourceBreakdown)) {
     sourceBreakdown[source].avgScore = sourceBreakdown[source].count
@@ -125,18 +166,21 @@ function buildRankingDiagnostics(events = [], scoredRows = []) {
   }
 
   return {
-    weights: RANKING_WEIGHTS,
+    rankingMode: getRankingModeProfile(context.rankingMode).mode,
+    modeProfile: getRankingModeProfile(context.rankingMode),
     distribution: {
       min: Number(min.toFixed(4)),
       avg: Number(avg.toFixed(4)),
       max: Number(max.toFixed(4))
     },
+    relevanceBreakdown,
     sourceBreakdown
   };
 }
 
 module.exports = {
-  RANKING_WEIGHTS,
+  RANKING_MODE_PROFILES,
+  getRankingModeProfile,
   scoreNewsEvent,
   rankNewsEvents,
   buildRankingDiagnostics

@@ -7,6 +7,12 @@ function normalizeTimeString(value) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
+function normalizeRankingMode(value) {
+  const mode = String(value || '').trim();
+  if (mode === 'strict_signal' || mode === 'balanced' || mode === 'discovery') return mode;
+  return 'balanced';
+}
+
 function defaultNewsPreferences(userId, existing = null) {
   const nowIso = new Date().toISOString();
   return {
@@ -27,6 +33,7 @@ function defaultNewsPreferences(userId, existing = null) {
     notifyOneHourBefore: existing?.notifyOneHourBefore ?? false,
     notifyFifteenMinutesBefore: existing?.notifyFifteenMinutesBefore ?? false,
     dailyDigestEnabled: existing?.dailyDigestEnabled ?? false,
+    rankingMode: normalizeRankingMode(existing?.rankingMode),
     quietHoursStart: existing?.quietHoursStart || null,
     quietHoursEnd: existing?.quietHoursEnd || null,
     createdAt: existing?.createdAt || nowIso,
@@ -34,7 +41,14 @@ function defaultNewsPreferences(userId, existing = null) {
   };
 }
 
-function createNewsPreferenceService({ loadDB, saveDB, ensureNewsEventTables, logger = console, resolveUserTickerUniverse = null }) {
+function createNewsPreferenceService({
+  loadDB,
+  saveDB,
+  ensureNewsEventTables,
+  logger = console,
+  resolveUserTickerUniverse = null,
+  resolveUserWatchlistTickerUniverse = null
+}) {
   function getUserNewsPreferences(userId) {
     const db = loadDB();
     ensureNewsEventTables(db);
@@ -67,6 +81,7 @@ function createNewsPreferenceService({ loadDB, saveDB, ensureNewsEventTables, lo
     for (const field of booleanFields) {
       if (typeof payload[field] === 'boolean') row[field] = payload[field];
     }
+    if (payload.rankingMode !== undefined) row.rankingMode = normalizeRankingMode(payload.rankingMode);
     if (payload.quietHoursStart !== undefined) row.quietHoursStart = normalizeTimeString(payload.quietHoursStart);
     if (payload.quietHoursEnd !== undefined) row.quietHoursEnd = normalizeTimeString(payload.quietHoursEnd);
     row.updatedAt = new Date().toISOString();
@@ -102,7 +117,10 @@ function createNewsPreferenceService({ loadDB, saveDB, ensureNewsEventTables, lo
     if (preferences.highImportanceOnly && Number(event.importance || 0) < 80) return false;
 
     if ((preferences.portfolioOnly || preferences.watchlistOnly) && typeof resolveUserTickerUniverse === 'function') {
-      const allowedTickers = resolveUserTickerUniverse(userId);
+      const allowedTickers = new Set(resolveUserTickerUniverse(userId) || []);
+      if (preferences.watchlistOnly && typeof resolveUserWatchlistTickerUniverse === 'function') {
+        for (const ticker of (resolveUserWatchlistTickerUniverse(userId) || [])) allowedTickers.add(ticker);
+      }
       const eventTicker = String(event.canonicalTicker || event.ticker || '').toUpperCase();
       if (eventTicker && !allowedTickers.has(eventTicker)) return false;
     }
@@ -120,5 +138,6 @@ function createNewsPreferenceService({ loadDB, saveDB, ensureNewsEventTables, lo
 
 module.exports = {
   createNewsPreferenceService,
-  defaultNewsPreferences
+  defaultNewsPreferences,
+  normalizeRankingMode
 };

@@ -142,6 +142,72 @@ test('Latest model suppresses low-score and duplicate headlines after ranking', 
   assert.equal(model.diagnostics.ranking.duplicateCollapsedCount, 1);
 });
 
+test('For You mode profiles keep bounded headlines with portfolio-first behavior', () => {
+  const published = [
+    { id: 'portfolio-1', sourceType: 'news', eventType: 'stock_news', title: 'AAPL launch', summary: '', importance: 86, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T12:00:00.000Z', metadataJson: {}, status: 'active' },
+    { id: 'watch-1', sourceType: 'news', eventType: 'stock_news', title: 'TSLA launch', summary: '', importance: 86, sourceName: 'TrustedWire', canonicalTicker: 'TSLA', publishedAt: '2026-04-14T12:01:00.000Z', metadataJson: {}, status: 'active' },
+    { id: 'global-1', sourceType: 'news', eventType: 'world_news', title: 'Global shock', summary: '', importance: 99, sourceName: 'TrustedWire', publishedAt: '2026-04-14T12:02:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+
+  const strictModel = getForYouNewsModel({
+    newsEventService: { listUpcomingEvents: () => [], listPublishedNews: () => published },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    resolveUserWatchlistTickerUniverse: () => new Set(['TSLA']),
+    getUserNewsPreferences: () => ({ rankingMode: 'strict_signal' }),
+    listNewsSourceProfiles: () => [{ sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 10, isAllowed: true, isMuted: false }],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  const discoveryModel = getForYouNewsModel({
+    newsEventService: { listUpcomingEvents: () => [], listPublishedNews: () => published },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    resolveUserWatchlistTickerUniverse: () => new Set(['TSLA']),
+    getUserNewsPreferences: () => ({ rankingMode: 'discovery' }),
+    listNewsSourceProfiles: () => [{ sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 10, isAllowed: true, isMuted: false }],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  const strictIds = (strictModel.sections.find((section) => section.summary.key === 'recentRelevantHeadlines')?.items || []).map((item) => item.id);
+  const discoveryIds = (discoveryModel.sections.find((section) => section.summary.key === 'recentRelevantHeadlines')?.items || []).map((item) => item.id);
+  assert.ok(strictIds.includes('portfolio-1'));
+  assert.ok(!strictIds.includes('global-1'));
+  assert.ok(discoveryIds.includes('watch-1'));
+});
+
+test('Latest ordering stays deterministic with watchlist-aware relevance', () => {
+  const events = [
+    { id: 'z-watch', sourceType: 'news', eventType: 'stock_news', title: 'TSLA event', summary: '', importance: 85, sourceName: 'TrustedWire', canonicalTicker: 'TSLA', publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: {}, status: 'active' },
+    { id: 'a-portfolio', sourceType: 'news', eventType: 'stock_news', title: 'AAPL event', summary: '', importance: 85, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+  const model = getLatestNewsModel({
+    newsEventService: { listPublishedNews: () => events },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    resolveUserWatchlistTickerUniverse: () => new Set(['TSLA']),
+    getUserNewsPreferences: () => ({ rankingMode: 'balanced' }),
+    listNewsSourceProfiles: () => [{ sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 0, isAllowed: true, isMuted: false }],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+
+  assert.deepEqual(model.data.map((item) => item.id), ['a-portfolio', 'z-watch']);
+});
+
+test('watchlist lookup fallback does not break latest ranking', () => {
+  const events = [
+    { id: 'portfolio', sourceType: 'news', eventType: 'stock_news', title: 'AAPL', summary: '', importance: 80, canonicalTicker: 'AAPL', publishedAt: '2026-04-14T11:00:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+  const model = getLatestNewsModel({
+    newsEventService: { listPublishedNews: () => events },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    resolveUserWatchlistTickerUniverse: () => {
+      throw new Error('store unavailable');
+    },
+    getUserNewsPreferences: () => ({ rankingMode: 'balanced' }),
+    listNewsSourceProfiles: () => [],
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 10, cursor: null, filters: {} });
+  assert.equal(model.data[0].id, 'portfolio');
+});
+
 test('For You headline section is bounded and includes only high-signal headlines', () => {
   const published = [
     { id: 'r1', sourceType: 'news', eventType: 'stock_news', title: 'AAPL raises guidance', summary: '', importance: 92, sourceName: 'TrustedWire', canonicalTicker: 'AAPL', publishedAt: '2026-04-14T12:00:00.000Z', metadataJson: { relevanceUserIds: ['alice'] }, status: 'active' },

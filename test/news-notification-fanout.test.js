@@ -32,6 +32,7 @@ function pref(overrides = {}) {
     notifyOneHourBefore: true,
     notifyFifteenMinutesBefore: true,
     dailyDigestEnabled: false,
+    rankingMode: 'balanced',
     quietHoursStart: null,
     quietHoursEnd: null,
     ...overrides
@@ -159,7 +160,8 @@ test('headline immediate notifications require ranking threshold', () => {
       eventType: 'world_news',
       scheduledAt: null,
       publishedAt: '2026-04-15T10:00:00.000Z',
-      importance: 5
+      importance: 5,
+      metadataJson: {}
     }),
     preferences: pref(),
     now: '2026-04-15T10:01:00.000Z',
@@ -187,6 +189,49 @@ test('headline immediate notifications require ranking threshold', () => {
     isEventRelevantToUser: () => true
   });
   assert.equal(highScoreHeadline.allowed, true);
+});
+
+test('strict_signal blocks watchlist headline while discovery allows high-signal watchlist', () => {
+  const baseEvent = event({
+    sourceType: 'news',
+    eventType: 'stock_news',
+    canonicalTicker: 'TSLA',
+    scheduledAt: null,
+    publishedAt: '2026-04-15T10:00:00.000Z',
+    importance: 90,
+    sourceName: 'TrustedWire',
+    metadataJson: {}
+  });
+  const userTickerUniverse = {
+    portfolioTickers: new Set(['AAPL']),
+    watchlistTickers: new Set(['TSLA'])
+  };
+
+  const strict = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: baseEvent,
+    preferences: pref({ rankingMode: 'strict_signal' }),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => false,
+    userTickerUniverse,
+    sourceProfiles: [{ sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 0, isAllowed: true, isMuted: false }]
+  });
+  assert.equal(strict.allowed, false);
+
+  const discovery = shouldDeliverEventToUser({
+    userId: 'alice',
+    event: baseEvent,
+    preferences: pref({ rankingMode: 'discovery' }),
+    now: '2026-04-15T10:01:00.000Z',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    shouldNotifyUserForEvent: () => true,
+    isEventRelevantToUser: () => false,
+    userTickerUniverse,
+    sourceProfiles: [{ sourceName: 'TrustedWire', trustTier: 'high', priorityBoost: 0, isAllowed: true, isMuted: false }]
+  });
+  assert.equal(discovery.allowed, true);
 });
 
 test('fanout dedupes repeated runs and tolerates single-channel dispatch failure', async () => {
