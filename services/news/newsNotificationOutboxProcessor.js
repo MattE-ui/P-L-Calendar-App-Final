@@ -1,6 +1,7 @@
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_BACKOFF_MS = 60 * 1000;
+const DEFAULT_STALE_PROCESSING_MS = 30 * 60 * 1000;
 
 function normalizeIso(value) {
   if (!value) return null;
@@ -39,6 +40,7 @@ function normalizeOutboxItem(item = {}, nowIso = new Date().toISOString()) {
     nextAttemptAt: normalizeIso(item.nextAttemptAt) || nowIso,
     claimedAt: normalizeIso(item.claimedAt),
     claimedBy: item.claimedBy ? String(item.claimedBy) : null,
+    claimToken: item.claimToken ? String(item.claimToken) : null,
     lastAttemptAt: normalizeIso(item.lastAttemptAt),
     sentAt: normalizeIso(item.sentAt),
     lastErrorCode: item.lastErrorCode ? String(item.lastErrorCode) : null,
@@ -57,6 +59,25 @@ function shouldRetryOutboxItem(item, errorInfo = {}) {
 }
 
 function finalizeOutboxItemSuccess(item, result = {}) {
+  const expectedClaimToken = result?.expectedClaimToken ? String(result.expectedClaimToken) : null;
+  if (expectedClaimToken && item.claimToken && item.claimToken !== expectedClaimToken) {
+    return {
+      id: item.id,
+      status: item.status,
+      guardRejected: true,
+      guardReason: 'claim_token_mismatch',
+      retryScheduled: false
+    };
+  }
+  if (item.status !== 'processing') {
+    return {
+      id: item.id,
+      status: item.status,
+      guardRejected: true,
+      guardReason: 'state_not_processing',
+      retryScheduled: false
+    };
+  }
   const nowIso = new Date().toISOString();
   item.status = 'sent';
   item.sentAt = nowIso;
@@ -65,6 +86,7 @@ function finalizeOutboxItemSuccess(item, result = {}) {
   item.lastErrorMessage = null;
   item.claimedAt = null;
   item.claimedBy = null;
+  item.claimToken = null;
   return {
     id: item.id,
     status: item.status,
@@ -77,12 +99,32 @@ function finalizeOutboxItemSuccess(item, result = {}) {
 }
 
 function finalizeOutboxItemFailure(item, errorInfo = {}, options = {}) {
+  const expectedClaimToken = options?.expectedClaimToken ? String(options.expectedClaimToken) : null;
+  if (expectedClaimToken && item.claimToken && item.claimToken !== expectedClaimToken) {
+    return {
+      id: item.id,
+      status: item.status,
+      guardRejected: true,
+      guardReason: 'claim_token_mismatch',
+      retryScheduled: false
+    };
+  }
+  if (item.status !== 'processing') {
+    return {
+      id: item.id,
+      status: item.status,
+      guardRejected: true,
+      guardReason: 'state_not_processing',
+      retryScheduled: false
+    };
+  }
   const nowIso = new Date().toISOString();
   item.updatedAt = nowIso;
   item.lastErrorCode = String(errorInfo.code || 'unknown_error');
   item.lastErrorMessage = String(errorInfo.message || 'Unknown outbox processing error').slice(0, 500);
   item.claimedAt = null;
   item.claimedBy = null;
+  item.claimToken = null;
 
   const canRetry = shouldRetryOutboxItem(item, errorInfo);
   if (canRetry) {
@@ -139,6 +181,7 @@ function claimPendingOutboxItems(options = {}) {
     row.status = 'processing';
     row.claimedAt = nowIso;
     row.claimedBy = claimedBy;
+    row.claimToken = `claim:${nowTs}:${row.id}:${Math.random().toString(36).slice(2, 10)}`;
     row.lastAttemptAt = nowIso;
     row.attemptCount = Number(row.attemptCount || 0) + 1;
     row.updatedAt = nowIso;
@@ -212,6 +255,9 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
   const claimed = claimPendingOutboxItems({ db, now: nowIso, batchSize, claimedBy });
   diagnostics.claimedCount = claimed.length;
   logger.info('[NewsOutboxProcessor] run start.', { now: nowIso, claimedCount: claimed.length, batchSize });
+  if (claimed.length) {
+    saveDB(db);
+  }
 
   for (const item of claimed) {
     diagnostics.processedCount += 1;
@@ -223,14 +269,36 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
           retryable: !!result.retryable,
           code: result.statusCode || 'provider_not_ok',
           message: result.details || 'Channel delivery returned non-ok status'
-        }, options);
+        }, { ...options, expectedClaimToken: item.claimToken });
+        if (failureResult.guardRejected) {
+          diagnostics.errors.push({
+            id: item.id,
+            channel: item.channel,
+            code: 'finalize_guard_rejected',
+            message: failureResult.guardReason
+          });
+          logger.warn('[NewsOutboxProcessor] finalize failure guard rejected.', { id: item.id, guardReason: failureResult.guardReason });
+          continue;
+        }
         if (failureResult.retryScheduled) diagnostics.retriedCount += 1;
         else if (failureResult.status === 'dead_letter') diagnostics.deadLetterCount += 1;
         else diagnostics.failedCount += 1;
+        saveDB(db);
         continue;
       }
-      finalizeOutboxItemSuccess(item, result);
+      const successResult = finalizeOutboxItemSuccess(item, { ...result, expectedClaimToken: item.claimToken });
+      if (successResult.guardRejected) {
+        diagnostics.errors.push({
+          id: item.id,
+          channel: item.channel,
+          code: 'finalize_guard_rejected',
+          message: successResult.guardReason
+        });
+        logger.warn('[NewsOutboxProcessor] finalize success guard rejected.', { id: item.id, guardReason: successResult.guardReason });
+        continue;
+      }
       diagnostics.sentCount += 1;
+      saveDB(db);
     } catch (error) {
       const code = String(error?.code || 'processor_exception');
       const retryable = error?.retryable === true || /timeout|temporar|unavailable|quota|rate/i.test(`${code}:${error?.message || ''}`);
@@ -238,7 +306,17 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
         retryable,
         code,
         message: error?.message || String(error)
-      }, options);
+      }, { ...options, expectedClaimToken: item.claimToken });
+      if (failureResult.guardRejected) {
+        diagnostics.errors.push({
+          id: item.id,
+          channel: item.channel,
+          code: 'finalize_guard_rejected',
+          message: failureResult.guardReason
+        });
+        logger.warn('[NewsOutboxProcessor] finalize exception guard rejected.', { id: item.id, guardReason: failureResult.guardReason });
+        continue;
+      }
       diagnostics.errors.push({
         id: item.id,
         channel: item.channel,
@@ -248,18 +326,25 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
       if (failureResult.retryScheduled) diagnostics.retriedCount += 1;
       else if (failureResult.status === 'dead_letter') diagnostics.deadLetterCount += 1;
       else diagnostics.failedCount += 1;
+      saveDB(db);
     }
   }
 
   // Release stale processing rows if no lock is present.
-  const staleCutoffTs = Date.now() - (15 * 60 * 1000);
+  const staleProcessingMs = Number.isFinite(Number(options.staleProcessingMs))
+    ? Math.max(5 * 60 * 1000, Math.floor(Number(options.staleProcessingMs)))
+    : DEFAULT_STALE_PROCESSING_MS;
+  const staleCutoffTs = Date.parse(nowIso) - staleProcessingMs;
   for (const row of db.newsNotificationOutbox) {
     if (row.status !== 'processing') continue;
     const claimedAtTs = Date.parse(row.claimedAt || 0);
+    const lastAttemptTs = Date.parse(row.lastAttemptAt || 0);
     if (!Number.isFinite(claimedAtTs) || claimedAtTs >= staleCutoffTs) continue;
+    if (Number.isFinite(lastAttemptTs) && lastAttemptTs >= staleCutoffTs) continue;
     row.status = 'pending';
     row.claimedAt = null;
     row.claimedBy = null;
+    row.claimToken = null;
     row.nextAttemptAt = new Date().toISOString();
     row.updatedAt = new Date().toISOString();
     diagnostics.processingReleasedCount += 1;

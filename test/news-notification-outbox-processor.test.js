@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   runNewsNotificationOutboxProcessor,
   claimPendingOutboxItems,
+  finalizeOutboxItemSuccess,
   finalizeOutboxItemFailure,
   shouldRetryOutboxItem
 } = require('../services/news/newsNotificationOutboxProcessor');
@@ -68,6 +69,25 @@ test('retryable and non-retryable failures map to pending/failed/dead_letter', (
   assert.equal(failOutcome.status, 'failed');
 });
 
+test('finalization guards reject stale or reclaimed claim tokens', () => {
+  const item = buildOutboxRow({
+    status: 'processing',
+    claimToken: 'token-current'
+  });
+
+  const mismatch = finalizeOutboxItemSuccess(item, { ok: true, expectedClaimToken: 'token-stale' });
+  assert.equal(mismatch.guardRejected, true);
+  assert.equal(item.status, 'processing');
+
+  const reclaimed = buildOutboxRow({
+    status: 'pending',
+    claimToken: null
+  });
+  const rejected = finalizeOutboxItemFailure(reclaimed, { retryable: true, code: 'timeout', message: 'x' }, { expectedClaimToken: 'token' });
+  assert.equal(rejected.guardRejected, true);
+  assert.equal(rejected.guardReason, 'state_not_processing');
+});
+
 test('outbox processor sends rows, retries retryables, and is idempotent on rerun', async () => {
   const db = {
     newsNotificationOutbox: [
@@ -110,6 +130,44 @@ test('outbox processor sends rows, retries retryables, and is idempotent on reru
   assert.equal(pushAttempts, 1);
 });
 
+test('processor persists claims before dispatch and only releases truly stale processing rows', async () => {
+  const db = {
+    newsNotificationOutbox: [
+      buildOutboxRow({
+        id: 'stale-1',
+        status: 'processing',
+        claimedAt: '2026-04-14T00:00:00.000Z',
+        lastAttemptAt: '2026-04-14T00:00:00.000Z',
+        claimedBy: 'processor:a',
+        claimToken: 'claim-old'
+      }),
+      buildOutboxRow({
+        id: 'fresh-1',
+        status: 'processing',
+        claimedAt: '2026-04-14T00:24:00.000Z',
+        lastAttemptAt: '2026-04-14T00:24:00.000Z',
+        claimedBy: 'processor:b',
+        claimToken: 'claim-fresh'
+      }),
+      buildOutboxRow({ id: 'pending-1', status: 'pending' })
+    ]
+  };
+  let saveCalls = 0;
+
+  await runNewsNotificationOutboxProcessor({
+    loadDB: () => db,
+    saveDB: () => { saveCalls += 1; },
+    ensureNewsEventTables: () => {},
+    now: '2026-04-14T00:40:00.000Z',
+    dispatchChannelPayload: async () => ({ ok: true }),
+    staleProcessingMs: 30 * 60 * 1000
+  });
+
+  assert.ok(saveCalls >= 2);
+  assert.equal(db.newsNotificationOutbox.find((row) => row.id === 'stale-1').status, 'pending');
+  assert.equal(db.newsNotificationOutbox.find((row) => row.id === 'fresh-1').status, 'processing');
+});
+
 test('deep-link generation routes deterministic tabs by context', () => {
   const digestLink = buildNewsNotificationDeepLink({
     event: { id: 'digest:daily_digest:2026-04-14', sourceType: 'news', eventType: 'internal_post' },
@@ -124,4 +182,11 @@ test('deep-link generation routes deterministic tabs by context', () => {
     context: {}
   });
   assert.equal(macroLink.includes('tab=calendar'), true);
+
+  const earningsLink = buildNewsNotificationDeepLink({
+    event: { id: 'evt-earnings', sourceType: 'earnings', eventType: 'earnings' },
+    deliveryWindow: { key: 'immediate' },
+    context: {}
+  });
+  assert.equal(earningsLink.includes('tab=for-you'), true);
 });

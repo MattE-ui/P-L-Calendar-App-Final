@@ -13,6 +13,14 @@ function normalizeTab(value) {
   return NEWS_TABS[value] ? value : DEFAULT_TAB;
 }
 
+function resolveInitialTab(search = '') {
+  const requestedTab = new URLSearchParams(search).get(TAB_QUERY_KEY) || DEFAULT_TAB;
+  return {
+    requestedTab,
+    activeTab: normalizeTab(requestedTab)
+  };
+}
+
 function mergeUniqueById(existing = [], incoming = []) {
   const seen = new Set();
   const merged = [];
@@ -32,14 +40,14 @@ function buildSectionList(tabKey, response) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { normalizeTab, mergeUniqueById, buildSectionList };
+  module.exports = { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList };
 }
 
 if (typeof window === 'undefined' || typeof document === 'undefined') {
   // no-op in test environment
 } else {
   const state = {
-    activeTab: normalizeTab(new URLSearchParams(window.location.search).get(TAB_QUERY_KEY) || DEFAULT_TAB),
+    activeTab: resolveInitialTab(window.location.search).activeTab,
     pageLoading: true,
     filters: {
       portfolioOnly: false,
@@ -479,6 +487,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   }
 
   async function init() {
+    const restoredTab = resolveInitialTab(window.location.search);
+    log('tab-restored', restoredTab);
     log('page-load-start', { tab: state.activeTab });
     bindEvents();
     renderLoading();

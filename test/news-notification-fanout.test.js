@@ -6,6 +6,7 @@ const {
   getDueDeliveryWindowsForEvent,
   shouldDeliverEventToUser,
   buildDeliveryLogKeyFields,
+  buildChannelPayload,
   WINDOW_KEY_IMMEDIATE,
   WINDOW_KEY_ONE_DAY_BEFORE,
   WINDOW_KEY_ONE_HOUR_BEFORE,
@@ -231,4 +232,40 @@ test('daily digest batches events per user and dedupe key is digest-granular', a
     deliveryWindow: { digestWindowKey: sent[0].deliveryWindowKey }
   });
   assert.equal(keyFields.deliveryWindowKey, sent[0].deliveryWindowKey);
+});
+
+test('channel payload deep links are stable for earnings, macro, and digest contexts', () => {
+  const earningsPayload = buildChannelPayload({
+    userId: 'alice',
+    event: event({ sourceType: 'earnings', eventType: 'earnings' }),
+    channel: 'in_app',
+    deliveryWindow: { key: WINDOW_KEY_IMMEDIATE },
+    context: {}
+  });
+  assert.equal(earningsPayload.deepLinkUrl.includes('tab=for-you'), true);
+
+  const macroPayload = buildChannelPayload({
+    userId: 'alice',
+    event: event({ sourceType: 'macro', eventType: 'cpi', scheduledAt: '2026-04-16T10:00:00.000Z' }),
+    channel: 'in_app',
+    deliveryWindow: { key: WINDOW_KEY_ONE_HOUR_BEFORE },
+    context: {}
+  });
+  assert.equal(macroPayload.deepLinkUrl.includes('tab=calendar'), true);
+
+  const digestPayload = buildChannelPayload({
+    userId: 'alice',
+    event: {
+      id: 'digest:daily_digest:2026-04-15',
+      sourceType: 'news',
+      eventType: 'internal_post',
+      title: 'Digest',
+      summary: 'Summary'
+    },
+    channel: 'in_app',
+    deliveryWindow: { key: WINDOW_KEY_DAILY_DIGEST, digestWindowKey: 'daily_digest:2026-04-15' },
+    context: { digest: true, digestWindowKey: 'daily_digest:2026-04-15' }
+  });
+  assert.equal(digestPayload.deepLinkUrl.includes('tab=for-you'), true);
+  assert.equal(digestPayload.deepLinkUrl.includes('digestWindowKey=daily_digest%3A2026-04-15'), true);
 });
