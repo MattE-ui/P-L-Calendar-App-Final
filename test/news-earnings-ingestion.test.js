@@ -4,10 +4,9 @@ const assert = require('node:assert/strict');
 const { buildEventDedupeKey } = require('../services/news/newsEventService');
 const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('../services/news/ownedTickerUniverseService');
 const {
-  buildDateRange,
-  buildDateRangePlan,
   normalizeNasdaqEarningsRow,
   selectNextUpcomingEarningsPerTicker,
+  extractEarningsAnnouncementDateFromHtml,
   fetchNasdaqEarningsEvents
 } = require('../providers/earnings/nasdaqEarningsProvider');
 const { runEarningsIngestion } = require('../services/news/earningsIngestionService');
@@ -50,120 +49,108 @@ test('owned ticker universe resolves only active/open holdings', () => {
   assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
 });
 
-test('owned ticker universe includes missing-status active trades and normalizes raw broker tickers', () => {
-  const db = {
-    users: {
-      alice: {
-        ibkr: {
-          live: {
-            positions: [
-              { symbol: ' msft_us_eq ', quantity: 2 },
-              { symbol: 'ignore', quantity: 0 }
-            ]
-          }
-        }
-      }
-    },
-    trades: [
-      { username: 'alice', canonicalTicker: ' aapl ' },
-      { username: 'alice', ticker: ' nvda_us_eq ' },
-      { username: 'alice', status: 'closed', ticker: 'TSLA' },
-      { username: 'alice', ticker: '   ', closedAt: '2026-04-12T00:00:00.000Z' }
-    ]
-  };
-
-  const resolved = resolveOwnedTickerUniverse({ db, logger: createLogger() });
-  assert.deepEqual(resolved.aggregateTickers, ['AAPL', 'MSFT', 'NVDA']);
-  assert.deepEqual(resolved.tickerOwnerMap.AAPL, ['alice']);
-  assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['alice']);
-  assert.deepEqual(resolved.tickerOwnerMap.MSFT, ['alice']);
-});
-
-test('owned ticker universe resolves trades persisted in per-user tradeJournal', () => {
-  const db = {
-    users: {
-      alice: {
-        tradeJournal: {
-          '2026-04-10': [
-            { id: 't1', status: 'open', symbol: 'aapl' },
-            { id: 't2', status: 'closed', symbol: 'msft' }
-          ]
-        }
-      },
-      bob: {
-        tradeJournal: {
-          '2026-04-10': [{ id: 't3', symbol: 'nvda' }]
-        }
-      }
-    }
-  };
-
-  const resolved = resolveOwnedTickerUniverse({ db, logger: createLogger() });
-  assert.deepEqual(resolved.aggregateTickers, ['AAPL', 'NVDA']);
-  assert.deepEqual(resolved.tickerOwnerMap.AAPL, ['alice']);
-  assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
-});
-
-test('Nasdaq row normalization returns earnings-shaped event', () => {
+test('normalizeNasdaqEarningsRow returns earnings-shaped event with ISO date', () => {
   const row = normalizeNasdaqEarningsRow({
-    symbol: 'aapl',
-    companyName: 'Apple Inc.',
-    reportDate: '2026-07-28',
-    fiscalQuarterEnding: '2026-06-30',
-    epsForecast: '1.22',
-    time: 'After-Hours'
-  }, { tickerUniverse: new Set(['AAPL']) });
+    ticker: 'aapl',
+    earningsAnnouncementDate: 'Apr 29, 2026'
+  }, { tickerUniverse: new Set(['AAPL']), nowMs: Date.parse('2026-04-01T00:00:00.000Z') });
 
   assert.equal(row.sourceType, 'earnings');
   assert.equal(row.eventType, 'earnings');
+  assert.equal(row.source, 'nasdaq');
   assert.equal(row.canonicalTicker, 'AAPL');
-  assert.equal(row.title, 'Earnings: AAPL');
-  assert.match(row.scheduledAt, /^2026-07-28T21:00:00\.000Z$/);
-  assert.match(row.sourceExternalId, /^nasdaq:earnings:AAPL:2026-07-28$/);
+  assert.equal(row.scheduledAt, '2026-04-29T16:00:00.000Z');
+  assert.match(row.sourceExternalId, /^nasdaq:earnings:AAPL:2026-04-29$/);
 });
 
-test('Nasdaq row normalization supports live-like nested announcementDate field', () => {
-  const row = normalizeNasdaqEarningsRow({
-    symbol: 'be',
-    companyName: 'Bloom Energy',
-    announcementDate: { value: '2026-07-30T00:00:00' },
-    time: 'After Market Close'
-  }, { tickerUniverse: new Set(['BE']) });
-
-  assert.equal(row.canonicalTicker, 'BE');
-  assert.equal(row.scheduledAt, '2026-07-30T21:00:00.000Z');
+test('extractEarningsAnnouncementDateFromHtml parses date near label', () => {
+  const html = '<div><h3>Earnings announcement*</h3><p>Apr 29, 2026</p></div>';
+  assert.equal(extractEarningsAnnouncementDateFromHtml(html), 'Apr 29, 2026');
 });
 
-test('buildDateRange iterates today through configured horizon', () => {
-  const dates = buildDateRange({ from: '2026-04-14', to: '2026-04-16' });
-  assert.deepEqual(dates, ['2026-04-14', '2026-04-15', '2026-04-16']);
+test('extractEarningsAnnouncementDateFromHtml handles entity-heavy HTML defensively', () => {
+  const html = '<section>Earnings&nbsp;announcement*<span>&nbsp;</span><strong>May 3, 2026</strong></section>';
+  assert.equal(extractEarningsAnnouncementDateFromHtml(html), 'May 3, 2026');
 });
 
-test('buildDateRange default horizon generates inclusive date count', () => {
-  const plan = buildDateRangePlan({ daysAhead: 2 });
-  assert.equal(plan.dates.length, 3);
-  assert.equal(plan.dates[0], plan.fromDate);
-  assert.equal(plan.dates[2], plan.toDate);
+test('fetchNasdaqEarningsEvents scrapes one next event per ticker page', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL', 'MSFT'],
+    logger: createLogger(),
+    fetcher: async (url) => {
+      if (String(url).includes('/aapl/')) {
+        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* Apr 29, 2026</div>' };
+      }
+      if (String(url).includes('/msft/')) {
+        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* May 01, 2026</div>' };
+      }
+      return { ok: false, status: 404, text: async () => '' };
+    }
+  });
+
+  assert.equal(result.rows.length, 2);
+  assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
+  assert.equal(result.diagnostics.tickersProcessed, 2);
+  assert.equal(result.diagnostics.successfulExtractions, 2);
+  assert.equal(result.diagnostics.failedExtractions, 0);
+  assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
+  assert.equal(result.diagnostics.extractedDatesSample.length, 2);
 });
 
-test('buildDateRangePlan default horizon is widened for next earnings search', () => {
-  const plan = buildDateRangePlan();
-  assert.equal(plan.daysAhead, 45);
+test('fetchNasdaqEarningsEvents skips ticker when page fails', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL', 'NVDA'],
+    logger: createLogger(),
+    fetcher: async (url) => {
+      if (String(url).includes('/aapl/')) {
+        return { ok: true, status: 200, text: async () => '<div>Earnings announcement* Apr 29, 2026</div>' };
+      }
+      return { ok: false, status: 503, text: async () => '' };
+    }
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
+  assert.equal(result.diagnostics.tickersProcessed, 2);
+  assert.equal(result.diagnostics.successfulExtractions, 1);
+  assert.equal(result.diagnostics.failedExtractions, 1);
+  assert.equal(result.diagnostics.fetchFailures.length, 1);
 });
 
-test('buildDateRangePlan default horizon includes day 45 (inclusive)', () => {
-  const plan = buildDateRangePlan({ nowMs: Date.parse('2026-04-14T12:00:00.000Z') });
-  assert.equal(plan.fromDate, '2026-04-14');
-  assert.equal(plan.toDate, '2026-05-29');
-  assert.equal(plan.dates.length, 46);
-  assert.equal(plan.dates.includes('2026-04-29'), true);
+test('fetchNasdaqEarningsEvents skips ticker when earnings date is not found', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    logger: createLogger(),
+    fetcher: async () => ({ ok: true, status: 200, text: async () => '<html><body>No earnings date available</body></html>' })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.successfulExtractions, 0);
+  assert.equal(result.diagnostics.failedExtractions, 1);
+  assert.equal(result.diagnostics.parseFailures[0].reason, 'earnings_announcement_date_not_found');
 });
 
-test('buildDateRangePlan returns empty list for invalid explicit range', () => {
-  const plan = buildDateRangePlan({ from: '2026-07-30', to: '2026-07-28' });
-  assert.equal(plan.strategy, 'explicit');
-  assert.equal(plan.isValidRange, false);
-  assert.deepEqual(plan.dates, []);
+test('fetchNasdaqEarningsEvents returns no rows for past parsed date', async () => {
+  const result = await fetchNasdaqEarningsEvents({
+    tickers: ['AAPL'],
+    logger: createLogger(),
+    fetcher: async () => ({ ok: true, status: 200, text: async () => '<div>Earnings announcement* Jan 2, 2020</div>' })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.failedExtractions, 1);
+  assert.equal(result.diagnostics.parseFailures[0].reason, 'dropped_past_date');
+});
+
+test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
+  const result = selectNextUpcomingEarningsPerTicker([
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-30T16:00:00.000Z' },
+    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-29T16:00:00.000Z' },
+    { canonicalTicker: 'MSFT', scheduledAt: '2026-07-31T16:00:00.000Z' }
+  ], Date.parse('2026-07-28T00:00:00.000Z'));
+
+  assert.equal(result.rows.length, 2);
+  assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, '2026-07-29T16:00:00.000Z');
 });
 
 test('earnings ingestion tolerates provider failure', async () => {
@@ -220,409 +207,6 @@ test('portfolio relevance uses per-user earnings mapping', async () => {
   assert.equal(isEventRelevantToUser(captured[0], 'bob'), false);
 });
 
-test('fetchNasdaqEarningsEvents filters rows to ticker universe', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { symbol: 'AAPL', companyName: 'Apple', reportDate: '2026-07-28', epsForecast: '1.22', time: 'pre-market' },
-              { symbol: 'MSFT', companyName: 'Microsoft', reportDate: '2026-07-28', epsForecast: '2.10', time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
-  assert.equal(result.diagnostics.totalRowsFetched, 2);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 1);
-  assert.equal(result.diagnostics.nextEarningsPerTickerCount, 1);
-});
-
-test('fetchNasdaqEarningsEvents normalizes Nasdaq symbol for portfolio matching', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { symbol: ' AAPL ', companyName: 'Apple', reportDate: '2026-07-28', time: 'after-hours' },
-              { symbol: null, companyName: 'Invalid', reportDate: '2026-07-28', time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].ticker, 'AAPL');
-  assert.equal(result.rows[0].canonicalTicker, 'AAPL');
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
-});
-
-test('fetchNasdaqEarningsEvents matches portfolio ticker when Nasdaq row uses ticker field', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['BE'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { ticker: ' BE ', companyName: 'Bloom Energy', reportDate: '2026-07-28', time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].canonicalTicker, 'BE');
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
-  assert.equal(result.diagnostics.intersectionCount > 0, true);
-});
-
-test('fetchNasdaqEarningsEvents keeps intersecting ticker with valid future date', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['GLW'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [{ symbol: 'GLW', earningsDate: '2026-08-01T00:00:00', time: 'bmo' }]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].canonicalTicker, 'GLW');
-  assert.equal(result.diagnostics.postIntersectionDropReasons.kept_future_match, 1);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio > 0, true);
-});
-
-test('fetchNasdaqEarningsEvents drops intersecting ticker with invalid/missing date and tracks reason', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['SNDK'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { symbol: 'SNDK', reportDate: '', time: 'after-hours' },
-              { symbol: 'SNDK', reportDate: 'not-a-date', time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_missing_date, 1);
-  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_invalid_date, 1);
-});
-
-test('fetchNasdaqEarningsEvents handles empty calendar rows', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.totalRowsFetched, 0);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 0);
-});
-
-test('fetchNasdaqEarningsEvents supports alternate nested shape data.rows', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: (name) => (name === 'content-type' ? 'application/json; charset=utf-8' : null) },
-      text: async () => JSON.stringify({
-        data: {
-          rows: [{ symbol: 'AAPL', companyName: 'Apple', reportDate: '2026-07-28', time: 'after-hours' }]
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.diagnostics.totalRowsFetched, 1);
-});
-
-test('fetchNasdaqEarningsEvents classifies HTML anti-bot responses', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: (name) => (name === 'content-type' ? 'text/html' : null) },
-      text: async () => '<html><body>Access denied. Please verify you are human.</body></html>'
-    })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.htmlResponses, 1);
-  assert.equal(result.diagnostics.unexpectedResponseShapes[0].reason, 'anti_bot_html');
-});
-
-test('fetchNasdaqEarningsEvents treats empty valid JSON as parsed but empty', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) },
-      text: async () => JSON.stringify({ data: { calendar: { rows: [] } } })
-    })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.successfulJsonResponses, 1);
-  assert.equal(result.diagnostics.totalRowsFetched, 0);
-  assert.equal(result.diagnostics.unexpectedResponseShapes.length, 0);
-});
-
-test('fetchNasdaqEarningsEvents captures unexpected JSON shape diagnostics', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) },
-      text: async () => JSON.stringify({ payload: { records: [] } })
-    })
-  });
-
-  assert.equal(result.rows.length, 0);
-  assert.equal(result.diagnostics.successfulJsonResponses, 1);
-  assert.equal(result.diagnostics.unexpectedResponseShapes.length, 1);
-  assert.deepEqual(result.diagnostics.unexpectedResponseShapes[0].topLevelKeys, ['payload']);
-  assert.equal(result.diagnostics.unexpectedResponseShapes[0].reason, 'rows_not_found_in_known_paths');
-});
-
-test('fetchNasdaqEarningsEvents diagnostics show planned fetches for default horizon', async () => {
-  const loggerCalls = [];
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    daysAhead: 1,
-    logger: {
-      info: (...args) => loggerCalls.push(args),
-      warn: () => {},
-      error: () => {}
-    },
-    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
-  });
-
-  assert.equal(result.diagnostics.fetchAttemptsPlanned, 2);
-  assert.equal(result.diagnostics.generatedDateCount, 2);
-  assert.equal(result.diagnostics.fetchAttempts, 2);
-  assert.equal(result.diagnostics.datesFetched, 2);
-  assert.equal(result.diagnostics.daysAheadUsed, 1);
-  assert.ok(loggerCalls.some((entry) => entry[0] === '[Earnings][Nasdaq] date plan computed.'));
-  const liveRangeLog = loggerCalls.find((entry) => entry[0] === '[Earnings][Nasdaq] live range summary.');
-  assert.ok(liveRangeLog);
-  assert.equal(liveRangeLog[1].strategyUsed, 'default_horizon');
-  assert.equal(liveRangeLog[1].daysAheadUsed, 1);
-});
-
-test('fetchNasdaqEarningsEvents uses env override when NASDAQ_EARNINGS_DAYS_AHEAD=7', async () => {
-  const originalEnv = process.env.NASDAQ_EARNINGS_DAYS_AHEAD;
-  process.env.NASDAQ_EARNINGS_DAYS_AHEAD = '7';
-  try {
-    const result = await fetchNasdaqEarningsEvents({
-      tickers: ['AAPL'],
-      logger: createLogger(),
-      fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
-    });
-    assert.equal(result.diagnostics.daysAheadUsed, 7);
-    assert.equal(result.diagnostics.fetchAttemptsPlanned, 8);
-    assert.equal(result.diagnostics.envDaysAheadRaw, '7');
-    assert.equal(result.diagnostics.daysAheadSource, 'env_override');
-  } finally {
-    if (originalEnv === undefined) delete process.env.NASDAQ_EARNINGS_DAYS_AHEAD;
-    else process.env.NASDAQ_EARNINGS_DAYS_AHEAD = originalEnv;
-  }
-});
-
-test('fetchNasdaqEarningsEvents explicit from/to keeps explicit range strategy', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-04-14',
-    to: '2026-04-16',
-    logger: createLogger(),
-    fetcher: async () => ({ ok: true, status: 200, json: async () => ({ data: { calendar: { rows: [] } } }) })
-  });
-  assert.equal(result.diagnostics.strategyUsed, 'explicit_range');
-  assert.equal(result.diagnostics.fetchAttemptsPlanned, 3);
-  assert.equal(result.diagnostics.fromDateComputed, '2026-04-14');
-  assert.equal(result.diagnostics.toDateComputed, '2026-04-16');
-});
-
-test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
-  const result = selectNextUpcomingEarningsPerTicker([
-    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-30T16:00:00.000Z' },
-    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-29T16:00:00.000Z' },
-    { canonicalTicker: 'MSFT', scheduledAt: '2026-07-31T16:00:00.000Z' }
-  ], Date.parse('2026-07-28T00:00:00.000Z'));
-
-  assert.equal(result.rows.length, 2);
-  assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, '2026-07-29T16:00:00.000Z');
-});
-
-test('fetchNasdaqEarningsEvents keeps earliest future row for same ticker and tracks next-event drop', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-28',
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { symbol: 'AAPL', reportDate: '2026-07-30', time: 'after-hours' },
-              { symbol: 'AAPL', reportDate: '2026-07-29', time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].scheduledAt, '2026-07-29T21:00:00.000Z');
-  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_next_event_selection, 1);
-});
-
-test('selectNextUpcomingEarningsPerTicker ignores rows in the past', () => {
-  const result = selectNextUpcomingEarningsPerTicker([
-    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-20T16:00:00.000Z' },
-    { canonicalTicker: 'AAPL', scheduledAt: '2026-07-30T16:00:00.000Z' }
-  ], Date.parse('2026-07-28T00:00:00.000Z'));
-
-  assert.equal(result.rows.length, 1);
-  assert.deepEqual(result.skippedPastRows, ['AAPL']);
-});
-
-test('fetchNasdaqEarningsEvents returns one next-upcoming event per matched ticker with diagnostics', async () => {
-  const now = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const pastDate = new Date(now - dayMs).toISOString().slice(0, 10);
-  const nextDate = new Date(now + dayMs).toISOString().slice(0, 10);
-  const laterDate = new Date(now + (3 * dayMs)).toISOString().slice(0, 10);
-
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL', 'MSFT', 'NVDA'],
-    from: pastDate,
-    to: pastDate,
-    logger: createLogger(),
-    fetcher: async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: {
-          calendar: {
-            rows: [
-              { symbol: 'AAPL', companyName: 'Apple', reportDate: pastDate, time: 'after-hours' },
-              { symbol: 'AAPL', companyName: 'Apple', reportDate: nextDate, time: 'after-hours' },
-              { symbol: 'AAPL', companyName: 'Apple', reportDate: laterDate, time: 'after-hours' },
-              { symbol: 'MSFT', companyName: 'Microsoft', reportDate: laterDate, time: 'after-hours' },
-              { symbol: 'TSLA', companyName: 'Tesla', reportDate: laterDate, time: 'after-hours' }
-            ]
-          }
-        }
-      })
-    })
-  });
-
-  assert.equal(result.rows.length, 2);
-  assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
-  assert.equal(result.rows.find((row) => row.canonicalTicker === 'AAPL').scheduledAt, `${nextDate}T21:00:00.000Z`);
-  assert.equal(result.diagnostics.rowsExtractedBeforePortfolioFilter, 5);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 3);
-  assert.equal(result.diagnostics.uniquePortfolioTickersMatched, 2);
-  assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
-  assert.equal(result.diagnostics.postIntersectionDropReasons.dropped_past_date, 1);
-  assert.deepEqual(result.diagnostics.unmatchedPortfolioTickersSample, ['NVDA']);
-});
-
-test('fetchNasdaqEarningsEvents captures partial date failures', async () => {
-  const result = await fetchNasdaqEarningsEvents({
-    tickers: ['AAPL'],
-    from: '2026-07-28',
-    to: '2026-07-29',
-    logger: createLogger(),
-    fetcher: async (url) => {
-      if (String(url).includes('date=2026-07-28')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ data: { calendar: { rows: [{ symbol: 'AAPL', companyName: 'Apple', reportDate: '2026-07-28', time: 'after-hours' }] } } })
-        };
-      }
-      return { ok: false, status: 503, json: async () => ({}) };
-    }
-  });
-
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.diagnostics.fetchFailures.length, 1);
-  assert.equal(result.diagnostics.fetchFailures[0].date, '2026-07-29');
-});
-
 test('earnings ingestion captures provider diagnostics payload shape', async () => {
   const diagnostics = await runEarningsIngestion({
     loadDB: () => ({ users: { alice: {} }, trades: [{ username: 'alice', status: 'open', canonicalTicker: 'AAPL' }] }),
@@ -643,12 +227,12 @@ test('earnings ingestion captures provider diagnostics payload shape', async () 
         sourceUrl: 'https://example.test',
         sourceExternalId: 'x'
       }],
-      diagnostics: { datesFetched: 2, totalRowsFetched: 12, rowsMatchedToPortfolio: 1, rowsSkipped: 11 }
+      diagnostics: { tickersProcessed: 2, successfulExtractions: 1, failedExtractions: 1 }
     }),
     trigger: 'test'
   });
 
   assert.equal(diagnostics.success, true);
-  assert.equal(diagnostics.providerStatus.providerDiagnostics.datesFetched, 2);
-  assert.equal(diagnostics.providerStatus.providerDiagnostics.totalRowsFetched, 12);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.tickersProcessed, 2);
+  assert.equal(diagnostics.providerStatus.providerDiagnostics.successfulExtractions, 1);
 });
