@@ -1533,17 +1533,49 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
   const resolvedFillPrice = Number.isFinite(Number(fillPrice)) ? Number(fillPrice) : null;
   const brokerEventKey = String(eventKey || `${trade?.id || 'unknown'}|trim|${trimDate || ''}|${trimPct}|${resolvedFillPrice || 'n/a'}`).trim();
   const nowIso = new Date().toISOString();
+  const trimmedQuantity = Number(previousQty) - Number(newQty);
+  const closeFingerprintMeta = buildTrading212CloseBusinessFingerprint({
+    accountId: String(trade?.trading212AccountId || '').trim(),
+    canonicalTicker: ticker,
+    brokerTicker: String(trade?.symbol || trade?.trading212Ticker || '').trim(),
+    isin: String(trade?.isin || trade?.instrumentIsin || '').trim(),
+    instrumentId: String(trade?.trading212Id || trade?.trading212PositionKey || '').trim(),
+    side: 'SELL',
+    classification: 'partial_sell',
+    quantity: Number.isFinite(trimmedQuantity) ? trimmedQuantity : null,
+    remainingQuantity: Number(newQty),
+    sourceTradeId: String(trade?.id || '').trim(),
+    providerEventId: '',
+    providerOrderId: '',
+    providerEventKey: brokerEventKey,
+    filledAt: String(trimDate || '').trim(),
+    reconciliationTimestamp: nowIso
+  });
+  const businessFingerprint = closeFingerprintMeta.fingerprint;
   let alertsCreated = 0;
   let notificationsCreated = 0;
   let duplicates = 0;
   for (const group of groups) {
     const duplicate = db.tradeGroupAlerts.find((alert) => (
       alert.group_id === group.id
-      && String(alert.side || '').toUpperCase() === 'SELL'
-      && String(alert.broker_event_key || '') === brokerEventKey
+      && (
+        (businessFingerprint && String(alert.business_event_fingerprint || '') === businessFingerprint)
+        || (
+          String(alert.side || '').toUpperCase() === 'SELL'
+          && String(alert.broker_event_key || '') === brokerEventKey
+        )
+      )
     ));
     if (duplicate) {
       duplicates += 1;
+      console.info('[TradeGroup][TrimAlert]', {
+        stage: 'trim_alert_deduped',
+        leader: leaderUsername,
+        groupId: group.id,
+        duplicateAlertId: duplicate.id,
+        businessFingerprint: businessFingerprint || null,
+        fingerprintInputs: closeFingerprintMeta.components
+      });
       continue;
     }
     const alert = {
@@ -1557,6 +1589,7 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
       side: 'SELL',
       alert_classification: 'partial_sell',
       position_event_type: 'POSITION_TRIM',
+      business_event_fingerprint: businessFingerprint || null,
       trim_pct: trimPct,
       fill_price: resolvedFillPrice,
       closure_reason: String(reason || '').trim() || null,
@@ -1574,7 +1607,9 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
         groupId: group.id,
         type: 'trade_group_alert',
         alertId: alert.id,
-        dedupeKey: `trade-trim:${brokerEventKey}:${group.id}`
+        dedupeKey: businessFingerprint
+          ? `trade-trim:${businessFingerprint}:${group.id}`
+          : `trade-trim:${brokerEventKey}:${group.id}`
       });
       if (created) {
         notificationsCreated += 1;
@@ -1592,6 +1627,8 @@ function emitTradeGroupTrimAlertForTrade(db, leaderUsername, trade, {
     trimPct,
     selectedFillPrice: resolvedFillPrice,
     brokerEventKey,
+    businessFingerprint: businessFingerprint || null,
+    fingerprintInputs: closeFingerprintMeta.components,
     alertsCreated,
     notificationsCreated,
     duplicates
@@ -1795,6 +1832,8 @@ function buildTrading212CloseBusinessFingerprint({
     providerOrderKey: providerOrderKey || null
   };
   // Keep canonical business key stable across snapshot-disappearance and history-fill paths.
+  // Trim-vs-close remains distinct via `classification` plus `remainingKey` (trim > 0, close = 0),
+  // and sequential trims on the same symbol avoid collapse when their resulting remaining size differs.
   // Source/provider identifiers are retained for observability but not required for equality.
   const fingerprint = [
     't212-close-biz-v1',
@@ -16654,6 +16693,40 @@ app.get('/api/social/trade-groups/:groupId/alerts', auth, (req, res) => {
     }));
   saveDB(db);
   res.json({ alerts });
+});
+
+app.get('/api/admin/trade-groups/:groupId/alerts/fingerprints', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
+  const db = loadDB();
+  ensureSocialTables(db);
+  const group = db.tradeGroups.find(item => item.id === req.params.groupId && item.is_active !== false);
+  if (!group) return res.status(404).json({ error: 'Trade group not found.' });
+  const fingerprintCounts = new Map();
+  for (const alert of db.tradeGroupAlerts) {
+    if (alert.group_id !== group.id) continue;
+    const fingerprint = String(alert.business_event_fingerprint || '').trim();
+    if (!fingerprint) continue;
+    fingerprintCounts.set(fingerprint, (fingerprintCounts.get(fingerprint) || 0) + 1);
+  }
+  const alerts = db.tradeGroupAlerts
+    .filter(alert => alert.group_id === group.id)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .map((alert) => {
+      const fingerprint = String(alert.business_event_fingerprint || '').trim();
+      return {
+        alert_id: alert.id,
+        created_at: alert.created_at,
+        ticker: alert.ticker || null,
+        side: String(alert.side || '').toUpperCase() || null,
+        alert_classification: alert.alert_classification || null,
+        position_event_type: alert.position_event_type || null,
+        business_event_fingerprint: fingerprint || null,
+        duplicate_count_for_fingerprint: fingerprint ? (fingerprintCounts.get(fingerprint) || 0) : 0,
+        broker_event_key: alert.broker_event_key || null,
+        source_trade_id: alert.source_trade_id || null
+      };
+    });
+  saveDB(db);
+  res.json({ group_id: group.id, alerts });
 });
 
 app.get('/api/social/trade-groups/notifications/unread', auth, (req, res) => {
