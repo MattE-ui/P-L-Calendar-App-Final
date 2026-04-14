@@ -56,9 +56,42 @@ function parseScheduledAt(dateOnly, sessionTime) {
   return `${date}T16:00:00.000Z`;
 }
 
+function firstNonEmptyString(values = []) {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+function extractRawNasdaqSymbol(row) {
+  return firstNonEmptyString([row?.symbol, row?.ticker, row?.securitySymbol, row?.issueSymbol, row?.assetSymbol]);
+}
+
+function extractNasdaqSymbolDiagnostics(row) {
+  const rawSymbol = extractRawNasdaqSymbol(row);
+  const normalizedTicker = normalizeTicker(rawSymbol);
+  const normalizedCanonicalTicker = normalizedTicker ? normalizedTicker.toUpperCase() : '';
+  return {
+    rawSymbol: typeof row?.symbol === 'string' ? row.symbol : null,
+    rawTicker: typeof row?.ticker === 'string' ? row.ticker : null,
+    rawSecuritySymbol: typeof row?.securitySymbol === 'string' ? row.securitySymbol : null,
+    normalizedTicker: normalizedTicker || null,
+    normalizedCanonicalTicker: normalizedCanonicalTicker || null
+  };
+}
+
+function toCsvPreview(values, limit = 12) {
+  return (Array.isArray(values) ? values : [])
+    .filter(Boolean)
+    .slice(0, limit)
+    .join(', ');
+}
+
 function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
-  if (!row || typeof row.symbol !== 'string') return null;
-  const rawSymbol = row.symbol.trim();
+  if (!row) return null;
+  const rawSymbol = extractRawNasdaqSymbol(row);
   if (!rawSymbol) return null;
   const ticker = normalizeTicker(rawSymbol);
   if (!ticker) return null;
@@ -285,15 +318,25 @@ async function fetchNasdaqEarningsEvents({
     rowsSkipped: 0,
     rowsSkippedPastDate: 0,
     extractedSymbolsSample: [],
+    extractedSymbolsSampleCsv: '',
     portfolioTickersSample: Array.from(tickerUniverse).slice(0, 10),
+    portfolioTickersSampleCsv: '',
     matchedTickersSample: [],
+    matchedTickersSampleCsv: '',
     unmatchedPortfolioTickersSample: [],
+    unmatchedPortfolioTickersSampleCsv: '',
+    extractedSymbolSetSize: 0,
+    portfolioTickerSetSize: tickerUniverse.size,
+    intersectionCount: 0,
+    intersectionSampleCsv: '',
+    normalizedRowSample: null,
     successfulJsonResponses: 0,
     htmlResponses: 0,
     nonJsonTextResponses: 0,
     unknownFormatResponses: 0,
     elapsedMs: 0
   };
+  diagnostics.portfolioTickersSampleCsv = toCsvPreview(diagnostics.portfolioTickersSample);
 
   logger.info('[Earnings][Nasdaq] date plan computed.', {
     fromDateRaw: diagnostics.fromDateRaw,
@@ -306,7 +349,7 @@ async function fetchNasdaqEarningsEvents({
     fetchAttemptsPlanned: diagnostics.fetchAttemptsPlanned,
     dateRangeStrategy: diagnostics.dateRangeStrategy,
     isValidRange: diagnostics.isValidRange,
-    portfolioTickersSample: diagnostics.portfolioTickersSample
+    portfolioTickersSampleCsv: toCsvPreview(diagnostics.portfolioTickersSample)
   });
   logger.info('[Earnings][Nasdaq] live range summary.', {
     daysAheadUsed: diagnostics.daysAheadUsed,
@@ -325,6 +368,8 @@ async function fetchNasdaqEarningsEvents({
   }
 
   const matchedRows = [];
+  const extractedSymbolSet = new Set();
+  const normalizedRowSampleCandidates = [];
 
   for (const date of requestedDates) {
     const url = buildRequestUrl(baseUrl, date);
@@ -429,8 +474,15 @@ async function fetchNasdaqEarningsEvents({
     diagnostics.rowsExtractedBeforePortfolioFilter += rows.length;
 
     for (const row of rows) {
-      if (diagnostics.extractedSymbolsSample.length < 10 && typeof row?.symbol === 'string') {
-        diagnostics.extractedSymbolsSample.push(row.symbol.trim());
+      const symbolDiagnostics = extractNasdaqSymbolDiagnostics(row);
+      if (symbolDiagnostics.normalizedCanonicalTicker) {
+        extractedSymbolSet.add(symbolDiagnostics.normalizedCanonicalTicker);
+      }
+      if (diagnostics.extractedSymbolsSample.length < 12 && symbolDiagnostics.normalizedCanonicalTicker) {
+        diagnostics.extractedSymbolsSample.push(symbolDiagnostics.normalizedCanonicalTicker);
+      }
+      if (normalizedRowSampleCandidates.length < 3) {
+        normalizedRowSampleCandidates.push(symbolDiagnostics);
       }
       const normalized = normalizeNasdaqEarningsRow(row, { tickerUniverse });
       if (!normalized) {
@@ -450,6 +502,16 @@ async function fetchNasdaqEarningsEvents({
   diagnostics.nextEarningsPerTickerCount = dedupedNext.rows.length;
   diagnostics.matchedTickersSample = Array.from(matchedTickers).slice(0, 10);
   diagnostics.unmatchedPortfolioTickersSample = unmatchedPortfolioTickers.slice(0, 10);
+  diagnostics.extractedSymbolSetSize = extractedSymbolSet.size;
+  diagnostics.portfolioTickerSetSize = tickerUniverse.size;
+  const intersectionTickers = Array.from(extractedSymbolSet).filter((ticker) => tickerUniverse.has(ticker));
+  diagnostics.intersectionCount = intersectionTickers.length;
+  diagnostics.intersectionSampleCsv = toCsvPreview(intersectionTickers);
+  diagnostics.extractedSymbolsSampleCsv = toCsvPreview(diagnostics.extractedSymbolsSample);
+  diagnostics.portfolioTickersSampleCsv = toCsvPreview(diagnostics.portfolioTickersSample);
+  diagnostics.matchedTickersSampleCsv = toCsvPreview(diagnostics.matchedTickersSample);
+  diagnostics.unmatchedPortfolioTickersSampleCsv = toCsvPreview(diagnostics.unmatchedPortfolioTickersSample);
+  diagnostics.normalizedRowSample = normalizedRowSampleCandidates[0] || null;
 
   diagnostics.rowsMismatchedToPortfolio = Math.max(
     diagnostics.rowsExtractedBeforePortfolioFilter - diagnostics.rowsMatchedToPortfolio,
@@ -474,10 +536,15 @@ async function fetchNasdaqEarningsEvents({
     nextEarningsPerTickerCount: diagnostics.nextEarningsPerTickerCount,
     rowsMismatchedToPortfolio: diagnostics.rowsMismatchedToPortfolio,
     rowsSkippedPastDate: diagnostics.rowsSkippedPastDate,
-    extractedSymbolsSample: diagnostics.extractedSymbolsSample,
-    portfolioTickersSample: diagnostics.portfolioTickersSample,
-    matchedTickersSample: diagnostics.matchedTickersSample,
-    unmatchedPortfolioTickersSample: diagnostics.unmatchedPortfolioTickersSample,
+    extractedSymbolSetSize: diagnostics.extractedSymbolSetSize,
+    portfolioTickerSetSize: diagnostics.portfolioTickerSetSize,
+    intersectionCount: diagnostics.intersectionCount,
+    intersectionSampleCsv: diagnostics.intersectionSampleCsv,
+    extractedSymbolsSampleCsv: diagnostics.extractedSymbolsSampleCsv,
+    portfolioTickersSampleCsv: diagnostics.portfolioTickersSampleCsv,
+    matchedTickersSampleCsv: diagnostics.matchedTickersSampleCsv,
+    unmatchedPortfolioTickersSampleCsv: diagnostics.unmatchedPortfolioTickersSampleCsv,
+    normalizedRowSample: diagnostics.normalizedRowSample,
     unexpectedResponseShapes: compactUnexpectedReasons
   });
 
