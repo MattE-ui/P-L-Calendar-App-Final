@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News Diagnostics | Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="container">
+    <section class="tool-card devtools-card">
+      <div class="section-header">
+        <div>
+          <p class="tool-overline">Admin</p>
+          <h2>News personalization diagnostics</h2>
+        </div>
+        <div>
+          <label for="time-range">Time range</label>
+          <select id="time-range">
+            <option value="1h">Last 1h</option>
+            <option value="24h" selected>Last 24h</option>
+            <option value="7d">Last 7d</option>
+          </select>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+      </div>
+      <pre id="overview-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Ranking distribution</h3>
+      <pre id="ranking-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Relevance distribution</h3>
+      <pre id="relevance-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Threshold drop-offs</h3>
+      <pre id="thresholds-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Notification blocks</h3>
+      <pre id="notifications-panel" class="raw-json">Loading…</pre>
+    </section>
+
+    <section class="tool-card devtools-card">
+      <h3>Source contribution</h3>
+      <pre id="sources-panel" class="raw-json">Loading…</pre>
+    </section>
+  </main>
+
+  <script src="/static/admin-news-diagnostics.js"></script>
+</body>
+</html>

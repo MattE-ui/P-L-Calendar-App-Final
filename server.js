@@ -24,6 +24,14 @@ const { runMacroIngestion } = require('./services/news/macroIngestionService');
 const { runEarningsIngestion } = require('./services/news/earningsIngestionService');
 const { runHeadlineIngestion, getHeadlineIngestionFeatureState } = require('./services/news/headlineIngestionService');
 const {
+  getNewsDiagnosticsOverview,
+  getRankingDiagnostics,
+  getRelevanceDistribution,
+  getThresholdDropoffStats,
+  getNotificationDiagnostics,
+  getSourceContributionStats
+} = require('./services/news/newsDiagnosticsService');
+const {
   runNewsNotificationFanout,
   WINDOW_KEY_IMMEDIATE,
   WINDOW_KEY_ONE_DAY_BEFORE,
@@ -3569,6 +3577,16 @@ function ensureNewsEventTables(db) {
   db.newsNotificationStatus.outboxLastAttemptedRunAt ||= null;
   db.newsNotificationStatus.outboxLastSuccessfulRunAt ||= null;
   db.newsNotificationStatus.lastOutboxDiagnostics ||= null;
+  if (!db.newsDiagnosticsSnapshots || typeof db.newsDiagnosticsSnapshots !== 'object') {
+    db.newsDiagnosticsSnapshots = {
+      ranking: [],
+      thresholds: [],
+      notifications: []
+    };
+  }
+  db.newsDiagnosticsSnapshots.ranking = Array.isArray(db.newsDiagnosticsSnapshots.ranking) ? db.newsDiagnosticsSnapshots.ranking : [];
+  db.newsDiagnosticsSnapshots.thresholds = Array.isArray(db.newsDiagnosticsSnapshots.thresholds) ? db.newsDiagnosticsSnapshots.thresholds : [];
+  db.newsDiagnosticsSnapshots.notifications = Array.isArray(db.newsDiagnosticsSnapshots.notifications) ? db.newsDiagnosticsSnapshots.notifications : [];
   if (!db.newsEventIndexCatalog || typeof db.newsEventIndexCatalog !== 'object') {
     db.newsEventIndexCatalog = {
       sourceType: true,
@@ -3629,6 +3647,30 @@ function ensureNewsEventTables(db) {
     db.newsIngestionStatus.headlines.providerStates ||= {};
     db.newsIngestionStatus.headlines.lastProviderStatuses ||= [];
   }
+}
+
+function resolveDiagnosticsTimeRange(rawValue) {
+  const value = String(rawValue || '').trim().toLowerCase();
+  return ['1h', '24h', '7d'].includes(value) ? value : '24h';
+}
+
+function appendBoundedSnapshot(list, snapshot, max = 336) {
+  const next = Array.isArray(list) ? list : [];
+  next.push(snapshot);
+  if (next.length > max) {
+    next.splice(0, next.length - max);
+  }
+  return next;
+}
+
+function buildNewsDiagnosticsServiceOptions(now, db) {
+  return {
+    now: now || new Date().toISOString(),
+    loadDB: () => db,
+    listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
+    resolveUserTickerUniverse: (userId) => resolveUserTickerUniverse(db, userId),
+    resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(db, userId)
+  };
 }
 
 function appendUserEventDeliveryLog(db, payload = {}) {
@@ -13666,6 +13708,9 @@ app.get('/devtools.html', auth, (req, res) => {
   }
   res.sendFile(path.join(__dirname,'devtools.html'));
 });
+app.get('/admin/news-diagnostics', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin-news-diagnostics.html'));
+});
 app.get('/site-announcements-admin.html', auth, requireAuthenticatedUser, requireOwner, (req, res) => {
   res.sendFile(path.join(__dirname, 'site-announcements-admin.html'));
 });
@@ -18809,6 +18854,72 @@ app.put('/api/admin/news/sources/:sourceName', auth, requireAuthenticatedUser, r
   } catch (error) {
     res.status(400).json({ error: error?.message || 'Invalid source patch.' });
   }
+});
+
+app.get('/api/admin/news/diagnostics/overview', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getNewsDiagnosticsOverview({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/ranking', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getRankingDiagnostics({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/relevance', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getRelevanceDistribution({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/thresholds', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getThresholdDropoffStats({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/notifications', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getNotificationDiagnostics({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
+});
+
+app.get('/api/admin/news/diagnostics/sources', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  ensureNewsEventTables(db);
+  const timeRange = resolveDiagnosticsTimeRange(req.query?.timeRange);
+  const data = getSourceContributionStats({
+    ...buildNewsDiagnosticsServiceOptions(new Date().toISOString(), db),
+    timeRange
+  });
+  res.json({ data });
 });
 
 app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
@@ -25645,6 +25756,30 @@ async function runHeadlineIngestionJob(trigger = 'scheduler') {
       rowsDeduped: diagnostics?.totals?.rowsDeduped || 0,
       capApplications: diagnostics?.capApplications || {}
     });
+
+    try {
+      const db = loadDB();
+      ensureNewsEventTables(db);
+      const nowIso = new Date().toISOString();
+      const options = buildNewsDiagnosticsServiceOptions(nowIso, db);
+      const rankingSummary = getRankingDiagnostics({ ...options, timeRange: '24h' });
+      const thresholdSummary = getThresholdDropoffStats({ ...options, timeRange: '24h' });
+      db.newsDiagnosticsSnapshots.ranking = appendBoundedSnapshot(db.newsDiagnosticsSnapshots.ranking, { createdAt: nowIso, trigger, timeRange: '24h', summary: rankingSummary });
+      db.newsDiagnosticsSnapshots.thresholds = appendBoundedSnapshot(db.newsDiagnosticsSnapshots.thresholds, { createdAt: nowIso, trigger, timeRange: '24h', summary: thresholdSummary });
+      saveDB(db);
+      console.info('[NewsDiagnostics][Summary]', {
+        trigger,
+        recordedAt: nowIso,
+        rankingAvgBalanced: rankingSummary?.byMode?.balanced?.distribution?.avg || 0,
+        thresholdDropPct: {
+          latest: thresholdSummary?.thresholds?.latest?.percentDropped || 0,
+          forYou: thresholdSummary?.thresholds?.for_you?.percentDropped || 0,
+          notification: thresholdSummary?.thresholds?.notification?.percentDropped || 0
+        }
+      });
+    } catch (error) {
+      console.warn('[NewsDiagnostics] unable to persist ranking/threshold summary.', error?.message || error);
+    }
     return diagnostics;
   } catch (error) {
     console.error('[HeadlineIngestion] job run failed.', { trigger, error: error?.message || error });
@@ -25737,7 +25872,31 @@ async function runNewsNotificationFanoutJob(trigger = 'scheduler') {
       }))
       : [];
     dbAfter.newsNotificationStatus.recentErrorSummaries = nextErrorSummaries;
+    const blockReasons = {
+      below_threshold: Number(diagnostics?.eligibility?.reasons?.headline_ranking_threshold || 0),
+      preference_disabled: Number(diagnostics?.eligibility?.reasons?.event_type_disabled || 0) + Number(diagnostics?.eligibility?.reasons?.delivery_window_disabled || 0),
+      not_relevant: Number(diagnostics?.eligibility?.reasons?.portfolio_only_blocked || 0) + Number(diagnostics?.eligibility?.reasons?.source_of_truth_blocked || 0),
+      channel_disabled: 0
+    };
+    const byRankingMode = Object.entries(diagnostics?.eligibility?.byMode || {}).reduce((acc, [mode, stats]) => {
+      acc[mode] = Number(stats?.allowed || 0) + Number(stats?.blocked || 0);
+      return acc;
+    }, {});
+    const byEventType = { stock_news: 0, world_news: 0, earnings: 0, macro: 0 };
+    const byRelevanceTier = { portfolio: 0, watchlist: 0, global_high_signal: 0, neutral: 0 };
+    const snapshot = {
+      createdAt: new Date().toISOString(),
+      trigger,
+      eligible: Number(diagnostics?.eligibility?.allowed || 0),
+      blocked: Number(diagnostics?.eligibility?.blocked || 0),
+      blockReasons,
+      byRankingMode,
+      byRelevanceTier,
+      byEventType
+    };
+    dbAfter.newsDiagnosticsSnapshots.notifications = appendBoundedSnapshot(dbAfter.newsDiagnosticsSnapshots.notifications, snapshot);
     saveDB(dbAfter);
+    console.info('[NewsDiagnostics][NotificationSummary]', snapshot);
 
     console.info('[NewsFanout] job run end.', {
       trigger,
