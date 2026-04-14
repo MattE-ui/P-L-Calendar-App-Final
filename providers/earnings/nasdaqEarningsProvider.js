@@ -56,9 +56,13 @@ function parseScheduledAt(dateOnly, sessionTime) {
 }
 
 function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
-  const ticker = normalizeTicker(row?.symbol);
+  if (!row || typeof row.symbol !== 'string') return null;
+  const rawSymbol = row.symbol.trim();
+  if (!rawSymbol) return null;
+  const ticker = normalizeTicker(rawSymbol);
   if (!ticker) return null;
-  if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(ticker)) return null;
+  const canonicalTicker = ticker.toUpperCase();
+  if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(canonicalTicker)) return null;
 
   const reportDate = normalizeDateOnly(row?.reportDate);
   if (!reportDate) return null;
@@ -75,7 +79,7 @@ function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
     sourceType: 'earnings',
     eventType: 'earnings',
     ticker,
-    canonicalTicker: ticker,
+    canonicalTicker,
     title: `Earnings: ${ticker}`,
     summary: companyName ? `${companyName} earnings report` : `${ticker} earnings report`,
     body: null,
@@ -86,7 +90,7 @@ function normalizeNasdaqEarningsRow(row, { tickerUniverse = null } = {}) {
     publishedAt: null,
     sourceName: 'Nasdaq',
     sourceUrl: NASDAQ_EARNINGS_SOURCE_URL,
-    sourceExternalId: `nasdaq:earnings:${ticker}:${reportDate}`,
+    sourceExternalId: `nasdaq:earnings:${canonicalTicker}:${reportDate}`,
     status: scheduledMs > nowMs ? 'upcoming' : 'completed',
     metadataJson: {
       provider: 'nasdaqEarningsProvider',
@@ -244,7 +248,10 @@ async function fetchNasdaqEarningsEvents({
     totalRowsFetched: 0,
     rowsExtractedBeforePortfolioFilter: 0,
     rowsMatchedToPortfolio: 0,
+    rowsMismatchedToPortfolio: 0,
     rowsSkipped: 0,
+    extractedSymbolsSample: [],
+    portfolioTickersSample: Array.from(tickerUniverse).slice(0, 10),
     successfulJsonResponses: 0,
     htmlResponses: 0,
     nonJsonTextResponses: 0,
@@ -262,7 +269,8 @@ async function fetchNasdaqEarningsEvents({
     generatedDatesPreview: diagnostics.generatedDatesPreview,
     fetchAttemptsPlanned: diagnostics.fetchAttemptsPlanned,
     dateRangeStrategy: diagnostics.dateRangeStrategy,
-    isValidRange: diagnostics.isValidRange
+    isValidRange: diagnostics.isValidRange,
+    portfolioTickersSample: diagnostics.portfolioTickersSample
   });
 
   if (!requestedDates.length || !tickerUniverse.size) {
@@ -376,6 +384,9 @@ async function fetchNasdaqEarningsEvents({
     diagnostics.rowsExtractedBeforePortfolioFilter += rows.length;
 
     for (const row of rows) {
+      if (diagnostics.extractedSymbolsSample.length < 10 && typeof row?.symbol === 'string') {
+        diagnostics.extractedSymbolsSample.push(row.symbol.trim());
+      }
       const normalized = normalizeNasdaqEarningsRow(row, { tickerUniverse });
       if (!normalized) {
         diagnostics.rowsSkipped += 1;
@@ -386,6 +397,10 @@ async function fetchNasdaqEarningsEvents({
     }
   }
 
+  diagnostics.rowsMismatchedToPortfolio = Math.max(
+    diagnostics.rowsExtractedBeforePortfolioFilter - diagnostics.rowsMatchedToPortfolio,
+    0
+  );
   diagnostics.elapsedMs = Date.now() - startedAt;
   const compactUnexpectedReasons = Object.entries(
     diagnostics.unexpectedResponseShapeReasons.reduce((acc, reason) => {
@@ -401,6 +416,9 @@ async function fetchNasdaqEarningsEvents({
     htmlResponses: diagnostics.htmlResponses,
     rowsExtractedBeforePortfolioFilter: diagnostics.rowsExtractedBeforePortfolioFilter,
     rowsMatchedToPortfolio: diagnostics.rowsMatchedToPortfolio,
+    rowsMismatchedToPortfolio: diagnostics.rowsMismatchedToPortfolio,
+    extractedSymbolsSample: diagnostics.extractedSymbolsSample,
+    portfolioTickersSample: diagnostics.portfolioTickersSample,
     unexpectedResponseShapes: compactUnexpectedReasons
   });
 
