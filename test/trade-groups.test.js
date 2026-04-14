@@ -1079,6 +1079,47 @@ test('manual close sell alert dedupes against later reconciliation alert', () =>
   assert.equal(db.tradeGroupAlerts.length, 1);
 });
 
+test('snapshot close dedupes against unlinked historical sell fill via business fingerprint', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-cross-path', leader_user_id: leader, name: 'Cross Path', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gcp-l', group_id: 'g-cross-path', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gcp-m', group_id: 'g-cross-path', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  const trade = {
+    id: 'trade-cross-path',
+    symbol: 'KOS',
+    source: 'trading212',
+    status: 'open',
+    sizeUnits: 3,
+    trading212AccountId: 'acc-1',
+    trading212PositionKey: 'acc-1:KOS',
+    closeDate: '2024-05-05',
+    createdAt: now
+  };
+  const first = emitTradeGroupSellAlertForClosedTrade(db, leader, trade, {
+    reason: 'snapshot_disappearance',
+    classification: 'full_close'
+  });
+  assert.equal(first.alertsCreated, 1);
+  const second = emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'fill-cross-path-1',
+    orderId: 'order-cross-path-1',
+    accountId: 'acc-1',
+    side: 'SELL',
+    ticker: 'KOS',
+    quantity: 3,
+    remainingQuantity: 0,
+    filledAt: '2024-05-05T14:32:00.000Z',
+    sourceTradeId: ''
+  });
+  assert.equal(second.alertsCreated, 0);
+  assert.equal(second.duplicates, 1);
+  assert.equal(db.tradeGroupAlerts.length, 1);
+  assert.equal(db.tradeGroupNotifications.length, 1);
+});
+
 test('group chat mention pipeline sends user mentions and preserves unknown mentions as text', async () => {
   const groupId = await createAcceptedGroup();
   const sent = await authedFetch(tokens.leader, `/api/group-chats/${groupId}/messages`, {
