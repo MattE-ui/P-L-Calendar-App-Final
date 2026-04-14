@@ -64,6 +64,7 @@
       if (normalizedPath.endsWith('/trades.html')) return 'trades';
       if (normalizedPath.endsWith('/transactions.html')) return 'transactions';
       if (normalizedPath.endsWith('/watchlists.html') || normalizedPath === '/watchlists' || normalizedPath.startsWith('/watchlists/')) return 'watchlists';
+      if (normalizedPath.endsWith('/news.html') || normalizedPath === '/news' || normalizedPath.startsWith('/news/')) return 'news';
       if (normalizedPath.endsWith('/social.html') || normalizedPath === '/social' || normalizedPath.startsWith('/social/')) return 'social';
       if (normalizedPath.endsWith('/review.html') || normalizedPath === '/review' || normalizedPath.startsWith('/review/')) return 'review';
       if (normalizedPath.endsWith('/profile.html')) return 'profile';
@@ -146,6 +147,7 @@
     if (path.endsWith('/analytics.html')) return 'analytics';
     if (path.endsWith('/trades.html')) return 'trades';
     if (path.endsWith('/transactions.html')) return 'portfolio';
+    if (path.endsWith('/news.html') || path === '/news' || path.startsWith('/news/')) return 'news';
     if (path.endsWith('/social.html') || path === '/social' || path.startsWith('/social/')) return 'social';
     if (path.endsWith('/watchlists.html') || path === '/watchlists' || path.startsWith('/watchlists/')) return 'watchlists';
     if (path.endsWith('/review.html') || path === '/review' || path.startsWith('/review/')) return 'review';
@@ -159,6 +161,7 @@
     { key: 'trades', label: 'Trades', href: '/trades.html' },
     { key: 'analytics', label: 'Analytics', href: '/analytics.html' },
     { key: 'portfolio', label: 'Transactions', href: '/transactions.html' },
+    { key: 'news', label: 'News', href: '/news' },
     { key: 'watchlists', label: 'Watchlists', href: '/watchlists' },
     { key: 'social', label: 'Social', href: '/social' },
     { key: 'review', label: 'Review', href: '/review' },

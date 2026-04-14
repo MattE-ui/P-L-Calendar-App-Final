@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News | P&L Calendar</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <main class="container news-page" id="news-page">
+    <section class="title-wrap news-title-wrap">
+      <div>
+        <h2 class="trade-title">News</h2>
+        <p class="avg" id="news-subtitle">Backend-ranked market events and calendar updates tailored to your portfolio.</p>
+      </div>
+      <div class="filter-actions">
+        <button id="news-refresh-btn" class="ghost" type="button">Refresh tab</button>
+        <button id="news-preferences-btn" class="primary" type="button">Preferences</button>
+      </div>
+    </section>
+
+    <section class="tool-card news-tabs-shell">
+      <div class="news-tab-row" role="tablist" aria-label="News tabs">
+        <button class="news-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="news-tab-panel" data-tab="for-you">For You</button>
+        <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="calendar">Calendar</button>
+        <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="news">News</button>
+      </div>
+
+      <div class="news-filter-row">
+        <label class="toggle-control">
+          <input id="filter-portfolio-only" type="checkbox">
+          <span>Portfolio only</span>
+        </label>
+        <label class="toggle-control">
+          <input id="filter-high-importance" type="checkbox">
+          <span>High importance only</span>
+        </label>
+        <div class="tool-field news-date-filter" id="news-date-filter-wrap">
+          <label for="filter-calendar-from">Calendar from</label>
+          <input id="filter-calendar-from" type="date">
+        </div>
+      </div>
+
+      <div id="news-tab-panel" class="news-content" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div id="news-preferences-modal" class="modal hidden">
+    <div class="modal-card trade-form-modal news-preferences-modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>News preferences</h3>
+          <p class="modal-subtitle">Control categories and notification timing for upcoming event alerts.</p>
+        </div>
+        <button id="close-news-preferences-btn" class="ghost close-btn" type="button">✕</button>
+      </div>
+      <p id="news-preferences-status" class="tool-note" aria-live="polite"></p>
+      <div class="news-preferences-grid" id="news-preferences-grid"></div>
+      <div class="row news-preferences-actions">
+        <button id="save-news-preferences-btn" class="primary" type="button">Save preferences</button>
+        <button id="cancel-news-preferences-btn" class="ghost" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="static/theme-utils.js"></script>
+  <script src="static/perf-diagnostics.js"></script>
+  <script src="static/social-avatar.js"></script>
+  <script src="static/app-header.js"></script>
+  <script src="static/guest.js"></script>
+  <script src="static/news.js"></script>
+</body>
+</html>

@@ -26,7 +26,9 @@ function normalizeFilters(filters = {}) {
     importanceMin: filters.importance !== undefined && filters.importance !== null && filters.importance !== ''
       ? Number(filters.importance)
       : null,
-    includePast: String(filters.includePast || '').toLowerCase() === 'true'
+    includePast: String(filters.includePast || '').toLowerCase() === 'true',
+    portfolioOnly: String(filters.portfolioOnly || '').toLowerCase() === 'true',
+    highImportanceOnly: String(filters.highImportanceOnly || '').toLowerCase() === 'true'
   };
 }
 
@@ -198,7 +200,9 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const rows = applyFilterRows(newsEventService.listUpcomingEvents({}), normalizedFilters);
   const cards = rows
     .map((event) => buildNewsEventCardModel(event, context))
-    .filter((card) => normalizedFilters.includePast || card.isUpcoming || card.urgencyClass === 'today');
+    .filter((card) => normalizedFilters.includePast || card.isUpcoming || card.urgencyClass === 'today')
+    .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance);
 
   const portfolioUpcomingEarnings = cards
     .filter((card) => card.eventType === 'earnings' && card.isPortfolioRelevant && card.isUpcoming)
@@ -267,6 +271,8 @@ function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     .filter((event) => isScheduledSignal(event.sourceType, event.eventType))
     .map((event) => buildNewsEventCardModel(event, context))
     .filter((card) => normalizedFilters.includePast || card.isUpcoming)
+    .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
     .sort(sortStableByTimestampAsc);
 
   const nowMs = Date.now();
@@ -320,6 +326,8 @@ function getLatestNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const cards = applyFilterRows(newsEventService.listPublishedNews({}), normalizedFilters)
     .filter((event) => isPublishedSignal(event.sourceType, event.eventType))
     .map((event) => buildNewsEventCardModel(event, context))
+    .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
     .sort(sortStableByTimestampDesc);
 
   const paged = paginate('latest', cards, limit, cursor);
