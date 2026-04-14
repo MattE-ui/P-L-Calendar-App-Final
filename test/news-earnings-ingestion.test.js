@@ -73,6 +73,31 @@ test('owned ticker universe includes missing-status active trades and normalizes
   assert.deepEqual(resolved.tickerOwnerMap.MSFT, ['alice']);
 });
 
+test('owned ticker universe resolves trades persisted in per-user tradeJournal', () => {
+  const db = {
+    users: {
+      alice: {
+        tradeJournal: {
+          '2026-04-10': [
+            { id: 't1', status: 'open', symbol: 'aapl' },
+            { id: 't2', status: 'closed', symbol: 'msft' }
+          ]
+        }
+      },
+      bob: {
+        tradeJournal: {
+          '2026-04-10': [{ id: 't3', symbol: 'nvda' }]
+        }
+      }
+    }
+  };
+
+  const resolved = resolveOwnedTickerUniverse({ db, logger: createLogger() });
+  assert.deepEqual(resolved.aggregateTickers, ['AAPL', 'NVDA']);
+  assert.deepEqual(resolved.tickerOwnerMap.AAPL, ['alice']);
+  assert.deepEqual(resolved.tickerOwnerMap.NVDA, ['bob']);
+});
+
 test('FMP row normalization returns earnings-shaped event', () => {
   const row = normalizeFmpEarningsRow({
     symbol: 'aapl',

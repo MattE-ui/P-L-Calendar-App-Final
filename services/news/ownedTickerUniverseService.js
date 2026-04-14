@@ -37,6 +37,49 @@ function summarizeTrade(trade = {}) {
   };
 }
 
+function flattenTradeJournalForUser(user = {}, userId = '') {
+  const journal = user?.tradeJournal && typeof user.tradeJournal === 'object'
+    ? user.tradeJournal
+    : {};
+  const flattened = [];
+  for (const [tradeDate, trades] of Object.entries(journal)) {
+    if (!Array.isArray(trades)) continue;
+    for (const trade of trades) {
+      if (!trade || typeof trade !== 'object') continue;
+      flattened.push({
+        ...trade,
+        __ownerUserId: userId,
+        __tradeDate: tradeDate,
+        __tradeSource: 'user.tradeJournal'
+      });
+    }
+  }
+  return flattened;
+}
+
+function tradeMatchesUser(trade = {}, userId = '', user = null) {
+  const expectedEmail = String(user?.email || '').trim().toLowerCase();
+  const candidates = [
+    { field: '__ownerUserId', value: trade?.__ownerUserId },
+    { field: 'username', value: trade?.username },
+    { field: 'userId', value: trade?.userId },
+    { field: 'ownerUserId', value: trade?.ownerUserId },
+    { field: 'email', value: trade?.email }
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate.value == null) continue;
+    const raw = String(candidate.value).trim();
+    if (!raw) continue;
+    if (candidate.field === 'email') {
+      if (expectedEmail && raw.toLowerCase() === expectedEmail) return { matched: true, field: candidate.field };
+      continue;
+    }
+    if (raw === userId) return { matched: true, field: candidate.field };
+  }
+  return { matched: false, field: null };
+}
+
 function summarizePosition(position = {}) {
   return {
     symbol: position?.symbol ?? position?.ticker ?? null,
@@ -47,36 +90,68 @@ function summarizePosition(position = {}) {
 
 function deriveUserCurrentHoldingTickers(db, userId, logger = console) {
   const tickers = new Set();
+  const user = db?.users?.[userId] || null;
+  const journalTrades = flattenTradeJournalForUser(user, userId);
+  const tableTrades = Array.isArray(db?.trades) ? db.trades : [];
+  const trades = [...journalTrades, ...tableTrades];
   const diagnostics = {
+    totalTradesInDb: trades.length,
+    tradeSources: {
+      tradeJournal: journalTrades.length,
+      tradesTable: tableTrades.length
+    },
     rawTradesFound: 0,
     tradesConsidered: 0,
     tradesIncluded: 0,
     tradeTickersExtracted: [],
+    tradesMatchedByField: {},
+    tradesExcluded: {
+      ownerMismatch: [],
+      inactive: [],
+      invalidTicker: []
+    },
     ibkrPositionsFound: 0,
     ibkrPositionsIncluded: 0,
     ibkrTickersExtracted: [],
     invalidSkippedTickers: []
   };
 
-  const trades = Array.isArray(db?.trades) ? db.trades : [];
-  diagnostics.rawTradesFound = trades.filter((trade) => trade?.username === userId).length;
   for (const trade of trades) {
-    if (trade?.username !== userId) continue;
+    const ownerMatch = tradeMatchesUser(trade, userId, user);
+    if (!ownerMatch.matched) {
+      diagnostics.tradesExcluded.ownerMismatch.push({
+        reason: 'owner_mismatch',
+        trade: summarizeTrade(trade),
+        ownershipFields: {
+          username: trade?.username ?? null,
+          userId: trade?.userId ?? null,
+          ownerUserId: trade?.ownerUserId ?? null,
+          email: trade?.email ?? null,
+          ownerFromJournal: trade?.__ownerUserId ?? null
+        }
+      });
+      continue;
+    }
+    diagnostics.rawTradesFound += 1;
+    diagnostics.tradesMatchedByField[ownerMatch.field] = (diagnostics.tradesMatchedByField[ownerMatch.field] || 0) + 1;
     diagnostics.tradesConsidered += 1;
-    if (!isTradeActive(trade)) continue;
+    if (!isTradeActive(trade)) {
+      diagnostics.tradesExcluded.inactive.push({ reason: 'inactive', trade: summarizeTrade(trade) });
+      continue;
+    }
     diagnostics.tradesIncluded += 1;
 
     const rawTicker = resolveTickerCandidate(trade);
     const normalized = normalizeTicker(rawTicker);
     if (!normalized) {
       diagnostics.invalidSkippedTickers.push({ source: 'trade', rawTicker, trade: summarizeTrade(trade) });
+      diagnostics.tradesExcluded.invalidTicker.push({ reason: 'invalid_ticker', rawTicker, trade: summarizeTrade(trade) });
       continue;
     }
     diagnostics.tradeTickersExtracted.push(normalized);
     tickers.add(normalized);
   }
 
-  const user = db?.users?.[userId] || null;
   const ibkrLivePositions = Array.isArray(user?.ibkr?.live?.positions)
     ? user.ibkr.live.positions
     : (Array.isArray(user?.ibkr?.livePositions) ? user.ibkr.livePositions : []);
@@ -100,10 +175,14 @@ function deriveUserCurrentHoldingTickers(db, userId, logger = console) {
   logger.info('[OwnedTickerUniverse] user universe resolved.', {
     userId,
     tickerCount: tickers.size,
+    totalTradesInDb: diagnostics.totalTradesInDb,
+    tradeSources: diagnostics.tradeSources,
     rawTradesFound: diagnostics.rawTradesFound,
     tradesConsidered: diagnostics.tradesConsidered,
     tradesIncluded: diagnostics.tradesIncluded,
     tradeTickersExtracted: diagnostics.tradeTickersExtracted,
+    tradesMatchedByField: diagnostics.tradesMatchedByField,
+    tradesExcluded: diagnostics.tradesExcluded,
     ibkrPositionsFound: diagnostics.ibkrPositionsFound,
     ibkrPositionsIncluded: diagnostics.ibkrPositionsIncluded,
     ibkrTickersExtracted: diagnostics.ibkrTickersExtracted,
@@ -122,6 +201,9 @@ function deriveUserCurrentHoldingTickers(db, userId, logger = console) {
 
 function resolveOwnedTickerUniverse({ db, logger = console } = {}) {
   const users = Object.keys(db?.users || {});
+  const tableTrades = Array.isArray(db?.trades) ? db.trades : [];
+  const journalTrades = users.flatMap((userId) => flattenTradeJournalForUser(db?.users?.[userId], userId));
+  const totalTradesInDb = tableTrades.length + journalTrades.length;
   const perUserUniverse = [];
   const aggregateTickerSet = new Set();
   const tickerToUsers = new Map();
@@ -161,6 +243,12 @@ function resolveOwnedTickerUniverse({ db, logger = console } = {}) {
   logger.info('[OwnedTickerUniverse] aggregate universe resolved.', {
     usersConsidered: users.length,
     userUniversesResolved: perUserUniverse.length,
+    totalTradesInDb,
+    tradeSources: {
+      tradeJournal: journalTrades.length,
+      tradesTable: tableTrades.length
+    },
+    sampleTrades: [...journalTrades, ...tableTrades].slice(0, 5).map(summarizeTrade),
     aggregateTickersResolved: aggregateTickerSet.size,
     totalTradesConsidered: aggregateDiagnostics.totalTradesConsidered,
     tradesIncluded: aggregateDiagnostics.tradesIncluded,
