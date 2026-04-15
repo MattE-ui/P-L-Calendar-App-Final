@@ -50,7 +50,7 @@ const {
 } = require('./services/news/newsNotificationFanoutService');
 const { createNewsNotificationDispatchService } = require('./services/news/newsNotificationDispatchService');
 const { runNewsNotificationOutboxProcessor } = require('./services/news/newsNotificationOutboxProcessor');
-const { resolveOwnedTickerUniverse, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
+const { resolveOwnedTickerUniverse, deriveUserCurrentHoldingTickers, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -19208,7 +19208,8 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
         lastUniverseStats: earningsStatus?.lastDiagnostics
           ? {
             usersConsidered: earningsStatus.lastDiagnostics.usersConsidered || 0,
-            aggregateTickersResolved: earningsStatus.lastDiagnostics.aggregateTickersResolved || 0
+            aggregateTickersResolved: earningsStatus.lastDiagnostics.aggregateTickersResolved || 0,
+            aggregateTickers: earningsStatus.lastDiagnostics.aggregateTickers || []
           }
           : null
       },
@@ -19229,6 +19230,34 @@ app.get('/api/admin/news/ingest/status', auth, requireAuthenticatedUser, require
         }
       }
     }
+  });
+});
+
+app.get('/api/admin/news/diagnostics/ticker-universe', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const db = loadDB();
+  const userId = req.query.userId || req.username;
+  const verboseLogger = {
+    info: () => {},
+    warn: () => {},
+    error: () => {}
+  };
+  const result = deriveUserCurrentHoldingTickers(db, userId, verboseLogger);
+  const allEarningsEvents = Array.isArray(db.newsEvents)
+    ? db.newsEvents
+      .filter((e) => e?.eventType === 'earnings' && e?.isActive !== false)
+      .map((e) => ({
+        id: e.id,
+        canonicalTicker: e.canonicalTicker || e.ticker || null,
+        scheduledAt: e.scheduledAt,
+        relevanceUserIds: e.metadataJson?.relevanceUserIds || []
+      }))
+    : [];
+  res.json({
+    userId,
+    tickerList: result.tickerList,
+    tickerCount: result.tickers.size,
+    diagnostics: result.diagnostics,
+    earningsEventsInDb: allEarningsEvents
   });
 });
 

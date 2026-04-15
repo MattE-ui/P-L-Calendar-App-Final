@@ -39,8 +39,26 @@ function buildSectionList(tabKey, response) {
   return order.map((key) => sectionMap.get(key)).filter(Boolean);
 }
 
+function formatCurrencyCompact(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num === 0) return null;
+  const abs = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(abs >= 100e9 ? 0 : 1).replace(/\.0$/, '')}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(abs >= 100e6 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
+  return `${sign}$${num.toFixed(2)}`;
+}
+
+function formatEpsEstimate(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const sign = num < 0 ? '-' : '';
+  return `${sign}$${Math.abs(num).toFixed(2)}`;
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList };
+  module.exports = { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList, formatCurrencyCompact, formatEpsEstimate };
 }
 
 if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -202,10 +220,13 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const sourceLink = item.sourceUrl
       ? `<a class="news-source-link" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
       : '';
+    const formattedEps = item.earningsEpsEstimate != null ? formatEpsEstimate(item.earningsEpsEstimate) : null;
+    const formattedRev = item.earningsRevenueEstimate != null ? formatCurrencyCompact(item.earningsRevenueEstimate) : null;
     const earningsExtras = item.eventType === 'earnings' ? [
       item.earningsTiming ? `<span class="news-card-earning-timing">${item.earningsTiming}</span>` : '',
       item.earningsQuarter ? `<span class="news-card-quarter">${item.earningsQuarter}</span>` : '',
-      item.earningsEpsEstimate != null ? `<span class="news-card-eps">EPS est ${item.earningsEpsEstimate}</span>` : ''
+      formattedEps ? `<span class="news-card-eps">EPS est ${formattedEps}</span>` : '',
+      formattedRev ? `<span class="news-card-rev">Rev est ${formattedRev}</span>` : ''
     ].join('') : '';
     return `
       <article class="news-card relevance-${item.relevanceClass || 'neutral'} urgency-${item.urgencyClass || 'none'}">

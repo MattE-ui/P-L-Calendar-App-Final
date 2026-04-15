@@ -166,6 +166,7 @@ function buildNewsEventCardModel(event, context = {}) {
       ? (EARNINGS_HOUR_LABELS[String(event.metadataJson?.hour || '').toLowerCase()] || null)
       : null,
     earningsEpsEstimate: event.eventType === 'earnings' ? (event.metadataJson?.epsEstimate ?? null) : null,
+    earningsRevenueEstimate: event.eventType === 'earnings' ? (event.metadataJson?.revenueEstimate ?? null) : null,
     earningsQuarter: event.eventType === 'earnings' && event.metadataJson?.year && event.metadataJson?.quarter
       ? `Q${event.metadataJson.quarter} ${event.metadataJson.year}`
       : null

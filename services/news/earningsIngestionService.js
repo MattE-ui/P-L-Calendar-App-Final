@@ -42,6 +42,7 @@ async function runEarningsIngestion({
     diagnostics.usersConsidered = universe.usersConsidered;
     diagnostics.userUniversesResolved = universe.perUserUniverse.length;
     diagnostics.aggregateTickersResolved = universe.aggregateTickers.length;
+    diagnostics.aggregateTickers = universe.aggregateTickers;
 
     if (!universe.aggregateTickers.length) {
       diagnostics.success = true;

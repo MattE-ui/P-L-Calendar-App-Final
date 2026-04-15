@@ -10120,7 +10120,8 @@ textarea {
   font-weight: 600;
 }
 
-.news-card-eps {
+.news-card-eps,
+.news-card-rev {
   color: var(--text-dim);
   font-size: 11px;
 }
