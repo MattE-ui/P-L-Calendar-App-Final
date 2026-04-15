@@ -871,6 +871,35 @@ test('group current positions prefer mapped ticker and fallback to raw symbol', 
   assert.equal(positions.find(p => p.id === 't-fallback').ticker, 'RAWTICK');
 });
 
+test('group current positions include Trading212 rows even when stop/risk are pending', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'g-open', leader_user_id: leader, name: 'Open Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [{ id: 'm1', group_id: 'g-open', user_id: leader, role: 'leader', status: 'active', joined_at: now }];
+  db.users[leader].tradeJournal = {
+    '2024-04': [{
+      id: 't-no-risk-yet',
+      source: 'trading212',
+      symbol: 'BE',
+      trading212Ticker: 'BE_US_EQ',
+      currency: 'USD',
+      entry: 100,
+      stop: 0,
+      riskPct: 0,
+      lastSyncPrice: 102,
+      status: 'open',
+      createdAt: now
+    }]
+  };
+  saveDB(db);
+
+  const positions = buildGroupCurrentPositions(loadDB(), db.tradeGroups[0]);
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].ticker, 'BE');
+  assert.equal(positions[0].stop_price, null);
+  assert.equal(positions[0].risk_pct, null);
+});
+
 test('new Trading212 position schedules delayed alert, dedupes, and emits enriched stop', () => {
   const db = loadDB();
   const now = new Date().toISOString();
