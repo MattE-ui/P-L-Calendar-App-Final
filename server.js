@@ -987,20 +987,31 @@ function buildTradeGroupAlertCopy(alert = {}, { groupName = '', leaderName = 'Le
   const fillPriceText = Number.isFinite(Number(alert?.fill_price)) ? `$${Number(alert.fill_price).toFixed(2)}` : '';
   const trimPctText = formatTrimPercentForUi(alert?.trim_pct);
   const normalizedEventType = normalizeTradeGroupAlertEventType(alert);
+  const positionEventType = String(alert?.position_event_type || alert?.event_type || '').trim().toUpperCase();
+  const alertClassification = String(alert?.alert_classification || '').trim().toLowerCase();
+  const isIncreaseBuy = positionEventType === 'POSITION_INCREASE' || alertClassification === 'position_increase' || alertClassification === 'add';
+  const copyLabel = normalizedEventType === 'TRADE_TRIMMED'
+    ? 'reduced'
+    : (normalizedEventType === 'TRADE_CLOSED' ? 'closed' : (isIncreaseBuy ? 'added to' : 'opened'));
   console.info('[TradeGroup][AlertCopy]', {
     alertId: alert?.id || null,
     source: 'trade_group_alert',
     side: String(alert?.side || '').trim().toUpperCase() || null,
     classification: String(alert?.alert_classification || '').trim().toLowerCase() || null,
-    positionEventType: String(alert?.position_event_type || '').trim().toUpperCase() || null,
+    positionEventType: positionEventType || null,
     quantityDelta: Number.isFinite(Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity))
       ? Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity)
       : null,
     remainingQuantity: Number.isFinite(Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity))
       ? Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity)
       : null,
-    normalizedEventType
+    normalizedEventType,
+    copyLabel
   });
+  console.info('[trade-alert-copy] eventType and chosen copy label', { eventType: positionEventType || null, copyLabel });
+  if (normalizedEventType === 'TRADE_OPENED') {
+    console.info('[trade-alert-copy] buy-path', { path: isIncreaseBuy ? 'POSITION_INCREASE' : 'NEW_POSITION', eventType: positionEventType || null });
+  }
   if (normalizedEventType === 'TRADE_TRIMMED') {
     return {
       normalizedEventType,
@@ -1019,11 +1030,15 @@ function buildTradeGroupAlertCopy(alert = {}, { groupName = '', leaderName = 'Le
       body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} reduced ${ticker || 'a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
     };
   }
+  if (isIncreaseBuy) {
+    return {
+      normalizedEventType,
+      body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} added to ${ticker || 'a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
+    };
+  }
   return {
     normalizedEventType,
-    body: ticker
-      ? `${groupName || 'Trade group'}: new trade alert for ${ticker}.`
-      : `${groupName || 'Trade group'}: a new trade alert is available.`
+    body: `${groupName || 'Trade group'}: ${leaderName || 'Leader'} opened ${ticker || 'a position'}${fillPriceText ? ` at ${fillPriceText}` : ''}.`
   };
 }
 
@@ -16578,6 +16593,16 @@ function createGroupTradeEventSystemMessage(db, groupId, leaderUsername, alert =
   const chat = getOrCreateGroupChat(db, groupId);
   const identity = socialIdentityForUser(db, leaderUsername || '');
   const normalizedEventType = normalizeTradeGroupAlertEventType(alert);
+  const positionEventType = String(alert?.position_event_type || alert?.event_type || '').trim().toUpperCase();
+  const alertClassification = String(alert?.alert_classification || '').trim().toLowerCase();
+  const isIncreaseBuy = positionEventType === 'POSITION_INCREASE' || alertClassification === 'position_increase' || alertClassification === 'add';
+  const copyLabel = normalizedEventType === 'TRADE_TRIMMED'
+    ? 'reduced'
+    : (normalizedEventType === 'TRADE_CLOSED' ? 'closed' : (isIncreaseBuy ? 'added to' : 'opened'));
+  console.info('[trade-alert-copy] eventType and chosen copy label', { eventType: positionEventType || null, copyLabel });
+  if (normalizedEventType === 'TRADE_OPENED') {
+    console.info('[trade-alert-copy] buy-path', { path: isIncreaseBuy ? 'POSITION_INCREASE' : 'NEW_POSITION', eventType: positionEventType || null });
+  }
   const nowIso = new Date().toISOString();
   const message = {
     id: crypto.randomUUID(),
@@ -16589,7 +16614,7 @@ function createGroupTradeEventSystemMessage(db, groupId, leaderUsername, alert =
       ? `Trade trimmed · ${String(alert?.ticker || '').toUpperCase()}`
       : (normalizedEventType === 'TRADE_CLOSED'
         ? `Trade closed · ${String(alert?.ticker || '').toUpperCase()}`
-        : `Trade opened · ${String(alert?.ticker || '').toUpperCase()}`),
+        : `${isIncreaseBuy ? 'Trade added to' : 'Trade opened'} · ${String(alert?.ticker || '').toUpperCase()}`),
     metadata: {
       version: 1,
       eventType: normalizedEventType,
@@ -16601,7 +16626,9 @@ function createGroupTradeEventSystemMessage(db, groupId, leaderUsername, alert =
       stopPrice: Number.isFinite(Number(alert?.stop_price)) ? Number(alert.stop_price) : null,
       riskPercent: Number.isFinite(Number(alert?.risk_pct)) ? Number(alert.risk_pct) : null,
       trimPercent: Number.isFinite(Number(alert?.trim_pct)) ? Number(alert.trim_pct) : null,
-      status: normalizedEventType === 'TRADE_CLOSED' ? 'closed' : (normalizedEventType === 'TRADE_TRIMMED' ? 'trimmed' : 'opened'),
+      status: normalizedEventType === 'TRADE_CLOSED'
+        ? 'closed'
+        : (normalizedEventType === 'TRADE_TRIMMED' ? 'trimmed' : (isIncreaseBuy ? 'added' : 'opened')),
       sourceAlertId: alert?.id || null,
       timestamp: nowIso
     },

@@ -141,7 +141,8 @@ function normalizeTradeGroupActivityEvent(item = {}) {
   const eventType = String(item?.position_event_type || item?.event_type || '').trim().toUpperCase();
   if (eventType === 'POSITION_TRIM') return 'trim';
   if (eventType === 'POSITION_CLOSED') return 'close';
-  if (eventType === 'POSITION_OPENED') return 'open';
+  if (eventType === 'POSITION_OPENED' || eventType === 'NEW_POSITION') return 'open';
+  if (eventType === 'POSITION_INCREASE') return 'add';
   if (eventType === 'POSITION_STOP_MOVED' || eventType === 'STOP_MOVED') return 'stop_move';
 
   const explicitSignals = [
@@ -157,11 +158,13 @@ function normalizeTradeGroupActivityEvent(item = {}) {
   if (hasCloseSignal) return 'close';
 
   const classification = String(item?.alert_classification || '').trim().toLowerCase();
-  if (classification === 'buy' || classification === 'add' || classification === 'new_position' || classification === 'position_increase') return 'open';
+  if (classification === 'add' || classification === 'position_increase') return 'add';
+  if (classification === 'buy' || classification === 'new_position') return 'open';
   if (classification === 'partial_sell') return 'trim';
   if (classification === 'full_close') return 'close';
 
-  if (eventType === 'NEW_POSITION' || eventType === 'POSITION_INCREASE') return 'open';
+  if (eventType === 'POSITION_INCREASE') return 'add';
+  if (eventType === 'NEW_POSITION') return 'open';
   if (eventType === 'POSITION_REDUCED') return 'trim';
 
   const side = String(item?.side || '').trim().toUpperCase();
@@ -1382,7 +1385,19 @@ function renderTradeGroupSection() {
         });
       }
       const isTrim = normalizedClassification === 'trim';
+      const isAdd = normalizedClassification === 'add';
       const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
+      const eventType = String(item?.position_event_type || item?.event_type || '').trim().toUpperCase();
+      const copyLabel = isSell
+        ? (isTrim ? 'reduced' : 'closed')
+        : (isAdd ? 'added to' : 'opened');
+      console.info('[trade-alert-copy] eventType and chosen copy label', { eventType: eventType || null, copyLabel });
+      if (!isSell) {
+        console.info('[trade-alert-copy] buy-path', {
+          eventType: eventType || null,
+          branch: isAdd ? 'POSITION_INCREASE' : 'NEW_POSITION'
+        });
+      }
       if (isTrim) row.classList.add('social-list-row--trim');
       const prefillPayload = normalizeAlertRiskPrefillPayload(item);
       const canSizeTrade = !isSell && !!prefillPayload;
@@ -1394,7 +1409,7 @@ function renderTradeGroupSection() {
         item.created_at ? new Date(item.created_at).toLocaleString() : '',
         isSell
           ? (isTrim ? `${item.ticker} · Trimmed${trimPctLabel ? ` ${trimPctLabel}` : ''}` : `${item.ticker} · Closed`)
-          : `${item.ticker} · Risk ${Number(item.risk_pct || 0).toFixed(2)}%`,
+          : (isAdd ? `${item.ticker} · Added to` : `${item.ticker} · Opened`),
         { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }
       ));
       const meta = document.createElement('div');
@@ -1403,7 +1418,7 @@ function renderTradeGroupSection() {
         ? (isTrim
           ? `${item.leader_nickname || 'Leader'} trimmed ${trimPctLabel || 'part of'} ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`
           : `${item.leader_nickname || 'Leader'} closed ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`)
-        : `Entry ${Number(item.entry_price || 0).toFixed(2)} • Stop ${Number(item.stop_price || 0).toFixed(2)}`;
+        : `${item.leader_nickname || 'Leader'} ${isAdd ? 'added to' : 'opened'} ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`;
       row.appendChild(meta);
       if (canSizeTrade || isLeader || missingStop) {
         const actionWrap = document.createElement('div');
