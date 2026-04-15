@@ -1357,11 +1357,12 @@ function buildGroupCurrentPositions(db, group) {
       if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop) || stop <= 0 || !Number.isFinite(riskPct) || riskPct <= 0) {
         continue;
       }
-      if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
       const direction = trade.direction === 'short' ? 'short' : 'long';
-      const gainLossPct = direction === 'short'
-        ? ((entry - livePrice) / entry) * 100
-        : ((livePrice - entry) / entry) * 100;
+      const gainLossPct = (Number.isFinite(livePrice) && livePrice > 0)
+        ? (direction === 'short'
+          ? ((entry - livePrice) / entry) * 100
+          : ((livePrice - entry) / entry) * 100)
+        : null;
       const mappedTrade = applyInstrumentMappingToTrade(trade, db, group.leader_user_id) || trade;
       const ticker = resolveCanonicalTickerForTrade(mappedTrade);
       positions.push({
@@ -11183,7 +11184,8 @@ const REGISTRY_RESOLUTION_STATUSES = new Set(['resolved', 'unresolved', 'ambiguo
 const REGISTRY_RESOLUTION_SOURCES = new Set(['isin_lookup', 'name_lookup', 'manual_override', 'unresolved']);
 const KNOWN_TICKER_ALIASES = new Map([
   ['SOI', { canonicalTicker: 'SEI', canonicalName: 'Solaris Energy Infrastructure', source: 'name_lookup', confidence: 0.7 }],
-  ['YNDX', { canonicalTicker: 'NBIS', canonicalName: 'Nebius Group', source: 'name_lookup', confidence: 0.7 }]
+  ['YNDX', { canonicalTicker: 'NBIS', canonicalName: 'Nebius Group', source: 'name_lookup', confidence: 0.7 }],
+  ['DMYI', { canonicalTicker: 'IONQ', canonicalName: 'IonQ', source: 'name_lookup', confidence: 0.95 }]
 ]);
 
 function ensureInstrumentRegistry(db) {
@@ -11654,10 +11656,13 @@ function resolveInstrumentMapping(db, instrument, username) {
       rawCurrency: instrument.currency || ''
     });
     if (registryEntry && (registryEntry.resolutionStatus === 'resolved' || registryEntry.resolutionStatus === 'manual_override') && registryEntry.canonicalTicker) {
+      const alias = KNOWN_TICKER_ALIASES.get(registryEntry.canonicalTicker);
+      const effectiveTicker = alias ? alias.canonicalTicker : registryEntry.canonicalTicker;
+      const effectiveName = alias ? (alias.canonicalName || registryEntry.canonicalName || instrument.name || '') : (registryEntry.canonicalName || instrument.name || '');
       return {
         sourceKey: registryEntry.lookupKey || computeSourceKey(instrument),
-        displayTicker: registryEntry.canonicalTicker,
-        displayName: registryEntry.canonicalName || instrument.name || '',
+        displayTicker: effectiveTicker,
+        displayName: effectiveName,
         scope: registryEntry.resolutionStatus === 'manual_override' ? 'manual_override' : 'registry',
         mapping: registryEntry
       };

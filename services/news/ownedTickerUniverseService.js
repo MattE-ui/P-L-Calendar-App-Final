@@ -1,10 +1,19 @@
+// Known SPAC renames and ticker aliases — keeps the owned ticker universe in sync
+// with current canonical symbols even when stored trades still reference old identifiers.
+const TICKER_RENAMES = new Map([
+  ['SOI', 'SEI'],
+  ['YNDX', 'NBIS'],
+  ['DMYI', 'IONQ']
+]);
+
 function normalizeTicker(raw) {
   const value = String(raw || '').trim().toUpperCase();
   if (!value) return '';
   const clean = value
     .replace(/[^A-Z0-9.\-_]/g, '')
     .replace(/(_[A-Z]{2,5}){1,2}$/, '');
-  return clean || '';
+  const normalized = clean || '';
+  return TICKER_RENAMES.get(normalized) || normalized;
 }
 
 function resolveTickerCandidate(record = {}) {
