@@ -10046,3 +10046,88 @@ textarea {
   flex-direction: column;
   gap: 8px;
 }
+
+/* Portfolio context banner */
+.news-portfolio-context {
+  border: 1px solid rgba(139, 240, 196, 0.18);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(139, 240, 196, 0.04);
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.news-context-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.news-context-tickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.news-ticker-chip {
+  background: rgba(139, 240, 196, 0.1);
+  color: #8bf0c4;
+  border: 1px solid rgba(139, 240, 196, 0.2);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.news-context-next {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.news-context-next strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Card meta elements */
+.news-card-ticker {
+  background: rgba(169, 180, 196, 0.12);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.news-card-source {
+  color: var(--text-dim);
+}
+
+.news-card-earning-timing {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.news-card-quarter {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.news-card-eps {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* Load more wrap */
+.news-load-more-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}

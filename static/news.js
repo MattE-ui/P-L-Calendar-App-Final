@@ -1,5 +1,5 @@
 const NEWS_TABS = {
-  'for-you': { key: 'for-you', label: 'For You', endpoint: '/api/news/for-you', sectionOrder: ['portfolioUpcomingEarnings', 'macroUpcoming', 'recentlyUpdatedRelevant'] },
+  'for-you': { key: 'for-you', label: 'For You', endpoint: '/api/news/for-you', sectionOrder: ['portfolioUpcomingEarnings', 'macroUpcoming', 'recentRelevantHeadlines', 'recentlyUpdatedRelevant'] },
   calendar: { key: 'calendar', label: 'Calendar', endpoint: '/api/news/calendar', sectionOrder: ['today', 'next7Days', 'later'] },
   news: { key: 'news', label: 'News', endpoint: '/api/news/latest', sectionOrder: ['headlines'] }
 };
@@ -89,6 +89,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     prefsClose: document.getElementById('close-news-preferences-btn'),
     prefsCancel: document.getElementById('cancel-news-preferences-btn'),
     prefsSave: document.getElementById('save-news-preferences-btn'),
+    notificationCenter: document.getElementById('news-notification-center'),
     notificationList: document.getElementById('news-notification-list'),
     notificationUnread: document.getElementById('news-notification-unread-count')
   };
@@ -188,22 +189,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return `news-card-badge--${tone || 'neutral'}`;
   }
 
-  function toSortableTimestamp(item = {}) {
-    const parsed = Date.parse(item?.scheduledAt || item?.sortTimestamp || item?.publishedAt || '');
-    return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-  }
-
-  function normalizePortfolioUpcomingEarnings(model = {}) {
-    const items = Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings : [];
-    return [...items].sort((a, b) => toSortableTimestamp(a) - toSortableTimestamp(b));
-  }
-
-  function getSectionItems(section = {}, model = {}) {
-    const sectionKey = section.summary?.key || '';
-    if (sectionKey === 'portfolioUpcomingEarnings') {
-      const normalized = normalizePortfolioUpcomingEarnings(model);
-      if (normalized.length) return normalized;
-    }
+  function getSectionItems(section = {}) {
     return Array.isArray(section.items) ? section.items : [];
   }
 
@@ -215,7 +201,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const ticker = item.canonicalTicker || item.ticker;
     const sourceLink = item.sourceUrl
       ? `<a class="news-source-link" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
-      : '<span class="news-source-link muted">No source link</span>';
+      : '';
+    const earningsExtras = item.eventType === 'earnings' ? [
+      item.earningsTiming ? `<span class="news-card-earning-timing">${item.earningsTiming}</span>` : '',
+      item.earningsQuarter ? `<span class="news-card-quarter">${item.earningsQuarter}</span>` : '',
+      item.earningsEpsEstimate != null ? `<span class="news-card-eps">EPS est ${item.earningsEpsEstimate}</span>` : ''
+    ].join('') : '';
     return `
       <article class="news-card relevance-${item.relevanceClass || 'neutral'} urgency-${item.urgencyClass || 'none'}">
         <div class="news-card-topline">
@@ -225,8 +216,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         <h4>${item.title || 'Untitled event'}</h4>
         <p class="news-card-summary">${item.summary || 'No summary available.'}</p>
         <div class="news-card-meta">
-          <span>${item.sourceName || item.sourceType || 'Unknown source'}</span>
           ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
+          ${earningsExtras}
+          <span class="news-card-source">${item.sourceName || item.sourceType || 'Unknown source'}</span>
           ${marker}
           ${sourceLink}
         </div>
@@ -257,6 +249,24 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     `;
   }
 
+  function buildPortfolioContextHtml(model = {}) {
+    const context = model?.portfolioContext || {};
+    const tickers = Array.isArray(context?.trackedTickers) ? context.trackedTickers : [];
+    const count = tickers.length;
+    if (count === 0) return '';
+    const chips = tickers.map((t) => `<span class="news-ticker-chip">${t}</span>`).join('');
+    const nextLine = context.nextEarningsTicker
+      ? `<div class="news-context-next">Next earnings: <strong>${context.nextEarningsTicker}</strong> — ${context.nextEarningsTimeLabel || 'date TBC'}</div>`
+      : '';
+    return `
+      <div class="news-portfolio-context">
+        <div class="news-context-label">Tracking ${count} position${count !== 1 ? 's' : ''}</div>
+        <div class="news-context-tickers">${chips}</div>
+        ${nextLine}
+      </div>
+    `;
+  }
+
   function renderTab() {
     renderTabs();
     const tabState = state.tabData[state.activeTab];
@@ -275,43 +285,45 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const sections = buildSectionList(state.activeTab, model);
     const sectionPayloadLengths = sections.map((section) => ({
       key: section.summary?.key || 'unknown',
-      sectionItemsLength: Array.isArray(section.items) ? section.items.length : 0,
-      renderedItemsLength: getSectionItems(section, model).length
+      itemCount: getSectionItems(section).length
     }));
-    const portfolioSection = sections.find((section) => section.summary?.key === 'portfolioUpcomingEarnings');
-    const portfolioRenderedItems = portfolioSection ? getSectionItems(portfolioSection, model) : [];
     diagnostics('render-tab-state', {
       tab: state.activeTab,
       filters: { ...state.filters },
       tabItemsLength: tabState.items.length,
-      rawPortfolioUpcomingEarningsLength: Array.isArray(model?.portfolioUpcomingEarnings) ? model.portfolioUpcomingEarnings.length : 0,
-      sectionPayloadLengths,
-      portfolioRenderedItemsLength: portfolioRenderedItems.length
+      sectionPayloadLengths
     });
 
     if (state.activeTab === 'news' && !tabState.items.length) {
       log('empty-state', { tab: state.activeTab, reason: 'latest-empty' });
-      return renderEmpty('No headline ingestion yet', model?.emptyState?.message || 'Latest headlines are intentionally empty right now.');
+      return renderEmpty('No headlines available', model?.emptyState?.message || 'News headlines are not available right now. Check back soon.');
     }
-    const totalRenderedItems = sections.reduce((sum, section) => sum + getSectionItems(section, model).length, 0);
-    if (!totalRenderedItems) {
+
+    const totalRenderedItems = sections.reduce((sum, section) => sum + getSectionItems(section).length, 0);
+    // For the 'for-you' tab we always render sections (portfolio earnings shows its own empty state)
+    if (!totalRenderedItems && state.activeTab !== 'for-you') {
       log('empty-state', { tab: state.activeTab, reason: 'no-items' });
       return renderEmpty('No events to show', 'Try relaxing filters or check back soon.');
     }
 
+    const portfolioContext = model?.portfolioContext || {};
     const sectionsHtml = sections.map((section) => {
       const sectionKey = section.summary?.key || '';
-      const items = getSectionItems(section, model);
+      const items = getSectionItems(section);
 
       if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
+        const hasPositions = (portfolioContext.trackedTickerCount || 0) > 0;
+        const emptyMsg = hasPositions
+          ? 'No earnings scheduled in the next 45 days for your active positions.'
+          : 'No active positions found. Add trades to your journal to track upcoming earnings.';
         return `
           <section class="news-section">
             <div class="section-header">
-              <h3>${section.summary?.title || 'Portfolio Upcoming Earnings'}</h3>
+              <h3>${section.summary?.title || 'Upcoming Earnings'}</h3>
               <span class="pill">0</span>
             </div>
             <div class="news-empty-state">
-              <p>No upcoming earnings for your portfolio right now.</p>
+              <p>${emptyMsg}</p>
             </div>
           </section>
         `;
@@ -331,8 +343,10 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       `;
     }).join('');
 
+    const portfolioContextHtml = state.activeTab === 'for-you' ? buildPortfolioContextHtml(model) : '';
     const hasMore = Boolean(tabState.pagination?.hasMore && tabState.pagination?.cursor);
     els.panel.innerHTML = `
+      ${portfolioContextHtml}
       ${sectionsHtml}
       <div class="news-load-more-wrap">
         ${hasMore ? '<button id="news-load-more-btn" class="ghost" type="button">Load more</button>' : ''}
@@ -349,13 +363,15 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   }
 
   function renderNotificationCenter() {
-    if (!els.notificationList || !els.notificationUnread) return;
+    if (!els.notificationList || !els.notificationUnread || !els.notificationCenter) return;
     const items = Array.isArray(state.notificationCenter.items) ? state.notificationCenter.items : [];
-    els.notificationUnread.textContent = String(state.notificationCenter.unreadCount || 0);
+    // Hide the entire notification center when there are no items
+    els.notificationCenter.classList.toggle('hidden', !items.length);
     if (!items.length) {
-      els.notificationList.innerHTML = '<p class="helper">No delivered in-app news notifications yet.</p>';
+      els.notificationList.innerHTML = '';
       return;
     }
+    els.notificationUnread.textContent = String(state.notificationCenter.unreadCount || 0);
     els.notificationList.innerHTML = items.map((item) => `
       <article class="news-notification-item ${item.isRead ? '' : 'is-unread'}" data-notification-id="${item.id}">
         <div class="news-notification-item__meta">

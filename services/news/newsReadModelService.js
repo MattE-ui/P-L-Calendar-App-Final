@@ -63,6 +63,12 @@ function urgencyFromScheduledAt(scheduledAt, nowMs) {
   return 'upcoming';
 }
 
+const EARNINGS_HOUR_LABELS = {
+  bmo: 'Before Market Open',
+  amc: 'After Market Close',
+  dmh: 'During Market Hours'
+};
+
 function formatTimeLabel(event, nowMs) {
   const scheduled = normalizeIsoDate(event.scheduledAt);
   const published = normalizeIsoDate(event.publishedAt);
@@ -72,8 +78,10 @@ function formatTimeLabel(event, nowMs) {
   if (!Number.isFinite(ts)) return 'No time set';
   const diffMs = ts - nowMs;
   if (Math.abs(diffMs) < 60 * 60 * 1000) return 'Within 1 hour';
-  if (diffMs > 0 && diffMs < 24 * 60 * 60 * 1000) return 'Within 24 hours';
-  return candidate.replace('.000Z', 'Z');
+  if (diffMs > 0 && diffMs < 24 * 60 * 60 * 1000) return 'Today';
+  if (diffMs > 0 && diffMs < 2 * 24 * 60 * 60 * 1000) return 'Tomorrow';
+  const date = new Date(ts);
+  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function deriveBadge(event, { isPortfolioRelevant, isHighImportance, urgencyClass }) {
@@ -153,7 +161,14 @@ function buildNewsEventCardModel(event, context = {}) {
     isUpcoming: urgencyClass !== 'past' && urgencyClass !== 'none',
     isPast: urgencyClass === 'past',
     sortTimestamp,
-    stableSortKey: `${sortTimestamp}|${String(event.id || '')}`
+    stableSortKey: `${sortTimestamp}|${String(event.id || '')}`,
+    earningsTiming: event.eventType === 'earnings'
+      ? (EARNINGS_HOUR_LABELS[String(event.metadataJson?.hour || '').toLowerCase()] || null)
+      : null,
+    earningsEpsEstimate: event.eventType === 'earnings' ? (event.metadataJson?.epsEstimate ?? null) : null,
+    earningsQuarter: event.eventType === 'earnings' && event.metadataJson?.year && event.metadataJson?.quarter
+      ? `Q${event.metadataJson.quarter} ${event.metadataJson.year}`
+      : null
   };
 }
 
@@ -393,10 +408,10 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
 
   const paged = paginate('for_you', mixed, limit, cursor);
   const sectionsRaw = [
-    { key: 'portfolioUpcomingEarnings', title: 'Portfolio Upcoming Earnings', items: portfolioUpcomingEarnings },
-    { key: 'macroUpcoming', title: 'Macro Upcoming', items: macroUpcoming },
-    ...(relevantHeadlines.length ? [{ key: 'recentRelevantHeadlines', title: 'Recent Relevant Headlines', items: relevantHeadlines }] : []),
-    ...(recentlyUpdatedRelevant.length ? [{ key: 'recentlyUpdatedRelevant', title: 'Recently Updated Relevant', items: recentlyUpdatedRelevant }] : [])
+    { key: 'portfolioUpcomingEarnings', title: 'Upcoming Earnings', items: portfolioUpcomingEarnings },
+    { key: 'macroUpcoming', title: 'Market Events', items: macroUpcoming },
+    ...(relevantHeadlines.length ? [{ key: 'recentRelevantHeadlines', title: 'Relevant Headlines', items: relevantHeadlines }] : []),
+    ...(recentlyUpdatedRelevant.length ? [{ key: 'recentlyUpdatedRelevant', title: 'Portfolio Updates', items: recentlyUpdatedRelevant }] : [])
   ];
   const sections = sectionsRaw.map((section) => ({
     summary: buildNewsSectionSummary(section.items, { key: section.key, title: section.title }),
@@ -423,6 +438,13 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     appliedFilters: normalizedFilters,
     sections,
     sectionCounts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
+    portfolioContext: {
+      trackedTickers: Array.from(userTickers).sort(),
+      trackedTickerCount: userTickers.size,
+      nextEarningsTicker: portfolioUpcomingEarnings[0]?.canonicalTicker || portfolioUpcomingEarnings[0]?.ticker || null,
+      nextEarningsTimeLabel: portfolioUpcomingEarnings[0]?.timeLabel || null,
+      nextEarningsDate: portfolioUpcomingEarnings[0]?.scheduledAt || null
+    },
     data: paged.items,
     pagination: paged.pagination
   };
@@ -459,7 +481,7 @@ function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const paged = paginate('calendar', cards, limit, cursor);
   const sections = [
     { key: 'today', title: 'Today', items: today },
-    { key: 'next7Days', title: 'Next 7 Days', items: next7Days },
+    { key: 'next7Days', title: 'This Week', items: next7Days },
     { key: 'later', title: 'Later', items: later }
   ].map((section) => ({
     summary: buildNewsSectionSummary(section.items, { key: section.key, title: section.title }),
