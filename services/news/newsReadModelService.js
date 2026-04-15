@@ -439,8 +439,8 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     sections,
     sectionCounts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
     portfolioContext: {
-      trackedTickers: Array.from(userTickers).sort(),
-      trackedTickerCount: userTickers.size,
+      trackedTickers: Array.from(userTickerUniverse.portfolioTickers).sort(),
+      trackedTickerCount: userTickerUniverse.portfolioTickers.size,
       nextEarningsTicker: portfolioUpcomingEarnings[0]?.canonicalTicker || portfolioUpcomingEarnings[0]?.ticker || null,
       nextEarningsTimeLabel: portfolioUpcomingEarnings[0]?.timeLabel || null,
       nextEarningsDate: portfolioUpcomingEarnings[0]?.scheduledAt || null
