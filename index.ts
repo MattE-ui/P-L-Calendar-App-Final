@@ -4,6 +4,7 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { setTimeout as sleep } from "node:timers/promises";
 
 type ConnectorConfig = {
   connectorKey: string;
@@ -11,10 +12,6 @@ type ConnectorConfig = {
 
 const CONFIG_DIR = path.join(os.homedir(), ".veracity");
 const CONFIG_FILE = path.join(CONFIG_DIR, "ibkr-connector.json");
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function loadConfig(): ConnectorConfig | null {
   if (!fs.existsSync(CONFIG_FILE)) return null;

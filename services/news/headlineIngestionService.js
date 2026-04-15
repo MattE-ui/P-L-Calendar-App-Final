@@ -9,38 +9,27 @@ const {
   normalizeWorldHeadlineRow,
   fetchConfiguredWorldNews
 } = require('../../providers/news/configuredNewsWorldProvider');
+const { getEnvBoolean, getEnvNumber } = require('../../lib/env-utils');
 
 const WORLD_HIGH_SIGNAL_CATEGORIES = new Set(['macro', 'market', 'markets', 'economy', 'central_bank', 'rates', 'inflation', 'policy', 'geopolitics']);
 
-function envFlag(name, defaultValue = false) {
-  const raw = String(process.env[name] ?? '').trim().toLowerCase();
-  if (!raw) return defaultValue;
-  return ['1', 'true', 'yes', 'on'].includes(raw);
-}
-
-function envInt(name, fallback, min = 0, max = 5000) {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.floor(value)));
-}
-
 function getHeadlineIngestionFeatureState() {
-  const enabled = envFlag('NEWS_HEADLINE_INGESTION_ENABLED', false);
-  const stockEnabled = enabled && envFlag('NEWS_STOCK_HEADLINES_ENABLED', true);
-  const worldEnabled = enabled && envFlag('NEWS_WORLD_HEADLINES_ENABLED', true);
+  const enabled = getEnvBoolean('NEWS_HEADLINE_INGESTION_ENABLED', false);
+  const stockEnabled = enabled && getEnvBoolean('NEWS_STOCK_HEADLINES_ENABLED', true);
+  const worldEnabled = enabled && getEnvBoolean('NEWS_WORLD_HEADLINES_ENABLED', true);
 
   return {
     enabled,
     stockEnabled,
     worldEnabled,
-    maxItemsPerRun: envInt('NEWS_HEADLINE_MAX_ITEMS_PER_RUN', 120, 1, 5000),
-    stockMaxItemsPerRun: envInt('NEWS_STOCK_HEADLINE_MAX_ITEMS_PER_RUN', 80, 0, 5000),
-    worldMaxItemsPerRun: envInt('NEWS_WORLD_HEADLINE_MAX_ITEMS_PER_RUN', 40, 0, 5000),
-    maxItemsPerProviderPerRun: envInt('NEWS_HEADLINE_MAX_ITEMS_PER_PROVIDER_PER_RUN', 60, 1, 2000),
-    circuitFailureThreshold: envInt('NEWS_HEADLINE_CIRCUIT_FAILURE_THRESHOLD', 3, 1, 50),
-    circuitMalformedRatioThreshold: Number(process.env.NEWS_HEADLINE_CIRCUIT_MALFORMED_RATIO_THRESHOLD) || 0.65,
-    circuitZeroValidThreshold: envInt('NEWS_HEADLINE_CIRCUIT_ZERO_VALID_THRESHOLD', 4, 1, 50),
-    circuitCooldownMs: envInt('NEWS_HEADLINE_CIRCUIT_COOLDOWN_MS', 20 * 60 * 1000, 60 * 1000, 24 * 60 * 60 * 1000)
+    maxItemsPerRun: getEnvNumber('NEWS_HEADLINE_MAX_ITEMS_PER_RUN', 120, { min: 1, max: 5000 }),
+    stockMaxItemsPerRun: getEnvNumber('NEWS_STOCK_HEADLINE_MAX_ITEMS_PER_RUN', 80, { min: 0, max: 5000 }),
+    worldMaxItemsPerRun: getEnvNumber('NEWS_WORLD_HEADLINE_MAX_ITEMS_PER_RUN', 40, { min: 0, max: 5000 }),
+    maxItemsPerProviderPerRun: getEnvNumber('NEWS_HEADLINE_MAX_ITEMS_PER_PROVIDER_PER_RUN', 60, { min: 1, max: 2000 }),
+    circuitFailureThreshold: getEnvNumber('NEWS_HEADLINE_CIRCUIT_FAILURE_THRESHOLD', 3, { min: 1, max: 50 }),
+    circuitMalformedRatioThreshold: getEnvNumber('NEWS_HEADLINE_CIRCUIT_MALFORMED_RATIO_THRESHOLD', 0.65, { min: 0, max: 1 }),
+    circuitZeroValidThreshold: getEnvNumber('NEWS_HEADLINE_CIRCUIT_ZERO_VALID_THRESHOLD', 4, { min: 1, max: 50 }),
+    circuitCooldownMs: getEnvNumber('NEWS_HEADLINE_CIRCUIT_COOLDOWN_MS', 20 * 60 * 1000, { min: 60 * 1000, max: 24 * 60 * 60 * 1000 })
   };
 }
 

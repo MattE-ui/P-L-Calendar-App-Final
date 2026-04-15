@@ -5,6 +5,7 @@ const {
   normalizeImportance,
   fetchJsonList
 } = require('./configuredNewsProviderCommon');
+const { getEnvString, getEnvNumber } = require('../../lib/env-utils');
 
 const PROVIDER_NAME = 'configured_stock';
 
@@ -45,9 +46,9 @@ function normalizeStockHeadlineRow(row = {}) {
 
 async function fetchConfiguredStockNews(options = {}) {
   const rows = await fetchJsonList({
-    url: options.url || process.env.NEWS_STOCK_PROVIDER_URL,
-    apiKey: options.apiKey || process.env.NEWS_STOCK_PROVIDER_API_KEY,
-    timeoutMs: options.timeoutMs || Number(process.env.NEWS_STOCK_PROVIDER_TIMEOUT_MS) || 8000,
+    url: options.url || getEnvString('NEWS_STOCK_PROVIDER_URL'),
+    apiKey: options.apiKey || getEnvString('NEWS_STOCK_PROVIDER_API_KEY'),
+    timeoutMs: options.timeoutMs || getEnvNumber('NEWS_STOCK_PROVIDER_TIMEOUT_MS', 8000, { min: 1000 }),
     logger: options.logger
   });
   return rows;

@@ -6,7 +6,10 @@ const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { setTimeout: sleep } = require('node:timers/promises');
 const { z } = require('zod');
+const { getEnvString, getEnvUrl, getEnvNumber, getEnvBoolean } = require('./lib/env-utils');
+const { ensureArrayProperty } = require('./lib/data-utils');
 let nodemailer = null;
 try {
   nodemailer = require('nodemailer');
@@ -77,7 +80,7 @@ const app = express();
 if (typeof app.patch !== 'function' && typeof app.post === 'function') {
   app.patch = (...args) => app.post(...args);
 }
-const PORT = process.env.PORT || 3000;
+const PORT = getEnvNumber('PORT', 3000);
 
 
 function resolveUserTickerUniverse(db, userId) {
@@ -175,27 +178,27 @@ const newsNotificationDispatchService = createNewsNotificationDispatchService({
     email: async (payload) => enqueueNewsNotificationOutboxItem(payload, 'email')
   }
 });
-const GUEST_TTL_HOURS = Number(process.env.GUEST_TTL_HOURS) || 24;
+const GUEST_TTL_HOURS = getEnvNumber('GUEST_TTL_HOURS', 24, { min: 1 });
 const GUEST_TTL_MS = GUEST_TTL_HOURS * 60 * 60 * 1000;
-const GUEST_RATE_LIMIT_MAX = Number(process.env.GUEST_RATE_LIMIT_MAX) || 10;
-const GUEST_RATE_LIMIT_WINDOW_MS = Number(process.env.GUEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
-const isProduction = process.env.RENDER || process.env.NODE_ENV === 'production';
-const ACTIVE_TRADE_DEBUG_LOGS = String(process.env.ACTIVE_TRADE_DEBUG_LOGS || '').trim().toLowerCase() === 'true';
-const IBKR_TOKEN_SECRET = process.env.IBKR_TOKEN_SECRET || '';
+const GUEST_RATE_LIMIT_MAX = getEnvNumber('GUEST_RATE_LIMIT_MAX', 10, { min: 1 });
+const GUEST_RATE_LIMIT_WINDOW_MS = getEnvNumber('GUEST_RATE_LIMIT_WINDOW_MS', 60 * 60 * 1000, { min: 1000 });
+const isProduction = getEnvBoolean('RENDER') || process.env.NODE_ENV === 'production';
+const ACTIVE_TRADE_DEBUG_LOGS = getEnvBoolean('ACTIVE_TRADE_DEBUG_LOGS');
+const IBKR_TOKEN_SECRET = getEnvString('IBKR_TOKEN_SECRET');
 const IBKR_TOKEN_SECRET_FALLBACK = IBKR_TOKEN_SECRET || (isProduction ? crypto.randomBytes(32).toString('hex') : 'ibkr-dev-secret');
 if (!IBKR_TOKEN_SECRET) {
   console.warn('[IBKR] IBKR_TOKEN_SECRET is not set. Connector token exchange will not work reliably across deploys.');
 }
-const IBKR_CACHE_TTL_MS = Number(process.env.IBKR_CACHE_TTL_MS) || 15000;
-const IBKR_CONNECTOR_TOKEN_TTL_MS = Number(process.env.IBKR_CONNECTOR_TOKEN_TTL_MS) || 15 * 60 * 1000;
-const IBKR_RATE_LIMIT_MAX = Number(process.env.IBKR_RATE_LIMIT_MAX) || 60;
-const IBKR_RATE_LIMIT_WINDOW_MS = Number(process.env.IBKR_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
-const SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX = Number(process.env.SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX) || 30;
-const SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS = Number(process.env.SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS) || 60 * 1000;
-const SOCIAL_CODE_REGEN_RATE_LIMIT_MAX = Number(process.env.SOCIAL_CODE_REGEN_RATE_LIMIT_MAX) || 3;
-const SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS = Number(process.env.SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS) || 24 * 60 * 60 * 1000;
-const PORTFOLIO_SOURCE_T212_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_T212_STALE_MS) || 36 * 60 * 60 * 1000;
-const PORTFOLIO_SOURCE_IBKR_STALE_MS = Number(process.env.PORTFOLIO_SOURCE_IBKR_STALE_MS) || 5 * 60 * 1000;
+const IBKR_CACHE_TTL_MS = getEnvNumber('IBKR_CACHE_TTL_MS', 15000, { min: 1000 });
+const IBKR_CONNECTOR_TOKEN_TTL_MS = getEnvNumber('IBKR_CONNECTOR_TOKEN_TTL_MS', 15 * 60 * 1000, { min: 1000 });
+const IBKR_RATE_LIMIT_MAX = getEnvNumber('IBKR_RATE_LIMIT_MAX', 60, { min: 1 });
+const IBKR_RATE_LIMIT_WINDOW_MS = getEnvNumber('IBKR_RATE_LIMIT_WINDOW_MS', 60 * 1000, { min: 1000 });
+const SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX = getEnvNumber('SOCIAL_CODE_LOOKUP_RATE_LIMIT_MAX', 30, { min: 1 });
+const SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS = getEnvNumber('SOCIAL_CODE_LOOKUP_RATE_LIMIT_WINDOW_MS', 60 * 1000, { min: 1000 });
+const SOCIAL_CODE_REGEN_RATE_LIMIT_MAX = getEnvNumber('SOCIAL_CODE_REGEN_RATE_LIMIT_MAX', 3, { min: 1 });
+const SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS = getEnvNumber('SOCIAL_CODE_REGEN_RATE_LIMIT_WINDOW_MS', 24 * 60 * 60 * 1000, { min: 1000 });
+const PORTFOLIO_SOURCE_T212_STALE_MS = getEnvNumber('PORTFOLIO_SOURCE_T212_STALE_MS', 36 * 60 * 60 * 1000, { min: 1000 });
+const PORTFOLIO_SOURCE_IBKR_STALE_MS = getEnvNumber('PORTFOLIO_SOURCE_IBKR_STALE_MS', 5 * 60 * 1000, { min: 1000 });
 const T212_SYNC_INTERVAL_MS = (() => {
   const parsed = Number(process.env.T212_SYNC_INTERVAL_MS);
   if (!Number.isFinite(parsed) || parsed < 1000) return 20 * 1000;
@@ -270,23 +273,23 @@ const TWO_FACTOR_VERIFY_RATE_LIMIT_WINDOW_MS = Number(process.env.TWO_FACTOR_VER
 const TWO_FACTOR_TOTP_ALGORITHM = 'SHA1';
 const TWO_FACTOR_TOTP_DIGITS = 6;
 const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
-const TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP = String(process.env.TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP ?? 'true').toLowerCase() !== 'false';
-const TWO_FACTOR_TOTP_ALLOW_NEXT_STEP = String(process.env.TWO_FACTOR_TOTP_ALLOW_NEXT_STEP ?? 'false').toLowerCase() === 'true';
+const TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP = getEnvString('TWO_FACTOR_TOTP_ALLOW_PREVIOUS_STEP', 'true').toLowerCase() !== 'false';
+const TWO_FACTOR_TOTP_ALLOW_NEXT_STEP = getEnvBoolean('TWO_FACTOR_TOTP_ALLOW_NEXT_STEP');
 const TWO_FACTOR_TOTP_WINDOW_STEPS = TWO_FACTOR_TOTP_ALLOW_NEXT_STEP ? 1 : 0;
-const INVESTOR_INVITE_BASE_URL = (process.env.INVESTOR_INVITE_BASE_URL || 'https://veracitysuite.com').replace(/\/+$/, '');
-const NOTIFICATION_TEST_RATE_LIMIT_MAX = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX) || 5;
-const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = Number(process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS) || 60 * 60 * 1000;
-const INTERNAL_NOTIFICATION_SECRET = process.env.INTERNAL_NOTIFICATION_SECRET || '';
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.FCM_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
-const FIREBASE_CLIENT_EMAIL = process.env.FIREBASE_CLIENT_EMAIL || process.env.FCM_CLIENT_EMAIL || '';
+const INVESTOR_INVITE_BASE_URL = getEnvUrl('INVESTOR_INVITE_BASE_URL', 'https://veracitysuite.com');
+const NOTIFICATION_TEST_RATE_LIMIT_MAX = getEnvNumber('NOTIFICATION_TEST_RATE_LIMIT_MAX', 5, { min: 1 });
+const NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS = getEnvNumber('NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS', 60 * 60 * 1000, { min: 1000 });
+const INTERNAL_NOTIFICATION_SECRET = getEnvString('INTERNAL_NOTIFICATION_SECRET');
+const FIREBASE_PROJECT_ID = getEnvString('FIREBASE_PROJECT_ID', getEnvString('FCM_PROJECT_ID', getEnvString('NEXT_PUBLIC_FIREBASE_PROJECT_ID', '')));
+const FIREBASE_CLIENT_EMAIL = getEnvString('FIREBASE_CLIENT_EMAIL', getEnvString('FCM_CLIENT_EMAIL', ''));
 const FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY
   ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
   : (process.env.FCM_PRIVATE_KEY ? process.env.FCM_PRIVATE_KEY.replace(/\\n/g, '\n') : '');
-const FCM_VAPID_KEY = process.env.FCM_VAPID_KEY || process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || '';
-const FCM_APP_ID = process.env.FCM_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '';
-const FCM_API_KEY = process.env.FCM_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
-const FCM_AUTH_DOMAIN = process.env.FCM_AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '';
-const FCM_MESSAGING_SENDER_ID = process.env.FCM_MESSAGING_SENDER_ID || process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '';
+const FCM_VAPID_KEY = getEnvString('FCM_VAPID_KEY', getEnvString('NEXT_PUBLIC_FIREBASE_VAPID_KEY', ''));
+const FCM_APP_ID = getEnvString('FCM_APP_ID', getEnvString('NEXT_PUBLIC_FIREBASE_APP_ID', ''));
+const FCM_API_KEY = getEnvString('FCM_API_KEY', getEnvString('NEXT_PUBLIC_FIREBASE_API_KEY', ''));
+const FCM_AUTH_DOMAIN = getEnvString('FCM_AUTH_DOMAIN', getEnvString('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', ''));
+const FCM_MESSAGING_SENDER_ID = getEnvString('FCM_MESSAGING_SENDER_ID', getEnvString('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID', ''));
 
 const notificationPublicEnvPresence = {
   apiKey: !!FCM_API_KEY,
@@ -301,7 +304,7 @@ const AUTH_COOKIE_NAME = 'auth_token';
 const AUTH_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: 'Strict',
-  secure: !!process.env.RENDER,
+  secure: isProduction,
   path: '/'
 };
 const missingNotificationPublicEnv = Object.entries(notificationPublicEnvPresence)
@@ -321,13 +324,13 @@ const notificationTestRateLimit = new Map();
 const twoFactorSetupVerifyRateLimit = new Map();
 const twoFactorLoginVerifyRateLimit = new Map();
 
-const DEFAULT_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'storage');
-const DB_PATH = process.env.DB_PATH || process.env.DATA_FILE || path.join(DEFAULT_DATA_DIR, 'data.json');
+const DEFAULT_DATA_DIR = getEnvString('DATA_DIR', path.join(__dirname, 'storage'));
+const DB_PATH = getEnvString('DB_PATH', getEnvString('DATA_FILE', path.join(DEFAULT_DATA_DIR, 'data.json')));
 const LEGACY_DATA_FILE = path.join(__dirname, 'data.json');
 const AVATAR_DIRECTORY_RELATIVE = path.join('uploads', 'avatars');
-const AVATAR_STORAGE_DIR = process.env.AVATAR_STORAGE_DIR || path.join(path.dirname(DB_PATH), AVATAR_DIRECTORY_RELATIVE);
+const AVATAR_STORAGE_DIR = getEnvString('AVATAR_STORAGE_DIR', path.join(path.dirname(DB_PATH), AVATAR_DIRECTORY_RELATIVE));
 const AVATAR_PUBLIC_PREFIX = '/static/uploads/avatars/';
-const AVATAR_MAX_BYTES = Number(process.env.AVATAR_MAX_BYTES) || (2 * 1024 * 1024);
+const AVATAR_MAX_BYTES = getEnvNumber('AVATAR_MAX_BYTES', 2 * 1024 * 1024, { min: 1024 });
 const AVATAR_ALLOWED_TYPES = new Map([
   ['image/jpeg', 'jpg'],
   ['image/jpg', 'jpg'],
@@ -335,7 +338,7 @@ const AVATAR_ALLOWED_TYPES = new Map([
   ['image/webp', 'webp']
 ]);
 const INSTANCE_ID = crypto.randomBytes(4).toString('hex');
-const PERF_DIAGNOSTICS_ENV_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.PERF_DIAGNOSTICS || '').toLowerCase());
+const PERF_DIAGNOSTICS_ENV_ENABLED = getEnvBoolean('PERF_DIAGNOSTICS');
 const PERF_DIAGNOSTICS_QUERY_KEYS = ['perf', '__perf', 'debugPerf'];
 const PERF_DIAGNOSTICS_HEADER_KEY = 'x-perf-debug';
 const PERF_REQUEST_ID_HEADER = 'x-request-id';
@@ -716,10 +719,6 @@ const IbkrHttpError = global.__IbkrHttpError__;
 const IbkrNetworkError = global.__IbkrNetworkError__;
 const IbkrParseError = global.__IbkrParseError__;
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function parseRetryAfter(header) {
   if (!header) return null;
   const numeric = Number(header);
@@ -778,102 +777,44 @@ function applySocialCodeRegenRateLimit(req, res) {
 
 function ensureSocialTables(db) {
   if (!db || typeof db !== 'object') return false;
+  const requiredArrays = [
+    'socialProfiles',
+    'socialSettings',
+    'friendRequests',
+    'friendships',
+    'tradeShareSettings',
+    'leaderboardStats',
+    'socialEventLog',
+    'tradeGroups',
+    'tradeGroupMembers',
+    'tradeGroupAlerts',
+    'tradeGroupNotifications',
+    'tradeGroupInvites',
+    'tradeGroupAnnouncements',
+    'tradeGroupPendingAlerts',
+    'watchlists',
+    'watchlistItems',
+    'tradeGroupWatchlists',
+    'groupChats',
+    'groupChatMessages',
+    'groupChatReadStates',
+    'groupChatRoles',
+    'groupChatRoleAssignments',
+    'groupChatTypingStates'
+  ];
+
   let mutated = false;
-  if (!Array.isArray(db.socialProfiles)) {
-    db.socialProfiles = [];
-    mutated = true;
+  for (const key of requiredArrays) {
+    if (!Array.isArray(db[key])) {
+      db[key] = [];
+      mutated = true;
+    }
   }
-  if (!Array.isArray(db.socialSettings)) {
-    db.socialSettings = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.friendRequests)) {
-    db.friendRequests = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.friendships)) {
-    db.friendships = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeShareSettings)) {
-    db.tradeShareSettings = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.leaderboardStats)) {
-    db.leaderboardStats = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.socialEventLog)) {
-    db.socialEventLog = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroups)) {
-    db.tradeGroups = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupMembers)) {
-    db.tradeGroupMembers = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupAlerts)) {
-    db.tradeGroupAlerts = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupNotifications)) {
-    db.tradeGroupNotifications = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupInvites)) {
-    db.tradeGroupInvites = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupAnnouncements)) {
-    db.tradeGroupAnnouncements = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupPendingAlerts)) {
-    db.tradeGroupPendingAlerts = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.watchlists)) {
-    db.watchlists = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.watchlistItems)) {
-    db.watchlistItems = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.tradeGroupWatchlists)) {
-    db.tradeGroupWatchlists = [];
-    mutated = true;
-  }
+
   if (ensureWatchlistPreviousCloseReferences(db)) {
     mutated = true;
   }
-  if (!Array.isArray(db.groupChats)) {
-    db.groupChats = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.groupChatMessages)) {
-    db.groupChatMessages = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.groupChatReadStates)) {
-    db.groupChatReadStates = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.groupChatRoles)) {
-    db.groupChatRoles = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.groupChatRoleAssignments)) {
-    db.groupChatRoleAssignments = [];
-    mutated = true;
-  }
-  if (!Array.isArray(db.groupChatTypingStates)) {
-    db.groupChatTypingStates = [];
-    mutated = true;
-  }
+
   return mutated;
 }
 
@@ -898,7 +839,7 @@ const GROUP_CHAT_PAGE_ROUTE_REGISTRY = {
   leaderboard: '/social/leaderboard',
   groups: '/social/groups'
 };
-const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, Number(process.env.TRADE_GROUP_BROKER_ALERT_DELAY_MS) || 30000);
+const TRADE_GROUP_BROKER_ALERT_DELAY_MS = Math.max(1000, getEnvNumber('TRADE_GROUP_BROKER_ALERT_DELAY_MS', 30000, { min: 1000 }));
 const pendingTradeGroupAlertTimers = new Map();
 const LEGACY_TRADE_GROUP_NOTIFICATION_TYPE_MAP = {
   alert: 'trade_group_alert',

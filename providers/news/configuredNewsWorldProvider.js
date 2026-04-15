@@ -4,6 +4,7 @@ const {
   normalizeImportance,
   fetchJsonList
 } = require('./configuredNewsProviderCommon');
+const { getEnvString, getEnvNumber } = require('../../lib/env-utils');
 
 const PROVIDER_NAME = 'configured_world';
 
@@ -42,9 +43,9 @@ function normalizeWorldHeadlineRow(row = {}) {
 
 async function fetchConfiguredWorldNews(options = {}) {
   const rows = await fetchJsonList({
-    url: options.url || process.env.NEWS_WORLD_PROVIDER_URL,
-    apiKey: options.apiKey || process.env.NEWS_WORLD_PROVIDER_API_KEY,
-    timeoutMs: options.timeoutMs || Number(process.env.NEWS_WORLD_PROVIDER_TIMEOUT_MS) || 8000,
+    url: options.url || getEnvString('NEWS_WORLD_PROVIDER_URL'),
+    apiKey: options.apiKey || getEnvString('NEWS_WORLD_PROVIDER_API_KEY'),
+    timeoutMs: options.timeoutMs || getEnvNumber('NEWS_WORLD_PROVIDER_TIMEOUT_MS', 8000, { min: 1000 }),
     logger: options.logger
   });
   return rows;

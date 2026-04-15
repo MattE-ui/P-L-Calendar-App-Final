@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import https from 'node:https';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
 const getArg = (flag: string, fallback: string | null = null) => {
@@ -98,8 +99,6 @@ const ibkrClient: AxiosInstance = createHttpClient({
   baseURL: ibkrApiBase,
   insecureTls: insecure
 });
-
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const buildFullUrl = (baseURL?: string, url?: string) => {
   const base = baseURL ? String(baseURL).replace(/\/+$/, '') : '';
