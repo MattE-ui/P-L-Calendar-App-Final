@@ -157,8 +157,15 @@ function normalizeTradeGroupActivityEvent(item = {}) {
   if (hasCloseSignal) return 'close';
 
   const classification = String(item?.alert_classification || '').trim().toLowerCase();
+  if (classification === 'buy' || classification === 'add' || classification === 'new_position' || classification === 'position_increase') return 'open';
   if (classification === 'partial_sell') return 'trim';
   if (classification === 'full_close') return 'close';
+
+  if (eventType === 'NEW_POSITION' || eventType === 'POSITION_INCREASE') return 'open';
+  if (eventType === 'POSITION_REDUCED') return 'trim';
+
+  const side = String(item?.side || '').trim().toUpperCase();
+  if (side === 'BUY') return 'open';
 
   const trimPct = toNumericOrNull(item?.trim_pct ?? item?.trim_percent ?? item?.percent ?? item?.percentage);
   if (trimPct !== null) {
@@ -177,9 +184,7 @@ function normalizeTradeGroupActivityEvent(item = {}) {
     return remainingQuantity > 0 ? 'trim' : 'close';
   }
 
-  const side = String(item?.side || '').trim().toUpperCase();
   if (side === 'SELL') return 'close';
-  if (side === 'BUY') return 'open';
   return 'other';
 }
 
@@ -1366,6 +1371,16 @@ function renderTradeGroupSection() {
       }
     } else {
       const normalizedClassification = normalizeTradeGroupActivityEvent(item);
+      if (SOCIAL_ACTIVITY_DEBUG) {
+        console.info('[social-activity-render]', {
+          itemId: item?.id || null,
+          source: item?.type || 'alert',
+          side: String(item?.side || '').trim().toUpperCase() || null,
+          classification: String(item?.alert_classification || '').trim().toLowerCase() || null,
+          positionEventType: String(item?.position_event_type || item?.event_type || '').trim().toUpperCase() || null,
+          normalizedClassification
+        });
+      }
       const isTrim = normalizedClassification === 'trim';
       const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
       if (isTrim) row.classList.add('social-list-row--trim');

@@ -940,8 +940,18 @@ function normalizeTradeGroupActivityEvent(alert = {}) {
   if (explicitSignals.some((value) => /(full[_\s-]?exit|full[_\s-]?close|close|closed|exit|exited)/.test(value))) return 'close';
 
   const classification = String(alert?.alert_classification || '').trim().toLowerCase();
+  if (classification === 'buy') return 'open';
+  if (classification === 'add') return 'open';
+  if (classification === 'new_position') return 'open';
+  if (classification === 'position_increase') return 'open';
   if (classification === 'partial_sell') return 'trim';
   if (classification === 'full_close') return 'close';
+
+  if (positionEventType === 'NEW_POSITION' || positionEventType === 'POSITION_INCREASE') return 'open';
+  if (positionEventType === 'POSITION_REDUCED') return 'trim';
+
+  const side = String(alert?.side || '').trim().toUpperCase();
+  if (side === 'BUY') return 'open';
 
   const trimPct = Number(alert?.trim_pct ?? alert?.trim_percent ?? alert?.percent ?? alert?.percentage);
   if (Number.isFinite(trimPct)) {
@@ -960,9 +970,7 @@ function normalizeTradeGroupActivityEvent(alert = {}) {
     return remainingQty > 0 ? 'trim' : 'close';
   }
 
-  const side = String(alert?.side || '').trim().toUpperCase();
   if (side === 'SELL') return 'close';
-  if (side === 'BUY') return 'open';
   return 'other';
 }
 
@@ -979,6 +987,20 @@ function buildTradeGroupAlertCopy(alert = {}, { groupName = '', leaderName = 'Le
   const fillPriceText = Number.isFinite(Number(alert?.fill_price)) ? `$${Number(alert.fill_price).toFixed(2)}` : '';
   const trimPctText = formatTrimPercentForUi(alert?.trim_pct);
   const normalizedEventType = normalizeTradeGroupAlertEventType(alert);
+  console.info('[TradeGroup][AlertCopy]', {
+    alertId: alert?.id || null,
+    source: 'trade_group_alert',
+    side: String(alert?.side || '').trim().toUpperCase() || null,
+    classification: String(alert?.alert_classification || '').trim().toLowerCase() || null,
+    positionEventType: String(alert?.position_event_type || '').trim().toUpperCase() || null,
+    quantityDelta: Number.isFinite(Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity))
+      ? Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity)
+      : null,
+    remainingQuantity: Number.isFinite(Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity))
+      ? Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity)
+      : null,
+    normalizedEventType
+  });
   if (normalizedEventType === 'TRADE_TRIMMED') {
     return {
       normalizedEventType,
@@ -2058,6 +2080,25 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
   const positionEventType = side === 'BUY'
     ? 'NEW_POSITION'
     : (classification === 'full_close' ? 'POSITION_CLOSED' : (classification === 'partial_sell' ? 'POSITION_TRIM' : 'POSITION_REDUCED'));
+  const quantity = Number.isFinite(Number(fillEvent?.quantity)) ? Number(fillEvent.quantity) : null;
+  const remainingQuantity = Number.isFinite(Number(fillEvent?.remainingQuantity)) ? Number(fillEvent.remainingQuantity) : null;
+  const previousQuantity = Number.isFinite(Number(fillEvent?.previousQuantity)) ? Number(fillEvent.previousQuantity) : null;
+  const quantityDelta = (Number.isFinite(previousQuantity) && Number.isFinite(remainingQuantity))
+    ? Number((remainingQuantity - previousQuantity).toFixed(8))
+    : null;
+  console.info('[TradeGroup][AlertClassifier]', {
+    source: 'trading212_fill',
+    leader: leaderUsername,
+    side,
+    classification,
+    positionEventType,
+    quantity,
+    previousQuantity,
+    remainingQuantity,
+    quantityDelta,
+    sourceTradeId: String(fillEvent?.sourceTradeId || '').trim() || null,
+    brokerEventKey
+  });
   const fillPrice = Number.isFinite(Number(fillEvent?.fillPrice)) ? Number(fillEvent.fillPrice) : null;
   const trimPercent = side === 'SELL' && classification === 'partial_sell'
     ? computeTrimPercent(fillEvent?.previousQuantity, fillEvent?.remainingQuantity)
@@ -2175,8 +2216,8 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
       position_event_type: positionEventType,
       fill_price: fillPrice,
       trim_pct: trimPercent,
-      quantity: side === 'SELL' ? null : (Number.isFinite(Number(fillEvent?.quantity)) ? Number(fillEvent.quantity) : null),
-      remaining_quantity: side === 'SELL' ? null : (Number.isFinite(Number(fillEvent?.remainingQuantity)) ? Number(fillEvent.remainingQuantity) : null),
+      quantity: side === 'SELL' ? null : quantity,
+      remaining_quantity: side === 'SELL' ? null : remainingQuantity,
       realized_pnl_gbp: Number.isFinite(Number(fillEvent?.realizedPnlGbp)) ? Number(fillEvent.realizedPnlGbp) : null,
       realized_return_pct: Number.isFinite(Number(fillEvent?.realizedReturnPct)) ? Number(fillEvent.realizedReturnPct) : null,
       stop_triggered: fillEvent?.stopTriggered === true,
