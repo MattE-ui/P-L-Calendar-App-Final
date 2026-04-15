@@ -1990,7 +1990,7 @@ function renderActiveTrades() {
   const renderModelDiagnostics = {
     incomingTrades: trades.length,
     groupedTiles: groupedTrades.length,
-    groupedChildRows: groupedTrades.reduce((sum, group) => sum + Math.max(0, (group.trades?.length || 0) - 1), 0),
+    groupedChildRows: groupedTrades.reduce((sum, group) => sum + (group.trades?.length || 0), 0),
     groupedBreakdown: groupedTrades.map((group) => ({
       ticker: group.ticker,
       direction: group.directionClass,
@@ -1998,11 +1998,12 @@ function renderActiveTrades() {
     }))
   };
   console.info('[ActiveTrades][RenderModel]', renderModelDiagnostics);
+  logActiveTradesContractAudit(trades, groupedTrades, 'renderActiveTrades');
   groupedTrades.forEach((group) => {
     console.info('[ActiveTrades][GroupingRegression]', {
       ticker: group.ticker || '—',
       direction: group.directionClass || 'long',
-      childCount: Math.max(0, (group.trades?.length || 0) - 1),
+      childCount: group.trades?.length || 0,
       mergeReason: `displaySymbol+direction:${group.ticker || '—'}:${group.directionClass || 'long'}`
     });
   });
@@ -2028,23 +2029,25 @@ function renderActiveTrades() {
     const groupCard = document.createElement('div');
     groupCard.className = 'trade-pill trade-group-card';
 
-    const oldestTrade = group.trades[0] || null;
-    if (!oldestTrade) return;
-    const oldestTradeId = getActiveTradeUiId(oldestTrade);
-    const oldestIsExpanded = Boolean(oldestTradeId) && oldestTradeId === state.expandedActiveTradeId;
     const aggregateHeaderTrade = buildGroupedTradeHeaderAggregate(group);
-    const groupHeader = renderGroupedTradeHeaderRow(group, aggregateHeaderTrade, oldestTradeId, oldestIsExpanded);
+    const groupHeader = renderGroupedTradeHeaderRow(group, aggregateHeaderTrade, '', false);
     groupCard.appendChild(groupHeader);
-    if (oldestIsExpanded) {
-      const expandedWrap = renderExpandedTradeContent(oldestTrade, oldestTradeId, true, noteDrafts);
-      expandedWrap.dataset.tradeId = oldestTradeId;
-      groupCard.appendChild(expandedWrap);
-    }
+    console.info('[ActiveTrades][DoubleCountTrace]', {
+      ticker: group.ticker || '—',
+      direction: group.directionClass || 'long',
+      parentInputTradeCount: group.trades.length,
+      parentUnrealizedGBP: Number.isFinite(Number(aggregateHeaderTrade?.unrealizedGBP)) ? Number(aggregateHeaderTrade.unrealizedGBP) : null,
+      parentInputs: group.trades.map((trade) => ({
+        tradeId: trade?.id || null,
+        unrealizedGBP: Number.isFinite(Number(trade?.unrealizedGBP)) ? Number(trade.unrealizedGBP) : null,
+        isAlreadyAggregated: Array.isArray(trade?.trades) || Number.isFinite(Number(trade?.aggregatedPnl))
+      }))
+    });
 
-    group.trades.slice(1).forEach((trade, index) => {
+    group.trades.forEach((trade, index) => {
       const tradeId = getActiveTradeUiId(trade);
       const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
-      const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 2);
+      const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 1);
       groupCard.appendChild(row);
       if (isExpanded) {
         const expandedWrap = renderExpandedTradeContent(trade, tradeId, true, noteDrafts);
@@ -2054,6 +2057,14 @@ function renderActiveTrades() {
     });
 
     list.appendChild(groupCard);
+    console.info('[ActiveTrades][ParentChildModel]', {
+      ticker: group.ticker || '—',
+      direction: group.directionClass || 'long',
+      finalTopLevelParentCount: 1,
+      finalChildRowCount: group.trades.length,
+      parentSourceIds: ['synthetic_from_raw_children'],
+      childSourceIds: group.trades.map((trade) => trade?.id).filter(Boolean)
+    });
   });
   updateActiveTradesOverflow();
   state.activeTradesLastStructureSignature = structureSignature;
@@ -2259,6 +2270,49 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       return (bFlag - aFlag) || (a.index - b.index);
     })
     .map(item => item.group);
+}
+
+function classifyActiveTradeContractRows(trades = []) {
+  const rows = Array.isArray(trades) ? trades : [];
+  let rawCount = 0;
+  let groupedCount = 0;
+  rows.forEach((trade) => {
+    const hasNestedTrades = Array.isArray(trade?.trades);
+    const hasAggregateShape = Number.isFinite(Number(trade?.tradeCount)) || Number.isFinite(Number(trade?.aggregatedPnl));
+    if (hasNestedTrades || hasAggregateShape) groupedCount += 1;
+    else rawCount += 1;
+  });
+  return {
+    total: rows.length,
+    rawCount,
+    groupedCount,
+    kind: groupedCount === 0 ? 'raw_only' : (rawCount === 0 ? 'grouped_only' : 'mixed')
+  };
+}
+
+function logActiveTradesContractAudit(trades = [], groupedTrades = [], source = 'render') {
+  const tickerScope = new Set(['BE', 'SNDK']);
+  const persistedCounts = new Map();
+  trades.forEach((trade) => {
+    const ticker = normalizeTicker(getTradeDisplaySymbol(trade));
+    if (!tickerScope.has(ticker)) return;
+    persistedCounts.set(ticker, (persistedCounts.get(ticker) || 0) + 1);
+  });
+  console.info('[ActiveTrades][ContractAudit]', {
+    source,
+    persistedObjectCountsForTicker: Array.from(persistedCounts.entries()).map(([ticker, count]) => ({ ticker, activeTrades: count })),
+    apiObjectCountsForTicker: Array.from(persistedCounts.entries()).map(([ticker, count]) => ({ ticker, rowsReturnedByApi: count })),
+    incomingRowsKind: classifyActiveTradeContractRows(trades).kind,
+    groupedRowsKind: classifyActiveTradeContractRows(groupedTrades).kind,
+    groupedCountsByTicker: groupedTrades
+      .filter((group) => tickerScope.has(normalizeTicker(group?.ticker)))
+      .map((group) => ({
+        ticker: normalizeTicker(group?.ticker),
+        topLevelParentCount: 1,
+        childEntryCount: Array.isArray(group?.trades) ? group.trades.length : 0,
+        sourceTradeIds: Array.isArray(group?.trades) ? group.trades.map((trade) => trade?.id).filter(Boolean) : []
+      }))
+  });
 }
 
 function buildGroupedTradeHeaderAggregate(group = {}) {

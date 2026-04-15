@@ -23112,6 +23112,7 @@ async function buildActiveTrades(user, rates = {}) {
       });
     });
   }
+  logActiveTradesContractAuditStage('persisted_model_active_candidates', trades);
   const dedupedTrades = dedupeActiveTradesByIdentity(trades);
   const enriched = [];
   for (const trade of dedupedTrades) {
@@ -23563,6 +23564,49 @@ function normalizeActiveTradeGroupingKey(trade = {}) {
   return { ticker, direction, key: `${ticker}::${direction}` };
 }
 
+function classifyActiveTradeRowContract(trades = []) {
+  const rows = Array.isArray(trades) ? trades : [];
+  let rawCount = 0;
+  let groupedCount = 0;
+  rows.forEach((trade) => {
+    const hasNestedTrades = Array.isArray(trade?.trades);
+    const hasAggregateShape = Number.isFinite(Number(trade?.tradeCount)) || Number.isFinite(Number(trade?.aggregatedPnl));
+    if (hasNestedTrades || hasAggregateShape) groupedCount += 1;
+    else rawCount += 1;
+  });
+  return groupedCount === 0 ? 'raw_only' : (rawCount === 0 ? 'grouped_only' : 'mixed');
+}
+
+function logActiveTradesContractAuditStage(stage = 'unknown', trades = []) {
+  const rows = Array.isArray(trades) ? trades : [];
+  const targetTickers = new Set(['BE', 'SNDK']);
+  const buckets = new Map();
+  rows.forEach((trade) => {
+    const ticker = String(trade.displayTicker || trade.displaySymbol || trade.symbol || '').trim().toUpperCase();
+    if (!targetTickers.has(ticker)) return;
+    if (!buckets.has(ticker)) buckets.set(ticker, { ticker, objects: 0, legs: 0, tradeIds: [] });
+    const bucket = buckets.get(ticker);
+    bucket.objects += 1;
+    const legs = Array.isArray(trade?.executions) ? trade.executions.length : 0;
+    bucket.legs += legs;
+    if (trade?.id) bucket.tradeIds.push(String(trade.id));
+  });
+  console.info('[ActiveTrades][ContractAudit]', {
+    stage,
+    rowsKind: classifyActiveTradeRowContract(rows),
+    persistedObjectCountsForTicker: Array.from(buckets.values()).map((item) => ({
+      ticker: item.ticker,
+      activeTrades: item.objects,
+      executionLegs: item.legs,
+      tradeIds: item.tradeIds
+    })),
+    apiObjectCountsForTicker: Array.from(buckets.values()).map((item) => ({
+      ticker: item.ticker,
+      rowsReturnedByApi: item.objects
+    }))
+  });
+}
+
 function logActiveTradesGroupingDiagnostics(trades = []) {
   if (!Array.isArray(trades) || !trades.length) return;
   const grouped = new Map();
@@ -23617,6 +23661,7 @@ function buildActiveTradesSnapshotPayload(snapshot, {
     ? snapshot.tradesSummary
     : detailTrades.map(serializeActiveTradeSummary);
   const responseTrades = responseMode === 'detail' ? detailTrades : summaryTrades;
+  logActiveTradesContractAuditStage(`api_response_${responseMode}`, responseTrades);
   logActiveTradesGroupingDiagnostics(responseTrades);
   const summaryBytes = Buffer.byteLength(JSON.stringify(summaryTrades));
   const detailBytes = Buffer.byteLength(JSON.stringify(detailTrades));
