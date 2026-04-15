@@ -961,8 +961,8 @@ function normalizeTradeGroupActivityEvent(alert = {}) {
 
   const remainingQty = Number(alert?.remaining_quantity ?? alert?.remainingQuantity ?? alert?.position_remaining_quantity);
   if (Number.isFinite(remainingQty)) {
-    if (remainingQty > 0) return 'trim';
-    if (remainingQty === 0) return 'close';
+    if (side === 'SELL' && remainingQty > 0) return 'trim';
+    if (side === 'SELL' && remainingQty === 0) return 'close';
   }
 
   const quantityDelta = Number(alert?.quantity_delta ?? alert?.quantityDelta ?? alert?.delta_quantity);
@@ -1839,6 +1839,10 @@ function classifyPositionDeltaEvent({ previousQty = null, nextQty = null } = {})
   return '';
 }
 
+function isCanonicallyClosedTrade(trade = {}) {
+  return trade?.status === 'closed' || Boolean(trade?.closedAt);
+}
+
 function computeTrimPercent(previousQty, nextQty) {
   const prev = Number(previousQty);
   const next = Number(nextQty);
@@ -2070,22 +2074,36 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
     console.info(`[TradeGroup][LeaderSync] alert skipped leader=${leaderUsername} reason=invalid_side side=${side || 'n/a'} eventKey=${brokerEventKey}`);
     return { alertsCreated: 0, notificationsCreated: 0, duplicates: 0 };
   }
-  const classification = side === 'BUY'
-    ? 'buy'
-    : classifyTrading212SellAlert({
-      matchedQuantity: fillEvent?.quantity,
-      remainingQuantity: fillEvent?.remainingQuantity,
-      tradeStatus: fillEvent?.tradeStatus
-    });
-  const positionEventType = side === 'BUY'
-    ? 'NEW_POSITION'
-    : (classification === 'full_close' ? 'POSITION_CLOSED' : (classification === 'partial_sell' ? 'POSITION_TRIM' : 'POSITION_REDUCED'));
   const quantity = Number.isFinite(Number(fillEvent?.quantity)) ? Number(fillEvent.quantity) : null;
   const remainingQuantity = Number.isFinite(Number(fillEvent?.remainingQuantity)) ? Number(fillEvent.remainingQuantity) : null;
   const previousQuantity = Number.isFinite(Number(fillEvent?.previousQuantity)) ? Number(fillEvent.previousQuantity) : null;
   const quantityDelta = (Number.isFinite(previousQuantity) && Number.isFinite(remainingQuantity))
     ? Number((remainingQuantity - previousQuantity).toFixed(8))
     : null;
+  const deltaType = classifyPositionDeltaEvent({ previousQty: previousQuantity, nextQty: remainingQuantity });
+  let classification = side === 'BUY'
+    ? 'buy'
+    : classifyTrading212SellAlert({
+      matchedQuantity: fillEvent?.quantity,
+      remainingQuantity: fillEvent?.remainingQuantity,
+      tradeStatus: fillEvent?.tradeStatus
+    });
+  let positionEventType = side === 'BUY'
+    ? 'NEW_POSITION'
+    : (classification === 'full_close' ? 'POSITION_CLOSED' : (classification === 'partial_sell' ? 'POSITION_TRIM' : 'POSITION_REDUCED'));
+  if (deltaType === 'POSITION_INCREASE') {
+    classification = side === 'BUY' ? 'add' : classification;
+    positionEventType = 'POSITION_INCREASE';
+  } else if (deltaType === 'NEW_POSITION') {
+    classification = side === 'BUY' ? 'buy' : classification;
+    positionEventType = 'NEW_POSITION';
+  } else if (deltaType === 'POSITION_TRIM') {
+    classification = side === 'SELL' ? 'partial_sell' : classification;
+    positionEventType = 'POSITION_TRIM';
+  } else if (deltaType === 'POSITION_CLOSED') {
+    classification = side === 'SELL' ? 'full_close' : classification;
+    positionEventType = 'POSITION_CLOSED';
+  }
   console.info('[TradeGroup][AlertClassifier]', {
     source: 'trading212_fill',
     leader: leaderUsername,
@@ -2099,6 +2117,28 @@ function emitTradeGroupAlertFromTrading212Fill(db, leaderUsername, fillEvent = {
     sourceTradeId: String(fillEvent?.sourceTradeId || '').trim() || null,
     brokerEventKey
   });
+  console.info('[trade-alert-classify]', {
+    source: 'emitTradeGroupAlertFromTrading212Fill',
+    leader: leaderUsername,
+    tradeId: String(fillEvent?.sourceTradeId || '').trim() || null,
+    groupId: null,
+    ticker: String(fillEvent?.ticker || '').trim().toUpperCase() || null,
+    preQty: previousQuantity,
+    postQty: remainingQuantity,
+    delta: quantityDelta,
+    deltaType: deltaType || null,
+    chosenEventType: positionEventType,
+    classification
+  });
+  if (positionEventType === 'POSITION_TRIM' || positionEventType === 'POSITION_REDUCED') {
+    console.info('[trade-alert-classify]', {
+      source: 'emitTradeGroupAlertFromTrading212Fill',
+      reason: 'post_qty_below_pre_qty',
+      ticker: String(fillEvent?.ticker || '').trim().toUpperCase() || null,
+      preQty: previousQuantity,
+      postQty: remainingQuantity
+    });
+  }
   const fillPrice = Number.isFinite(Number(fillEvent?.fillPrice)) ? Number(fillEvent.fillPrice) : null;
   const trimPercent = side === 'SELL' && classification === 'partial_sell'
     ? computeTrimPercent(fillEvent?.previousQuantity, fillEvent?.remainingQuantity)
@@ -7665,6 +7705,12 @@ function addTradeTrim(user, trade, units, price, closeDate, rates, defaultDate, 
 }
 
 function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate) {
+  const priorState = {
+    status: trade?.status || null,
+    closedAt: trade?.closedAt || null,
+    closeDate: trade?.closeDate || null,
+    closePrice: Number.isFinite(Number(trade?.closePrice)) ? Number(trade.closePrice) : null
+  };
   const history = ensurePortfolioHistory(user);
   const targetDate = (typeof closeDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(closeDate))
     ? closeDate
@@ -7687,6 +7733,18 @@ function applyTradeClose(user, trade, closePrice, closeDate, rates, defaultDate)
     updateHistoryForClose(user, history, targetDate, pnlSafe);
     refreshAnchors(user, history);
   }
+  console.info('[trade-close]', {
+    tradeId: trade?.id || null,
+    priorState,
+    persistedState: {
+      status: trade?.status || null,
+      closedAt: trade?.closedAt || null,
+      closeDate: trade?.closeDate || null,
+      closePrice: Number.isFinite(Number(trade?.closePrice)) ? Number(trade.closePrice) : null
+    },
+    fillPrice: Number(closePrice),
+    closeQuantity: Number(trade?.sizeUnits) || null
+  });
   return { pnlGBP: pnlSafe, closeDateKey: targetDate };
 }
 
@@ -9404,6 +9462,19 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
       if (ticker) lookup.set(`ticker:${ticker}`, { tradeDate, trade });
     }
   }
+  const closedLookup = new Map();
+  for (const items of Object.values(journal)) {
+    for (const trade of items || []) {
+      if (!trade || !isCanonicallyClosedTrade(trade)) continue;
+      if (trade.source !== 'ibkr' && !trade.ibkrPositionId) continue;
+      const ticker = normalizeIbkrTicker(trade.ibkrTicker || trade.brokerTicker || trade.symbol || '');
+      const conid = trade.ibkrConid ? String(trade.ibkrConid) : '';
+      const positionId = trade.ibkrPositionId || conid || ticker;
+      if (positionId) closedLookup.set(positionId, trade);
+      if (conid) closedLookup.set(`conid:${conid}`, trade);
+      if (ticker) closedLookup.set(`ticker:${ticker}`, trade);
+    }
+  }
   let positionsMutated = false;
   const positions = normalizeIbkrPositions(snapshot.positions || []);
   if (positions.length) {
@@ -9422,6 +9493,20 @@ function upsertIbkrTradesFromSnapshot(user, snapshot, derivedStopByTicker = {}, 
       const matched = lookup.get(positionId)
         || (conid ? lookup.get(`conid:${conid}`) : null)
         || (ticker ? lookup.get(`ticker:${ticker}`) : null);
+      const matchedClosed = closedLookup.get(positionId)
+        || (conid ? closedLookup.get(`conid:${conid}`) : null)
+        || (ticker ? closedLookup.get(`ticker:${ticker}`) : null);
+      if (matchedClosed) {
+        console.info('[trade-reconcile]', {
+          source: 'ibkr_snapshot',
+          action: 'skip_reopen_closed_trade',
+          tradeId: matchedClosed?.id || null,
+          ticker,
+          conid: conid || null,
+          positionId
+        });
+        continue;
+      }
       const resolvedTradeDate = matched?.tradeDate || dateKey;
       if (matched && matched.tradeDate !== dateKey) {
         const fromItems = journal[matched.tradeDate] || [];
@@ -9615,6 +9700,16 @@ function updateTrading212LayerMetadata(trade, {
   rates
 }) {
   if (!trade) return;
+  if (isCanonicallyClosedTrade(trade)) {
+    console.info('[trade-reconcile]', {
+      source: 't212_snapshot',
+      action: 'skip_update_closed_trade',
+      tradeId: trade?.id || null,
+      trading212Id: trade?.trading212Id || null,
+      trading212PositionKey: trade?.trading212PositionKey || null
+    });
+    return;
+  }
   const existingOriginalStop = Number(trade.originalStopPrice);
   const existingCurrentStop = Number(trade.currentStop);
   const existingStop = Number(trade.stop);
@@ -10972,6 +11067,9 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
         filledAt: fill.filledAt || '',
         sourceTradeId: null
       });
+      importedKeys.add(fillKey);
+      if (Number.isFinite(fillTs) && fillTs > maxFilledAt) maxFilledAt = fillTs;
+      continue;
     }
     const candidates = openEntries
       .filter(entry => tradeMatchesTrading212HistoryFill(entry.trade, fill, accountId))
@@ -11676,11 +11774,12 @@ function buildInstrumentFromTrade(trade = {}) {
 
 function getDisplayInstrumentIdentity(record = {}, db, username = '') {
   const isTrading212 = record.source === 'trading212' || record.trading212Id;
+  const manualDisplayName = typeof record?.displayName === 'string' ? record.displayName.trim() : '';
   if (!isTrading212) {
     const fallback = record.displaySymbol || record.symbol || '';
     return {
       displayTicker: fallback,
-      displayName: record.displayName || record.trading212Name || '',
+      displayName: manualDisplayName || record.trading212Name || '',
       canonicalTicker: fallback,
       rawTicker: record.symbol || '',
       resolutionStatus: 'resolved',
@@ -11689,6 +11788,13 @@ function getDisplayInstrumentIdentity(record = {}, db, username = '') {
       mappingId: null,
       sourceKey: null
     };
+  }
+  if (manualDisplayName) {
+    console.info('[display-name]', {
+      stage: 'resolver_bypass_manual_override',
+      tradeId: record?.id || null,
+      nameSource: 'manual_override'
+    });
   }
   const instrument = buildInstrumentFromTrade(record);
   const resolved = resolveInstrumentMapping(db, instrument, username);
@@ -11699,9 +11805,17 @@ function getDisplayInstrumentIdentity(record = {}, db, username = '') {
   const resolutionStatus = resolved.scope === 'broker'
     ? 'unresolved'
     : (resolved.scope === 'manual_override' ? 'manual_override' : 'resolved');
+  const nameSource = manualDisplayName
+    ? 'manual_override'
+    : (resolved.displayName ? 'canonical' : 'fallback');
+  console.info('[display-name]', {
+    stage: 'serialize_trade_display_name',
+    tradeId: record?.id || null,
+    nameSource
+  });
   return {
     displayTicker,
-    displayName: resolved.displayName || record.displayName || record.trading212Name || '',
+    displayName: manualDisplayName || resolved.displayName || record.trading212Name || '',
     canonicalTicker: resolved.scope === 'broker' ? '' : (resolved.displayTicker || ''),
     rawTicker: instrument.ticker || record.symbol || '',
     resolutionStatus,
@@ -12823,9 +12937,16 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     let positionsMutated = false;
     const journal = ensureTradeJournal(user);
     const openTrades = [];
+    const closedTrading212Trades = [];
     for (const [tradeDate, items] of Object.entries(journal)) {
       for (const trade of items || []) {
-        if (!trade || trade.status === 'closed') continue;
+        if (!trade) continue;
+        if (trade.status === 'closed') {
+          if (trade.source === 'trading212' || trade.trading212Id) {
+            closedTrading212Trades.push({ tradeDate, trade });
+          }
+          continue;
+        }
         openTrades.push({ tradeDate, trade });
       }
     }
@@ -12941,6 +13062,27 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         const trading212IdBase = rawPositionId ? String(rawPositionId) : trading212Key;
         const trading212Id = accountId ? `${accountId}:${trading212IdBase}` : trading212IdBase;
         const trading212PositionKey = accountId ? `${accountId}:${symbol}` : symbol;
+        const closedMatch = closedTrading212Trades.find((entry) => (
+          entry?.trade
+          && (
+            entry.trade.trading212PositionKey === trading212PositionKey
+            || entry.trade.trading212Id === trading212Id
+            || entry.trade.trading212Id === trading212IdBase
+            || (rawIsin && entry.trade.trading212Isin === rawIsin)
+            || (rawTickerValue && normalizeTrading212TickerValue(entry.trade.trading212Ticker) === rawTickerValue)
+            || entry.trade.symbol === symbol
+          )
+        ));
+        if (closedMatch?.trade) {
+          console.info('[trade-reconcile]', {
+            source: 't212_snapshot',
+            action: 'skip_reopen_closed_trade',
+            tradeId: closedMatch.trade.id || null,
+            trading212Id,
+            trading212PositionKey
+          });
+          continue;
+        }
         const { exactTradeEntry, aggregateTradeEntry } = findTrading212OpenTradeMatch(openTrades, {
           accountId,
           trading212Id,
@@ -19312,6 +19454,17 @@ app.post('/api/instrument-mappings/user', auth, asyncHandler(async (req, res) =>
     };
     mappings.push(mapping);
   }
+  console.info('[display-name]', {
+    stage: 'save_instrument_mapping',
+    userId: req.username,
+    sourceKey: normalizedKey,
+    tradeId: null,
+    incomingPayload: {
+      brokerName: brokerName || null,
+      canonicalName: canonicalName || null
+    },
+    persistedOverride: mapping.canonical_name || mapping.broker_name || null
+  });
   const { entry: registryEntry } = upsertRegistryEntry(db, {
     broker: 'trading212',
     brokerInstrumentId: uid,
@@ -23064,6 +23217,16 @@ async function buildActiveTrades(user, rates = {}) {
         });
         loggedManualDebugSample = true;
       }
+      if (isCanonicallyClosedTrade(canonicalTrade)) {
+        console.info('[active-trades]', {
+          stage: 'exclude_canonically_closed_trade',
+          tradeId: trade.id || null,
+          status: trade.status || null,
+          closedAt: trade.closedAt || null,
+          closeDate: trade.closeDate || null
+        });
+        continue;
+      }
       if (!includeByCanonicalOpenQty) continue;
       const base = {
         ...trade,
@@ -24896,6 +25059,21 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       delete trade.displaySymbol;
     }
   }
+  if (updates.displayName !== undefined || updates.manualDisplayName !== undefined) {
+    const incomingDisplayName = updates.displayName ?? updates.manualDisplayName;
+    const manualDisplayName = typeof incomingDisplayName === 'string' ? incomingDisplayName.trim() : '';
+    if (manualDisplayName) trade.displayName = manualDisplayName;
+    else delete trade.displayName;
+    console.info('[display-name]', {
+      stage: 'save_trade_display_name',
+      tradeId: trade.id || null,
+      incomingPayload: {
+        displayName: updates.displayName ?? null,
+        manualDisplayName: updates.manualDisplayName ?? null
+      },
+      persistedOverride: trade.displayName || null
+    });
+  }
   if (updates.currentStop !== undefined) {
     const stopVal = Number(updates.currentStop);
     if (updates.currentStop === '' || updates.currentStop === null) {
@@ -25211,6 +25389,22 @@ app.post('/api/trades/close', auth, (req, res) => {
         trade.closeDate = summaryAfter.lastExitDate || closeDateKey;
         trade.realizedPnlGBP = summaryAfter.realizedPnlGBP;
         trade.realizedPnlCurrency = summaryAfter.realizedPnlCurrency;
+        console.info('[trade-close]', {
+          tradeId: trade?.id || null,
+          priorState: {
+            status: summaryBefore.status || null,
+            closedAt: trade?.closedAt || null,
+            closeDate: trade?.closeDate || null
+          },
+          persistedState: {
+            status: trade?.status || null,
+            closedAt: trade?.closedAt || null,
+            closeDate: trade?.closeDate || null,
+            closePrice: Number.isFinite(Number(trade?.closePrice)) ? Number(trade.closePrice) : null
+          },
+          fillPrice: closePrice,
+          closeQuantity: Number(summaryBefore.openQuantity) || null
+        });
         if (userLeadsTradeGroups(db, req.username)) {
           console.info('[TradeGroup][SellAlert]', {
             stage: 'manual_close_detected',
