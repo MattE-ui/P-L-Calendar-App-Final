@@ -1371,14 +1371,16 @@ function renderTradeGroupSection() {
       }
     } else {
       const normalizedClassification = normalizeTradeGroupActivityEvent(item);
-      console.info('[social-activity-render]', {
-        itemId: item?.id || null,
-        source: item?.type || 'alert',
-        side: String(item?.side || '').trim().toUpperCase() || null,
-        classification: String(item?.alert_classification || '').trim().toLowerCase() || null,
-        positionEventType: String(item?.position_event_type || item?.event_type || '').trim().toUpperCase() || null,
-        normalizedClassification
-      });
+      if (SOCIAL_ACTIVITY_DEBUG) {
+        console.info('[social-activity-render]', {
+          itemId: item?.id || null,
+          source: item?.type || 'alert',
+          side: String(item?.side || '').trim().toUpperCase() || null,
+          classification: String(item?.alert_classification || '').trim().toLowerCase() || null,
+          positionEventType: String(item?.position_event_type || item?.event_type || '').trim().toUpperCase() || null,
+          normalizedClassification
+        });
+      }
       const isTrim = normalizedClassification === 'trim';
       const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
       if (isTrim) row.classList.add('social-list-row--trim');
