@@ -9572,9 +9572,9 @@ function findTrading212OpenTradeMatch(openTrades, {
 }) {
   const exactTradeEntry = openTrades.find(entry => {
     if (entry.trade?.status === 'closed') return false;
-    if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
-      return false;
-    }
+    const tradeAccId = String(entry.trade?.trading212AccountId || '');
+    const isFallbackId = /^account-\d+$/.test(tradeAccId);
+    if (tradeAccId && accountId && tradeAccId !== accountId && !isFallbackId) return false;
     return (
       entry.trade?.trading212Id === trading212Id ||
       entry.trade?.trading212Id === trading212IdBase ||
@@ -9583,9 +9583,9 @@ function findTrading212OpenTradeMatch(openTrades, {
   });
   const aggregateTradeEntry = !exactTradeEntry ? openTrades.find(entry => {
     if (entry.trade?.status === 'closed') return false;
-    if (entry.trade?.trading212AccountId && accountId && entry.trade.trading212AccountId !== accountId) {
-      return false;
-    }
+    const tradeAccId = String(entry.trade?.trading212AccountId || '');
+    const isFallbackId = /^account-\d+$/.test(tradeAccId);
+    if (tradeAccId && accountId && tradeAccId !== accountId && !isFallbackId) return false;
     return (
       entry.trade?.trading212PositionKey === trading212PositionKey ||
       entry.trade?.symbol === symbol ||
@@ -12977,7 +12977,9 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         const relatedOpenTrades = openTrades.filter(entry => {
           const trade = entry?.trade;
           if (!trade || trade.status === 'closed') return false;
-          if (trade.trading212AccountId && accountId && trade.trading212AccountId !== accountId) return false;
+          const tradeAccountId = String(trade.trading212AccountId || '');
+          const isFallbackAccountId = /^account-\d+$/.test(tradeAccountId);
+          if (tradeAccountId && accountId && tradeAccountId !== accountId && !isFallbackAccountId) return false;
           return (
             trade.trading212PositionKey === trading212PositionKey
             || trade.trading212Id === trading212Id
