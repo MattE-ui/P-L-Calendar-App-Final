@@ -103,6 +103,28 @@ function upsertTradeInState(trade, { source = 'action' } = {}) {
   return changed;
 }
 
+function patchLocalTradeStateAfterSave(savedTrade, { source = 'edit' } = {}) {
+  if (!savedTrade?.id) return false;
+  console.info('[display-name-ui] save success payload', {
+    tradeId: savedTrade.id,
+    displayTicker: savedTrade.displayTicker || savedTrade.displaySymbol || savedTrade.symbol || null,
+    brokerTicker: savedTrade.brokerTicker || null,
+    source
+  });
+  const changed = upsertTradeInState(savedTrade, { source });
+  if (state.editingId && String(state.editingId) === String(savedTrade.id)) {
+    state.editingTrade = savedTrade;
+  }
+  console.info(`[display-name-ui] local state patched for trade id ${savedTrade.id}`);
+  console.info('[display-name-ui] selected trade/source after patch', {
+    editingId: state.editingId || null,
+    editingTradeId: state.editingTrade?.id || null,
+    editingDisplayTicker: state.editingTrade?.displayTicker || state.editingTrade?.displaySymbol || state.editingTrade?.symbol || null,
+    cacheHasTrade: state.tradeDetailCache.has(savedTrade.id)
+  });
+  return changed;
+}
+
 function removeTradeFromState(tradeId, { source = 'action' } = {}) {
   if (!tradeId) return false;
   state.tradeDetailCache.delete(tradeId);
@@ -907,10 +929,17 @@ async function saveTrade(event) {
         body: JSON.stringify(payload)
       });
       if (result?.trade) {
-        upsertTradeInState(result.trade, { source: 'edit' });
+        patchLocalTradeStateAfterSave(result.trade, { source: 'edit' });
         renderTrades();
       } else {
+        const editedTradeId = state.editingId;
         await loadTrades();
+        const mergedTrade = state.trades.find((item) => String(item?.id) === String(editedTradeId));
+        if (mergedTrade) {
+          state.tradeDetailCache.set(mergedTrade.id, mergedTrade);
+          state.editingTrade = mergedTrade;
+          console.info(`[display-name-ui] refetch merged trade id ${mergedTrade.id}`);
+        }
       }
     } else {
       const result = await api('/api/trades', {
