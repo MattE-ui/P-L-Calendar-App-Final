@@ -346,6 +346,8 @@ test('manual trim unread payload and notification body are trim-specific (not cl
 
 
 test('normalizeTradeGroupActivityEvent classifies trim and close semantics consistently', () => {
+  assert.equal(normalizeTradeGroupActivityEvent({ side: 'BUY', alert_classification: 'buy', remaining_quantity: 5 }), 'open');
+  assert.equal(normalizeTradeGroupActivityEvent({ side: 'BUY', position_event_type: 'NEW_POSITION', remaining_quantity: 5 }), 'open');
   assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', remaining_quantity: 3, trim_pct: 10 }), 'trim');
   assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', event_subtype: 'trim' }), 'trim');
   assert.equal(normalizeTradeGroupActivityEvent({ side: 'SELL', remaining_quantity: 0 }), 'close');
