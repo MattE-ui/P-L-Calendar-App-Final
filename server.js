@@ -1398,22 +1398,35 @@ function buildGroupCurrentPositions(db, group) {
       const stop = Number(trade.stop);
       const riskPct = Number(trade.riskPct);
       const livePrice = Number(trade.lastSyncPrice);
-      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop) || stop <= 0 || !Number.isFinite(riskPct) || riskPct <= 0) {
+      const tickerProbe = resolveCanonicalTickerForTrade(applyInstrumentMappingToTrade(trade, db, group.leader_user_id) || trade) || String(trade?.symbol || '').trim().toUpperCase();
+      if (!Number.isFinite(entry) || entry <= 0) {
+        console.info(`[TradeGroups][CurrentPositionsProject] leader=${group?.leader_user_id || ''} tradeId=${trade?.id || ''} ticker=${tickerProbe || 'n/a'} include=false reason=invalid_entry`);
         continue;
       }
-      if (!Number.isFinite(livePrice) || livePrice <= 0) continue;
+      if (!Number.isFinite(livePrice) || livePrice <= 0) {
+        console.info(`[TradeGroups][CurrentPositionsProject] leader=${group?.leader_user_id || ''} tradeId=${trade?.id || ''} ticker=${tickerProbe || 'n/a'} include=false reason=missing_live_price`);
+        continue;
+      }
       const direction = trade.direction === 'short' ? 'short' : 'long';
       const gainLossPct = direction === 'short'
         ? ((entry - livePrice) / entry) * 100
         : ((livePrice - entry) / entry) * 100;
       const mappedTrade = applyInstrumentMappingToTrade(trade, db, group.leader_user_id) || trade;
       const ticker = resolveCanonicalTickerForTrade(mappedTrade);
+      if (!ticker) {
+        console.info(`[TradeGroups][CurrentPositionsProject] leader=${group?.leader_user_id || ''} tradeId=${trade?.id || ''} ticker=n/a include=false reason=missing_ticker`);
+      } else {
+        const hasRisk = Number.isFinite(riskPct) && riskPct > 0;
+        const hasStop = Number.isFinite(stop) && stop > 0;
+        const reason = hasRisk && hasStop ? 'include_complete_risk' : 'include_without_stop_or_risk';
+        console.info(`[TradeGroups][CurrentPositionsProject] leader=${group?.leader_user_id || ''} tradeId=${trade?.id || ''} ticker=${ticker} include=true reason=${reason}`);
+      }
       positions.push({
         id: trade.id,
         ticker,
         entry_price: entry,
-        stop_price: stop,
-        risk_pct: riskPct,
+        stop_price: Number.isFinite(stop) && stop > 0 ? stop : null,
+        risk_pct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : null,
         gain_loss_pct: gainLossPct,
         created_at: trade.createdAt || trade.created_at || dateKey,
         updated_at: trade.updatedAt || trade.updated_at || null
@@ -10936,10 +10949,16 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
     const fillKey = buildTrading212HistoryFillKey(fill, accountId);
     const fillTs = Date.parse(fill.filledAt || '');
     if (importedKeys.has(fillKey)) {
+      if (fill.side === 'BUY') {
+        console.info(`[T212][RepeatBuyImport] account=${accountId || 'default'} ticker=${normalizeTrading212Symbol(fill.instrumentTicker || '') || 'n/a'} fillKey=${fillKey} decision=skip_duplicate_fill_key`);
+      }
       skipped += 1;
       continue;
     }
     if (Number.isFinite(lastFilledAtTs) && Number.isFinite(fillTs) && fillTs < lastFilledAtTs) {
+      if (fill.side === 'BUY') {
+        console.info(`[T212][RepeatBuyImport] account=${accountId || 'default'} ticker=${normalizeTrading212Symbol(fill.instrumentTicker || '') || 'n/a'} fillKey=${fillKey} decision=skip_older_than_checkpoint checkpoint=${accountState.lastFilledAt || ''}`);
+      }
       skipped += 1;
       continue;
     }
@@ -10955,6 +10974,7 @@ function reconcileTrading212HistoricalExits(user, cfg, historyOrdersPayload, acc
       console.info(`[TradeGroup][SellAlert] stage=fill_detected accountId=${accountId || 'default'} fillId=${baseFillId || 'n/a'} orderId=${baseOrderId || 'n/a'} ticker=${baseTicker || 'n/a'} quantity=${Number(fill.quantity) || 0}`);
     }
     if (fill.side === 'BUY') {
+      console.info(`[T212][RepeatBuyImport] account=${accountId || 'default'} ticker=${baseTicker || 'n/a'} fillKey=${fillKey} decision=import_buy_fill quantity=${Number(fill.quantity) || 0} price=${Number(fill.fillPrice) || 0} orderId=${baseOrderId || 'n/a'} fillId=${baseFillId || 'n/a'}`);
       importedFillEvents.push({
         fillId: baseFillId,
         orderId: baseOrderId,
@@ -12988,6 +13008,9 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         });
         if (relatedOpenTrades.length) {
           const totalTrackedUnits = relatedOpenTrades.reduce((sum, entry) => {
+            const summary = summarizeExecutionLegs(entry?.trade, rates);
+            const openQty = Number(summary?.openQuantity);
+            if (Number.isFinite(openQty) && openQty > 0) return sum + openQty;
             const units = Number(entry?.trade?.sizeUnits);
             return Number.isFinite(units) && units > 0 ? sum + units : sum;
           }, 0);
@@ -13011,6 +13034,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             });
           }
           const addToPosition = isTrading212AddToPosition({ sizeUnits: totalTrackedUnits }, sizeUnits);
+          console.info(`[ActiveTrades][RepeatBuyMatch] account=${accountId || 'default'} ticker=${symbol} matchedOpenTrades=${relatedOpenTrades.length} trackedOpenUnitsBefore=${Number(totalTrackedUnits) || 0} snapshotUnits=${Number(sizeUnits) || 0} addToPosition=${addToPosition}`);
           if (addToPosition) {
             const weightedNotional = relatedOpenTrades.reduce((sum, entry) => {
               const units = Number(entry?.trade?.sizeUnits);
@@ -13024,97 +13048,59 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             if (addedUnits > TRADING212_LAYER_BUY_BUDGET_EPSILON) {
               const budgetKey = buildTrading212PositionBudgetKey(accountId, symbol);
               const hasBuyFillAnchor = consumeTrading212BuyFillBudget(buyFillBudgetByPositionKey, budgetKey, addedUnits);
-              if (hasBuyFillAnchor) {
-                const inferredAddedEntry = inferTrading212AddedEntryPrice(previousEntry, previousUnits, entryPrice, sizeUnits);
-                const layerEntryPrice = Number.isFinite(inferredAddedEntry) ? inferredAddedEntry : entryPrice;
-                const seedTrade = existingTrade || relatedOpenTrades[relatedOpenTrades.length - 1]?.trade;
-                const layeredTrade = normalizeTradeMeta({
-                  ...seedTrade,
-                  id: crypto.randomBytes(8).toString('hex'),
-                  createdAt: createdAtDate.toISOString(),
-                  entry: layerEntryPrice,
-                  sizeUnits: addedUnits,
-                  symbol: effectiveResolvedSymbol,
-                  status: 'open',
-                  closeDate: undefined,
-                  closePrice: undefined,
-                  closedAt: undefined,
-                  partialCloses: undefined,
-                  trading212Id: `${trading212Id}#layer:${Date.now()}`
-                });
-                delete layeredTrade.realizedPnlGBP;
-                delete layeredTrade.realizedPnlCurrency;
-                delete layeredTrade.rMultiple;
-                updateTrading212LayerMetadata(layeredTrade, {
-                  symbol: effectiveResolvedSymbol,
-                  trading212Id: layeredTrade.trading212Id,
-                  trading212PositionKey,
-                  accountId,
-                  rawName,
-                  rawIsin,
-                  rawTickerValue,
-                  optionContract,
-                  tradeCurrency,
-                  direction,
-                  currentPrice,
-                  stop,
-                  lowStop,
-                  user,
-                  rates
-                });
-                if (Number.isFinite(ppl)) {
-                  layeredTrade.ppl = ppl;
-                }
-                journal[normalizedDate].push(layeredTrade);
-                openTrades.push({ tradeDate: normalizedDate, trade: layeredTrade });
-                console.info('[T212][reconcile]', {
-                  stage: 'snapshot_add_to_position',
-                  accountId: accountId || 'default',
-                  symbol,
-                  matchedExistingLeg: false,
-                  createdNewLeg: true,
-                  duplicateLegCollapsed: false,
-                  brokerIdentifierUsed: 'history_buy_fill_budget',
-                  addedUnits
-                });
-              } else {
-                const targetEntry = relatedOpenTrades.slice().sort((a, b) => {
-                  const aCreated = Date.parse(a?.trade?.createdAt || a?.tradeDate || '');
-                  const bCreated = Date.parse(b?.trade?.createdAt || b?.tradeDate || '');
-                  return bCreated - aCreated;
-                })[0];
-                if (targetEntry?.trade) {
-                  const currentUnits = Number(targetEntry.trade.sizeUnits);
-                  targetEntry.trade.sizeUnits = (Number.isFinite(currentUnits) ? currentUnits : 0) + addedUnits;
-                  updateTrading212LayerMetadata(targetEntry.trade, {
-                    symbol: targetEntry.trade?.displaySymbol || targetEntry.trade?.symbol || resolvedSymbol,
-                    trading212Id: targetEntry.trade?.trading212Id || trading212Id,
-                    trading212PositionKey,
-                    accountId,
-                    rawName,
-                    rawIsin,
-                    rawTickerValue,
-                    optionContract,
-                    tradeCurrency,
-                    direction,
-                    currentPrice,
-                    stop,
-                    lowStop,
-                    user,
-                    rates
-                  });
-                  console.info('[T212][reconcile]', {
-                    stage: 'snapshot_add_to_position',
-                    accountId: accountId || 'default',
-                    symbol,
-                    matchedExistingLeg: true,
-                    createdNewLeg: false,
-                    duplicateLegCollapsed: true,
-                    brokerIdentifierUsed: 'position_key_fallback',
-                    addedUnits
-                  });
-                }
+              const inferredAddedEntry = inferTrading212AddedEntryPrice(previousEntry, previousUnits, entryPrice, sizeUnits);
+              const layerEntryPrice = Number.isFinite(inferredAddedEntry) ? inferredAddedEntry : entryPrice;
+              const seedTrade = existingTrade || relatedOpenTrades[relatedOpenTrades.length - 1]?.trade;
+              const layeredTrade = normalizeTradeMeta({
+                ...seedTrade,
+                id: crypto.randomBytes(8).toString('hex'),
+                createdAt: createdAtDate.toISOString(),
+                entry: layerEntryPrice,
+                sizeUnits: addedUnits,
+                symbol: effectiveResolvedSymbol,
+                status: 'open',
+                closeDate: undefined,
+                closePrice: undefined,
+                closedAt: undefined,
+                partialCloses: undefined,
+                trading212Id: `${trading212Id}#layer:${Date.now()}`
+              });
+              delete layeredTrade.realizedPnlGBP;
+              delete layeredTrade.realizedPnlCurrency;
+              delete layeredTrade.rMultiple;
+              updateTrading212LayerMetadata(layeredTrade, {
+                symbol: effectiveResolvedSymbol,
+                trading212Id: layeredTrade.trading212Id,
+                trading212PositionKey,
+                accountId,
+                rawName,
+                rawIsin,
+                rawTickerValue,
+                optionContract,
+                tradeCurrency,
+                direction,
+                currentPrice,
+                stop,
+                lowStop,
+                user,
+                rates
+              });
+              if (Number.isFinite(ppl)) {
+                layeredTrade.ppl = ppl;
               }
+              journal[normalizedDate].push(layeredTrade);
+              openTrades.push({ tradeDate: normalizedDate, trade: layeredTrade });
+              console.info(`[T212][RepeatBuyImport] account=${accountId || 'default'} ticker=${symbol} decision=create_new_leg buyFillAnchor=${hasBuyFillAnchor} addedUnits=${addedUnits} previousUnits=${previousUnits} snapshotUnits=${sizeUnits} layerEntry=${Number(layerEntryPrice) || 0}`);
+              console.info('[T212][reconcile]', {
+                stage: 'snapshot_add_to_position',
+                accountId: accountId || 'default',
+                symbol,
+                matchedExistingLeg: false,
+                createdNewLeg: true,
+                duplicateLegCollapsed: false,
+                brokerIdentifierUsed: hasBuyFillAnchor ? 'history_buy_fill_budget' : 'snapshot_inferred_entry',
+                addedUnits
+              });
             }
           }
           positionsMutated = true;
@@ -23563,7 +23549,12 @@ const ACTIVE_TRADES_DETAIL_ONLY_FIELDS = [
 ];
 
 function serializeActiveTradeSummary(trade = {}) {
-  return pickDefinedFields(trade, ACTIVE_TRADES_SUMMARY_FIELDS);
+  const summary = pickDefinedFields(trade, ACTIVE_TRADES_SUMMARY_FIELDS);
+  const ticker = String(summary.displaySymbol || summary.symbol || '').trim().toUpperCase();
+  if (ticker) {
+    console.info(`[ActiveTrades][Serializer] tradeId=${summary.id || ''} ticker=${ticker} sizeUnits=${Number(summary.sizeUnits) || 0} openQuantity=${Number(summary.openQuantity) || 0} totalEntered=${Number(summary.totalEnteredQuantity) || 0} totalExited=${Number(summary.totalExitedQuantity) || 0} source=${summary.source || ''}`);
+  }
+  return summary;
 }
 
 function parseActiveTradesSerializerMode(query = {}) {
