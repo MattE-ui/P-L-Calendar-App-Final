@@ -224,10 +224,20 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const formattedRev = item.earningsRevenueEstimate != null ? formatCurrencyCompact(item.earningsRevenueEstimate) : null;
     const earningsExtras = item.eventType === 'earnings' ? [
       item.earningsTiming ? `<span class="news-card-earning-timing">${item.earningsTiming}</span>` : '',
-      item.earningsQuarter ? `<span class="news-card-quarter">${item.earningsQuarter}</span>` : '',
-      formattedEps ? `<span class="news-card-eps">EPS est ${formattedEps}</span>` : '',
-      formattedRev ? `<span class="news-card-rev">Rev est ${formattedRev}</span>` : ''
+      item.earningsQuarter ? `<span class="news-card-quarter">${item.earningsQuarter}</span>` : ''
     ].join('') : '';
+    // For earnings cards build the summary from formatted fields so stored raw-number summaries don't leak through
+    let summaryText = item.summary || 'No summary available.';
+    if (item.eventType === 'earnings') {
+      const earningsTicker = ticker || '';
+      const parts = [];
+      if (item.earningsTiming) parts.push(item.earningsTiming);
+      if (formattedEps) parts.push(`EPS est ${formattedEps}`);
+      if (formattedRev) parts.push(`Rev est ${formattedRev}`);
+      summaryText = parts.length
+        ? `${earningsTicker} earnings (${parts.join(', ')})`
+        : `${earningsTicker} earnings scheduled`;
+    }
     return `
       <article class="news-card relevance-${item.relevanceClass || 'neutral'} urgency-${item.urgencyClass || 'none'}">
         <div class="news-card-topline">
@@ -235,7 +245,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
           <span class="news-card-time">${item.timeLabel || 'No time set'}</span>
         </div>
         <h4>${item.title || 'Untitled event'}</h4>
-        <p class="news-card-summary">${item.summary || 'No summary available.'}</p>
+        <p class="news-card-summary">${summaryText}</p>
         <div class="news-card-meta">
           ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
           ${earningsExtras}

@@ -1351,12 +1351,10 @@ function buildGroupCurrentPositions(db, group) {
     for (const trade of (trades || [])) {
       if (!trade || trade.status === 'closed' || Number.isFinite(Number(trade.closePrice))) continue;
       const entry = Number(trade.entry);
+      if (!Number.isFinite(entry) || entry <= 0) continue;
       const stop = Number(trade.stop);
       const riskPct = Number(trade.riskPct);
       const livePrice = Number(trade.lastSyncPrice);
-      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(stop) || stop <= 0 || !Number.isFinite(riskPct) || riskPct <= 0) {
-        continue;
-      }
       const direction = trade.direction === 'short' ? 'short' : 'long';
       const gainLossPct = (Number.isFinite(livePrice) && livePrice > 0)
         ? (direction === 'short'
@@ -1369,8 +1367,8 @@ function buildGroupCurrentPositions(db, group) {
         id: trade.id,
         ticker,
         entry_price: entry,
-        stop_price: stop,
-        risk_pct: riskPct,
+        stop_price: (Number.isFinite(stop) && stop > 0) ? stop : null,
+        risk_pct: (Number.isFinite(riskPct) && riskPct > 0) ? riskPct : null,
         gain_loss_pct: gainLossPct,
         created_at: trade.createdAt || trade.created_at || dateKey,
         updated_at: trade.updatedAt || trade.updated_at || null
@@ -11185,7 +11183,8 @@ const REGISTRY_RESOLUTION_SOURCES = new Set(['isin_lookup', 'name_lookup', 'manu
 const KNOWN_TICKER_ALIASES = new Map([
   ['SOI', { canonicalTicker: 'SEI', canonicalName: 'Solaris Energy Infrastructure', source: 'name_lookup', confidence: 0.7 }],
   ['YNDX', { canonicalTicker: 'NBIS', canonicalName: 'Nebius Group', source: 'name_lookup', confidence: 0.7 }],
-  ['DMYI', { canonicalTicker: 'IONQ', canonicalName: 'IonQ', source: 'name_lookup', confidence: 0.95 }]
+  ['DMYI', { canonicalTicker: 'IONQ', canonicalName: 'IonQ', source: 'name_lookup', confidence: 0.95 }],
+  ['APPLE', { canonicalTicker: 'AAPL', canonicalName: 'Apple Inc.', source: 'name_lookup', confidence: 0.99 }]
 ]);
 
 function ensureInstrumentRegistry(db) {
@@ -13023,17 +13022,29 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         const trading212IdBase = rawPositionId ? String(rawPositionId) : trading212Key;
         const trading212Id = accountId ? `${accountId}:${trading212IdBase}` : trading212IdBase;
         const trading212PositionKey = accountId ? `${accountId}:${symbol}` : symbol;
-        const closedMatch = closedTrading212Trades.find((entry) => (
-          entry?.trade
-          && (
+        const closedMatch = closedTrading212Trades.find((entry) => {
+          if (!entry?.trade) return false;
+          const instrumentMatches = (
             entry.trade.trading212PositionKey === trading212PositionKey
             || entry.trade.trading212Id === trading212Id
             || entry.trade.trading212Id === trading212IdBase
             || (rawIsin && entry.trade.trading212Isin === rawIsin)
             || (rawTickerValue && normalizeTrading212TickerValue(entry.trade.trading212Ticker) === rawTickerValue)
             || entry.trade.symbol === symbol
-          )
-        ));
+          );
+          if (!instrumentMatches) return false;
+          // Temporal guards: allow a re-open when there is positive evidence this is a new position.
+          // 1. If T212 reports when this position was opened and it is after the recorded close date,
+          //    the user re-bought after closing — not a phantom re-open.
+          // 2. If the close happened more than 48 hours before the current sync run, any matching
+          //    snapshot entry is almost certainly a genuine re-buy, not API lag.
+          const tradeClosedAtMs = Date.parse(entry.trade.closedAt || entry.trade.closeDate || '');
+          if (Number.isFinite(tradeClosedAtMs)) {
+            if (Number.isFinite(createdAt) && createdAt > tradeClosedAtMs) return false;
+            if ((runDate.getTime() - tradeClosedAtMs) > 48 * 60 * 60 * 1000) return false;
+          }
+          return true;
+        });
         if (closedMatch?.trade) {
           console.info('[trade-reconcile]', {
             source: 't212_snapshot',

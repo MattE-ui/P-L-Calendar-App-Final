@@ -34,13 +34,35 @@ function computeDateRange({ from, to, daysAhead = DEFAULT_DAYS_AHEAD, nowMs = Da
   return { fromDate, toDate };
 }
 
+function formatRevenue(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num === 0) return null;
+  const abs = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(abs >= 100e9 ? 0 : 1).replace(/\.0$/, '')}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(abs >= 100e6 ? 0 : 1).replace(/\.0$/, '')}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1).replace(/\.0$/, '')}K`;
+  return `${sign}$${num.toFixed(2)}`;
+}
+
+function formatEps(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const sign = num < 0 ? '-' : '';
+  return `${sign}$${Math.abs(num).toFixed(2)}`;
+}
+
 function buildSummary({ symbol, hour, epsEstimate, epsActual, revenueEstimate, revenueActual }) {
   const chunks = [];
   if (hour) chunks.push(`timing ${String(hour).toUpperCase()}`);
-  if (epsEstimate !== null && epsEstimate !== undefined && epsEstimate !== '') chunks.push(`EPS est ${epsEstimate}`);
-  if (epsActual !== null && epsActual !== undefined && epsActual !== '') chunks.push(`EPS act ${epsActual}`);
-  if (revenueEstimate !== null && revenueEstimate !== undefined && revenueEstimate !== '') chunks.push(`Rev est ${revenueEstimate}`);
-  if (revenueActual !== null && revenueActual !== undefined && revenueActual !== '') chunks.push(`Rev act ${revenueActual}`);
+  const fmtEpsEst = epsEstimate != null && epsEstimate !== '' ? formatEps(epsEstimate) : null;
+  const fmtEpsAct = epsActual != null && epsActual !== '' ? formatEps(epsActual) : null;
+  const fmtRevEst = revenueEstimate != null && revenueEstimate !== '' ? formatRevenue(revenueEstimate) : null;
+  const fmtRevAct = revenueActual != null && revenueActual !== '' ? formatRevenue(revenueActual) : null;
+  if (fmtEpsEst) chunks.push(`EPS est ${fmtEpsEst}`);
+  if (fmtEpsAct) chunks.push(`EPS act ${fmtEpsAct}`);
+  if (fmtRevEst) chunks.push(`Rev est ${fmtRevEst}`);
+  if (fmtRevAct) chunks.push(`Rev act ${fmtRevAct}`);
   return chunks.length ? `${symbol} earnings (${chunks.join(', ')})` : `${symbol} earnings scheduled`;
 }
 

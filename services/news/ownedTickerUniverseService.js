@@ -3,7 +3,8 @@
 const TICKER_RENAMES = new Map([
   ['SOI', 'SEI'],
   ['YNDX', 'NBIS'],
-  ['DMYI', 'IONQ']
+  ['DMYI', 'IONQ'],
+  ['APPLE', 'AAPL']
 ]);
 
 function normalizeTicker(raw) {
