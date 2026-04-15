@@ -67,6 +67,7 @@ const state = {
   activeTradesLastRealtimeSignature: '',
   activeTradesLastRenderSort: '',
   activeTradesLastExpandedTradeId: null,
+  activeTradesLastPriceInfoSignature: '',
   activeTradesRenderCount: 0,
   activeTradesIncrementalUpdateCount: 0,
   tradeHeadlineMetricsCache: {
@@ -1873,11 +1874,13 @@ function renderActiveTrades() {
   const trades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
   const structureSignature = buildActiveTradeStructureSignature(trades);
   const realtimeSignature = buildActiveTradeRealtimeSignature(trades, state.safeScreenshot);
+  const priceInfoSignature = JSON.stringify(state.openPriceInfoByTradeId || {});
   const shouldReuseExistingDom = (
     list.childElementCount > 0
     && state.activeTradesLastStructureSignature === structureSignature
     && state.activeTradesLastRenderSort === state.activeTradeSort
     && state.activeTradesLastExpandedTradeId === state.expandedActiveTradeId
+    && state.activeTradesLastPriceInfoSignature === priceInfoSignature
   );
   const livePnl = Number.isFinite(state.liveOpenPnlGBP) ? state.liveOpenPnlGBP : 0;
   const openLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
@@ -1898,6 +1901,7 @@ function renderActiveTrades() {
     updateActiveTradeDisplay(trades);
     state.activeTradesLastRealtimeSignature = realtimeSignature;
     state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
+    state.activeTradesLastPriceInfoSignature = priceInfoSignature;
     state.activeTradesIncrementalUpdateCount += 1;
     return;
   }
@@ -1909,6 +1913,7 @@ function renderActiveTrades() {
     updateActiveTradesOverflow();
     state.activeTradesLastRealtimeSignature = realtimeSignature;
     state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
+    state.activeTradesLastPriceInfoSignature = priceInfoSignature;
     if (window.PerfDiagnostics) {
       window.PerfDiagnostics.log('dashboard-active-trades-dom-reused', {
         sort: state.activeTradeSort,
@@ -1947,6 +1952,7 @@ function renderActiveTrades() {
     state.activeTradesLastRealtimeSignature = realtimeSignature;
     state.activeTradesLastRenderSort = state.activeTradeSort;
     state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
+    state.activeTradesLastPriceInfoSignature = priceInfoSignature;
     return;
   }
   if (empty) empty.classList.add('is-hidden');
@@ -2012,6 +2018,7 @@ function renderActiveTrades() {
   state.activeTradesLastRealtimeSignature = realtimeSignature;
   state.activeTradesLastRenderSort = state.activeTradeSort;
   state.activeTradesLastExpandedTradeId = state.expandedActiveTradeId;
+  state.activeTradesLastPriceInfoSignature = priceInfoSignature;
   state.activeTradesRenderCount += 1;
   window.PerfDiagnostics?.log('dashboard-active-trades-full-render', {
     sort: state.activeTradeSort,
@@ -2539,8 +2546,37 @@ function renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts) {
 
     priceInfoToggle.addEventListener('click', () => {
       if (!tradeId) return;
+      const before = Boolean(state.openPriceInfoByTradeId?.[tradeId]);
       state.openPriceInfoByTradeId[tradeId] = !state.openPriceInfoByTradeId[tradeId];
+      const after = Boolean(state.openPriceInfoByTradeId?.[tradeId]);
+      window.PerfDiagnostics?.log('active-trade-price-info-toggle', {
+        tradeId,
+        sectionKey: 'price_info',
+        beforeExpanded: before,
+        afterExpanded: after
+      });
+      console.info('[active-trades-price-info]', {
+        stage: 'toggle_requested',
+        tradeId,
+        sectionKey: 'price_info',
+        beforeExpanded: before,
+        afterExpanded: after
+      });
       renderActiveTrades();
+      const persisted = Boolean(state.openPriceInfoByTradeId?.[tradeId]);
+      window.PerfDiagnostics?.log('active-trade-price-info-toggle-rendered', {
+        tradeId,
+        sectionKey: 'price_info',
+        persistedExpanded: persisted,
+        resetDetected: persisted !== after
+      });
+      console.info('[active-trades-price-info]', {
+        stage: 'toggle_rendered',
+        tradeId,
+        sectionKey: 'price_info',
+        persistedExpanded: persisted,
+        resetDetected: persisted !== after
+      });
     });
 
     bodyRow.append(pnlStack, priceInfoToggle, details);
