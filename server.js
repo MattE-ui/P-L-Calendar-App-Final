@@ -12982,6 +12982,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
             trade.trading212PositionKey === trading212PositionKey
             || trade.trading212Id === trading212Id
             || trade.symbol === symbol
+            || trade.symbol === resolvedSymbol
             || (rawIsin && trade.trading212Isin === rawIsin)
             || (rawTickerValue && normalizeTrading212TickerValue(trade.trading212Ticker) === rawTickerValue)
           );
@@ -13167,6 +13168,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         });
         recalculateTradeRiskFromImportedStop(trade, user, rates);
         journal[normalizedDate].push(trade);
+        openTrades.push({ tradeDate: normalizedDate, trade });
         console.info(`[TradeGroup][T212] new leader position detected leader=${username} trade=${trade.id} brokerKey=${trade.trading212PositionKey || trade.trading212Id || trade.trading212Ticker || trade.symbol || ''}`);
         scheduleTrading212TradeGroupAlertsForNewPosition(db, username, trade, new Date());
         positionsMutated = true;
