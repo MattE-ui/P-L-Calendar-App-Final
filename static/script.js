@@ -1178,6 +1178,28 @@ function getTradeDisplaySymbol(trade) {
   return trade.displayTicker || trade.displaySymbol || trade.symbol || '—';
 }
 
+function logPersistedActiveTradeGroupingState(trades = [], source = 'unknown') {
+  if (!Array.isArray(trades)) return;
+  const groups = new Map();
+  trades.forEach((trade) => {
+    const symbol = normalizeTicker(getTradeDisplaySymbol(trade));
+    const direction = trade?.direction === 'short' ? 'short' : 'long';
+    const key = `${symbol}::${direction}`;
+    if (!groups.has(key)) groups.set(key, { ticker: symbol, direction, count: 0, tradeIds: [] });
+    const bucket = groups.get(key);
+    bucket.count += 1;
+    if (trade?.id) bucket.tradeIds.push(trade.id);
+  });
+  console.info('[ActiveTrades][GroupingRegression]', {
+    stage: 'persisted_state',
+    source,
+    totalTrades: trades.length,
+    topLevelTiles: groups.size,
+    groupedChildRows: Array.from(groups.values()).reduce((sum, bucket) => sum + Math.max(0, bucket.count - 1), 0),
+    groups: Array.from(groups.values())
+  });
+}
+
 function shouldShowMappingBadge(trade) {
   if (!SHOW_MAPPING_BADGE) return false;
   if (!trade?.mappingScope) return false;
@@ -1965,6 +1987,25 @@ function renderActiveTrades() {
   const sortedTrades = sortActiveTrades(tradesWithStopState, state.activeTradeSort);
   const displayTrades = sortTradesFlaggedFirst(sortedTrades);
   const groupedTrades = buildActiveTradeGroups(displayTrades, state.activeTradeSort);
+  const renderModelDiagnostics = {
+    incomingTrades: trades.length,
+    groupedTiles: groupedTrades.length,
+    groupedChildRows: groupedTrades.reduce((sum, group) => sum + Math.max(0, (group.trades?.length || 0) - 1), 0),
+    groupedBreakdown: groupedTrades.map((group) => ({
+      ticker: group.ticker,
+      direction: group.directionClass,
+      trades: group.trades?.length || 0
+    }))
+  };
+  console.info('[ActiveTrades][RenderModel]', renderModelDiagnostics);
+  groupedTrades.forEach((group) => {
+    console.info('[ActiveTrades][GroupingRegression]', {
+      ticker: group.ticker || '—',
+      direction: group.directionClass || 'long',
+      childCount: Math.max(0, (group.trades?.length || 0) - 1),
+      mergeReason: `displaySymbol+direction:${group.ticker || '—'}:${group.directionClass || 'long'}`
+    });
+  });
 
   const validExpandedId = sortedTrades.some(trade => getActiveTradeUiId(trade) === state.expandedActiveTradeId);
   if (!validExpandedId) state.expandedActiveTradeId = null;
@@ -1991,7 +2032,8 @@ function renderActiveTrades() {
     if (!oldestTrade) return;
     const oldestTradeId = getActiveTradeUiId(oldestTrade);
     const oldestIsExpanded = Boolean(oldestTradeId) && oldestTradeId === state.expandedActiveTradeId;
-    const groupHeader = renderGroupedTradeHeaderRow(group, oldestTrade, oldestTradeId, oldestIsExpanded);
+    const aggregateHeaderTrade = buildGroupedTradeHeaderAggregate(group);
+    const groupHeader = renderGroupedTradeHeaderRow(group, aggregateHeaderTrade, oldestTradeId, oldestIsExpanded);
     groupCard.appendChild(groupHeader);
     if (oldestIsExpanded) {
       const expandedWrap = renderExpandedTradeContent(oldestTrade, oldestTradeId, true, noteDrafts);
@@ -2171,12 +2213,16 @@ function sortTradesFlaggedFirst(trades) {
 function buildActiveTradeGroups(sortedTrades, sortMode) {
   const groups = new Map();
   sortedTrades.forEach(trade => {
-    const key = normalizeTicker(trade.ticker || trade.symbol || trade.instrument || trade.id || '');
+    const symbolKey = normalizeTicker(getTradeDisplaySymbol(trade));
+    const directionKey = trade.direction === 'short' ? 'short' : 'long';
+    const key = `${symbolKey}::${directionKey}`;
     if (!groups.has(key)) groups.set(key, { ticker: key, trades: [] });
     groups.get(key).trades.push(trade);
   });
 
   const grouped = Array.from(groups.values()).map(group => {
+    const firstTrade = group.trades[0] || {};
+    const resolvedTicker = normalizeTicker(getTradeDisplaySymbol(firstTrade));
     const directions = new Set(group.trades.map(trade => (trade.direction === 'short' ? 'short' : 'long')));
     const directionLabel = directions.size === 1
       ? (directions.has('short') ? 'Short' : 'Long')
@@ -2186,6 +2232,7 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       : 'mixed';
     return {
       ...group,
+      ticker: resolvedTicker || group.ticker.split('::')[0] || '—',
       trades: [...group.trades]
         .map((trade, index) => ({ trade, index }))
         .sort((a, b) => compareGroupedTradeChildren(a.trade, b.trade) || (a.index - b.index))
@@ -2212,6 +2259,46 @@ function buildActiveTradeGroups(sortedTrades, sortMode) {
       return (bFlag - aFlag) || (a.index - b.index);
     })
     .map(item => item.group);
+}
+
+function buildGroupedTradeHeaderAggregate(group = {}) {
+  const trades = Array.isArray(group.trades) ? group.trades : [];
+  const aggregatedPnl = trades.reduce((sum, trade) => {
+    const value = Number(trade?.unrealizedGBP);
+    return Number.isFinite(value) ? (sum + value) : sum;
+  }, 0);
+  const aggregatedPosition = trades.reduce((sum, trade) => {
+    const value = Number(trade?.positionGBP);
+    return Number.isFinite(value) ? (sum + value) : sum;
+  }, 0);
+  const aggregatedRiskPct = trades.reduce((sum, trade) => {
+    const value = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
+    return Number.isFinite(value) && value > 0 ? (sum + value) : sum;
+  }, 0);
+  const aggregatedRiskAmount = trades.reduce((sum, trade) => {
+    const value = getTradeRiskAmountGBP(trade);
+    return Number.isFinite(value) && value > 0 ? (sum + value) : sum;
+  }, 0);
+  const headerTrade = {
+    ...trades[0],
+    symbol: group.ticker || getTradeDisplaySymbol(trades[0]),
+    displaySymbol: group.ticker || getTradeDisplaySymbol(trades[0]),
+    unrealizedGBP: aggregatedPnl,
+    positionGBP: aggregatedPosition > 0 ? aggregatedPosition : undefined,
+    riskPct: aggregatedRiskPct > 0 ? aggregatedRiskPct : undefined,
+    riskAmountGBP: aggregatedRiskAmount > 0 ? aggregatedRiskAmount : undefined
+  };
+  console.info('[ActiveTrades][RiskAggregation]', {
+    ticker: group.ticker || '—',
+    tradeCount: trades.length,
+    parentRiskPct: headerTrade.riskPct ?? null,
+    childRiskPct: trades.map((trade) => Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage))
+      .filter((value) => Number.isFinite(value)),
+    parentRiskAmountGBP: headerTrade.riskAmountGBP ?? null,
+    childRiskAmountGBP: trades.map((trade) => getTradeRiskAmountGBP(trade))
+      .filter((value) => Number.isFinite(value))
+  });
+  return headerTrade;
 }
 
 function isTradeMissingActiveStop(trade) {
@@ -4466,6 +4553,7 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
   try {
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    logPersistedActiveTradeGroupingState(state.activeTrades, 'dashboard_load');
     state.activeTrades.forEach((trade) => {
       const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
       const currentStop = Number(trade?.currentStop);
@@ -4534,6 +4622,7 @@ async function refreshActiveTrades() {
     const prevOpenLossPotential = Number.isFinite(state.openLossPotentialGBP) ? state.openLossPotentialGBP : 0;
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
+    logPersistedActiveTradeGroupingState(state.activeTrades, 'dashboard_poll_refresh');
     state.activeTrades.forEach((trade) => {
       const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
       const currentStop = Number(trade?.currentStop);

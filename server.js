@@ -23557,6 +23557,51 @@ function serializeActiveTradeSummary(trade = {}) {
   return summary;
 }
 
+function normalizeActiveTradeGroupingKey(trade = {}) {
+  const ticker = String(trade.displayTicker || trade.displaySymbol || trade.symbol || '').trim().toUpperCase();
+  const direction = String(trade.direction || '').trim().toLowerCase() === 'short' ? 'short' : 'long';
+  return { ticker, direction, key: `${ticker}::${direction}` };
+}
+
+function logActiveTradesGroupingDiagnostics(trades = []) {
+  if (!Array.isArray(trades) || !trades.length) return;
+  const grouped = new Map();
+  trades.forEach((trade) => {
+    const { ticker, direction, key } = normalizeActiveTradeGroupingKey(trade);
+    if (!ticker) return;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        ticker,
+        direction,
+        count: 0,
+        tradeIds: [],
+        riskPct: []
+      });
+    }
+    const bucket = grouped.get(key);
+    bucket.count += 1;
+    if (trade?.id) bucket.tradeIds.push(String(trade.id));
+    const riskPct = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
+    if (Number.isFinite(riskPct) && riskPct > 0) bucket.riskPct.push(riskPct);
+  });
+  const buckets = Array.from(grouped.values());
+  console.info('[ActiveTrades][GroupingRegression]', {
+    topLevelTiles: buckets.length,
+    totalTrades: trades.length,
+    groupedChildRows: buckets.reduce((sum, bucket) => sum + Math.max(0, bucket.count - 1), 0),
+    buckets
+  });
+  buckets.forEach((bucket) => {
+    const parentRiskPct = bucket.riskPct.reduce((sum, value) => sum + value, 0);
+    console.info('[ActiveTrades][RiskAggregation]', {
+      ticker: bucket.ticker,
+      direction: bucket.direction,
+      parentRiskPct: Number.isFinite(parentRiskPct) ? parentRiskPct : null,
+      childRiskPct: bucket.riskPct
+    });
+  });
+}
+
 function parseActiveTradesSerializerMode(query = {}) {
   const detailRaw = String(query?.detail ?? query?.view ?? '').trim().toLowerCase();
   if (['1', 'true', 'yes', 'detail', 'full'].includes(detailRaw)) return 'detail';
@@ -23572,6 +23617,7 @@ function buildActiveTradesSnapshotPayload(snapshot, {
     ? snapshot.tradesSummary
     : detailTrades.map(serializeActiveTradeSummary);
   const responseTrades = responseMode === 'detail' ? detailTrades : summaryTrades;
+  logActiveTradesGroupingDiagnostics(responseTrades);
   const summaryBytes = Buffer.byteLength(JSON.stringify(summaryTrades));
   const detailBytes = Buffer.byteLength(JSON.stringify(detailTrades));
   const responseBytes = responseMode === 'detail' ? detailBytes : summaryBytes;
