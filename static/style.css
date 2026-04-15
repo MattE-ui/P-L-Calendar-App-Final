@@ -2248,6 +2248,9 @@ select {
   cursor: pointer;
   min-width: 0;
 }
+#active-trades-card .trade-group-summary-row {
+  cursor: default;
+}
 #active-trades-card .trade-group-header-row:hover {
   background: rgba(255,255,255,0.03);
 }
@@ -2267,6 +2270,32 @@ select {
 }
 #active-trades-card .trade-group-row:hover {
   background: rgba(255,255,255,0.03);
+}
+#active-trades-card .trade-group-child-detail {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+}
+#active-trades-card .trade-group-child-pnl {
+  font-size: 14px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+#active-trades-card .trade-group-child-pnl.positive { color: var(--positive); }
+#active-trades-card .trade-group-child-pnl.negative { color: var(--negative); }
+#active-trades-card .trade-group-child-meta {
+  font-size: 11px;
+  color: rgba(235, 240, 255, 0.7);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 #active-trades-card .trade-group-row-connector {
   width: 18px;

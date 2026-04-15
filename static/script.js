@@ -2032,6 +2032,14 @@ function renderActiveTrades() {
     const aggregateHeaderTrade = buildGroupedTradeHeaderAggregate(group);
     const groupHeader = renderGroupedTradeHeaderRow(group, aggregateHeaderTrade, '', false);
     groupCard.appendChild(groupHeader);
+    console.info('[ActiveTrades][GroupedUXContract]', {
+      ticker: group.ticker || '—',
+      direction: group.directionClass || 'long',
+      rowRole: 'parent_summary',
+      expanded: false,
+      metricFields: ['ticker', 'direction', 'aggregatedPnl', 'aggregatedPct', 'aggregatedR', 'aggregatedRiskPct'],
+      tradeCount: group.trades.length
+    });
     console.info('[ActiveTrades][DoubleCountTrace]', {
       ticker: group.ticker || '—',
       direction: group.directionClass || 'long',
@@ -2049,6 +2057,16 @@ function renderActiveTrades() {
       const isExpanded = Boolean(tradeId) && tradeId === state.expandedActiveTradeId;
       const row = renderGroupedTradeRow(trade, tradeId, isExpanded, index === group.trades.length - 1);
       groupCard.appendChild(row);
+      console.info('[ActiveTrades][ParentDetailRender]', {
+        ticker: group.ticker || '—',
+        direction: group.directionClass || 'long',
+        rowRole: 'child_detail',
+        tradeId: tradeId || null,
+        expanded: isExpanded,
+        childRenderMode: 'collapsed_summary_row',
+        metricFields: ['childPnl', 'entryPrice', 'sizeUnits', 'openedDate'],
+        parentOnlyMetrics: ['aggregatedPnl', 'aggregatedPct', 'aggregatedR', 'aggregatedRiskPct']
+      });
       if (isExpanded) {
         const expandedWrap = renderExpandedTradeContent(trade, tradeId, true, noteDrafts);
         expandedWrap.dataset.tradeId = tradeId;
@@ -2424,9 +2442,9 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
 
 function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   const pnl = Number.isFinite(trade.unrealizedGBP) ? trade.unrealizedGBP : 0;
-  const riskMultipleLabel = formatRiskMultiple(getTradeRiskMultiple(trade, pnl));
-  const riskPctValue = Number(trade?.riskPct ?? trade?.riskPercent ?? trade?.risk_percentage);
-  const pctChange = getTradePercentChange(trade, pnl);
+  const entryPrice = Number(trade?.entry);
+  const sizeUnits = Number(trade?.sizeUnits);
+  const openedAtLabel = formatDateForGroupedChildDetail(trade);
 
   const row = document.createElement('button');
   row.className = `trade-group-row trade-row-grid-child ${isExpanded ? 'is-expanded' : ''} ${isLast ? 'is-last' : ''} ${trade.stopMissing ? 'trade-tile-warning' : ''}`.trim();
@@ -2443,10 +2461,16 @@ function renderGroupedTradeRow(trade, tradeId, isExpanded, isLast) {
   compactLeftPlaceholder.className = 'trade-left-placeholder';
   compactLeftPlaceholder.setAttribute('aria-hidden', 'true');
 
-  const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
+  const childDetail = createGroupedChildDetailCluster({
+    pnl,
+    entryPrice,
+    sizeUnits,
+    openedAtLabel,
+    currency: trade?.currency
+  });
   const compactChevron = createCompactChevron();
 
-  row.append(connector, compactLeftPlaceholder, compactMetrics, compactChevron);
+  row.append(connector, compactLeftPlaceholder, childDetail, compactChevron);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     const nextExpandedTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -2468,7 +2492,7 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   const pctChange = getTradePercentChange(trade, pnl);
 
   const row = document.createElement('button');
-  row.className = `trade-group-header trade-group-header-row trade-row-grid ${isExpanded ? 'is-expanded' : ''} ${group.stopMissing ? 'trade-tile-warning' : ''}`.trim();
+  row.className = `trade-group-header trade-group-header-row trade-row-grid trade-group-summary-row ${isExpanded ? 'is-expanded' : ''} ${group.stopMissing ? 'trade-tile-warning' : ''}`.trim();
   row.type = 'button';
   row.setAttribute('aria-expanded', String(isExpanded));
   row.dataset.tradeId = tradeId;
@@ -2482,9 +2506,7 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
   compactLeft.append(compactTitle, compactDirection);
 
   const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
-  const compactChevron = createCompactChevron();
-
-  row.append(compactLeft, compactMetrics, compactChevron);
+  row.append(compactLeft, compactMetrics);
   row.addEventListener('click', () => {
     if (!tradeId) return;
     const nextExpandedTradeId = state.expandedActiveTradeId === tradeId ? null : tradeId;
@@ -2496,6 +2518,32 @@ function renderGroupedTradeHeaderRow(group, trade, tradeId, isExpanded) {
     renderActiveTrades();
   });
   return row;
+}
+
+function formatDateForGroupedChildDetail(trade) {
+  const timestamp = getTradeTimestamp(trade);
+  if (!timestamp) return '—';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function createGroupedChildDetailCluster({ pnl, entryPrice, sizeUnits, openedAtLabel, currency }) {
+  const cluster = document.createElement('div');
+  cluster.className = 'trade-group-child-detail';
+
+  const pnlEl = document.createElement('strong');
+  pnlEl.className = `trade-group-child-pnl ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+  pnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(pnl);
+
+  const metaEl = document.createElement('span');
+  metaEl.className = 'trade-group-child-meta';
+  const entryLabel = Number.isFinite(entryPrice) ? formatPrice(entryPrice, currency || state?.baseCurrency || 'GBP', 2) : '—';
+  const sizeLabel = Number.isFinite(sizeUnits) ? sizeUnits.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—';
+  metaEl.textContent = `Entry ${entryLabel} • Size ${sizeLabel} • ${openedAtLabel}`;
+
+  cluster.append(pnlEl, metaEl);
+  return cluster;
 }
 
 function createCompactTitleRow(symbol, stopMissing) {
