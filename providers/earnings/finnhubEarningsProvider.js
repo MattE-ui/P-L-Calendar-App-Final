@@ -163,7 +163,9 @@ function selectNextUpcomingEarningsPerTicker(rows, nowMs = Date.now()) {
     }
   }
   return {
-    rows: Array.from(earliestByTicker.values()).map((item) => item.row),
+    rows: Array.from(earliestByTicker.values())
+      .map((item) => item.row)
+      .sort((a, b) => String(a?.scheduledAt || '').localeCompare(String(b?.scheduledAt || ''))),
     nextEarningsTickers: Array.from(earliestByTicker.keys())
   };
 }
@@ -183,8 +185,12 @@ async function fetchFinnhubEarningsEvents({
   const diagnostics = {
     provider: 'finnhub',
     apiKeyPresent: !!String(apiKey || '').trim(),
+    trackedTickersInput: Array.from(tickerUniverse).sort(),
     fromDateComputed: fromDate,
     toDateComputed: toDate,
+    rawFinnhubEarningsCount: 0,
+    normalizedEarningsByTicker: [],
+    excludedRows: [],
     totalRowsFetched: 0,
     rowsMatchedToPortfolio: 0,
     uniquePortfolioTickersMatched: 0,
@@ -249,11 +255,24 @@ async function fetchFinnhubEarningsEvents({
 
   const rows = Array.isArray(payload?.earningsCalendar) ? payload.earningsCalendar : [];
   diagnostics.totalRowsFetched = rows.length;
+  diagnostics.rawFinnhubEarningsCount = rows.length;
 
   const normalizedRows = [];
   for (const row of rows) {
-    const normalized = normalizeFinnhubRowWithReason(row, { tickerUniverse, nowMs: startedAt });
-    if (normalized?.row) normalizedRows.push(normalized.row);
+    const normalized = normalizeFinnhubRowWithReason(row, { tickerUniverse, nowMs: startedAt }) || {};
+    if (normalized?.row) {
+      normalizedRows.push(normalized.row);
+      diagnostics.normalizedEarningsByTicker.push({
+        ticker: normalized.row.canonicalTicker || normalized.row.ticker || null,
+        scheduledAt: normalized.row.scheduledAt || null
+      });
+    } else {
+      diagnostics.excludedRows.push({
+        ticker: normalizeTicker(row?.symbol),
+        date: normalizeDateOnly(row?.date),
+        reason: normalized.reason || 'dropped_unknown'
+      });
+    }
   }
 
   diagnostics.rowsMatchedToPortfolio = normalizedRows.length;

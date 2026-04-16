@@ -200,6 +200,10 @@ function sortStableByTimestampDesc(a, b) {
   return b.sortTimestamp.localeCompare(a.sortTimestamp) || a.id.localeCompare(b.id);
 }
 
+function normalizeTickerForMatch(raw) {
+  return String(raw || '').trim().toUpperCase();
+}
+
 function normalizeHeadlineTitle(value) {
   return String(value || '')
     .toLowerCase()
@@ -299,18 +303,32 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance);
 
   const currentServerTime = new Date().toISOString();
-  const portfolioEarningsCandidates = cards
-    .filter((card) => card.eventType === 'earnings' && card.isPortfolioRelevant);
+  const trackedTickers = Array.from(userTickerUniverse.portfolioTickers).sort();
+  const trackedTickerSet = new Set(trackedTickers);
+  const allEarningsCards = cards.filter((card) => card.eventType === 'earnings');
   const droppedPortfolioEarnings = [];
-  const portfolioUpcomingEarnings = portfolioEarningsCandidates
-    .filter((card) => {
-      const rawScheduledAt = card?.scheduledAt;
-      const rawScheduledAtType = rawScheduledAt === undefined
-        ? 'undefined'
-        : rawScheduledAt instanceof Date
-          ? 'date'
-          : typeof rawScheduledAt;
-      if (card.isUpcoming) return true;
+  const keptPortfolioEarnings = [];
+
+  for (const card of allEarningsCards) {
+    const ticker = normalizeTickerForMatch(card.canonicalTicker || card.ticker);
+    const rawScheduledAt = card?.scheduledAt;
+    const rawScheduledAtType = rawScheduledAt === undefined
+      ? 'undefined'
+      : rawScheduledAt instanceof Date
+        ? 'date'
+        : typeof rawScheduledAt;
+
+    if (!ticker || !trackedTickerSet.has(ticker)) {
+      droppedPortfolioEarnings.push({
+        ticker: ticker || null,
+        scheduledAt: rawScheduledAt,
+        rawScheduledAtType,
+        reason: 'not_in_tracked_tickers'
+      });
+      continue;
+    }
+
+    if (!card.isUpcoming) {
       let reason = 'unknown';
       if (rawScheduledAt === undefined || rawScheduledAt === null || rawScheduledAt === '') {
         reason = 'missing_field';
@@ -320,42 +338,43 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
         else if (parsedTs < Date.parse(currentServerTime)) reason = 'past_date';
       }
       droppedPortfolioEarnings.push({
-        ticker: card.ticker || card.canonicalTicker || null,
+        ticker,
         scheduledAt: rawScheduledAt,
         rawScheduledAtType,
         reason
       });
-      return false;
-    })
-    .sort(sortStableByTimestampAsc);
+      continue;
+    }
 
-  logger.info('[EARNINGS DEBUG] pre-filter', {
-    currentServerTime,
-    totalEarningsEventsCount: portfolioEarningsCandidates.length,
-    earningsEventsSample: portfolioEarningsCandidates.slice(0, 10).map((card) => ({
-      ticker: card.ticker || card.canonicalTicker || null,
-      scheduledAt: card.scheduledAt,
-      rawScheduledAtType: card?.scheduledAt === undefined
-        ? 'undefined'
-        : card.scheduledAt instanceof Date
-          ? 'date'
-          : typeof card.scheduledAt
-    }))
-  });
+    keptPortfolioEarnings.push(card);
+  }
 
-  logger.info('[EARNINGS DEBUG] post-filter', {
-    currentServerTime,
-    portfolioUpcomingEarningsLength: portfolioUpcomingEarnings.length,
-    kept: portfolioUpcomingEarnings.map((card) => ({
-      ticker: card.ticker || card.canonicalTicker || null,
-      scheduledAt: card.scheduledAt,
-      rawScheduledAtType: card?.scheduledAt === undefined
-        ? 'undefined'
-        : card.scheduledAt instanceof Date
-          ? 'date'
-          : typeof card.scheduledAt
+  const portfolioUpcomingEarnings = keptPortfolioEarnings.sort(sortStableByTimestampAsc);
+  const postSortOrder = portfolioUpcomingEarnings.map((card) => ({
+    ticker: normalizeTickerForMatch(card.canonicalTicker || card.ticker) || null,
+    scheduledAt: card.scheduledAt || null
+  }));
+  const nextEarnings = postSortOrder[0] || { ticker: null, scheduledAt: null };
+
+  const earningsPipelineDiagnostics = {
+    trackedTickers,
+    rawFinnhubEarningsCount: allEarningsCards.length,
+    normalizedEarningsByTicker: allEarningsCards.map((card) => ({
+      ticker: normalizeTickerForMatch(card.canonicalTicker || card.ticker) || null,
+      scheduledAt: card.scheduledAt || null
     })),
-    dropped: droppedPortfolioEarnings
+    postFilterCount: keptPortfolioEarnings.length,
+    postSortOrder,
+    postLimitCount: portfolioUpcomingEarnings.length,
+    renderedCount: portfolioUpcomingEarnings.length,
+    nextEarningsTicker: nextEarnings.ticker,
+    nextEarningsDate: nextEarnings.scheduledAt,
+    excluded: droppedPortfolioEarnings
+  };
+
+  logger.info('[NewsReadModel][EarningsPipeline]', {
+    userId,
+    ...earningsPipelineDiagnostics
   });
 
   const macroUpcoming = cards
@@ -440,11 +459,14 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     sections,
     sectionCounts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
     portfolioContext: {
-      trackedTickers: Array.from(userTickerUniverse.portfolioTickers).sort(),
+      trackedTickers,
       trackedTickerCount: userTickerUniverse.portfolioTickers.size,
-      nextEarningsTicker: portfolioUpcomingEarnings[0]?.canonicalTicker || portfolioUpcomingEarnings[0]?.ticker || null,
+      nextEarningsTicker: normalizeTickerForMatch(portfolioUpcomingEarnings[0]?.canonicalTicker || portfolioUpcomingEarnings[0]?.ticker) || null,
       nextEarningsTimeLabel: portfolioUpcomingEarnings[0]?.timeLabel || null,
       nextEarningsDate: portfolioUpcomingEarnings[0]?.scheduledAt || null
+    },
+    diagnostics: {
+      earningsPipeline: earningsPipelineDiagnostics
     },
     data: paged.items,
     pagination: paged.pagination
