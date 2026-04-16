@@ -53,6 +53,10 @@ const state = {
   rounding: 'fractional',
   autoStopSymbol: '',
   autoStopValue: null,
+  autoStopSessionOpen: null,
+  autoStopQuoteAsOf: null,
+  lastResolvedRiskStop: null,
+  lastResolvedRiskStopSource: 'none',
   manualStopOverride: false,
   lastUserInteractionAt: 0,
   hasPendingBackgroundRender: false,
@@ -985,6 +989,48 @@ function computeRiskPlan({
   };
 }
 
+function resolveRiskStopFromSources({
+  manualStop,
+  alertStop,
+  providerStop,
+  currentStop,
+  originalStop,
+  sessionLow,
+  openPrice,
+  previousResolvedStop,
+  lowOfDayFallbackActive = true
+} = {}) {
+  // Stop source precedence used by the risk calculator:
+  // manual input > explicit alert/shared-trade stop > provider stop > currentStop > originalStop > low-of-day fallback > open fallback.
+  const pick = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const manual = pick(manualStop);
+  if (manual !== null) return { source: 'manual', stop: manual, changedBecauseNewLow: false };
+  const explicitAlert = pick(alertStop);
+  if (explicitAlert !== null) return { source: 'alert', stop: explicitAlert, changedBecauseNewLow: false };
+  const provider = pick(providerStop);
+  if (provider !== null) return { source: 'provider', stop: provider, changedBecauseNewLow: false };
+  const current = pick(currentStop);
+  if (current !== null) return { source: 'currentStop', stop: current, changedBecauseNewLow: false };
+  const original = pick(originalStop);
+  if (original !== null) return { source: 'originalStop', stop: original, changedBecauseNewLow: false };
+  const low = lowOfDayFallbackActive ? pick(sessionLow) : null;
+  const open = pick(openPrice);
+  if (low !== null || open !== null) {
+    const fallbackRaw = low ?? open;
+    const previous = pick(previousResolvedStop);
+    const fallbackStop = previous !== null ? Math.min(previous, fallbackRaw) : fallbackRaw;
+    return {
+      source: low !== null ? 'fallback_low_of_day' : 'fallback_open',
+      stop: fallbackStop,
+      changedBecauseNewLow: previous !== null && fallbackStop < previous
+    };
+  }
+  return { source: 'none', stop: null, changedBecauseNewLow: false };
+}
+
 function formatPrice(value, currency = state.currency, decimals = 4) {
   const symbol = currencySymbols[currency] || '';
   if (!Number.isFinite(value)) return '—';
@@ -1842,18 +1888,52 @@ async function fetchDailyLow(symbol) {
   if (!symbol) return null;
   const res = await api(`/api/market/low?symbol=${encodeURIComponent(symbol)}`);
   const low = Number(res?.low);
-  return Number.isFinite(low) && low > 0 ? low : null;
+  const open = Number(res?.open);
+  return {
+    low: Number.isFinite(low) && low > 0 ? low : null,
+    open: Number.isFinite(open) && open > 0 ? open : null,
+    asOf: typeof res?.asOf === 'string' ? res.asOf : null
+  };
 }
 
 async function updateAutoStop(symbol, stopInput, markAuto) {
   if (!symbol || !stopInput || state.manualStopOverride) return;
   try {
-    const low = await fetchDailyLow(symbol);
-    if (low === null) return;
-    state.autoStopValue = low;
+    const lowSnapshot = await fetchDailyLow(symbol);
+    if (!lowSnapshot || (lowSnapshot.low === null && lowSnapshot.open === null)) return;
+    state.autoStopSessionOpen = lowSnapshot.open;
+    state.autoStopQuoteAsOf = lowSnapshot.asOf;
+    const resolved = resolveRiskStopFromSources({
+      manualStop: state.manualStopOverride ? Number(stopInput.value) : null,
+      alertStop: state.prefilledFromAlert ? state.alertPrefillPayload?.stopPrice : null,
+      providerStop: state.alertPrefillPayload?.providerStopPrice ?? state.alertPrefillPayload?.brokerStopPrice,
+      currentStop: state.alertPrefillPayload?.currentStop,
+      originalStop: state.alertPrefillPayload?.originalStop,
+      sessionLow: lowSnapshot.low,
+      openPrice: lowSnapshot.open,
+      previousResolvedStop: state.autoStopValue,
+      lowOfDayFallbackActive: true
+    });
+    if (!Number.isFinite(Number(resolved.stop)) || Number(resolved.stop) <= 0) return;
+    const previousResolvedStop = Number.isFinite(Number(state.lastResolvedRiskStop)) ? Number(state.lastResolvedRiskStop) : null;
+    state.autoStopValue = Number(resolved.stop);
+    state.lastResolvedRiskStop = Number(resolved.stop);
+    state.lastResolvedRiskStopSource = resolved.source;
     markAuto(true);
-    stopInput.value = low.toFixed(2);
+    stopInput.value = Number(resolved.stop).toFixed(2);
     markAuto(false);
+    console.info('[risk-stop-resolution]', {
+      symbol,
+      openPrice: lowSnapshot.open,
+      sessionLow: lowSnapshot.low,
+      selectedStopSource: resolved.source,
+      resolvedStop: resolved.stop,
+      previousResolvedStop,
+      changedBecauseNewLow: resolved.changedBecauseNewLow,
+      quoteAsOf: lowSnapshot.asOf,
+      manualStopOverride: state.manualStopOverride,
+      prefilledFromAlert: state.prefilledFromAlert
+    });
     calculateRiskPosition(false);
   } catch (e) {
     console.warn('Failed to fetch daily low', e);
@@ -5517,6 +5597,10 @@ function bindControls() {
           state.autoStopSymbol = normalized;
           state.manualStopOverride = false;
           state.autoStopValue = null;
+          state.autoStopSessionOpen = null;
+          state.autoStopQuoteAsOf = null;
+          state.lastResolvedRiskStop = null;
+          state.lastResolvedRiskStopSource = 'none';
         }
         updateAutoStop(normalized, stopInput, markAuto);
       }, 400);
@@ -5526,7 +5610,7 @@ function bindControls() {
     setInterval(() => {
       if (!symbolInput.value.trim() || state.manualStopOverride) return;
       updateAutoStop(symbolInput.value.trim().toUpperCase(), stopInput, markAuto);
-    }, 5 * 60 * 1000);
+    }, 15 * 1000);
   }
   $$('#risk-percent-toggle button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -5721,7 +5805,7 @@ async function updateDevtoolsNav() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent };
+  module.exports = { computeRiskPlan, summarizeWeek, computeAverageChangePercent, resolveRiskStopFromSources };
 }
 
 async function loadProfile({ refreshIntegrations = false } = {}) {
@@ -5935,7 +6019,7 @@ async function init() {
   }, 1000);
 }
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && typeof module === 'undefined') {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', init);
   } else {
