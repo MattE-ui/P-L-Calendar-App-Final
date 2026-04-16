@@ -1,5 +1,5 @@
 const NEWS_TABS = {
-  'for-you': { key: 'for-you', label: 'For You', endpoint: '/api/news/for-you', sectionOrder: ['portfolioUpcomingEarnings', 'macroUpcoming', 'recentRelevantHeadlines', 'recentlyUpdatedRelevant'] },
+  'for-you': { key: 'for-you', label: 'For You', endpoint: '/api/news/for-you', sectionOrder: ['upcomingEvents', 'recentRelevantHeadlines', 'recentlyUpdatedRelevant', 'portfolioUpcomingEarnings', 'macroUpcoming'] },
   calendar: { key: 'calendar', label: 'Calendar', endpoint: '/api/news/calendar', sectionOrder: ['today', 'next7Days', 'later'] },
   news: { key: 'news', label: 'News', endpoint: '/api/news/latest', sectionOrder: ['headlines'] }
 };
@@ -207,11 +207,20 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return `news-card-badge--${tone || 'neutral'}`;
   }
 
+  function accentClass(item = {}) {
+    const variant = item.accentVariant
+      || (item.eventType === 'earnings' ? 'earnings' : '')
+      || (item.eventType === 'macro' ? (Number(item.importance || 0) >= 80 ? 'macro-critical' : 'macro') : '')
+      || (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news' ? 'news' : '')
+      || 'catalyst';
+    return `event-accent-${variant}`;
+  }
+
   function getSectionItems(section = {}) {
     return Array.isArray(section.items) ? section.items : [];
   }
 
-  function renderCard(item = {}) {
+  function renderCard(item = {}, { compact = false } = {}) {
     const marker = [
       item.isPortfolioRelevant ? '<span class="pill">Portfolio</span>' : '',
       item.isHighImportance ? '<span class="pill warning">High impact</span>' : ''
@@ -238,11 +247,13 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         ? `${earningsTicker} earnings (${parts.join(', ')})`
         : `${earningsTicker} earnings scheduled`;
     }
+    const rowDate = compact ? (item.eventDate || item.scheduledAt || item.publishedAt) : null;
+    const compactDate = rowDate ? new Date(rowDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short', timeZone: 'UTC' }) : 'TBD';
     return `
-      <article class="news-card relevance-${item.relevanceClass || 'neutral'} urgency-${item.urgencyClass || 'none'}">
+      <article class="news-card ${compact ? 'news-card--compact' : ''} ${accentClass(item)} relevance-${item.relevanceClass || 'neutral'} urgency-${item.urgencyClass || 'none'}">
         <div class="news-card-topline">
           <span class="news-card-badge ${toneClass(item.badgeTone)}">${item.badgeLabel || 'Update'}</span>
-          <span class="news-card-time">${item.timeLabel || 'No time set'}</span>
+          <span class="news-card-time">${compact ? `${compactDate} · ${item.timeLabel || 'No time set'}` : (item.timeLabel || 'No time set')}</span>
         </div>
         <h4>${item.title || 'Untitled event'}</h4>
         <p class="news-card-summary">${summaryText}</p>
@@ -255,6 +266,25 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
       </article>
     `;
+  }
+
+  function renderUpcomingEventsByDate(items = []) {
+    const grouped = new Map();
+    for (const item of items) {
+      const rawDate = item.eventDate || item.scheduledAt || item.publishedAt || '';
+      const parsed = new Date(rawDate);
+      const key = Number.isNaN(parsed.getTime()) ? 'Date TBD' : parsed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    }
+    return Array.from(grouped.entries()).map(([dateLabel, groupItems]) => `
+      <div class="news-date-group">
+        <div class="news-date-header">${dateLabel}</div>
+        <div class="news-card-list news-card-list--compact">
+          ${groupItems.map((item) => renderCard(item, { compact: true })).join('')}
+        </div>
+      </div>
+    `).join('');
   }
 
   function renderEmpty(title, subtitle, withRetry = false) {
@@ -342,6 +372,20 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       const sectionKey = section.summary?.key || '';
       const items = getSectionItems(section);
 
+      if (sectionKey === 'upcomingEvents' && !items.length) {
+        return `
+          <section class="news-section">
+            <div class="section-header">
+              <h3>${section.summary?.title || 'Upcoming Events'}</h3>
+              <span class="pill">0</span>
+            </div>
+            <div class="news-empty-state">
+              <p>No upcoming events are available right now.</p>
+            </div>
+          </section>
+        `;
+      }
+
       if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
         const hasPositions = (portfolioContext.trackedTickerCount || 0) > 0;
         const emptyMsg = hasPositions
@@ -361,6 +405,18 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       }
 
       if (!items.length) return '';
+      if (state.activeTab === 'for-you' && sectionKey === 'upcomingEvents') {
+        return `
+          <section class="news-section">
+            <div class="section-header">
+              <h3>${section.summary?.title || 'Upcoming Events'}</h3>
+              <span class="pill">${items.length}</span>
+            </div>
+            ${renderUpcomingEventsByDate(items)}
+          </section>
+        `;
+      }
+      if (state.activeTab === 'for-you' && (sectionKey === 'portfolioUpcomingEarnings' || sectionKey === 'macroUpcoming')) return '';
       return `
         <section class="news-section">
           <div class="section-header">
@@ -497,7 +553,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         append,
         payloadDataLength: Array.isArray(payload?.data) ? payload.data.length : 0,
         payloadSectionsLength: Array.isArray(payload?.sections) ? payload.sections.length : 0,
-        payloadPortfolioUpcomingEarningsLength: Array.isArray(payload?.portfolioUpcomingEarnings) ? payload.portfolioUpcomingEarnings.length : 0
+        payloadPortfolioUpcomingEarningsLength: Array.isArray(payload?.portfolioUpcomingEarnings) ? payload.portfolioUpcomingEarnings.length : 0,
+        payloadUpcomingEventsLength: Array.isArray(payload?.upcomingEvents) ? payload.upcomingEvents.length : 0
       });
       const previousItems = append ? tabState.items : [];
       tabState.items = mergeUniqueById(previousItems, payload?.data || []);

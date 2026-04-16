@@ -34,8 +34,29 @@ test('For You prioritizes portfolio upcoming earnings then high-importance macro
 
   assert.equal(model.data[0].id, 'e1');
   assert.equal(model.data[1].id, 'm1');
+  assert.equal(model.sectionCounts.upcomingEvents, 2);
   assert.equal(model.sectionCounts.portfolioUpcomingEarnings, 1);
   assert.equal(model.sectionCounts.macroUpcoming, 1);
+});
+
+test('For You upcomingEvents unifies earnings + macro/news and sorts by date then time bucket priority', () => {
+  const day = '2026-05-02';
+  const events = [
+    { id: 'macro-amc', sourceType: 'macro', eventType: 'fomc', title: 'FOMC Press Conference', summary: '', importance: 95, scheduledAt: `${day}T21:00:00.000Z`, metadataJson: {}, status: 'active' },
+    { id: 'earnings-bmo', sourceType: 'earnings', eventType: 'earnings', title: 'AAPL earnings', summary: '', canonicalTicker: 'AAPL', importance: 70, scheduledAt: `${day}T11:00:00.000Z`, metadataJson: { hour: 'bmo' }, status: 'active' },
+    { id: 'macro-intraday', sourceType: 'macro', eventType: 'cpi', title: 'CPI release', summary: '', importance: 88, scheduledAt: `${day}T14:00:00.000Z`, metadataJson: {}, status: 'active' },
+    { id: 'world-news', sourceType: 'news', eventType: 'world_news', title: 'Global market briefing', summary: '', importance: 60, scheduledAt: '2026-05-03T09:00:00.000Z', metadataJson: {}, status: 'active' }
+  ];
+
+  const model = getForYouNewsModel({
+    newsEventService: { listUpcomingEvents: () => events, listPublishedNews: () => [] },
+    resolveUserTickerUniverse: () => new Set(['AAPL']),
+    logger: { info: () => {} }
+  }, { userId: 'alice', limit: 20, cursor: null, filters: {} });
+
+  assert.deepEqual(model.upcomingEvents.map((item) => item.id), ['earnings-bmo', 'macro-intraday', 'macro-amc', 'world-news']);
+  assert.deepEqual(model.upcomingEvents.map((item) => item.eventTimeBucket), ['bmo', 'intraday', 'amc', 'bmo']);
+  assert.equal(model.diagnostics.unifiedUpcomingEvents.unifiedUpcomingEventsCount, 4);
 });
 
 test('Calendar groups and sorts events chronologically', () => {
