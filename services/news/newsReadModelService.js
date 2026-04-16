@@ -69,6 +69,74 @@ const EARNINGS_HOUR_LABELS = {
   dmh: 'During Market Hours'
 };
 
+const EVENT_TIME_BUCKET_PRIORITY = {
+  bmo: 0,
+  intraday: 1,
+  amc: 2,
+  all_day: 3,
+  unknown: 4
+};
+
+function deriveUnifiedEventType(card) {
+  if (card.eventType === 'earnings') return 'earnings';
+  if (card.sourceType === 'macro') return 'macro';
+  if (card.eventType === 'stock_news' || card.eventType === 'world_news' || card.sourceType === 'news') return 'news';
+  return 'catalyst';
+}
+
+function deriveEventTimeBucket(card) {
+  const earningsHour = String(card?.metadataJson?.hour || '').toLowerCase();
+  if (earningsHour === 'bmo' || earningsHour === 'amc') return earningsHour;
+  if (earningsHour === 'dmh') return 'intraday';
+  const ts = Date.parse(card.scheduledAt || card.publishedAt || '');
+  if (Number.isFinite(ts)) {
+    const hour = new Date(ts).getUTCHours();
+    if (hour < 13) return 'bmo';
+    if (hour >= 13 && hour < 20) return 'intraday';
+    if (hour >= 20) return 'amc';
+  }
+  if (card.sourceType === 'macro') return 'all_day';
+  return 'unknown';
+}
+
+function deriveAccentVariant(eventType, card) {
+  if (eventType === 'earnings') return 'earnings';
+  if (eventType === 'macro' && Number(card.importance || 0) >= 80) return 'macro-critical';
+  if (eventType === 'macro') return 'macro';
+  if (eventType === 'news') return 'news';
+  return 'catalyst';
+}
+
+function buildUnifiedUpcomingEvent(card) {
+  const eventType = deriveUnifiedEventType(card);
+  const eventTimeBucket = deriveEventTimeBucket(card);
+  const ticker = normalizeTickerForMatch(card.canonicalTicker || card.ticker) || null;
+  return {
+    id: card.id,
+    eventType,
+    title: card.title || 'Untitled event',
+    subtitle: card.summary || null,
+    eventDate: card.scheduledAt || card.publishedAt || card.sortTimestamp || null,
+    eventTimeBucket,
+    importance: Number(card.importance || 0),
+    source: card.sourceName || card.sourceType || null,
+    ticker,
+    tags: [
+      card.sourceType || null,
+      card.eventType || null,
+      card.badgeLabel || null
+    ].filter(Boolean),
+    accentVariant: deriveAccentVariant(eventType, card),
+    timeLabel: card.timeLabel || 'No time set',
+    canonicalTicker: ticker,
+    sourceType: card.sourceType,
+    badgeLabel: card.badgeLabel,
+    badgeTone: card.badgeTone,
+    relevanceClass: card.relevanceClass,
+    urgencyClass: card.urgencyClass
+  };
+}
+
 function formatTimeLabel(event, nowMs) {
   const scheduled = normalizeIsoDate(event.scheduledAt);
   const published = normalizeIsoDate(event.publishedAt);
@@ -148,6 +216,7 @@ function buildNewsEventCardModel(event, context = {}) {
     sourceName: event.sourceName,
     sourceUrl: event.sourceUrl,
     status: event.status,
+    metadataJson: event.metadataJson || {},
     badgeLabel,
     badgeTone,
     relevanceClass,
@@ -198,6 +267,15 @@ function sortStableByTimestampAsc(a, b) {
 
 function sortStableByTimestampDesc(a, b) {
   return b.sortTimestamp.localeCompare(a.sortTimestamp) || a.id.localeCompare(b.id);
+}
+
+function sortUnifiedUpcomingEvents(a, b) {
+  const dateCompare = String(a.eventDate || '').localeCompare(String(b.eventDate || ''));
+  if (dateCompare !== 0) return dateCompare;
+  const bucketPriorityA = EVENT_TIME_BUCKET_PRIORITY[a.eventTimeBucket] ?? EVENT_TIME_BUCKET_PRIORITY.unknown;
+  const bucketPriorityB = EVENT_TIME_BUCKET_PRIORITY[b.eventTimeBucket] ?? EVENT_TIME_BUCKET_PRIORITY.unknown;
+  if (bucketPriorityA !== bucketPriorityB) return bucketPriorityA - bucketPriorityB;
+  return String(a.id || '').localeCompare(String(b.id || ''));
 }
 
 function normalizeTickerForMatch(raw) {
@@ -380,6 +458,9 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   const macroUpcoming = cards
     .filter((card) => card.sourceType === 'macro' && card.isHighImportance && card.isUpcoming)
     .sort(sortStableByTimestampAsc);
+  const macroAndNewsUpcoming = cards
+    .filter((card) => card.isUpcoming && card.eventType !== 'earnings' && (card.sourceType === 'macro' || card.sourceType === 'news' || card.eventType === 'stock_news' || card.eventType === 'world_news'))
+    .sort(sortStableByTimestampAsc);
 
   const recentlyUpdatedRelevant = cards
     .filter((card) => card.isPortfolioRelevant && card.eventType !== 'earnings')
@@ -427,7 +508,11 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   }
 
   const paged = paginate('for_you', mixed, limit, cursor);
+  const upcomingEvents = [...portfolioUpcomingEarnings, ...macroAndNewsUpcoming]
+    .map(buildUnifiedUpcomingEvent)
+    .sort(sortUnifiedUpcomingEvents);
   const sectionsRaw = [
+    { key: 'upcomingEvents', title: 'Upcoming Events', items: upcomingEvents },
     { key: 'portfolioUpcomingEarnings', title: 'Upcoming Earnings', items: portfolioUpcomingEarnings },
     { key: 'macroUpcoming', title: 'Market Events', items: macroUpcoming },
     ...(relevantHeadlines.length ? [{ key: 'recentRelevantHeadlines', title: 'Relevant Headlines', items: relevantHeadlines }] : []),
@@ -442,6 +527,16 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     userId,
     filters: normalizedFilters,
     counts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
+    unifiedUpcomingEventsDiagnostics: {
+      unifiedUpcomingEventsCount: upcomingEvents.length,
+      earningsCountMergedIn: portfolioUpcomingEarnings.length,
+      macroNewsCountMergedIn: macroAndNewsUpcoming.length,
+      first10SortedEvents: upcomingEvents.slice(0, 10).map((event) => ({
+        eventDate: event.eventDate,
+        eventType: event.eventType,
+        title: event.title
+      }))
+    },
     rankingDiagnostics: {
       ...buildRankingDiagnostics([], scoredHeadlines),
       relevanceDiagnostics: buildUserRelevanceDiagnostics(scoredHeadlines.map((row) => row.event), { userId, rankingMode, userTickerUniverse }),
@@ -458,6 +553,7 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     appliedFilters: normalizedFilters,
     sections,
     sectionCounts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
+    upcomingEvents,
     portfolioContext: {
       trackedTickers,
       trackedTickerCount: userTickerUniverse.portfolioTickers.size,
@@ -466,7 +562,17 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
       nextEarningsDate: portfolioUpcomingEarnings[0]?.scheduledAt || null
     },
     diagnostics: {
-      earningsPipeline: earningsPipelineDiagnostics
+      earningsPipeline: earningsPipelineDiagnostics,
+      unifiedUpcomingEvents: {
+        unifiedUpcomingEventsCount: upcomingEvents.length,
+        earningsCountMergedIn: portfolioUpcomingEarnings.length,
+        macroNewsCountMergedIn: macroAndNewsUpcoming.length,
+        first10SortedEvents: upcomingEvents.slice(0, 10).map((event) => ({
+          eventDate: event.eventDate,
+          eventType: event.eventType,
+          title: event.title
+        }))
+      }
     },
     data: paged.items,
     pagination: paged.pagination

@@ -37,3 +37,15 @@ test('buildSectionList preserves backend section order per tab shell', () => {
   const ordered = buildSectionList('calendar', response);
   assert.deepEqual(ordered.map((item) => item.summary.key), ['today', 'next7Days', 'later']);
 });
+
+test('buildSectionList prioritizes unified upcomingEvents section for for-you tab', () => {
+  const response = {
+    sections: [
+      { summary: { key: 'macroUpcoming' }, items: [{ id: 'm' }] },
+      { summary: { key: 'upcomingEvents' }, items: [{ id: 'u' }] },
+      { summary: { key: 'portfolioUpcomingEarnings' }, items: [{ id: 'e' }] }
+    ]
+  };
+  const ordered = buildSectionList('for-you', response);
+  assert.deepEqual(ordered.map((item) => item.summary.key), ['upcomingEvents', 'portfolioUpcomingEarnings', 'macroUpcoming']);
+});
