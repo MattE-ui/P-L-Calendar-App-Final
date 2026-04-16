@@ -1,7 +1,10 @@
 const NEWS_TABS = {
   'for-you': { key: 'for-you', label: 'For You', endpoint: '/api/news/for-you', sectionOrder: ['upcomingEvents', 'recentRelevantHeadlines', 'recentlyUpdatedRelevant', 'portfolioUpcomingEarnings', 'macroUpcoming'] },
   calendar: { key: 'calendar', label: 'Calendar', endpoint: '/api/news/calendar', sectionOrder: ['today', 'next7Days', 'later'] },
-  news: { key: 'news', label: 'News', endpoint: '/api/news/latest', sectionOrder: ['headlines'] }
+  news: { key: 'news', label: 'News', endpoint: '/api/news/latest', sectionOrder: ['headlines'] },
+  // Custom-render tabs: no backend endpoint, rendered entirely from client-side state
+  'analyst-ratings': { key: 'analyst-ratings', label: 'Analyst Ratings', endpoint: null, sectionOrder: [], customRender: true },
+  macro: { key: 'macro', label: 'Macro', endpoint: null, sectionOrder: [], customRender: true }
 };
 
 const TAB_QUERY_KEY = 'tab';
@@ -155,6 +158,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     },
     exposureByTicker: {},
     exposureLoaded: false,
+    // ── Enhancement state ─────────────────────────────────────
+    marketPulse: { data: null, loaded: false, loading: false },
+    sentimentData: { fearGreed: null, portfolio: [], loaded: false, loading: false },
+    analystRatings: { items: [], loaded: false, loading: false },
+    analystRatingsFilter: { ticker: '', actionType: '' },
+    newsFeedOffset: 0, // for "Load more" in the news feed
     tabData: Object.keys(NEWS_TABS).reduce((acc, key) => {
       acc[key] = {
         loaded: false,
@@ -289,6 +298,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const variant = item.accentVariant
       || (item.eventType === 'earnings' ? 'earnings' : '')
       || (item.eventType === 'macro' ? (Number(item.importance || 0) >= 80 ? 'macro-critical' : 'macro') : '')
+      || (item.eventType === 'dividend' ? 'dividend' : '')
       || (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news' ? 'news' : '')
       || 'catalyst';
     return `event-accent-${variant}`;
@@ -297,6 +307,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   function compactTypeLabel(item = {}) {
     if (item.eventType === 'earnings') return 'Earnings';
     if (item.eventType === 'macro') return 'Macro';
+    if (item.eventType === 'dividend') return 'Dividend';
     if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'News';
     const badge = String(item.badgeLabel || '').toLowerCase();
     if (badge.includes('earnings')) return 'Earnings';
@@ -308,6 +319,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   function compactPillLabel(item = {}) {
     if (item.eventType === 'earnings') return 'earnings';
     if (item.eventType === 'macro') return 'macro';
+    if (item.eventType === 'dividend') return 'dividend';
     if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'news';
     return String(item.badgeLabel || 'update').toLowerCase();
   }
@@ -430,9 +442,41 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const dateLabel = startDateLabel && endDateLabel && startDateLabel !== endDateLabel
       ? `${startDateLabel}–${endDateLabel.replace(/^[A-Za-z]{3}\s/, '')}`
       : (startDateLabel || 'TBD');
-    const ticker = item.canonicalTicker || item.ticker;
+    const ticker = normalizeTicker(item.canonicalTicker || item.ticker);
+
+    // ── Earnings enhancements ────────────────────────────────────
+    // EPS estimate text appended inline to the row description
+    const formattedEps = item.earningsEpsEstimate != null ? formatEpsEstimate(item.earningsEpsEstimate) : null;
+    const earningsEpsText = (item.eventType === 'earnings' && formattedEps) ? ` · Est. EPS ${formattedEps}` : '';
+
+    // "HIGH" badge: position value above $1,000 threshold
+    const exposureValue = Number(state.exposureByTicker[ticker] || 0);
+    const isHighPosition = item.eventType === 'earnings' && Number.isFinite(exposureValue) && exposureValue > 1000;
+    const highBadge = isHighPosition
+      ? '<span class="news-event-row__badge news-event-row__badge--high">HIGH</span>' : '';
+
+    // "NEW EST" badge: EPS estimate revised within last 7 days
+    const epsRevisedAt = item.earningsEpsEstimateRevisedAt;
+    const isNewEst = item.eventType === 'earnings' && epsRevisedAt
+      && (Date.now() - new Date(epsRevisedAt).getTime() < 7 * 24 * 3600 * 1000);
+    const newEstBadge = isNewEst
+      ? '<span class="news-event-row__badge news-event-row__badge--new-est">NEW EST</span>' : '';
+
+    // ── FOMC probability ─────────────────────────────────────────
+    // TODO: Replace stub — source: CME FedWatch API, expected field: item.fomcHoldProbability (0–1 decimal)
+    const fomcProb = (item.eventType === 'macro' && item.fomcHoldProbability != null)
+      ? `<span class="news-event-row__fomc-prob">Prob. hold ${Math.round(Number(item.fomcHoldProbability) * 100)}%</span>` : '';
+
+    // ── Dividend extras ──────────────────────────────────────────
+    let dividendText = '';
+    if (item.eventType === 'dividend') {
+      const amt = item.dividendAmount != null ? `$${Number(item.dividendAmount).toFixed(4)}/share` : null;
+      const yld = item.dividendYield != null ? `${(Number(item.dividendYield) * 100).toFixed(2)}% yield` : null;
+      dividendText = [amt, yld].filter(Boolean).map((v) => ` · ${v}`).join('');
+    }
+
     const summaryText = item.summary || '';
-    const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}`;
+    const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}${earningsEpsText}${dividendText}`;
     const timingText = item.timeLabel || item.earningsTiming || (item.__sessionOrder < 50 ? compactPillLabel(item).toUpperCase() : 'Time TBC');
     const countdownText = computeTimeToEvent(rowDate) || '';
     const exposureLabel = resolveExposureLabel(item);
@@ -441,11 +485,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       ? 'news-event-row--priority'
       : (item.isHighImportance ? 'news-event-row--elevated' : 'news-event-row--standard');
     const macroClass = item.eventType === 'macro' ? 'news-event-row--macro' : '';
+    const dividendClass = item.eventType === 'dividend' ? 'news-event-row--dividend' : '';
     const sourceLink = item.sourceUrl
       ? `<a class="news-source-link news-source-link--row" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">↗</a>`
       : '';
     return `
-      <article class="news-event-row ${accentClass(item)} ${rowPriorityClass} ${macroClass}" title="${item.badgeLabel || compactTypeLabel(item)}">
+      <article class="news-event-row ${accentClass(item)} ${rowPriorityClass} ${macroClass} ${dividendClass}" title="${item.badgeLabel || compactTypeLabel(item)}">
         <div class="news-event-row__type">${compactTypeLabel(item)}</div>
         <div class="news-event-row__main">
           ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
@@ -453,6 +498,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
         <div class="news-event-row__time">${timingText}</div>
         <div class="news-event-row__meta">
+          ${highBadge}
+          ${newEstBadge}
+          ${fomcProb}
           ${countdownText ? `<span class="news-event-row__countdown">${countdownText}</span>` : ''}
           ${exposureLabel ? `<span class="news-event-row__exposure">${exposureLabel}</span>` : ''}
           <span class="news-row-pill">${compactPillLabel(item)}</span>
@@ -506,6 +554,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
   function renderFilterTickerChips(model = {}) {
     if (!els.filterTickerChips) return;
+    // Analyst-ratings tab shows tickers from ratings data (handled in tab content itself)
     if (state.activeTab !== 'for-you') {
       els.filterTickerChips.innerHTML = '';
       return;
@@ -520,138 +569,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     els.filterTickerChips.innerHTML = tickers.map((ticker) => `<span class="news-ticker-chip">${ticker}</span>`).join('');
   }
 
-  function renderTab() {
-    renderTabs();
-    const tabState = state.tabData[state.activeTab];
-
-    if (tabState.loading && !tabState.loaded) {
-      renderLoading();
-      return;
-    }
-    if (tabState.error) {
-      log('error-state', { tab: state.activeTab, message: tabState.error.message });
-      renderEmpty('Unable to load this tab', tabState.error.message || 'Please try again.', true);
-      return;
-    }
-
-    const model = tabState.model || {};
-    renderFilterTickerChips(model);
-    const sections = buildSectionList(state.activeTab, model);
-    const sectionPayloadLengths = sections.map((section) => ({
-      key: section.summary?.key || 'unknown',
-      itemCount: getSectionItems(section).length
-    }));
-    diagnostics('render-tab-state', {
-      tab: state.activeTab,
-      filters: { ...state.filters },
-      tabItemsLength: tabState.items.length,
-      sectionPayloadLengths
-    });
-
-    if (state.activeTab === 'news' && !tabState.items.length) {
-      log('empty-state', { tab: state.activeTab, reason: 'latest-empty' });
-      return renderEmpty('No headlines available', model?.emptyState?.message || 'News headlines are not available right now. Check back soon.');
-    }
-
-    const totalRenderedItems = sections.reduce((sum, section) => sum + getSectionItems(section).length, 0);
-    // For the 'for-you' tab we always render sections (portfolio earnings shows its own empty state)
-    if (!totalRenderedItems && state.activeTab !== 'for-you') {
-      log('empty-state', { tab: state.activeTab, reason: 'no-items' });
-      return renderEmpty('No events to show', 'Try relaxing filters or check back soon.');
-    }
-
-    const portfolioContext = model?.portfolioContext || {};
-    const sectionsHtml = sections.map((section) => {
-      const sectionKey = section.summary?.key || '';
-      const items = getSectionItems(section);
-
-      if (sectionKey === 'upcomingEvents' && !items.length) {
-        return `
-          <section class="news-section">
-            <div class="section-header">
-              <h3>${section.summary?.title || 'Upcoming Events'}</h3>
-              <span class="pill">0</span>
-            </div>
-            <div class="news-empty-state">
-              <p>No upcoming events are available right now.</p>
-            </div>
-          </section>
-        `;
-      }
-
-      if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
-        const hasPositions = (portfolioContext.trackedTickerCount || 0) > 0;
-        const emptyMsg = hasPositions
-          ? 'No earnings scheduled in the next 45 days for your active positions.'
-          : 'No active positions found. Add trades to your journal to track upcoming earnings.';
-        return `
-          <section class="news-section">
-            <div class="section-header">
-              <h3>${section.summary?.title || 'Upcoming Earnings'}</h3>
-              <span class="pill">0</span>
-            </div>
-            <div class="news-empty-state">
-              <p>${emptyMsg}</p>
-            </div>
-          </section>
-        `;
-      }
-
-      if (!items.length) return '';
-      if (state.activeTab === 'for-you' && sectionKey === 'upcomingEvents') {
-        const sectionLookup = Object.fromEntries(sections.map((entry) => [entry?.summary?.key, entry]));
-        const upcoming = getSectionItems(sectionLookup.upcomingEvents || {});
-        const earnings = getSectionItems(sectionLookup.portfolioUpcomingEarnings || {});
-        const macro = getSectionItems(sectionLookup.macroUpcoming || {});
-        // Canonical timeline source: visible upcoming, plus dedicated earnings/macro sections as fallback.
-        const canonicalTimeline = buildUnifiedTimelineItems([...upcoming, ...earnings, ...macro]);
-        const nextItem = canonicalTimeline[0];
-        const parsedNextDate = nextItem ? parseTimelineDate(nextItem) : null;
-        const nextDateText = parsedNextDate
-          ? parsedNextDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
-          : 'date TBC';
-        const nextTimingText = nextItem?.timeLabel || nextItem?.earningsTiming || 'time TBC';
-        const nextTitleText = nextItem
-          ? `${nextItem.canonicalTicker || nextItem.ticker || compactTypeLabel(nextItem)} ${compactTypeLabel(nextItem)}`
-          : 'No upcoming events';
-        const nextLine = `<span class="news-inline-next">Next: <strong>${nextTitleText}</strong> — ${nextDateText}${nextItem ? ` (${nextTimingText})` : ''}</span>`;
-        return `
-          <section class="news-section">
-            <div class="section-header news-upcoming-header">
-              <h3>${section.summary?.title || 'Upcoming events'}</h3>
-              <span class="news-upcoming-dot" aria-hidden="true">·</span>
-              <span class="pill">${canonicalTimeline.length}</span>
-              <span class="news-upcoming-dot" aria-hidden="true">·</span>
-              ${nextLine}
-            </div>
-            ${renderUpcomingEventsByDate(canonicalTimeline)}
-          </section>
-        `;
-      }
-      if (state.activeTab === 'for-you' && (sectionKey === 'portfolioUpcomingEarnings' || sectionKey === 'macroUpcoming')) return '';
-      return `
-        <section class="news-section">
-          <div class="section-header">
-            <h3>${section.summary?.title || 'Section'}</h3>
-            <span class="pill">${items.length}</span>
-          </div>
-          <div class="news-card-list">
-            ${items.map(renderCard).join('')}
-          </div>
-        </section>
-      `;
-    }).join('');
-
-    const hasMore = Boolean(tabState.pagination?.hasMore && tabState.pagination?.cursor);
-    els.panel.innerHTML = `
-      ${sectionsHtml}
-      <div class="news-load-more-wrap">
-        ${hasMore ? '<button id="news-load-more-btn" class="ghost" type="button">Load more</button>' : ''}
-      </div>
-    `;
-
-    document.getElementById('news-load-more-btn')?.addEventListener('click', () => fetchTab(state.activeTab, { append: true }));
-  }
+  // renderTab() — defined below after the new enhancement functions
 
   function formatNotificationTime(value) {
     const parsed = new Date(value);
@@ -740,6 +658,15 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const tabState = state.tabData[tabKey];
     const activeSignature = filterSignature();
     if (tabState.loading) return;
+
+    // Custom-render tabs (analyst-ratings, macro) have no backend endpoint; mark loaded and render.
+    if (NEWS_TABS[tabKey]?.customRender) {
+      tabState.loaded = true;
+      tabState.loading = false;
+      state.pageLoading = false;
+      renderTab();
+      return;
+    }
 
     if (!reset && tabState.loaded && !append && tabState.lastFilterSignature === activeSignature) {
       diagnostics('fetch-cache-hit', {
@@ -950,13 +877,702 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     });
   }
 
+  // ═══════════════════════════════════════════════════════
+  //  MARKET PULSE — load + render
+  // ═══════════════════════════════════════════════════════
+
+  async function loadMarketPulse() {
+    if (state.marketPulse.loaded) return;
+    state.marketPulse.loading = true;
+    try {
+      // TODO: Replace stub — expected shape: { sp500: { price, change, changePct }, vix: { value },
+      //   treasury10y: { value, direction: 'up'|'down'|'flat' }, fedFunds: { range, nextFomcDate } }
+      const payload = await api('/api/news/market-pulse');
+      state.marketPulse.data = payload?.data || null;
+    } catch {
+      // Endpoint not yet available — use visually-obvious stub values
+      state.marketPulse.data = {
+        _stub: true,
+        sp500: { price: 5234.18, change: -12.45, changePct: -0.24 },
+        vix: { value: 18.4 },
+        treasury10y: { value: 4.42, direction: 'up' },
+        fedFunds: { range: '4.25–4.50%', nextFomcDate: '2026-06-11' }
+      };
+    } finally {
+      state.marketPulse.loading = false;
+      state.marketPulse.loaded = true;
+    }
+  }
+
+  function renderMarketPulseBar() {
+    const d = state.marketPulse.data;
+    if (state.marketPulse.loading && !d) {
+      return '<div class="news-skeleton-wrap news-pulse-skeleton"><div class="news-skeleton" style="height:72px"></div></div>';
+    }
+    if (!d) return '';
+    const stubBanner = d._stub
+      ? '<div class="news-stub-banner">[STUB] Market Pulse data — live endpoint not yet connected. See <code>loadMarketPulse()</code> for expected shape.</div>'
+      : '';
+    const sp = d.sp500 || {};
+    const spChangeClass = sp.changePct > 0 ? 'up' : sp.changePct < 0 ? 'down' : 'flat';
+    const spSign = sp.changePct > 0 ? '+' : '';
+    const vix = d.vix || {};
+    const vixVal = Number(vix.value || 0);
+    const vixLabel = vixVal > 25 ? 'Elevated' : vixVal >= 15 ? 'Normal' : 'Low';
+    const vixClass = vixVal > 25 ? 'down' : vixVal < 15 ? 'up' : 'flat';
+    const t10 = d.treasury10y || {};
+    const dirArrow = t10.direction === 'up' ? '↑' : t10.direction === 'down' ? '↓' : '→';
+    const dirClass = t10.direction === 'up' ? 'down' : t10.direction === 'down' ? 'up' : 'flat'; // rising yield = pressure
+    const ff = d.fedFunds || {};
+    const nextFomcText = ff.nextFomcDate
+      ? (() => {
+        const diff = computeTimeToEvent(ff.nextFomcDate + 'T14:00:00Z');
+        return diff ? `Next FOMC ${diff}` : 'Next FOMC soon';
+      })()
+      : 'Next FOMC TBD';
+    return `
+      ${stubBanner}
+      <div class="news-pulse-bar" aria-label="Market Pulse">
+        <div class="news-pulse-card">
+          <div class="news-pulse-card__label">S&amp;P 500</div>
+          <div class="news-pulse-card__value">${sp.price != null ? sp.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div>
+          <div class="news-pulse-card__change news-pulse-card__change--${spChangeClass}">${spSign}${sp.changePct != null ? sp.changePct.toFixed(2) : '—'}%</div>
+        </div>
+        <div class="news-pulse-card">
+          <div class="news-pulse-card__label">VIX</div>
+          <div class="news-pulse-card__value">${vixVal ? vixVal.toFixed(1) : '—'}</div>
+          <div class="news-pulse-card__change news-pulse-card__change--${vixClass}">${vixLabel}</div>
+        </div>
+        <div class="news-pulse-card">
+          <div class="news-pulse-card__label">10Y Treasury</div>
+          <div class="news-pulse-card__value">${t10.value != null ? t10.value.toFixed(2) : '—'}%</div>
+          <div class="news-pulse-card__change news-pulse-card__change--${dirClass}">${dirArrow} vs yesterday</div>
+        </div>
+        <div class="news-pulse-card">
+          <div class="news-pulse-card__label">Fed Funds Rate</div>
+          <div class="news-pulse-card__value">${ff.range || '—'}</div>
+          <div class="news-pulse-card__change news-pulse-card__change--flat">${nextFomcText}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  SENTIMENT — load + render
+  // ═══════════════════════════════════════════════════════
+
+  async function loadSentimentData() {
+    if (state.sentimentData.loaded) return;
+    state.sentimentData.loading = true;
+    try {
+      // TODO: Replace stub — Fear & Greed expected shape: { score: number (0–100), label: string,
+      //   prevWeek: number, prevMonth: number } — source: CNN Fear & Greed or equivalent API
+      const fgPayload = await api('/api/news/fear-greed');
+      state.sentimentData.fearGreed = fgPayload?.data || null;
+    } catch {
+      state.sentimentData.fearGreed = {
+        _stub: true,
+        score: 38,
+        label: 'Fear',
+        prevWeek: 44,
+        prevMonth: 62
+      };
+    }
+    try {
+      // TODO: Replace stub — Portfolio sentiment expected shape: { items: [{ ticker: string, score: number }] }
+      //   score is -100 (extreme negative) to +100 (extreme positive), derived from recent news sentiment
+      const psPayload = await api('/api/news/portfolio-sentiment');
+      state.sentimentData.portfolio = Array.isArray(psPayload?.data) ? psPayload.data : [];
+    } catch {
+      // Stub: derive tickers from exposure map; assign placeholder scores
+      state.sentimentData.portfolio = Object.keys(state.exposureByTicker).slice(0, 8).map((ticker, i) => ({
+        _stub: true,
+        ticker,
+        score: [42, -18, 71, -55, 28, 83, -9, 16][i % 8]
+      }));
+    }
+    state.sentimentData.loading = false;
+    state.sentimentData.loaded = true;
+  }
+
+  function renderSentimentGauge(score) {
+    // Colour stop: red (0) → amber (50) → green (100)
+    const pct = Math.max(0, Math.min(100, Number(score || 0)));
+    const hue = Math.round(pct * 1.2); // 0→0°(red), 50→60°(amber), 100→120°(green)
+    return `
+      <div class="news-fg-gauge" role="img" aria-label="Fear &amp; Greed score ${pct}">
+        <div class="news-fg-gauge__track">
+          <div class="news-fg-gauge__fill" style="width:${pct}%;background:hsl(${hue},72%,46%)"></div>
+          <div class="news-fg-gauge__marker" style="left:${pct}%"></div>
+        </div>
+        <div class="news-fg-gauge__ends"><span>0</span><span>100</span></div>
+      </div>
+    `;
+  }
+
+  function renderSentimentSection(portfolioOnly = false) {
+    const sd = state.sentimentData;
+    if (sd.loading && !sd.fearGreed) {
+      return `
+        <div class="news-sentiment-section">
+          <div class="news-skeleton" style="height:140px;border-radius:12px"></div>
+          <div class="news-skeleton" style="height:140px;border-radius:12px"></div>
+        </div>
+      `;
+    }
+    const fg = sd.fearGreed || {};
+    const fgStub = fg._stub ? '<div class="news-stub-banner">[STUB] Fear &amp; Greed data — live endpoint not yet connected.</div>' : '';
+    const fgScore = Number(fg.score || 0);
+    const fgLabel = fg.label || (fgScore >= 75 ? 'Extreme Greed' : fgScore >= 55 ? 'Greed' : fgScore >= 45 ? 'Neutral' : fgScore >= 25 ? 'Fear' : 'Extreme Fear');
+
+    let portfolio = Array.isArray(sd.portfolio) ? sd.portfolio : [];
+    if (portfolioOnly) {
+      const held = new Set(Object.keys(state.exposureByTicker));
+      portfolio = portfolio.filter((p) => held.has(normalizeTicker(p.ticker)));
+    }
+    const psStub = portfolio.some((p) => p._stub) ? '<div class="news-stub-banner">[STUB] Portfolio sentiment — live scoring not yet connected.</div>' : '';
+
+    const psRows = portfolio.length ? portfolio.map((p) => {
+      const s = Number(p.score || 0);
+      const pct = ((s + 100) / 2); // map -100..+100 → 0..100%
+      const colorClass = s > 15 ? 'positive' : s < -15 ? 'negative' : 'neutral';
+      return `
+        <div class="news-ps-row">
+          <span class="news-ps-row__ticker">${p.ticker}</span>
+          <div class="news-ps-bar">
+            <div class="news-ps-bar__fill news-ps-bar__fill--${colorClass}" style="width:${pct.toFixed(1)}%"></div>
+          </div>
+          <span class="news-ps-row__score news-ps-row__score--${colorClass}">${s > 0 ? '+' : ''}${s}</span>
+        </div>
+      `;
+    }).join('') : '<p class="news-empty-micro">No held positions to score.</p>';
+
+    return `
+      <div class="news-sentiment-section">
+        <div class="news-sentiment-card">
+          <div class="news-sentiment-card__header">
+            <h4>Fear &amp; Greed Index</h4>
+          </div>
+          ${fgStub}
+          ${renderSentimentGauge(fgScore)}
+          <div class="news-fg-score-row">
+            <span class="news-fg-score">${fgScore}</span>
+            <span class="news-fg-label">${fgLabel}</span>
+          </div>
+          <div class="news-fg-history">
+            <span>Last week: <strong>${fg.prevWeek ?? '—'}</strong></span>
+            <span>Last month: <strong>${fg.prevMonth ?? '—'}</strong></span>
+          </div>
+        </div>
+        <div class="news-sentiment-card">
+          <div class="news-sentiment-card__header">
+            <h4>Portfolio Sentiment</h4>
+          </div>
+          ${psStub}
+          <div class="news-ps-list">${psRows}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  NEWS FEED — render from section items
+  // ═══════════════════════════════════════════════════════
+
+  function newsSentimentDot(item = {}) {
+    // Sentiment classification from backend field, or derive from tone/badge
+    const tone = String(item.sentimentClass || item.badgeTone || '').toLowerCase();
+    if (tone === 'positive' || tone === 'highlight' || tone === 'bullish') return 'positive';
+    if (tone === 'negative' || tone === 'critical' || tone === 'bearish') return 'negative';
+    return 'neutral';
+  }
+
+  function newsTimeAgo(dateValue) {
+    const parsed = dateValue ? new Date(dateValue) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) return '';
+    const diffMs = Date.now() - parsed.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  function renderNewsFeedItem(item = {}) {
+    const dotClass = newsSentimentDot(item);
+    const ticker = item.canonicalTicker || item.ticker;
+    const tagLabel = ticker || 'MACRO';
+    const source = item.sourceName || item.sourceType || 'Unknown';
+    const timeAgo = newsTimeAgo(item.publishedAt || item.scheduledAt);
+    const signalNote = item.signalNote || item.signalLabel || '';
+    return `
+      <div class="news-feed-item">
+        <div class="news-feed-item__dot news-feed-item__dot--${dotClass}" aria-hidden="true"></div>
+        <div class="news-feed-item__body">
+          <div class="news-feed-item__source">${source}${timeAgo ? ` · ${timeAgo}` : ''}</div>
+          <div class="news-feed-item__headline">${item.title || 'Untitled'}</div>
+          <div class="news-feed-item__meta">
+            <span class="news-feed-item__tag">${tagLabel}</span>
+            ${signalNote ? `<span class="news-feed-item__signal">${signalNote}</span>` : ''}
+            ${item.sourceUrl ? `<a class="news-source-link news-feed-item__link" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">↗</a>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderNewsFeed(items = [], portfolioOnly = false) {
+    if (!items.length) return '';
+    let filtered = items;
+    if (portfolioOnly) {
+      const held = new Set(Object.keys(state.exposureByTicker));
+      // Keep items that match a held ticker, or have no ticker (macro headlines)
+      filtered = items.filter((it) => {
+        const t = normalizeTicker(it.canonicalTicker || it.ticker);
+        return !t || held.has(t);
+      });
+    }
+    // Rank: (a) portfolio-relevant first, (b) recency (publishedAt desc), (c) importance score desc
+    const ranked = [...filtered].sort((a, b) => {
+      const aPort = a.isPortfolioRelevant ? 1 : 0;
+      const bPort = b.isPortfolioRelevant ? 1 : 0;
+      if (bPort !== aPort) return bPort - aPort;
+      const aTs = new Date(a.publishedAt || a.scheduledAt || 0).getTime();
+      const bTs = new Date(b.publishedAt || b.scheduledAt || 0).getTime();
+      if (bTs !== aTs) return bTs - aTs;
+      return Number(b.importance || 0) - Number(a.importance || 0);
+    });
+    const PAGE = 10;
+    const offset = state.newsFeedOffset;
+    const visible = ranked.slice(0, offset + PAGE);
+    const hasMore = ranked.length > visible.length;
+    return `
+      <section class="news-section">
+        <div class="section-header">
+          <h3>News Feed</h3>
+          <span class="pill">${ranked.length}</span>
+        </div>
+        <div class="news-feed-list" id="news-feed-list">
+          ${visible.map(renderNewsFeedItem).join('')}
+        </div>
+        <div class="news-load-more-wrap">
+          ${hasMore ? `<button id="news-feed-load-more" class="ghost" type="button" data-total="${ranked.length}">Load more</button>` : ''}
+        </div>
+      </section>
+    `;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  ANALYST RATINGS — load + render
+  // ═══════════════════════════════════════════════════════
+
+  async function loadAnalystRatings() {
+    if (state.analystRatings.loaded) return;
+    state.analystRatings.loading = true;
+    try {
+      // TODO: Replace stub — expected shape: { items: [{ id, ticker, action: 'UPGRADE'|'DOWNGRADE'|'INITIATED'|'REITERATED',
+      //   firm, newRating, oldPt, newPt, timestamp }] }
+      const payload = await api('/api/news/analyst-ratings');
+      state.analystRatings.items = Array.isArray(payload?.data) ? payload.data : [];
+    } catch {
+      state.analystRatings.items = [
+        { id: 'ar-1', _stub: true, ticker: 'AAPL', action: 'UPGRADE', firm: 'Goldman Sachs', newRating: 'Buy', oldPt: 175, newPt: 210, timestamp: new Date(Date.now() - 3600000).toISOString() },
+        { id: 'ar-2', _stub: true, ticker: 'NVDA', action: 'REITERATED', firm: 'Morgan Stanley', newRating: 'Overweight', oldPt: 850, newPt: 950, timestamp: new Date(Date.now() - 7200000).toISOString() },
+        { id: 'ar-3', _stub: true, ticker: 'MSFT', action: 'DOWNGRADE', firm: 'JP Morgan', newRating: 'Neutral', oldPt: 420, newPt: 390, timestamp: new Date(Date.now() - 14400000).toISOString() },
+        { id: 'ar-4', _stub: true, ticker: 'AMZN', action: 'INITIATED', firm: 'Bernstein', newRating: 'Outperform', oldPt: null, newPt: 225, timestamp: new Date(Date.now() - 28800000).toISOString() },
+        { id: 'ar-5', _stub: true, ticker: 'TSLA', action: 'DOWNGRADE', firm: 'Barclays', newRating: 'Underweight', oldPt: 280, newPt: 180, timestamp: new Date(Date.now() - 43200000).toISOString() },
+        { id: 'ar-6', _stub: true, ticker: 'META', action: 'UPGRADE', firm: 'Citi', newRating: 'Buy', oldPt: 530, newPt: 620, timestamp: new Date(Date.now() - 54000000).toISOString() }
+      ];
+    }
+    state.analystRatings.loading = false;
+    state.analystRatings.loaded = true;
+  }
+
+  function renderAnalystRatingCard(item = {}) {
+    const actionBadgeClass = {
+      UPGRADE: 'upgrade',
+      DOWNGRADE: 'downgrade',
+      INITIATED: 'initiated',
+      REITERATED: 'reiterated'
+    }[item.action] || 'reiterated';
+    const ptRaised = item.oldPt != null && item.newPt != null && item.newPt > item.oldPt;
+    const ptLowered = item.oldPt != null && item.newPt != null && item.newPt < item.oldPt;
+    const ptClass = ptRaised ? 'raised' : ptLowered ? 'lowered' : '';
+    const ptText = item.oldPt != null
+      ? `$${item.oldPt} → <span class="news-analyst-pt__new news-analyst-pt--${ptClass}">$${item.newPt}</span>`
+      : `<span class="news-analyst-pt__new news-analyst-pt--${ptClass}">$${item.newPt ?? '—'}</span>`;
+    const stubNote = item._stub ? '<span class="news-event-row__badge news-event-row__badge--stub">STUB</span>' : '';
+    return `
+      <div class="news-analyst-card">
+        <div class="news-analyst-card__top">
+          <span class="news-analyst-ticker">${item.ticker || '—'}</span>
+          ${stubNote}
+          <span class="news-analyst-badge news-analyst-badge--${actionBadgeClass}">${item.action || 'UPDATE'}</span>
+        </div>
+        <div class="news-analyst-firm">${item.firm || 'Unknown'} → <strong>${item.newRating || '—'}</strong></div>
+        <div class="news-analyst-pt">PT: ${ptText}</div>
+        <div class="news-analyst-time">${newsTimeAgo(item.timestamp)}</div>
+      </div>
+    `;
+  }
+
+  function renderAnalystRatingsSection(items, { preview = false, portfolioOnly = false, filterTicker = '', filterAction = '' } = {}) {
+    let filtered = items;
+    if (portfolioOnly) {
+      const held = new Set(Object.keys(state.exposureByTicker));
+      filtered = filtered.filter((it) => held.has(normalizeTicker(it.ticker)));
+    }
+    if (filterTicker) {
+      filtered = filtered.filter((it) => normalizeTicker(it.ticker) === normalizeTicker(filterTicker));
+    }
+    if (filterAction) {
+      filtered = filtered.filter((it) => String(it.action || '').toUpperCase() === filterAction.toUpperCase());
+    }
+    const visible = preview ? filtered.slice(0, 4) : filtered;
+    const hasStub = visible.some((it) => it._stub);
+    const stubBanner = hasStub
+      ? '<div class="news-stub-banner">[STUB] Analyst ratings — live endpoint not yet connected. See <code>loadAnalystRatings()</code> for expected shape.</div>'
+      : '';
+    if (!visible.length) {
+      return `
+        <section class="news-section">
+          <div class="section-header"><h3>${preview ? 'Recent Analyst Ratings' : 'Analyst Ratings'}</h3></div>
+          ${stubBanner}
+          <div class="news-empty-state"><p>No analyst rating changes to show.</p></div>
+        </section>
+      `;
+    }
+    const seeAllLink = preview && filtered.length > 4
+      ? `<a class="news-analyst-see-all ghost" href="/news.html?tab=analyst-ratings">See all ${filtered.length} ratings ↗</a>`
+      : '';
+    return `
+      <section class="news-section">
+        <div class="section-header">
+          <h3>${preview ? 'Recent Analyst Ratings' : 'Analyst Ratings'}</h3>
+          <span class="pill">${filtered.length}</span>
+          ${seeAllLink}
+        </div>
+        ${stubBanner}
+        <div class="news-analyst-grid">
+          ${visible.map(renderAnalystRatingCard).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  ANALYST RATINGS TAB — full view with filters
+  // ═══════════════════════════════════════════════════════
+
+  function renderAnalystRatingsTabContent() {
+    const ACTION_TYPES = ['', 'UPGRADE', 'DOWNGRADE', 'INITIATED', 'REITERATED'];
+    const activeAction = state.analystRatingsFilter.actionType;
+    const activeTicker = state.analystRatingsFilter.ticker;
+
+    // Unique tickers from ratings data for chip filter
+    const ratingTickers = [...new Set(state.analystRatings.items.map((it) => normalizeTicker(it.ticker)).filter(Boolean))];
+    const chipHtml = ratingTickers.map((t) => `
+      <span class="news-ticker-chip news-analyst-ticker-chip ${activeTicker === t ? 'is-active' : ''}" data-ar-ticker="${t}">${t}</span>
+    `).join('');
+    const actionBtns = ACTION_TYPES.map((a) => `
+      <button class="news-analyst-action-btn ${activeAction === a ? 'is-active' : ''}" type="button" data-ar-action="${a}">${a || 'All'}</button>
+    `).join('');
+
+    const portfolioOnly = state.filters.portfolioOnly;
+    return `
+      <div class="news-analyst-tab-filters">
+        <div class="news-analyst-action-row">${actionBtns}</div>
+        ${ratingTickers.length ? `<div class="news-analyst-chip-row">${chipHtml}</div>` : ''}
+      </div>
+      ${renderAnalystRatingsSection(state.analystRatings.items, {
+        portfolioOnly,
+        filterTicker: activeTicker,
+        filterAction: activeAction
+      })}
+    `;
+  }
+
+  function bindAnalystRatingsTabEvents() {
+    document.querySelectorAll('[data-ar-action]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.analystRatingsFilter.actionType = btn.dataset.arAction || '';
+        els.panel.innerHTML = renderAnalystRatingsTabContent();
+        bindAnalystRatingsTabEvents();
+      });
+    });
+    document.querySelectorAll('[data-ar-ticker]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const t = normalizeTicker(chip.dataset.arTicker || '');
+        state.analystRatingsFilter.ticker = state.analystRatingsFilter.ticker === t ? '' : t;
+        els.panel.innerHTML = renderAnalystRatingsTabContent();
+        bindAnalystRatingsTabEvents();
+      });
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  MACRO TAB — FOMC events + yield metrics + macro headlines
+  // ═══════════════════════════════════════════════════════
+
+  function renderMacroTabContent(model = {}) {
+    const d = state.marketPulse.data;
+    const ff = d?.fedFunds || {};
+    const t10 = d?.treasury10y || {};
+    const hasMetrics = d != null;
+    const stubBanner = d?._stub
+      ? '<div class="news-stub-banner">[STUB] Macro metrics — live endpoint not yet connected.</div>'
+      : '';
+
+    const metricsHtml = hasMetrics ? `
+      <section class="news-section">
+        <div class="section-header"><h3>Macro Metrics</h3></div>
+        ${stubBanner}
+        <div class="news-macro-metrics">
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">Fed Funds Rate</div>
+            <div class="news-pulse-card__value">${ff.range || '—'}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--flat">${ff.nextFomcDate ? `Next FOMC ${computeTimeToEvent(ff.nextFomcDate + 'T14:00:00Z') || ''}` : 'Date TBD'}</div>
+          </div>
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">10Y Treasury Yield</div>
+            <div class="news-pulse-card__value">${t10.value != null ? t10.value.toFixed(2) : '—'}%</div>
+            <div class="news-pulse-card__change news-pulse-card__change--${t10.direction === 'up' ? 'down' : t10.direction === 'down' ? 'up' : 'flat'}">${t10.direction === 'up' ? '↑' : t10.direction === 'down' ? '↓' : '→'} vs yesterday</div>
+          </div>
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">VIX</div>
+            <div class="news-pulse-card__value">${d.vix?.value != null ? Number(d.vix.value).toFixed(1) : '—'}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--${Number(d.vix?.value || 0) > 25 ? 'down' : Number(d.vix?.value || 0) < 15 ? 'up' : 'flat'}">${Number(d.vix?.value || 0) > 25 ? 'Elevated' : Number(d.vix?.value || 0) < 15 ? 'Low' : 'Normal'}</div>
+          </div>
+        </div>
+      </section>
+    ` : '';
+
+    // Pull FOMC + macro events from the for-you model cache if available
+    const forYouModel = state.tabData['for-you']?.model || {};
+    const allSections = Array.isArray(forYouModel.sections) ? forYouModel.sections : [];
+    const macroSection = allSections.find((s) => s?.summary?.key === 'macroUpcoming');
+    const macroItems = macroSection ? macroSection.items || [] : [];
+    const fomcItems = macroItems.filter((it) => it.eventType === 'macro');
+    const macroEventsHtml = fomcItems.length ? `
+      <section class="news-section">
+        <div class="section-header"><h3>FOMC &amp; Macro Events</h3><span class="pill">${fomcItems.length}</span></div>
+        <div class="news-row-list">${fomcItems.map(renderCompactEventRow).join('')}</div>
+      </section>
+    ` : '';
+
+    // Macro headlines from for-you model
+    const headlineSection = allSections.find((s) => s?.summary?.key === 'recentRelevantHeadlines');
+    const macroHeadlines = (headlineSection?.items || []).filter((it) =>
+      it.eventType === 'macro' || it.eventType === 'world_news'
+    );
+    const macroHeadlinesHtml = macroHeadlines.length ? `
+      <section class="news-section">
+        <div class="section-header"><h3>Macro Headlines</h3><span class="pill">${macroHeadlines.length}</span></div>
+        <div class="news-feed-list">${macroHeadlines.map(renderNewsFeedItem).join('')}</div>
+      </section>
+    ` : '';
+
+    if (!hasMetrics && !fomcItems.length && !macroHeadlines.length) {
+      return `<div class="news-empty-state"><p>Load the For You tab first to populate macro events, or connect the macro endpoint.</p></div>`;
+    }
+    return `${metricsHtml}${macroEventsHtml}${macroHeadlinesHtml}`;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  renderTab — handles new tabs + For You extras
+  // ═══════════════════════════════════════════════════════
+
+  function renderTab() {
+    renderTabs();
+    const tabState = state.tabData[state.activeTab];
+
+    if (tabState.loading && !tabState.loaded) {
+      renderLoading();
+      return;
+    }
+    if (tabState.error) {
+      log('error-state', { tab: state.activeTab, message: tabState.error.message });
+      renderEmpty('Unable to load this tab', tabState.error.message || 'Please try again.', true);
+      return;
+    }
+
+    // ── Custom-render tabs ────────────────────────────────
+    if (state.activeTab === 'analyst-ratings') {
+      renderFilterTickerChips({});
+      els.panel.innerHTML = renderAnalystRatingsTabContent();
+      bindAnalystRatingsTabEvents();
+      return;
+    }
+    if (state.activeTab === 'macro') {
+      renderFilterTickerChips({});
+      els.panel.innerHTML = renderMacroTabContent();
+      return;
+    }
+
+    // ── Standard tabs (for-you / calendar / news) ─────────
+    const model = tabState.model || {};
+    renderFilterTickerChips(model);
+    const sections = buildSectionList(state.activeTab, model);
+    const sectionPayloadLengths = sections.map((section) => ({
+      key: section.summary?.key || 'unknown',
+      itemCount: getSectionItems(section).length
+    }));
+    diagnostics('render-tab-state', {
+      tab: state.activeTab,
+      filters: { ...state.filters },
+      tabItemsLength: tabState.items.length,
+      sectionPayloadLengths
+    });
+
+    if (state.activeTab === 'news' && !tabState.items.length) {
+      log('empty-state', { tab: state.activeTab, reason: 'latest-empty' });
+      return renderEmpty('No headlines available', model?.emptyState?.message || 'News headlines are not available right now. Check back soon.');
+    }
+
+    const totalRenderedItems = sections.reduce((sum, section) => sum + getSectionItems(section).length, 0);
+    if (!totalRenderedItems && state.activeTab !== 'for-you') {
+      log('empty-state', { tab: state.activeTab, reason: 'no-items' });
+      return renderEmpty('No events to show', 'Try relaxing filters or check back soon.');
+    }
+
+    const portfolioContext = model?.portfolioContext || {};
+    const portfolioOnly = state.filters.portfolioOnly;
+
+    // Collect news-feed items from relevant sections (rendered separately on For You)
+    const newsFeedSectionKeys = new Set(['recentRelevantHeadlines', 'recentlyUpdatedRelevant']);
+    const newsFeedItems = state.activeTab === 'for-you'
+      ? sections
+        .filter((s) => newsFeedSectionKeys.has(s?.summary?.key))
+        .flatMap((s) => getSectionItems(s))
+      : [];
+
+    const sectionsHtml = sections.map((section) => {
+      const sectionKey = section.summary?.key || '';
+      const items = getSectionItems(section);
+
+      // On For You tab, news sections are rendered as the dedicated news feed below — skip here
+      if (state.activeTab === 'for-you' && newsFeedSectionKeys.has(sectionKey)) return '';
+
+      if (sectionKey === 'upcomingEvents' && !items.length) {
+        return `
+          <section class="news-section">
+            <div class="section-header">
+              <h3>${section.summary?.title || 'Upcoming Events'}</h3>
+              <span class="pill">0</span>
+            </div>
+            <div class="news-empty-state">
+              <p>No upcoming events are available right now.</p>
+            </div>
+          </section>
+        `;
+      }
+
+      if (sectionKey === 'portfolioUpcomingEarnings' && !items.length) {
+        const hasPositions = (portfolioContext.trackedTickerCount || 0) > 0;
+        const emptyMsg = hasPositions
+          ? 'No earnings scheduled in the next 45 days for your active positions.'
+          : 'No active positions found. Add trades to your journal to track upcoming earnings.';
+        return `
+          <section class="news-section">
+            <div class="section-header">
+              <h3>${section.summary?.title || 'Upcoming Earnings'}</h3>
+              <span class="pill">0</span>
+            </div>
+            <div class="news-empty-state">
+              <p>${emptyMsg}</p>
+            </div>
+          </section>
+        `;
+      }
+
+      if (!items.length) return '';
+      if (state.activeTab === 'for-you' && sectionKey === 'upcomingEvents') {
+        const sectionLookup = Object.fromEntries(sections.map((entry) => [entry?.summary?.key, entry]));
+        const upcoming = getSectionItems(sectionLookup.upcomingEvents || {});
+        const earnings = getSectionItems(sectionLookup.portfolioUpcomingEarnings || {});
+        const macro = getSectionItems(sectionLookup.macroUpcoming || {});
+        const canonicalTimeline = buildUnifiedTimelineItems([...upcoming, ...earnings, ...macro]);
+        const nextItem = canonicalTimeline[0];
+        const parsedNextDate = nextItem ? parseTimelineDate(nextItem) : null;
+        const nextDateText = parsedNextDate
+          ? parsedNextDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+          : 'date TBC';
+        const nextTimingText = nextItem?.timeLabel || nextItem?.earningsTiming || 'time TBC';
+        const nextTitleText = nextItem
+          ? `${nextItem.canonicalTicker || nextItem.ticker || compactTypeLabel(nextItem)} ${compactTypeLabel(nextItem)}`
+          : 'No upcoming events';
+        const nextLine = `<span class="news-inline-next">Next: <strong>${nextTitleText}</strong> — ${nextDateText}${nextItem ? ` (${nextTimingText})` : ''}</span>`;
+        return `
+          <section class="news-section">
+            <div class="section-header news-upcoming-header">
+              <h3>${section.summary?.title || 'Upcoming events'}</h3>
+              <span class="news-upcoming-dot" aria-hidden="true">·</span>
+              <span class="pill">${canonicalTimeline.length}</span>
+              <span class="news-upcoming-dot" aria-hidden="true">·</span>
+              ${nextLine}
+            </div>
+            ${renderUpcomingEventsByDate(canonicalTimeline)}
+          </section>
+        `;
+      }
+      if (state.activeTab === 'for-you' && (sectionKey === 'portfolioUpcomingEarnings' || sectionKey === 'macroUpcoming')) return '';
+      return `
+        <section class="news-section">
+          <div class="section-header">
+            <h3>${section.summary?.title || 'Section'}</h3>
+            <span class="pill">${items.length}</span>
+          </div>
+          <div class="news-card-list">
+            ${items.map(renderCard).join('')}
+          </div>
+        </section>
+      `;
+    }).join('');
+
+    const hasMore = Boolean(tabState.pagination?.hasMore && tabState.pagination?.cursor);
+
+    // ── For You extras ─────────────────────────────────────
+    const forYouTopHtml = state.activeTab === 'for-you'
+      ? `${renderMarketPulseBar()}${renderSentimentSection(portfolioOnly)}`
+      : '';
+    const forYouBottomHtml = state.activeTab === 'for-you'
+      ? `${renderNewsFeed(newsFeedItems, portfolioOnly)}
+         ${renderAnalystRatingsSection(state.analystRatings.items, { preview: true, portfolioOnly })}`
+      : '';
+
+    els.panel.innerHTML = `
+      ${forYouTopHtml}
+      ${sectionsHtml}
+      ${forYouBottomHtml}
+      <div class="news-load-more-wrap">
+        ${hasMore ? '<button id="news-load-more-btn" class="ghost" type="button">Load more</button>' : ''}
+      </div>
+    `;
+
+    document.getElementById('news-load-more-btn')?.addEventListener('click', () => fetchTab(state.activeTab, { append: true }));
+
+    // "Load more" for news feed
+    document.getElementById('news-feed-load-more')?.addEventListener('click', () => {
+      state.newsFeedOffset += 10;
+      renderTab();
+    });
+  }
+
   async function init() {
     const restoredTab = resolveInitialTab(window.location.search);
     log('tab-restored', restoredTab);
     log('page-load-start', { tab: state.activeTab });
     bindEvents();
     renderLoading();
-    await Promise.all([loadPreferences(), loadExposureMap(), fetchTab(state.activeTab), loadInAppNotifications()]);
+    await Promise.all([
+      loadPreferences(),
+      loadExposureMap(),
+      fetchTab(state.activeTab),
+      loadInAppNotifications()
+    ]);
+    // Load enhancement data in parallel after primary data is ready (exposure map populated)
+    await Promise.all([loadMarketPulse(), loadSentimentData(), loadAnalystRatings()]);
     renderTab();
     log('page-load-end', { tab: state.activeTab });
   }
