@@ -51,6 +51,7 @@ const {
 const { createNewsNotificationDispatchService } = require('./services/news/newsNotificationDispatchService');
 const { runNewsNotificationOutboxProcessor } = require('./services/news/newsNotificationOutboxProcessor');
 const { resolveOwnedTickerUniverse, deriveUserCurrentHoldingTickers, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
+const makeNewsMarketDataRouter = require('./routes/newsMarketData');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -19019,6 +19020,12 @@ app.post('/api/news/notifications/in-app/:id/read', auth, (req, res) => {
   }
   res.json({ data: row });
 });
+
+// ---------------------------------------------------------------------------
+// News Market Data routes — market-pulse, fear-greed, portfolio-sentiment,
+// analyst-ratings.  Powered by Finnhub free tier.
+// ---------------------------------------------------------------------------
+app.use('/api/news', makeNewsMarketDataRouter({ auth, asyncHandler, loadDB, sleep }));
 
 app.post('/api/admin/news/ingest/macro', auth, requireAuthenticatedUser, requireAdmin, asyncHandler(async (req, res) => {
   const diagnostics = await runMacroIngestionJob('admin_endpoint');
