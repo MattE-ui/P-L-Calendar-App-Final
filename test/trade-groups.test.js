@@ -152,6 +152,7 @@ test('leader can create group, add friend, and member receives alert for qualify
   assert.equal(unread.data.notifications.length, 1);
   assert.equal(unread.data.notifications[0].type, 'trade_group_alert');
   assert.equal(unread.data.notifications[0].ticker, 'NVDA');
+  assert.equal(unread.data.notifications[0].normalized_event_type, 'TRADE_OPENED');
 
   const alerts = await authedFetch(tokens.member, `/api/social/trade-groups/${groupId}/alerts`);
   assert.equal(alerts.res.status, 200);
@@ -167,6 +168,11 @@ test('leader can create group, add friend, and member receives alert for qualify
 
   const db = loadDB();
   assert.equal(db.tradeGroupAlerts.length, 1);
+  const openPush = db.notificationEvents
+    .filter((item) => item.userId === member && item.eventType === 'trade_group_alert')
+    .find((item) => /opened|added to/i.test(item.body || ''));
+  assert.ok(openPush);
+  assert.equal(/reduced/i.test(openPush.body || ''), false);
 });
 
 test('emitTradeGroupAlertFromTrading212Fill emits SELL alerts for partial and full closes', () => {
@@ -341,6 +347,39 @@ test('manual trim unread payload and notification body are trim-specific (not cl
     .find((item) => /trimmed/i.test(item.body || ''));
   assert.ok(trimPush);
   assert.equal(/closed/i.test(trimPush.body || ''), false);
+});
+
+test('full close push body is close-specific (not trim or reduce)', () => {
+  const db = loadDB();
+  const now = new Date().toISOString();
+  db.tradeGroups = [{ id: 'group-close-push', leader_user_id: leader, name: 'Close Group', is_active: true, created_at: now }];
+  db.tradeGroupMembers = [
+    { id: 'gc-l', group_id: 'group-close-push', user_id: leader, role: 'leader', status: 'active', joined_at: now },
+    { id: 'gc-m', group_id: 'group-close-push', user_id: member, role: 'member', status: 'active', joined_at: now }
+  ];
+  db.tradeGroupAlerts = [];
+  db.tradeGroupNotifications = [];
+  db.notificationEvents = [];
+
+  emitTradeGroupAlertFromTrading212Fill(db, leader, {
+    fillId: 'fill-close-push-1',
+    orderId: 'order-close-push-1',
+    side: 'SELL',
+    ticker: 'MSFT',
+    quantity: 5,
+    previousQuantity: 5,
+    remainingQuantity: 0,
+    fillPrice: 410.22,
+    tradeStatus: 'closed',
+    filledAt: now,
+    sourceTradeId: 'trade-close-push-1'
+  });
+
+  const closePush = db.notificationEvents
+    .filter((item) => item.userId === member && item.eventType === 'trade_group_alert')
+    .find((item) => /closed/i.test(item.body || ''));
+  assert.ok(closePush);
+  assert.equal(/trimmed|reduced/i.test(closePush.body || ''), false);
 });
 
 

@@ -1444,6 +1444,10 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
       group_id: group.id,
       leader_user_id: leaderUsername,
       source_trade_id: trade.id,
+      side: 'BUY',
+      alert_classification: 'buy',
+      position_event_type: 'POSITION_OPENED',
+      normalized_event_type: 'TRADE_OPENED',
       ticker: payload.ticker,
       entry_price: payload.entry_price,
       stop_price: payload.stop_price,
@@ -1453,6 +1457,17 @@ function createTradeGroupAlertsForNewTrade(db, leaderUsername, trade) {
       created_at: nowIso
     };
     db.tradeGroupAlerts.push(alert);
+    console.info('[TradeGroup][AlertClassifier]', {
+      source: 'new_trade_create',
+      leader: leaderUsername,
+      groupId: group.id,
+      tradeId: trade?.id || null,
+      alertId: alert.id,
+      side: alert.side,
+      classification: alert.alert_classification,
+      positionEventType: alert.position_event_type,
+      normalizedEventType: alert.normalized_event_type
+    });
     createGroupTradeEventSystemMessage(db, group.id, leaderUsername, { ...alert, side: 'BUY', position_event_type: 'POSITION_OPENED' });
     alertsCreated += 1;
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
@@ -2373,6 +2388,10 @@ function processPendingTrading212GroupAlerts(db, { now = new Date(), pendingId =
       leader_user_id: pending.leader_user_id,
       source_trade_id: linkedTrade.id,
       pending_dedupe_key: pending.dedupe_key,
+      side: 'BUY',
+      alert_classification: 'buy',
+      position_event_type: 'POSITION_OPENED',
+      normalized_event_type: 'TRADE_OPENED',
       ticker: payload.ticker,
       entry_price: payload.entry_price,
       stop_price: payload.stop_price,
@@ -2382,6 +2401,18 @@ function processPendingTrading212GroupAlerts(db, { now = new Date(), pendingId =
       created_at: new Date(nowMs).toISOString()
     };
     db.tradeGroupAlerts.push(alert);
+    console.info('[TradeGroup][AlertClassifier]', {
+      source: 'pending_t212_new_position',
+      leader: pending.leader_user_id,
+      groupId: group.id,
+      tradeId: linkedTrade?.id || null,
+      pendingId: pending.id,
+      alertId: alert.id,
+      side: alert.side,
+      classification: alert.alert_classification,
+      positionEventType: alert.position_event_type,
+      normalizedEventType: alert.normalized_event_type
+    });
     const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' })
       .filter(member => member.user_id !== pending.leader_user_id);
     for (const member of activeMembers) {
