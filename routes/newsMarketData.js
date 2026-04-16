@@ -248,12 +248,11 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const cached = cache.get(CACHE_KEY);
     if (cached) return res.json({ data: cached });
 
-    let spyQuote, vixQuote, tnxQuote;
+    let spyQuote, vixQuote;
     try {
-      [spyQuote, vixQuote, tnxQuote] = await Promise.all([
+      [spyQuote, vixQuote] = await Promise.all([
         getQuote('SPY'),
-        getQuote('VIX'),
-        getQuote('TNX')
+        getQuote('VIX')
       ]);
     } catch (err) {
       console.error('[MarketPulse] Finnhub parallel fetch failed:', err.message);
@@ -268,8 +267,27 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     cache.set('quote:VIX', vixQuote, TTL_SECONDS);
 
     const vixValue = Number(vixQuote?.c);
-    const tnxValue = Number(tnxQuote?.c);
-    const tnxPrev  = Number(tnxQuote?.pc);
+
+    // Treasury 10Y fallback chain:
+    // Finnhub free-tier quote coverage can return 0 for TNX symbols.
+    // Try each symbol in order and take the first non-zero quote.
+    const treasurySymbolFallbacks = ['FRED:T10Y2Y', '^TNX', 'TNX'];
+    let treasuryQuote = null;
+    for (const symbol of treasurySymbolFallbacks) {
+      try {
+        const quote = await getQuote(symbol);
+        const value = Number(quote?.c);
+        if (Number.isFinite(value) && value !== 0) {
+          treasuryQuote = quote;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[MarketPulse] Treasury quote failed for ${symbol}: ${err.message}`);
+      }
+    }
+
+    const tnxValue = Number(treasuryQuote?.c);
+    const tnxPrev  = Number(treasuryQuote?.pc);
 
     const { nextFomcDate, nextFomcCountdown } = resolveFomcCountdown();
 
@@ -282,12 +300,17 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
         value: Number.isFinite(vixValue) ? vixValue : null,
         label: Number.isFinite(vixValue) ? vixLabel(vixValue) : null
       },
-      treasury10y: {
-        value:     Number.isFinite(tnxValue) ? tnxValue : null,
-        direction: (Number.isFinite(tnxValue) && Number.isFinite(tnxPrev))
-          ? yieldDirection(tnxValue, tnxPrev)
-          : null
-      },
+      treasury10y: Number.isFinite(tnxValue) && tnxValue !== 0
+        ? {
+          value: tnxValue,
+          direction: Number.isFinite(tnxPrev)
+            ? yieldDirection(tnxValue, tnxPrev)
+            : 'flat'
+        }
+        : {
+          value: null,
+          direction: 'unavailable'
+        },
       fedFunds: {
         range:             FED_FUNDS_RATE_RANGE,
         nextFomcDate,
@@ -456,7 +479,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const { tickerList } = deriveUserCurrentHoldingTickers(db, req.username);
 
     if (!tickerList.length) {
-      return res.json([]);
+      return res.json({ data: [] });
     }
 
     const allEntries = [];
@@ -523,7 +546,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     }
 
     if (!allEntries.length) {
-      return res.status(503).json({ error: 'data_unavailable' });
+      return res.json({ data: [] });
     }
 
     // Filter by action unless caller wants all entries
@@ -536,7 +559,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
       String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''))
     );
 
-    res.json(filtered);
+    res.json({ data: filtered });
   }));
 
   return router;
