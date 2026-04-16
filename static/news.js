@@ -153,6 +153,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       items: [],
       unreadCount: 0
     },
+    exposureByTicker: {},
+    exposureLoaded: false,
     tabData: Object.keys(NEWS_TABS).reduce((acc, key) => {
       acc[key] = {
         loaded: false,
@@ -310,6 +312,33 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return String(item.badgeLabel || 'update').toLowerCase();
   }
 
+  function normalizeTicker(value) {
+    return String(value || '').trim().toUpperCase();
+  }
+
+  // Countdown is intentionally render-time only (no interval) so we preserve scroll stability and keep updates cheap.
+  function computeTimeToEvent(eventDate, now = new Date()) {
+    const parsed = eventDate ? new Date(eventDate) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) return null;
+    const diffMs = parsed.getTime() - now.getTime();
+    if (diffMs <= 0) return 'Today';
+    const totalMinutes = Math.floor(diffMs / (1000 * 60));
+    const totalHours = Math.floor(totalMinutes / 60);
+    const totalDays = Math.floor(totalHours / 24);
+    if (totalDays >= 1) return `in ${totalDays}d ${totalHours % 24}h`;
+    if (totalHours >= 1) return `in ${totalHours}h ${totalMinutes % 60}m`;
+    return `in ${Math.max(1, totalMinutes)}m`;
+  }
+
+  // Exposure lookup is built once from already-available trade/account context and used as a lightweight ticker map.
+  function resolveExposureLabel(item = {}) {
+    const ticker = normalizeTicker(item.canonicalTicker || item.ticker);
+    if (!ticker) return '';
+    const exposureValue = Number(state.exposureByTicker[ticker]);
+    if (!Number.isFinite(exposureValue) || exposureValue <= 0) return '';
+    return `Position: ${formatCurrencyCompact(exposureValue)}`;
+  }
+
   function getSectionItems(section = {}) {
     return Array.isArray(section.items) ? section.items : [];
   }
@@ -405,6 +434,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const summaryText = item.summary || '';
     const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}`;
     const timingText = item.timeLabel || item.earningsTiming || (item.__sessionOrder < 50 ? compactPillLabel(item).toUpperCase() : 'Time TBC');
+    const countdownText = computeTimeToEvent(rowDate) || '';
+    const exposureLabel = resolveExposureLabel(item);
     const isPortfolioEarnings = item.eventType === 'earnings' && item.isPortfolioRelevant;
     const rowPriorityClass = isPortfolioEarnings
       ? 'news-event-row--priority'
@@ -422,6 +453,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
         <div class="news-event-row__time">${timingText}</div>
         <div class="news-event-row__meta">
+          ${countdownText ? `<span class="news-event-row__countdown">${countdownText}</span>` : ''}
+          ${exposureLabel ? `<span class="news-event-row__exposure">${exposureLabel}</span>` : ''}
           <span class="news-row-pill">${compactPillLabel(item)}</span>
           <span class="news-event-row__date">${dateLabel}</span>
           ${sourceLink}
@@ -679,6 +712,30 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     renderNotificationCenter();
   }
 
+  async function loadExposureMap() {
+    if (state.exposureLoaded) return;
+    try {
+      const payload = await api('/api/trades?summaryMode=1&limit=200');
+      const trades = Array.isArray(payload?.trades) ? payload.trades : [];
+      const nextExposureByTicker = {};
+      for (const trade of trades) {
+        const ticker = normalizeTicker(trade?.symbol || trade?.ticker || trade?.canonicalTicker);
+        if (!ticker) continue;
+        const isOpen = String(trade?.status || '').toLowerCase() === 'open' || !trade?.closeDate;
+        if (!isOpen) continue;
+        const notional = Math.abs(Number(trade?.positionGBP));
+        if (!Number.isFinite(notional) || notional <= 0) continue;
+        nextExposureByTicker[ticker] = (nextExposureByTicker[ticker] || 0) + notional;
+      }
+      state.exposureByTicker = nextExposureByTicker;
+    } catch (error) {
+      console.warn('[NewsPage] exposure map load failed', error?.message || error);
+      state.exposureByTicker = {};
+    } finally {
+      state.exposureLoaded = true;
+    }
+  }
+
   async function fetchTab(tabKey, { append = false, reset = false } = {}) {
     const tabState = state.tabData[tabKey];
     const activeSignature = filterSignature();
@@ -899,7 +956,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     log('page-load-start', { tab: state.activeTab });
     bindEvents();
     renderLoading();
-    await Promise.all([loadPreferences(), fetchTab(state.activeTab), loadInAppNotifications()]);
+    await Promise.all([loadPreferences(), loadExposureMap(), fetchTab(state.activeTab), loadInAppNotifications()]);
     renderTab();
     log('page-load-end', { tab: state.activeTab });
   }
