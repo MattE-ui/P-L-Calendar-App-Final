@@ -1332,6 +1332,8 @@
       mountedGroupId: '',
       textareaRef: null
     },
+    // Track feed render state to avoid unnecessary rebuilds
+    feedRenderedLastMsgId: {},
     watchlists: [],
     selectedWatchlistId: '',
     selectedWatchlistRows: [],
@@ -1768,24 +1770,42 @@
     return messages.map((msg, index) => {
       const prev = messages[index - 1];
       const type = getMessageType(msg);
-      const sameSender = prev && prev.senderNickname === msg.senderNickname;
-      const sameType = prev && getMessageType(prev) === type;
-      const isGrouped = !!(sameSender && sameType);
+      const sameSender = prev && prev.senderNickname === msg.senderNickname &&
+        getMessageType(prev) === type &&
+        !['system','trade_event_system'].includes(type) &&
+        Math.abs(new Date(msg.createdAt) - new Date(prev.createdAt)) < 5 * 60 * 1000;
+      const isGrouped = !!sameSender;
       const createdAtMs = new Date(msg.createdAt).getTime();
       const isFresh = Number.isFinite(createdAtMs) && (Date.now() - createdAtMs) <= 12000;
+      const timeStr = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const avatar = msg.senderAvatarUrl
-        ? `<img src="${msg.senderAvatarUrl}" alt="${msg.senderNickname}" loading="lazy">`
+        ? `<img src="${msg.senderAvatarUrl}" alt="${escapeHtml(msg.senderNickname)}" loading="lazy">`
         : `<span>${(msg.senderAvatarInitials || msg.senderNickname || '?').slice(0, 2).toUpperCase()}</span>`;
       const badges = Array.isArray(msg.senderRoleBadges) && msg.senderRoleBadges.length
-        ? `<div class="utility-chat-msg__badges">${msg.senderRoleBadges.map((badge) => `<span style="--role-color:${badge.color || '#3cb982'}">${badge.name}</span>`).join('')}</div>`
+        ? `<span class="utility-chat-msg__badges">${msg.senderRoleBadges.map((b) => `<span style="--role-color:${b.color || '#3cb982'}">${escapeHtml(b.name)}</span>`).join('')}</span>`
         : '';
-      const senderLabel = !sameSender ? `<div class="utility-chat-msg__sender"><div class="utility-chat-avatar">${avatar}</div><div><strong>${msg.senderNickname}</strong>${badges}</div></div>` : '';
+      const avatarCol = isGrouped
+        ? `<div class="utility-chat-msg__avatar-col"><span class="utility-chat-msg__grouped-time">${timeStr}</span></div>`
+        : `<div class="utility-chat-msg__avatar-col"><div class="utility-chat-avatar">${avatar}</div></div>`;
+      const senderRow = isGrouped ? '' : `
+        <div class="utility-chat-msg__sender">
+          <strong>${escapeHtml(msg.senderNickname)}</strong>
+          ${badges}
+          <span>${timeStr}</span>
+        </div>`;
+      const announcementLabel = isLeaderAnnouncement(msg) && !isGrouped ? '<div class="utility-chat-msg__type">📢 Announcement</div>' : '';
+      const actions = chat.chat.canModerate
+        ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">📌</button><button data-action="delete" data-mid="${msg.id}" type="button">🗑</button></div>`
+        : '';
       return `
       <article class="utility-chat-msg ${isLeaderAnnouncement(msg) ? 'is-announcement' : ''} ${type === 'trade_share' ? 'is-trade-share' : ''} ${type === 'trade_event_system' ? 'is-trade-event-system' : ''} ${isGrouped ? 'is-grouped' : 'is-group-break'} ${isFresh ? 'is-fresh' : ''}">
-        ${senderLabel}
-        <header><span>${new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
-        ${renderChatMessageBody(msg)}
-        ${chat.chat.canModerate ? `<div class="utility-chat-msg__actions"><button data-action="pin" data-mid="${msg.id}" type="button">Pin</button><button data-action="delete" data-mid="${msg.id}" type="button">Delete</button></div>` : ''}
+        ${avatarCol}
+        <div class="utility-chat-msg__body">
+          ${senderRow}
+          ${announcementLabel}
+          ${renderChatMessageBody(msg)}
+          ${actions}
+        </div>
       </article>
     `;
     }).join('');
@@ -1861,7 +1881,17 @@
       `;
     }
     if (pinnedSlot) pinnedSlot.innerHTML = pinned ? `<div class="utility-chat-pinned"><span class="utility-chat-pinned__label">Pinned note</span><strong>${pinned.senderNickname}</strong><p>${pinned.content}</p></div>` : '';
-    if (feed) feed.innerHTML = buildChatMessagesHtml(chat);
+    if (feed) {
+      const msgs = chat.messages || [];
+      const latestId = msgs.length ? msgs[msgs.length - 1].id : '';
+      const prevLatestId = state.feedRenderedLastMsgId[groupId] || '';
+      const wasNearBottom = (feed.scrollHeight - feed.scrollTop - feed.clientHeight) < 100;
+      if (latestId !== prevLatestId || !feed.children.length) {
+        feed.innerHTML = buildChatMessagesHtml(chat);
+        state.feedRenderedLastMsgId[groupId] = latestId;
+        if (wasNearBottom) feed.scrollTop = feed.scrollHeight;
+      }
+    }
     chatDebug('rendered-message-data', {
       groupId,
       messageCount: Array.isArray(chat.messages) ? chat.messages.length : 0,
@@ -2362,7 +2392,9 @@
       composerUi.sendError = '';
       composerUi.announcement = !!form.querySelector('input[name="announcement"]')?.checked;
     }
-    render();
+    // Disable send button immediately without rebuilding the whole form
+    const sendButtonEl = form.querySelector('button[type="submit"]');
+    if (sendButtonEl) { sendButtonEl.disabled = true; sendButtonEl.textContent = 'Sending…'; }
     const messageType = composerUi?.announcement ? 'leader_announcement' : 'user_message';
     const selectedEntities = reconcileComposerEntities(rawDraft, composerUi?.selectedEntities || []);
     if (composerUi) composerUi.selectedEntities = selectedEntities;
@@ -2402,9 +2434,28 @@
         composerUi.lastDraft = '';
         composerUi.sendPhase = 'success';
       }
+      // Invalidate feed cache so next render shows the new message
+      if (sendResponse?.message?.id) {
+        state.feedRenderedLastMsgId[state.activeChatGroupId] = '';
+      }
       await publishTyping(false);
-      render();
-      maybeScrollChatToBottom(true);
+      // Patch the feed immediately with the new message — don't wait for full openChat
+      const feedEl = body.querySelector('#utility-chat-feed');
+      const textareaEl = body.querySelector('.utility-chat-composer textarea');
+      if (feedEl && sendResponse?.message) {
+        const activeChatData = state.activeChatByGroupId[state.activeChatGroupId];
+        if (activeChatData) {
+          feedEl.innerHTML = buildChatMessagesHtml(activeChatData);
+          state.feedRenderedLastMsgId[state.activeChatGroupId] = sendResponse.message.id;
+          maybeScrollChatToBottom(true);
+        }
+      }
+      // Clear the textarea directly without full DOM rebuild
+      if (textareaEl) {
+        textareaEl.value = '';
+        textareaEl.focus();
+      }
+      // Background sync — fetch full state but don't let it re-render the feed if no new messages arrive
       openChat(state.activeChatGroupId, { markRead: false, refreshList: false });
       window.setTimeout(() => focusComposer(state.activeChatGroupId, { atEnd: true }), 0);
     } catch (error) {
