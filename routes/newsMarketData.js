@@ -238,7 +238,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
   // GET /api/news/market-pulse
   // -------------------------------------------------------------------------
   // Returns live market snapshot for the four metric cards on the News page.
-  // Calls SPY, ^VIX and ^TNX in parallel and caches the combined result for
+  // Calls SPY, VIX and TNX in parallel and caches the combined result for
   // 5 minutes.  The Fed Funds Rate and FOMC calendar are hardcoded constants.
   // -------------------------------------------------------------------------
   router.get('/market-pulse', auth, asyncHandler(async (req, res) => {
@@ -246,14 +246,14 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const TTL_SECONDS = 5 * 60; // 5 minutes
 
     const cached = cache.get(CACHE_KEY);
-    if (cached) return res.json(cached);
+    if (cached) return res.json({ data: cached });
 
     let spyQuote, vixQuote, tnxQuote;
     try {
       [spyQuote, vixQuote, tnxQuote] = await Promise.all([
         getQuote('SPY'),
-        getQuote('^VIX'),
-        getQuote('^TNX')
+        getQuote('VIX'),
+        getQuote('TNX')
       ]);
     } catch (err) {
       console.error('[MarketPulse] Finnhub parallel fetch failed:', err.message);
@@ -265,7 +265,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
 
     // Cache individual quotes so fear-greed can reuse them without extra calls
     cache.set('quote:SPY', spyQuote, TTL_SECONDS);
-    cache.set('quote:^VIX', vixQuote, TTL_SECONDS);
+    cache.set('quote:VIX', vixQuote, TTL_SECONDS);
 
     const vixValue = Number(vixQuote?.c);
     const tnxValue = Number(tnxQuote?.c);
@@ -275,20 +275,20 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
 
     const payload = {
       sp500: {
-        price:         Number(spyQuote?.c)  || null,
-        changePercent: Number(spyQuote?.dp) || null
+        price:     Number(spyQuote?.c)  || null,
+        changePct: Number(spyQuote?.dp) || null
       },
       vix: {
         value: Number.isFinite(vixValue) ? vixValue : null,
         label: Number.isFinite(vixValue) ? vixLabel(vixValue) : null
       },
-      tenYearYield: {
+      treasury10y: {
         value:     Number.isFinite(tnxValue) ? tnxValue : null,
         direction: (Number.isFinite(tnxValue) && Number.isFinite(tnxPrev))
           ? yieldDirection(tnxValue, tnxPrev)
           : null
       },
-      fedFundsRate: {
+      fedFunds: {
         range:             FED_FUNDS_RATE_RANGE,
         nextFomcDate,
         nextFomcCountdown
@@ -296,7 +296,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     };
 
     cache.set(CACHE_KEY, payload, TTL_SECONDS);
-    res.json(payload);
+    res.json({ data: payload });
   }));
 
   // -------------------------------------------------------------------------
@@ -313,15 +313,15 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const TTL_SECONDS = 15 * 60; // 15 minutes
 
     const cached = cache.get(CACHE_KEY);
-    if (cached) return res.json(cached);
+    if (cached) return res.json({ data: cached });
 
     // Reuse cached quotes from market-pulse if available to avoid duplicate calls
     let spyQuote = cache.get('quote:SPY');
-    let vixQuote = cache.get('quote:^VIX');
+    let vixQuote = cache.get('quote:VIX');
 
     const fetchPromises = [];
     if (!spyQuote) fetchPromises.push(getQuote('SPY').then((q) => { spyQuote = q; }));
-    if (!vixQuote) fetchPromises.push(getQuote('^VIX').then((q) => { vixQuote = q; }));
+    if (!vixQuote) fetchPromises.push(getQuote('VIX').then((q) => { vixQuote = q; }));
     // Always need SPY metrics for 52-week range
     let spyMetrics;
     fetchPromises.push(getMetrics('SPY').then((m) => { spyMetrics = m; }));
@@ -364,7 +364,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const payload = { score, label, previousWeek, previousMonth };
 
     cache.set(CACHE_KEY, payload, TTL_SECONDS);
-    res.json(payload);
+    res.json({ data: payload });
   }));
 
   // -------------------------------------------------------------------------
@@ -386,7 +386,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     const { tickerList } = deriveUserCurrentHoldingTickers(db, req.username);
 
     if (!tickerList.length) {
-      return res.json([]);
+      return res.json({ data: [] });
     }
 
     // Date window: today and 7 days ago in YYYY-MM-DD format
@@ -435,7 +435,7 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
       return res.status(503).json({ error: 'data_unavailable' });
     }
 
-    res.json(results);
+    res.json({ data: results });
   }));
 
   // -------------------------------------------------------------------------
