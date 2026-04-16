@@ -16,10 +16,6 @@
         <h2 class="trade-title">News</h2>
         <p class="avg" id="news-subtitle">Backend-ranked market events and calendar updates tailored to your portfolio.</p>
       </div>
-      <div class="filter-actions">
-        <button id="news-refresh-btn" class="ghost" type="button">Refresh tab</button>
-        <button id="news-preferences-btn" class="primary" type="button">Preferences</button>
-      </div>
     </section>
 
     <section class="tool-card news-notification-center" id="news-notification-center">
@@ -31,27 +27,37 @@
     </section>
 
     <section class="tool-card news-tabs-shell">
-      <div class="news-tab-row" role="tablist" aria-label="News tabs">
-        <button class="news-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="news-tab-panel" data-tab="for-you">For You</button>
-        <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="calendar">Calendar</button>
-        <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="news">News</button>
-      </div>
+      <div class="news-toolbar">
+        <div class="news-tab-row" role="tablist" aria-label="News tabs">
+          <button class="news-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="news-tab-panel" data-tab="for-you">For You</button>
+          <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="calendar">Calendar</button>
+          <button class="news-tab" type="button" role="tab" aria-selected="false" aria-controls="news-tab-panel" data-tab="news">News</button>
+        </div>
 
-      <div class="news-filter-row">
-        <div class="news-filter-controls">
-          <label class="toggle-control">
+        <div class="news-filter-controls news-toolbar-controls">
+          <label class="news-switch" for="filter-portfolio-only">
             <input id="filter-portfolio-only" type="checkbox">
-            <span>Portfolio only</span>
+            <span class="news-switch__slider" aria-hidden="true"></span>
+            <span class="news-switch__label">Portfolio only</span>
           </label>
-          <label class="toggle-control">
+          <label class="news-switch" for="filter-high-importance">
             <input id="filter-high-importance" type="checkbox">
-            <span>High importance only</span>
+            <span class="news-switch__slider" aria-hidden="true"></span>
+            <span class="news-switch__label">High importance only</span>
           </label>
           <div class="tool-field news-date-filter" id="news-date-filter-wrap">
             <label for="filter-calendar-from">Calendar from</label>
             <input id="filter-calendar-from" type="date">
           </div>
         </div>
+
+        <div class="filter-actions news-toolbar-actions">
+          <button id="news-refresh-btn" class="ghost" type="button">Refresh tab</button>
+          <button id="news-preferences-btn" class="primary" type="button">Preferences</button>
+        </div>
+      </div>
+
+      <div class="news-filter-row">
         <div id="news-filter-ticker-chips" class="news-filter-ticker-chips" aria-live="polite"></div>
       </div>
 

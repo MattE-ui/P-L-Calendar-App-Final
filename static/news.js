@@ -409,11 +409,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const rowPriorityClass = isPortfolioEarnings
       ? 'news-event-row--priority'
       : (item.isHighImportance ? 'news-event-row--elevated' : 'news-event-row--standard');
+    const macroClass = item.eventType === 'macro' ? 'news-event-row--macro' : '';
     const sourceLink = item.sourceUrl
-      ? `<a class="news-source-link news-source-link--row" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
+      ? `<a class="news-source-link news-source-link--row" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">↗</a>`
       : '';
     return `
-      <article class="news-event-row ${accentClass(item)} ${rowPriorityClass}" title="${item.badgeLabel || compactTypeLabel(item)}">
+      <article class="news-event-row ${accentClass(item)} ${rowPriorityClass} ${macroClass}" title="${item.badgeLabel || compactTypeLabel(item)}">
         <div class="news-event-row__type">${compactTypeLabel(item)}</div>
         <div class="news-event-row__main">
           ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
