@@ -307,11 +307,24 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   }
 
   function renderCompactEventRow(item = {}) {
+    const formatShortDate = (value) => {
+      const parsed = value ? new Date(value) : null;
+      if (!parsed || Number.isNaN(parsed.getTime())) return null;
+      return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    };
     const rowDate = item.eventDate || item.scheduledAt || item.publishedAt;
-    const dateLabel = rowDate
-      ? new Date(rowDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-      : 'TBD';
-    const timeLabel = item.timeLabel || 'No time';
+    const endDateValue = item.endDate
+      || item.endAt
+      || item.scheduledEnd
+      || item.eventDateEnd
+      || item.metadataJson?.endDate
+      || item.metadataJson?.endAt
+      || null;
+    const startDateLabel = formatShortDate(rowDate);
+    const endDateLabel = formatShortDate(endDateValue);
+    const dateLabel = startDateLabel && endDateLabel && startDateLabel !== endDateLabel
+      ? `${startDateLabel}–${endDateLabel.replace(/^[A-Za-z]{3}\s/, '')}`
+      : (startDateLabel || 'TBD');
     const ticker = item.canonicalTicker || item.ticker;
     const summaryText = item.summary || '';
     const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}`;
@@ -328,7 +341,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
         <div class="news-event-row__meta">
           <span class="news-row-pill">${compactPillLabel(item)}</span>
-          <span class="news-event-row__date">${dateLabel} · ${timeLabel}</span>
+          <span class="news-event-row__date">${dateLabel}</span>
         </div>
       </article>
     `;
@@ -477,7 +490,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
           <section class="news-section">
             <div class="section-header news-upcoming-header">
               <h3>${section.summary?.title || 'Upcoming events'}</h3>
+              <span class="news-upcoming-dot" aria-hidden="true">·</span>
               <span class="pill">${items.length}</span>
+              <span class="news-upcoming-dot" aria-hidden="true">·</span>
               ${nextLine}
             </div>
             ${renderUpcomingEventsByDate(items)}
