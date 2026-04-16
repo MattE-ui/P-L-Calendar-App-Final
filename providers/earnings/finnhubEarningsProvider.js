@@ -88,10 +88,16 @@ function toCsvPreview(values, limit = 12) {
   return (Array.isArray(values) ? values : []).filter(Boolean).slice(0, limit).join(', ');
 }
 
-function normalizeFinnhubRowWithReason(row, { tickerUniverse = null, nowMs = Date.now() } = {}) {
+function normalizeFinnhubRowWithReason(row, {
+  tickerUniverse = null,
+  expectedSymbol = null,
+  nowMs = Date.now()
+} = {}) {
   if (!row || typeof row !== 'object') return { row: null, reason: 'dropped_invalid_row' };
   const ticker = normalizeTicker(row.symbol);
   if (!ticker) return { row: null, reason: 'dropped_missing_symbol' };
+  const expectedTicker = normalizeTicker(expectedSymbol);
+  if (expectedTicker && ticker !== expectedTicker) return { row: null, reason: 'dropped_symbol_mismatch' };
   if (tickerUniverse && tickerUniverse.size && !tickerUniverse.has(ticker)) return { row: null, reason: 'dropped_not_in_portfolio' };
 
   const dateOnly = normalizeDateOnly(row.date);
@@ -184,6 +190,7 @@ async function fetchFinnhubEarningsEvents({
   const { fromDate, toDate } = computeDateRange({ from, to, nowMs: startedAt });
   const diagnostics = {
     provider: 'finnhub',
+    requestMode: 'tracked_symbol',
     apiKeyPresent: !!String(apiKey || '').trim(),
     trackedTickersInput: Array.from(tickerUniverse).sort(),
     fromDateComputed: fromDate,
@@ -195,6 +202,8 @@ async function fetchFinnhubEarningsEvents({
     rowsMatchedToPortfolio: 0,
     uniquePortfolioTickersMatched: 0,
     nextEarningsPerTickerCount: 0,
+    perSymbolRequests: [],
+    symbolErrors: [],
     matchedTickersSampleCsv: '',
     unmatchedPortfolioTickersSampleCsv: '',
     rowsInserted: 0,
@@ -217,49 +226,73 @@ async function fetchFinnhubEarningsEvents({
     return { rows: [], diagnostics };
   }
 
-  const url = new URL(baseUrl);
-  url.searchParams.set('from', fromDate);
-  url.searchParams.set('to', toDate);
-  url.searchParams.set('token', String(apiKey));
+  const rows = [];
+  for (const symbol of diagnostics.trackedTickersInput) {
+    const url = new URL(baseUrl);
+    url.searchParams.set('symbol', symbol);
+    url.searchParams.set('from', fromDate);
+    url.searchParams.set('to', toDate);
+    url.searchParams.set('token', String(apiKey));
+    const requestTarget = url.toString();
+    const requestDiagnostic = {
+      symbol,
+      requestTarget,
+      returnedRows: 0,
+      status: 'ok'
+    };
+    diagnostics.perSymbolRequests.push(requestDiagnostic);
 
-  let response;
-  try {
-    response = await fetcher(url.toString(), { headers: { Accept: 'application/json' } });
-  } catch (error) {
-    diagnostics.failureReason = error?.message || 'request_failed';
-    diagnostics.elapsedMs = Date.now() - startedAt;
-    const wrapped = new Error(`Finnhub earnings request failed: ${diagnostics.failureReason}`);
-    wrapped.diagnostics = diagnostics;
-    throw wrapped;
+    let response;
+    try {
+      response = await fetcher(requestTarget, { headers: { Accept: 'application/json' } });
+    } catch (error) {
+      requestDiagnostic.status = 'request_failed';
+      requestDiagnostic.error = error?.message || 'request_failed';
+      diagnostics.symbolErrors.push({ symbol, error: requestDiagnostic.error });
+      logger.warn('[Earnings][Finnhub] symbol request failed.', { symbol, error: requestDiagnostic.error });
+      continue;
+    }
+
+    let payload = null;
+    try {
+      payload = typeof response?.json === 'function' ? await response.json() : null;
+    } catch (error) {
+      requestDiagnostic.status = 'body_read_failed';
+      requestDiagnostic.error = 'body_read_failed';
+      diagnostics.symbolErrors.push({ symbol, error: requestDiagnostic.error });
+      logger.warn('[Earnings][Finnhub] symbol response parse failed.', { symbol });
+      continue;
+    }
+
+    if (!response?.ok) {
+      requestDiagnostic.status = `http_${response?.status || 'unknown'}`;
+      requestDiagnostic.error = requestDiagnostic.status;
+      requestDiagnostic.failureBodySnippet = JSON.stringify(payload).slice(0, 200);
+      diagnostics.symbolErrors.push({ symbol, error: requestDiagnostic.error });
+      logger.warn('[Earnings][Finnhub] symbol response not ok.', {
+        symbol,
+        status: response?.status || 'unknown'
+      });
+      continue;
+    }
+
+    const symbolRows = Array.isArray(payload?.earningsCalendar) ? payload.earningsCalendar : [];
+    requestDiagnostic.returnedRows = symbolRows.length;
+    for (const row of symbolRows) {
+      rows.push({ ...row, __requestedSymbol: symbol });
+    }
   }
 
-  let payload = null;
-  try {
-    payload = typeof response?.json === 'function' ? await response.json() : null;
-  } catch (error) {
-    diagnostics.failureReason = 'body_read_failed';
-    diagnostics.elapsedMs = Date.now() - startedAt;
-    const wrapped = new Error('Finnhub earnings response body could not be parsed');
-    wrapped.diagnostics = diagnostics;
-    throw wrapped;
-  }
-
-  if (!response?.ok) {
-    diagnostics.failureReason = `http_${response?.status || 'unknown'}`;
-    diagnostics.failureBodySnippet = JSON.stringify(payload).slice(0, 300);
-    diagnostics.elapsedMs = Date.now() - startedAt;
-    const wrapped = new Error(`Finnhub earnings request returned ${response?.status || 'unknown'}`);
-    wrapped.diagnostics = diagnostics;
-    throw wrapped;
-  }
-
-  const rows = Array.isArray(payload?.earningsCalendar) ? payload.earningsCalendar : [];
   diagnostics.totalRowsFetched = rows.length;
   diagnostics.rawFinnhubEarningsCount = rows.length;
 
   const normalizedRows = [];
   for (const row of rows) {
-    const normalized = normalizeFinnhubRowWithReason(row, { tickerUniverse, nowMs: startedAt }) || {};
+    const normalized = normalizeFinnhubRowWithReason(row, {
+      tickerUniverse,
+      expectedSymbol: row?.__requestedSymbol,
+      nowMs: startedAt
+    }) || {};
     if (normalized?.row) {
       normalizedRows.push(normalized.row);
       diagnostics.normalizedEarningsByTicker.push({
@@ -270,6 +303,7 @@ async function fetchFinnhubEarningsEvents({
       diagnostics.excludedRows.push({
         ticker: normalizeTicker(row?.symbol),
         date: normalizeDateOnly(row?.date),
+        requestedSymbol: normalizeTicker(row?.__requestedSymbol),
         reason: normalized.reason || 'dropped_unknown'
       });
     }

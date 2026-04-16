@@ -72,7 +72,7 @@ test('computeDateRange builds default 45-day request window', () => {
   assert.equal(range.toDate, '2026-05-29');
 });
 
-test('fetchFinnhubEarningsEvents parses response and filters to portfolio tickers', async () => {
+test('fetchFinnhubEarningsEvents requests each tracked symbol and filters mismatched rows', async () => {
   const requests = [];
   const result = await fetchFinnhubEarningsEvents({
     tickers: ['AAPL', 'MSFT'],
@@ -80,14 +80,23 @@ test('fetchFinnhubEarningsEvents parses response and filters to portfolio ticker
     logger: createLogger(),
     fetcher: async (url, options) => {
       requests.push({ url: String(url), options });
+      if (String(url).includes('symbol=AAPL')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            earningsCalendar: [
+              { symbol: 'AAPL', date: '2026-04-29', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 1.2 },
+              { symbol: 'TSLA', date: '2026-04-30', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 0.8 }
+            ]
+          })
+        };
+      }
       return {
         ok: true,
         status: 200,
         json: async () => ({
           earningsCalendar: [
-            { symbol: 'AAPL', date: '2026-04-29', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 1.2 },
-            { symbol: 'AAPL', date: '2026-05-02', hour: 'bmo', quarter: 1, year: 2026, epsEstimate: 1.3 },
-            { symbol: 'TSLA', date: '2026-04-29', hour: 'amc', quarter: 1, year: 2026, epsEstimate: 0.8 },
             { symbol: 'MSFT', date: '2026-05-03', hour: 'bmo', quarter: 1, year: 2026, epsEstimate: 2.3 }
           ]
         })
@@ -97,12 +106,17 @@ test('fetchFinnhubEarningsEvents parses response and filters to portfolio ticker
 
   assert.equal(result.rows.length, 2);
   assert.deepEqual(result.rows.map((row) => row.canonicalTicker).sort(), ['AAPL', 'MSFT']);
-  assert.equal(result.diagnostics.totalRowsFetched, 4);
-  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 3);
+  assert.equal(result.diagnostics.totalRowsFetched, 3);
+  assert.equal(result.diagnostics.rowsMatchedToPortfolio, 2);
   assert.equal(result.diagnostics.nextEarningsPerTickerCount, 2);
   assert.equal(result.diagnostics.uniquePortfolioTickersMatched, 2);
+  assert.equal(result.diagnostics.requestMode, 'tracked_symbol');
+  assert.equal(result.diagnostics.perSymbolRequests.length, 2);
+  assert.ok(result.diagnostics.excludedRows.some((row) => row.reason === 'dropped_symbol_mismatch'));
+  assert.equal(requests.length, 2);
   assert.match(requests[0].url, /from=\d{4}-\d{2}-\d{2}/);
   assert.match(requests[0].url, /to=\d{4}-\d{2}-\d{2}/);
+  assert.match(requests[0].url, /symbol=(AAPL|MSFT)/);
   assert.match(requests[0].url, /token=test-token/);
 });
 
@@ -144,25 +158,47 @@ test('fetchFinnhubEarningsEvents fails clearly when FINNHUB_API_KEY missing', as
   );
 });
 
-test('fetchFinnhubEarningsEvents includes failure diagnostics on non-OK response', async () => {
-  await assert.rejects(
-    () => fetchFinnhubEarningsEvents({
-      tickers: ['AAPL'],
-      apiKey: 'test-token',
-      logger: createLogger(),
-      fetcher: async () => ({
-        ok: false,
-        status: 429,
-        json: async () => ({ error: 'rate limit exceeded' })
-      })
-    }),
-    (error) => {
-      assert.match(error.message, /429/);
-      assert.equal(error.diagnostics.failureReason, 'http_429');
-      assert.match(error.diagnostics.failureBodySnippet, /rate limit/);
-      return true;
+test('fetchFinnhubEarningsEvents captures per-symbol non-OK diagnostics without throwing', async () => {
+  const result = await fetchFinnhubEarningsEvents({
+    tickers: ['AAPL'],
+    apiKey: 'test-token',
+    logger: createLogger(),
+    fetcher: async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'rate limit exceeded' })
+    })
+  });
+
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.symbolErrors.length, 1);
+  assert.equal(result.diagnostics.symbolErrors[0].error, 'http_429');
+  assert.match(result.diagnostics.perSymbolRequests[0].failureBodySnippet, /rate limit/);
+});
+
+test('fetchFinnhubEarningsEvents tolerates one symbol failing and keeps others', async () => {
+  const result = await fetchFinnhubEarningsEvents({
+    tickers: ['AAPL', 'MSFT'],
+    apiKey: 'test-token',
+    logger: createLogger(),
+    fetcher: async (url) => {
+      if (String(url).includes('symbol=AAPL')) throw new Error('network down');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          earningsCalendar: [
+            { symbol: 'MSFT', date: '2026-05-03', hour: 'bmo', quarter: 1, year: 2026, epsEstimate: 2.3 }
+          ]
+        })
+      };
     }
-  );
+  });
+
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].canonicalTicker, 'MSFT');
+  assert.equal(result.diagnostics.symbolErrors.length, 1);
+  assert.equal(result.diagnostics.symbolErrors[0].symbol, 'AAPL');
 });
 
 test('selectNextUpcomingEarningsPerTicker keeps earliest future row per ticker', () => {
