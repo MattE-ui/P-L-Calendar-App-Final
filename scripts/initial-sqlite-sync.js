@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { initDB, syncFromJSON } = require('../lib/sqlite-db');
 
-const DB_PATH = path.join(__dirname, '..', 'storage', 'data.json');
+const DB_PATH = process.env.DATA_PATH || path.join(__dirname, '..', 'storage', 'data.json');
 
 console.log('[SQLite Sync] Loading', DB_PATH);
 let raw;

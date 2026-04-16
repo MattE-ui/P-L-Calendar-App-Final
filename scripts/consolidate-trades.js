@@ -17,7 +17,8 @@ const crypto = require('crypto');
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const ROOT        = path.resolve(__dirname, '..');
-const DATA_PATH   = path.join(ROOT, 'storage', 'data.json');
+const DB_PATH     = process.env.DATA_PATH || path.join(ROOT, 'storage', 'data.json');
+const DATA_PATH   = DB_PATH;
 const BACKUP_PATH = path.join(ROOT, 'storage', 'data_consolidation_backup.json');
 const TEMP_PATH   = path.join(ROOT, 'storage', 'data_consolidation_tmp.json');
 
