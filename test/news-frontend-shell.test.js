@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList } = require('../static/news.js');
+const { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList, buildUnifiedTimelineItems, sessionOrder } = require('../static/news.js');
 
 test('normalizeTab restores expected default', () => {
   assert.equal(normalizeTab('calendar'), 'calendar');
@@ -48,4 +48,19 @@ test('buildSectionList prioritizes unified upcomingEvents section for for-you ta
   };
   const ordered = buildSectionList('for-you', response);
   assert.deepEqual(ordered.map((item) => item.summary.key), ['upcomingEvents', 'portfolioUpcomingEarnings', 'macroUpcoming']);
+});
+
+test('buildUnifiedTimelineItems de-duplicates presentational duplicates and sorts chronologically', () => {
+  const merged = buildUnifiedTimelineItems([
+    { id: '1', eventType: 'earnings', ticker: 'BE', title: 'BE earnings', eventDate: '2026-04-28T21:00:00.000Z', timeLabel: 'AH' },
+    { id: '2', eventType: 'macro', title: 'CPI release', eventDate: '2026-04-28T12:30:00.000Z', timeLabel: '08:30 ET' },
+    { id: '3', eventType: 'macro', title: 'CPI release', eventDate: '2026-04-28T12:30:00.000Z', timeLabel: '08:30 ET' }
+  ]);
+  assert.deepEqual(merged.map((item) => item.id), ['2', '1']);
+});
+
+test('sessionOrder establishes deterministic fallback ordering when event timestamps are coarse', () => {
+  assert.equal(sessionOrder({ timeLabel: 'BMO' }), 10);
+  assert.equal(sessionOrder({ timeLabel: 'AH' }), 40);
+  assert.equal(sessionOrder({ timeLabel: 'time tbc' }), 50);
 });
