@@ -10,6 +10,13 @@ const NEWS_TABS = {
 const TAB_QUERY_KEY = 'tab';
 const DEFAULT_TAB = 'for-you';
 const DEFAULT_LIMIT = 25;
+const NEWS_SECTION_INFO = {
+  marketPulse: 'A live snapshot of key market conditions. Shows the S&P 500 (via SPY), the VIX volatility index, the 10-year Treasury yield, and the current Fed Funds Rate with the next FOMC meeting date.',
+  fearGreed: 'A composite sentiment score from 0 (Extreme Fear) to 100 (Extreme Greed), synthesised from three market signals: VIX volatility level, SPY daily momentum, and SPY\'s position within its 52-week range. Note: previous week and previous month values are approximated on the current data plan.',
+  portfolioSentiment: 'A relative activity score per holding based on news volume and recency over the last 7 days. A higher score means more news coverage than usual — it does not indicate whether the news is positive or negative. Full sentiment analysis requires a paid data plan.',
+  upcomingEvents: 'A chronological list of market events relevant to your portfolio, including earnings dates, FOMC meetings, and dividend ex-dates. Events marked HIGH have a position value over £1,000. Earnings estimates shown where available.',
+  analystRatings: 'Recent analyst upgrades, downgrades, and new coverage initiations for your held tickers, sourced from Finnhub\'s recommendation trend data. Only actionable changes are shown by default — use the Analyst Ratings tab to see all ratings including reiterations.'
+};
 
 function normalizeTab(value) {
   if (value === 'latest') return 'news';
@@ -421,6 +428,12 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
       </div>
     `).join('');
+  }
+
+  function renderInfoTrigger(key, label) {
+    const text = NEWS_SECTION_INFO[key];
+    if (!text) return '';
+    return `<button class="news-info-trigger" type="button" aria-label="${label}" data-news-info="${key}">i</button>`;
   }
 
   function renderCompactEventRow(item = {}) {
@@ -921,8 +934,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const vixLabel = vixVal > 25 ? 'Elevated' : vixVal >= 15 ? 'Normal' : 'Low';
     const vixClass = vixVal > 25 ? 'down' : vixVal < 15 ? 'up' : 'flat';
     const t10 = d.treasury10y || {};
+    const t10Unavailable = t10.direction === 'unavailable' || t10.value == null;
     const dirArrow = t10.direction === 'up' ? '↑' : t10.direction === 'down' ? '↓' : '→';
-    const dirClass = t10.direction === 'up' ? 'down' : t10.direction === 'down' ? 'up' : 'flat'; // rising yield = pressure
+    const dirClass = t10Unavailable ? 'flat' : (t10.direction === 'up' ? 'down' : t10.direction === 'down' ? 'up' : 'flat'); // rising yield = pressure
     const ff = d.fedFunds || {};
     const nextFomcText = ff.nextFomcDate
       ? (() => {
@@ -932,28 +946,34 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       : 'Next FOMC TBD';
     return `
       ${stubBanner}
-      <div class="news-pulse-bar" aria-label="Market Pulse">
-        <div class="news-pulse-card">
-          <div class="news-pulse-card__label">S&amp;P 500</div>
-          <div class="news-pulse-card__value">${sp.price != null ? sp.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div>
-          <div class="news-pulse-card__change news-pulse-card__change--${spChangeClass}">${spSign}${sp.changePct != null ? sp.changePct.toFixed(2) : '—'}%</div>
+      <section class="news-section">
+        <div class="section-header">
+          <h3>Market Pulse</h3>
+          ${renderInfoTrigger('marketPulse', 'About Market Pulse')}
         </div>
-        <div class="news-pulse-card">
-          <div class="news-pulse-card__label">VIX</div>
-          <div class="news-pulse-card__value">${vixVal ? vixVal.toFixed(1) : '—'}</div>
-          <div class="news-pulse-card__change news-pulse-card__change--${vixClass}">${vixLabel}</div>
+        <div class="news-pulse-bar" aria-label="Market Pulse">
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">S&amp;P 500</div>
+            <div class="news-pulse-card__value">${sp.price != null ? sp.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--${spChangeClass}">${spSign}${sp.changePct != null ? sp.changePct.toFixed(2) : '—'}%</div>
+          </div>
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">VIX</div>
+            <div class="news-pulse-card__value">${vixVal ? vixVal.toFixed(1) : '—'}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--${vixClass}">${vixLabel}</div>
+          </div>
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">10Y Treasury</div>
+            <div class="news-pulse-card__value ${t10Unavailable ? 'news-pulse-card__value--muted' : ''}">${t10Unavailable ? '—' : `${t10.value.toFixed(2)}%`}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--${dirClass}">${t10Unavailable ? 'Unavailable' : `${dirArrow} vs yesterday`}</div>
+          </div>
+          <div class="news-pulse-card">
+            <div class="news-pulse-card__label">Fed Funds Rate</div>
+            <div class="news-pulse-card__value">${ff.range || '—'}</div>
+            <div class="news-pulse-card__change news-pulse-card__change--flat">${nextFomcText}</div>
+          </div>
         </div>
-        <div class="news-pulse-card">
-          <div class="news-pulse-card__label">10Y Treasury</div>
-          <div class="news-pulse-card__value">${t10.value != null ? t10.value.toFixed(2) : '—'}%</div>
-          <div class="news-pulse-card__change news-pulse-card__change--${dirClass}">${dirArrow} vs yesterday</div>
-        </div>
-        <div class="news-pulse-card">
-          <div class="news-pulse-card__label">Fed Funds Rate</div>
-          <div class="news-pulse-card__value">${ff.range || '—'}</div>
-          <div class="news-pulse-card__change news-pulse-card__change--flat">${nextFomcText}</div>
-        </div>
-      </div>
+      </section>
     `;
   }
 
@@ -1052,6 +1072,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         <div class="news-sentiment-card">
           <div class="news-sentiment-card__header">
             <h4>Fear &amp; Greed Index</h4>
+            ${renderInfoTrigger('fearGreed', 'About Fear & Greed Index')}
           </div>
           ${fgStub}
           ${renderSentimentGauge(fgScore)}
@@ -1067,6 +1088,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         <div class="news-sentiment-card">
           <div class="news-sentiment-card__header">
             <h4>Portfolio Sentiment</h4>
+            ${renderInfoTrigger('portfolioSentiment', 'About Portfolio Sentiment')}
           </div>
           ${psStub}
           <div class="news-ps-list">${psRows}</div>
@@ -1171,19 +1193,13 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     if (state.analystRatings.loaded) return;
     state.analystRatings.loading = true;
     try {
-      // TODO: Replace stub — expected shape: { items: [{ id, ticker, action: 'UPGRADE'|'DOWNGRADE'|'INITIATED'|'REITERATED',
-      //   firm, newRating, oldPt, newPt, timestamp }] }
       const payload = await api('/api/news/analyst-ratings');
-      state.analystRatings.items = Array.isArray(payload?.data) ? payload.data : [];
-    } catch {
-      state.analystRatings.items = [
-        { id: 'ar-1', _stub: true, ticker: 'AAPL', action: 'UPGRADE', firm: 'Goldman Sachs', newRating: 'Buy', oldPt: 175, newPt: 210, timestamp: new Date(Date.now() - 3600000).toISOString() },
-        { id: 'ar-2', _stub: true, ticker: 'NVDA', action: 'REITERATED', firm: 'Morgan Stanley', newRating: 'Overweight', oldPt: 850, newPt: 950, timestamp: new Date(Date.now() - 7200000).toISOString() },
-        { id: 'ar-3', _stub: true, ticker: 'MSFT', action: 'DOWNGRADE', firm: 'JP Morgan', newRating: 'Neutral', oldPt: 420, newPt: 390, timestamp: new Date(Date.now() - 14400000).toISOString() },
-        { id: 'ar-4', _stub: true, ticker: 'AMZN', action: 'INITIATED', firm: 'Bernstein', newRating: 'Outperform', oldPt: null, newPt: 225, timestamp: new Date(Date.now() - 28800000).toISOString() },
-        { id: 'ar-5', _stub: true, ticker: 'TSLA', action: 'DOWNGRADE', firm: 'Barclays', newRating: 'Underweight', oldPt: 280, newPt: 180, timestamp: new Date(Date.now() - 43200000).toISOString() },
-        { id: 'ar-6', _stub: true, ticker: 'META', action: 'UPGRADE', firm: 'Citi', newRating: 'Buy', oldPt: 530, newPt: 620, timestamp: new Date(Date.now() - 54000000).toISOString() }
-      ];
+      state.analystRatings.items = Array.isArray(payload)
+        ? payload
+        : (Array.isArray(payload?.data) ? payload.data : []);
+    } catch (error) {
+      console.warn('[NewsPage] analyst ratings unavailable', error);
+      state.analystRatings.items = [];
     }
     state.analystRatings.loading = false;
     state.analystRatings.loaded = true;
@@ -1202,12 +1218,10 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const ptText = item.oldPt != null
       ? `$${item.oldPt} → <span class="news-analyst-pt__new news-analyst-pt--${ptClass}">$${item.newPt}</span>`
       : `<span class="news-analyst-pt__new news-analyst-pt--${ptClass}">$${item.newPt ?? '—'}</span>`;
-    const stubNote = item._stub ? '<span class="news-event-row__badge news-event-row__badge--stub">STUB</span>' : '';
     return `
       <div class="news-analyst-card">
         <div class="news-analyst-card__top">
           <span class="news-analyst-ticker">${item.ticker || '—'}</span>
-          ${stubNote}
           <span class="news-analyst-badge news-analyst-badge--${actionBadgeClass}">${item.action || 'UPDATE'}</span>
         </div>
         <div class="news-analyst-firm">${item.firm || 'Unknown'} → <strong>${item.newRating || '—'}</strong></div>
@@ -1230,16 +1244,14 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       filtered = filtered.filter((it) => String(it.action || '').toUpperCase() === filterAction.toUpperCase());
     }
     const visible = preview ? filtered.slice(0, 4) : filtered;
-    const hasStub = visible.some((it) => it._stub);
-    const stubBanner = hasStub
-      ? '<div class="news-stub-banner">[STUB] Analyst ratings — live endpoint not yet connected. See <code>loadAnalystRatings()</code> for expected shape.</div>'
-      : '';
     if (!visible.length) {
       return `
         <section class="news-section">
-          <div class="section-header"><h3>${preview ? 'Recent Analyst Ratings' : 'Analyst Ratings'}</h3></div>
-          ${stubBanner}
-          <div class="news-empty-state"><p>No analyst rating changes to show.</p></div>
+          <div class="section-header">
+            <h3>${preview ? 'Recent Analyst Ratings' : 'Analyst Ratings'}</h3>
+            ${renderInfoTrigger('analystRatings', 'About Recent Analyst Ratings')}
+          </div>
+          <div class="news-empty-state"><p>No recent rating changes for your holdings.</p></div>
         </section>
       `;
     }
@@ -1250,10 +1262,10 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       <section class="news-section">
         <div class="section-header">
           <h3>${preview ? 'Recent Analyst Ratings' : 'Analyst Ratings'}</h3>
+          ${renderInfoTrigger('analystRatings', 'About Recent Analyst Ratings')}
           <span class="pill">${filtered.length}</span>
           ${seeAllLink}
         </div>
-        ${stubBanner}
         <div class="news-analyst-grid">
           ${visible.map(renderAnalystRatingCard).join('')}
         </div>
@@ -1309,6 +1321,88 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         bindAnalystRatingsTabEvents();
       });
     });
+  }
+
+  let infoPopoverEl = null;
+  let activeInfoTrigger = null;
+
+  function ensureInfoPopover() {
+    if (infoPopoverEl) return infoPopoverEl;
+    infoPopoverEl = document.createElement('div');
+    infoPopoverEl.className = 'news-info-popover hidden';
+    infoPopoverEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(infoPopoverEl);
+    return infoPopoverEl;
+  }
+
+  function hideInfoPopover() {
+    if (!infoPopoverEl) return;
+    infoPopoverEl.classList.add('hidden');
+    activeInfoTrigger = null;
+  }
+
+  function showInfoPopover(trigger) {
+    const key = trigger?.dataset?.newsInfo || '';
+    const text = NEWS_SECTION_INFO[key];
+    if (!text) return;
+    const pop = ensureInfoPopover();
+    pop.textContent = text;
+    pop.classList.remove('hidden');
+
+    const rect = trigger.getBoundingClientRect();
+    const popRect = pop.getBoundingClientRect();
+    const spacing = 8;
+    const showAbove = rect.bottom + spacing + popRect.height > window.innerHeight - 8;
+    const top = showAbove
+      ? Math.max(8, rect.top - popRect.height - spacing)
+      : Math.min(window.innerHeight - popRect.height - 8, rect.bottom + spacing);
+    const left = Math.min(
+      window.innerWidth - popRect.width - 8,
+      Math.max(8, rect.left + (rect.width / 2) - (popRect.width / 2))
+    );
+    pop.style.top = `${top + window.scrollY}px`;
+    pop.style.left = `${left + window.scrollX}px`;
+    activeInfoTrigger = trigger;
+  }
+
+  let infoPopoverGlobalBound = false;
+  function bindInfoPopovers() {
+    document.querySelectorAll('[data-news-info]').forEach((trigger) => {
+      if (trigger.dataset.newsInfoBound === '1') return;
+      trigger.dataset.newsInfoBound = '1';
+      trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (activeInfoTrigger === trigger) {
+          hideInfoPopover();
+          return;
+        }
+        showInfoPopover(trigger);
+      });
+      trigger.addEventListener('mouseenter', () => showInfoPopover(trigger));
+      trigger.addEventListener('focus', () => showInfoPopover(trigger));
+      trigger.addEventListener('mouseleave', () => {
+        if (activeInfoTrigger !== trigger) return;
+        hideInfoPopover();
+      });
+      trigger.addEventListener('blur', () => {
+        if (activeInfoTrigger !== trigger) return;
+        hideInfoPopover();
+      });
+    });
+
+    if (infoPopoverGlobalBound) return;
+    infoPopoverGlobalBound = true;
+    document.addEventListener('click', (event) => {
+      if (!activeInfoTrigger || !infoPopoverEl) return;
+      if (event.target.closest('[data-news-info]') || event.target.closest('.news-info-popover')) return;
+      hideInfoPopover();
+    });
+    window.addEventListener('resize', () => {
+      if (activeInfoTrigger) showInfoPopover(activeInfoTrigger);
+    });
+    window.addEventListener('scroll', () => {
+      if (activeInfoTrigger) showInfoPopover(activeInfoTrigger);
+    }, { passive: true });
   }
 
   // ═══════════════════════════════════════════════════════
@@ -1459,6 +1553,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
           <section class="news-section">
             <div class="section-header">
               <h3>${section.summary?.title || 'Upcoming Events'}</h3>
+              ${renderInfoTrigger('upcomingEvents', 'About Upcoming Events')}
               <span class="pill">0</span>
             </div>
             <div class="news-empty-state">
@@ -1507,6 +1602,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
           <section class="news-section">
             <div class="section-header news-upcoming-header">
               <h3>${section.summary?.title || 'Upcoming events'}</h3>
+              ${renderInfoTrigger('upcomingEvents', 'About Upcoming Events')}
               <span class="news-upcoming-dot" aria-hidden="true">·</span>
               <span class="pill">${canonicalTimeline.length}</span>
               <span class="news-upcoming-dot" aria-hidden="true">·</span>
@@ -1557,6 +1653,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       state.newsFeedOffset += 10;
       renderTab();
     });
+    bindInfoPopovers();
   }
 
   async function init() {

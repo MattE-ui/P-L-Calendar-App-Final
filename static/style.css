@@ -11014,6 +11014,10 @@ textarea {
   line-height: 1.2;
 }
 
+.news-pulse-card__value--muted {
+  color: var(--text-muted);
+}
+
 .news-pulse-card__change {
   font-size: 11px;
   font-weight: 600;
@@ -11050,6 +11054,56 @@ textarea {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .04em;
+}
+
+.news-sentiment-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.news-info-trigger {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text-dim) 55%, var(--border) 45%);
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.news-info-trigger:hover,
+.news-info-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border) 58%);
+  color: var(--text);
+  outline: none;
+}
+
+.news-info-popover {
+  position: absolute;
+  z-index: 2200;
+  max-width: 280px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 95%, transparent), color-mix(in srgb, var(--surface-1) 95%, transparent));
+  border-radius: 10px;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  box-shadow: var(--shadow-soft);
+}
+
+.news-info-popover.hidden {
+  display: none;
 }
 
 /* Fear & Greed gauge */
@@ -12669,4 +12723,3 @@ button.primary.outline:hover:not(:disabled) {
 #active-trades-card .active-trades-list-wrap::-webkit-scrollbar {
   width: 0;
 }
-
