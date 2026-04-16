@@ -10328,17 +10328,18 @@ textarea {
 }
 
 .news-date-group {
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }
 
 .news-date-header {
   margin: 0;
-  padding-top: 6px;
-  font-size: 11px;
-  font-weight: 700;
+  padding: 5px 0 3px;
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--text-dim);
+  letter-spacing: .09em;
+  color: color-mix(in srgb, var(--text-dim) 86%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border-soft) 65%, transparent);
 }
 
 .news-source-link {
@@ -10516,34 +10517,35 @@ textarea {
 }
 
 .news-inline-next {
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--accent) 62%, var(--text-muted) 38%);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: min(62vw, 680px);
 }
 
 .news-inline-next strong {
-  color: var(--text-muted);
-  font-weight: 600;
+  color: var(--text);
+  font-weight: 700;
 }
 
 .news-row-list {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .news-event-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: 74px minmax(0, 1.6fr) minmax(92px, .7fr) minmax(150px, .9fr);
   align-items: center;
-  min-height: 40px;
-  padding: 6px 8px;
+  min-height: 34px;
+  padding: 4px 9px 4px 10px;
   border-left: 2px solid color-mix(in srgb, var(--text-dim) 70%, var(--border) 30%);
-  border-radius: 0 8px 8px 0;
-  background: color-mix(in srgb, var(--surface-2) 65%, transparent);
-  column-gap: 8px;
-  transition: background-color 120ms ease;
+  border-radius: 0 7px 7px 0;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  column-gap: 10px;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
 .news-event-row.event-accent-earnings { border-left-color: var(--accent); }
@@ -10551,11 +10553,11 @@ textarea {
 .news-event-row.event-accent-macro-critical { border-left-color: var(--warning); }
 
 .news-event-row__type {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: none;
-  letter-spacing: .05em;
+  letter-spacing: .08em;
   color: var(--text-dim);
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10569,12 +10571,26 @@ textarea {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+}
+
+.news-event-row .news-card-ticker {
+  padding: 1px 6px;
+  font-size: 10px;
 }
 
 .news-event-row__text {
   font-size: 12px;
-  color: var(--text);
+  color: color-mix(in srgb, var(--text) 92%, #fff 8%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.news-event-row__time {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10592,7 +10608,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 1px 7px;
+  padding: 1px 8px;
   font-size: 10px;
   text-transform: lowercase;
   letter-spacing: .02em;
@@ -10612,6 +10628,26 @@ textarea {
   font-size: 11px;
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+.news-source-link--row {
+  margin-left: 0;
+  font-size: 10px;
+  color: color-mix(in srgb, #a6d7ff 74%, var(--text-dim) 26%);
+}
+
+.news-event-row--priority {
+  border-left-width: 3px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2) 93%);
+}
+
+.news-event-row--priority .news-event-row__text {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text) 82%, var(--accent) 18%);
+}
+
+.news-event-row--elevated {
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface-2) 94%);
 }
 
 @media (max-width: 1100px) {

@@ -57,8 +57,83 @@ function formatEpsEstimate(value) {
   return `${sign}$${Math.abs(num).toFixed(2)}`;
 }
 
+function timelineDateValue(item = {}) {
+  return item.scheduledAt || item.eventDate || item.publishedAt || '';
+}
+
+function parseTimelineDate(item = {}) {
+  const raw = timelineDateValue(item);
+  const parsed = raw ? new Date(raw) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function hasExplicitTimestamp(item = {}) {
+  const raw = String(timelineDateValue(item) || '');
+  if (!raw) return false;
+  if (raw.includes('T')) return !/T00:00(:00(\.000)?)?Z?$/.test(raw);
+  return false;
+}
+
+function sessionOrder(item = {}) {
+  const marker = String(item.timeLabel || item.earningsTiming || item.session || '').toLowerCase();
+  if (!marker) return 50;
+  if (marker.includes('pre') || marker.includes('before open') || marker.includes('bmo')) return 10;
+  if (marker.includes('open') || marker.includes('intraday')) return 20;
+  if (marker.includes('close')) return 30;
+  if (marker.includes('after') || marker.includes('post') || marker.includes('ah') || marker.includes('pm')) return 40;
+  return 50;
+}
+
+function buildTimelineIdentity(item = {}) {
+  return [
+    item.eventType || 'event',
+    (item.canonicalTicker || item.ticker || '').toUpperCase(),
+    String(item.title || '').trim().toLowerCase(),
+    String(item.summary || '').trim().toLowerCase(),
+    String(timelineDateValue(item) || ''),
+    String(item.timeLabel || item.earningsTiming || '').toLowerCase()
+  ].join('|');
+}
+
+function buildUnifiedTimelineItems(items = []) {
+  const seenIds = new Set();
+  const seenIdentity = new Set();
+  const prepared = [];
+  for (const [index, item] of items.entries()) {
+    if (!item || typeof item !== 'object') continue;
+    if (item.id && seenIds.has(item.id)) continue;
+    if (item.id) seenIds.add(item.id);
+    const identity = buildTimelineIdentity(item);
+    if (seenIdentity.has(identity)) continue;
+    seenIdentity.add(identity);
+    const parsed = parseTimelineDate(item);
+    prepared.push({
+      ...item,
+      __timelineIndex: index,
+      __timelineTs: parsed ? parsed.getTime() : Number.POSITIVE_INFINITY,
+      __hasExplicitTimestamp: hasExplicitTimestamp(item),
+      __sessionOrder: sessionOrder(item)
+    });
+  }
+  return prepared.sort((a, b) => {
+    if (a.__timelineTs !== b.__timelineTs) return a.__timelineTs - b.__timelineTs;
+    if (a.__hasExplicitTimestamp !== b.__hasExplicitTimestamp) return a.__hasExplicitTimestamp ? -1 : 1;
+    if (a.__sessionOrder !== b.__sessionOrder) return a.__sessionOrder - b.__sessionOrder;
+    return a.__timelineIndex - b.__timelineIndex;
+  });
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { normalizeTab, resolveInitialTab, mergeUniqueById, buildSectionList, formatCurrencyCompact, formatEpsEstimate };
+  module.exports = {
+    normalizeTab,
+    resolveInitialTab,
+    mergeUniqueById,
+    buildSectionList,
+    formatCurrencyCompact,
+    formatEpsEstimate,
+    buildUnifiedTimelineItems,
+    sessionOrder
+  };
 }
 
 if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -288,9 +363,10 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   }
 
   function renderUpcomingEventsByDate(items = []) {
+    const timelineItems = buildUnifiedTimelineItems(items);
     const grouped = new Map();
-    for (const item of items) {
-      const rawDate = item.eventDate || item.scheduledAt || item.publishedAt || '';
+    for (const item of timelineItems) {
+      const rawDate = timelineDateValue(item);
       const parsed = new Date(rawDate);
       const key = Number.isNaN(parsed.getTime()) ? 'Date TBD' : parsed.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
       if (!grouped.has(key)) grouped.set(key, []);
@@ -328,20 +404,26 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const ticker = item.canonicalTicker || item.ticker;
     const summaryText = item.summary || '';
     const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}`;
+    const timingText = item.timeLabel || item.earningsTiming || (item.__sessionOrder < 50 ? compactPillLabel(item).toUpperCase() : 'Time TBC');
+    const isPortfolioEarnings = item.eventType === 'earnings' && item.isPortfolioRelevant;
+    const rowPriorityClass = isPortfolioEarnings
+      ? 'news-event-row--priority'
+      : (item.isHighImportance ? 'news-event-row--elevated' : 'news-event-row--standard');
     const sourceLink = item.sourceUrl
-      ? `<a class="news-source-link" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
+      ? `<a class="news-source-link news-source-link--row" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
       : '';
     return `
-      <article class="news-event-row ${accentClass(item)}" title="${item.badgeLabel || compactTypeLabel(item)}">
+      <article class="news-event-row ${accentClass(item)} ${rowPriorityClass}" title="${item.badgeLabel || compactTypeLabel(item)}">
         <div class="news-event-row__type">${compactTypeLabel(item)}</div>
         <div class="news-event-row__main">
           ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
           <span class="news-event-row__text">${middleText}</span>
-          ${sourceLink}
         </div>
+        <div class="news-event-row__time">${timingText}</div>
         <div class="news-event-row__meta">
           <span class="news-row-pill">${compactPillLabel(item)}</span>
           <span class="news-event-row__date">${dateLabel}</span>
+          ${sourceLink}
         </div>
       </article>
     `;
@@ -483,19 +565,32 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
       if (!items.length) return '';
       if (state.activeTab === 'for-you' && sectionKey === 'upcomingEvents') {
-        const nextLine = portfolioContext.nextEarningsTicker
-          ? `<span class="news-inline-next">Next earnings: <strong>${portfolioContext.nextEarningsTicker}</strong> ${portfolioContext.nextEarningsTimeLabel || 'date TBC'}</span>`
-          : '<span class="news-inline-next">Next earnings: date TBC</span>';
+        const sectionLookup = Object.fromEntries(sections.map((entry) => [entry?.summary?.key, entry]));
+        const upcoming = getSectionItems(sectionLookup.upcomingEvents || {});
+        const earnings = getSectionItems(sectionLookup.portfolioUpcomingEarnings || {});
+        const macro = getSectionItems(sectionLookup.macroUpcoming || {});
+        // Canonical timeline source: visible upcoming, plus dedicated earnings/macro sections as fallback.
+        const canonicalTimeline = buildUnifiedTimelineItems([...upcoming, ...earnings, ...macro]);
+        const nextItem = canonicalTimeline[0];
+        const parsedNextDate = nextItem ? parseTimelineDate(nextItem) : null;
+        const nextDateText = parsedNextDate
+          ? parsedNextDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+          : 'date TBC';
+        const nextTimingText = nextItem?.timeLabel || nextItem?.earningsTiming || 'time TBC';
+        const nextTitleText = nextItem
+          ? `${nextItem.canonicalTicker || nextItem.ticker || compactTypeLabel(nextItem)} ${compactTypeLabel(nextItem)}`
+          : 'No upcoming events';
+        const nextLine = `<span class="news-inline-next">Next: <strong>${nextTitleText}</strong> — ${nextDateText}${nextItem ? ` (${nextTimingText})` : ''}</span>`;
         return `
           <section class="news-section">
             <div class="section-header news-upcoming-header">
               <h3>${section.summary?.title || 'Upcoming events'}</h3>
               <span class="news-upcoming-dot" aria-hidden="true">·</span>
-              <span class="pill">${items.length}</span>
+              <span class="pill">${canonicalTimeline.length}</span>
               <span class="news-upcoming-dot" aria-hidden="true">·</span>
               ${nextLine}
             </div>
-            ${renderUpcomingEventsByDate(items)}
+            ${renderUpcomingEventsByDate(canonicalTimeline)}
           </section>
         `;
       }
