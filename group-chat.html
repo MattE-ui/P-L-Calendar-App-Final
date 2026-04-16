@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Group Chat | P&L Calendar</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- app-shell-header injected by app-header.js -->
+
+  <div class="gc-page">
+    <!-- Mobile sidebar overlay -->
+    <div class="gc-sidebar-overlay" id="gc-sidebar-overlay"></div>
+
+    <div class="gc-shell">
+      <!-- ── Left sidebar: group list ── -->
+      <aside class="gc-sidebar" id="gc-sidebar" aria-label="Group channels">
+        <div class="gc-sidebar-head">Channels</div>
+        <div class="gc-sidebar-list" id="gc-sidebar-list">
+          <!-- populated by JS -->
+        </div>
+      </aside>
+
+      <!-- ── Main chat area ── -->
+      <main class="gc-main" id="gc-main">
+
+        <!-- Empty state (no group selected) -->
+        <div class="gc-empty-state" id="gc-no-group">
+          <div class="gc-empty-state-icon">💬</div>
+          <h3>Select a group to chat</h3>
+          <p>Pick a channel from the sidebar to join the conversation.</p>
+        </div>
+
+        <!-- Active chat (hidden until group selected) -->
+        <div id="gc-chat-view" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden;display:none;">
+
+          <!-- Chat header -->
+          <header class="gc-header" id="gc-header">
+            <button class="gc-header-menu-btn" id="gc-menu-btn" aria-label="Toggle channels">☰</button>
+            <span class="gc-header-hash">#</span>
+            <span class="gc-header-name" id="gc-header-name">group-name</span>
+            <div class="gc-header-sep"></div>
+            <span class="gc-header-meta" id="gc-header-meta">0 members</span>
+            <div class="gc-header-actions" id="gc-header-actions">
+              <!-- populated by JS based on permissions -->
+            </div>
+          </header>
+
+          <!-- Pinned message banner -->
+          <div class="gc-pinned" id="gc-pinned" style="display:none;">
+            <span class="gc-pinned-icon">📌</span>
+            <span class="gc-pinned-label">Pinned</span>
+            <span class="gc-pinned-text" id="gc-pinned-text"></span>
+            <button class="gc-pinned-unpin" id="gc-pinned-unpin" title="Unpin message" style="display:none;">✕</button>
+          </div>
+
+          <!-- Messages -->
+          <div class="gc-messages" id="gc-messages" role="log" aria-live="polite" aria-label="Chat messages">
+            <!-- populated by JS -->
+          </div>
+
+          <!-- Typing indicator -->
+          <div class="gc-typing" id="gc-typing" aria-live="polite"></div>
+
+          <!-- Reply preview bar -->
+          <div class="gc-reply-bar" id="gc-reply-bar" style="display:none;">
+            <span class="gc-reply-bar-label">Replying to</span>
+            <span class="gc-reply-bar-name" id="gc-reply-bar-name"></span>
+            <span class="gc-reply-bar-preview" id="gc-reply-bar-preview"></span>
+            <button class="gc-reply-bar-cancel" id="gc-reply-cancel" title="Cancel reply">✕</button>
+          </div>
+
+          <!-- Input area -->
+          <div class="gc-input-area" id="gc-input-area">
+            <!-- Autocomplete dropdown (above input) -->
+            <div class="gc-autocomplete" id="gc-autocomplete" style="display:none;" role="listbox"></div>
+
+            <!-- Locked state notice -->
+            <div class="gc-locked-notice" id="gc-locked-notice" style="display:none;">
+              🔒 This chat is locked. Only the group leader can send messages.
+            </div>
+
+            <!-- Input box -->
+            <div class="gc-input-wrap" id="gc-input-wrap">
+              <textarea
+                class="gc-textarea"
+                id="gc-textarea"
+                placeholder="Message #group-name"
+                rows="1"
+                maxlength="2000"
+                aria-label="Message input"
+                autocomplete="off"
+                autocorrect="off"
+                spellcheck="true"
+              ></textarea>
+              <button class="gc-input-btn" id="gc-share-trade-btn" title="Share a trade" aria-label="Share trade">
+                📊
+              </button>
+              <button class="gc-input-btn gc-input-btn--send" id="gc-send-btn" title="Send message (Enter)" aria-label="Send message" disabled>
+                ➤
+              </button>
+            </div>
+            <div style="padding:3px 2px 0;font-size:11px;color:var(--text-dim);">
+              <kbd style="font-family:inherit;background:rgba(255,255,255,0.07);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;">Enter</kbd> to send &nbsp;·&nbsp;
+              <kbd style="font-family:inherit;background:rgba(255,255,255,0.07);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;">Shift+Enter</kbd> for new line &nbsp;·&nbsp;
+              <kbd style="font-family:inherit;background:rgba(255,255,255,0.07);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:10px;">@</kbd> to mention
+            </div>
+          </div>
+
+        </div><!-- /gc-chat-view -->
+      </main>
+    </div><!-- /gc-shell -->
+  </div><!-- /gc-page -->
+
+  <!-- Trade share modal -->
+  <div id="gc-trade-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="gc-trade-modal-title">
+    <div class="modal-card" style="width:min(480px,96vw);">
+      <header class="modal-header">
+        <h2 class="modal-title" id="gc-trade-modal-title">Share a Trade</h2>
+        <button class="modal-close" id="gc-trade-modal-close" aria-label="Close">✕</button>
+      </header>
+      <div class="modal-body">
+        <p class="helper" style="margin-bottom:12px;">Pick an open trade to share with the group.</p>
+        <div id="gc-trade-list" class="social-list"></div>
+        <p id="gc-trade-modal-feedback" class="helper social-inline-feedback" aria-live="polite" style="margin-top:8px;"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/theme-utils.js"></script>
+  <script src="/static/social-avatar.js"></script>
+  <script src="/static/app-header.js"></script>
+  <script src="/static/guest.js"></script>
+  <script src="/static/group-chat.js?v=20260416"></script>
+</body>
+</html>

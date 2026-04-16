@@ -13863,6 +13863,8 @@ app.get('/social', (req,res)=>{ res.sendFile(path.join(__dirname,'social.html'))
 app.get('/social/groups', (req,res)=>{ res.sendFile(path.join(__dirname,'social-groups.html')); });
 app.get('/social/network', (req,res)=>{ res.sendFile(path.join(__dirname,'social-network.html')); });
 app.get('/social/profile', (req,res)=>{ res.sendFile(path.join(__dirname,'social-profile.html')); });
+app.get('/social/chat', (req,res)=>{ res.sendFile(path.join(__dirname,'group-chat.html')); });
+app.get('/group-chat.html', (req,res)=>{ res.sendFile(path.join(__dirname,'group-chat.html')); });
 app.get('/manifest.json', (req,res)=>{ res.sendFile(path.join(__dirname,'manifest.json')); });
 app.get('/devtools.html', auth, (req, res) => {
   if (req.user?.guest) {
