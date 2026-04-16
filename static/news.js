@@ -101,6 +101,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     highImportanceOnly: document.getElementById('filter-high-importance'),
     calendarFrom: document.getElementById('filter-calendar-from'),
     calendarFromWrap: document.getElementById('news-date-filter-wrap'),
+    filterTickerChips: document.getElementById('news-filter-ticker-chips'),
     prefsModal: document.getElementById('news-preferences-modal'),
     prefsGrid: document.getElementById('news-preferences-grid'),
     prefsStatus: document.getElementById('news-preferences-status'),
@@ -216,6 +217,24 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return `event-accent-${variant}`;
   }
 
+  function compactTypeLabel(item = {}) {
+    if (item.eventType === 'earnings') return 'Earnings';
+    if (item.eventType === 'macro') return 'Macro';
+    if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'News';
+    const badge = String(item.badgeLabel || '').toLowerCase();
+    if (badge.includes('earnings')) return 'Earnings';
+    if (badge.includes('macro')) return 'Macro';
+    if (badge.includes('news')) return 'News';
+    return 'Event';
+  }
+
+  function compactPillLabel(item = {}) {
+    if (item.eventType === 'earnings') return 'earnings';
+    if (item.eventType === 'macro') return 'macro';
+    if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'news';
+    return String(item.badgeLabel || 'update').toLowerCase();
+  }
+
   function getSectionItems(section = {}) {
     return Array.isArray(section.items) ? section.items : [];
   }
@@ -280,11 +299,39 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     return Array.from(grouped.entries()).map(([dateLabel, groupItems]) => `
       <div class="news-date-group">
         <div class="news-date-header">${dateLabel}</div>
-        <div class="news-card-list news-card-list--compact">
-          ${groupItems.map((item) => renderCard(item, { compact: true })).join('')}
+        <div class="news-row-list">
+          ${groupItems.map((item) => renderCompactEventRow(item)).join('')}
         </div>
       </div>
     `).join('');
+  }
+
+  function renderCompactEventRow(item = {}) {
+    const rowDate = item.eventDate || item.scheduledAt || item.publishedAt;
+    const dateLabel = rowDate
+      ? new Date(rowDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+      : 'TBD';
+    const timeLabel = item.timeLabel || 'No time';
+    const ticker = item.canonicalTicker || item.ticker;
+    const summaryText = item.summary || '';
+    const middleText = `${item.title || 'Untitled event'}${summaryText ? ` · ${summaryText}` : ''}`;
+    const sourceLink = item.sourceUrl
+      ? `<a class="news-source-link" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">Source</a>`
+      : '';
+    return `
+      <article class="news-event-row ${accentClass(item)}" title="${item.badgeLabel || compactTypeLabel(item)}">
+        <div class="news-event-row__type">${compactTypeLabel(item)}</div>
+        <div class="news-event-row__main">
+          ${ticker ? `<span class="news-card-ticker">${ticker}</span>` : ''}
+          <span class="news-event-row__text">${middleText}</span>
+          ${sourceLink}
+        </div>
+        <div class="news-event-row__meta">
+          <span class="news-row-pill">${compactPillLabel(item)}</span>
+          <span class="news-event-row__date">${dateLabel} · ${timeLabel}</span>
+        </div>
+      </article>
+    `;
   }
 
   function renderEmpty(title, subtitle, withRetry = false) {
@@ -328,6 +375,22 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     `;
   }
 
+  function renderFilterTickerChips(model = {}) {
+    if (!els.filterTickerChips) return;
+    if (state.activeTab !== 'for-you') {
+      els.filterTickerChips.innerHTML = '';
+      return;
+    }
+    const tickers = Array.isArray(model?.portfolioContext?.trackedTickers)
+      ? model.portfolioContext.trackedTickers
+      : [];
+    if (!tickers.length) {
+      els.filterTickerChips.innerHTML = '';
+      return;
+    }
+    els.filterTickerChips.innerHTML = tickers.map((ticker) => `<span class="news-ticker-chip">${ticker}</span>`).join('');
+  }
+
   function renderTab() {
     renderTabs();
     const tabState = state.tabData[state.activeTab];
@@ -343,6 +406,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     }
 
     const model = tabState.model || {};
+    renderFilterTickerChips(model);
     const sections = buildSectionList(state.activeTab, model);
     const sectionPayloadLengths = sections.map((section) => ({
       key: section.summary?.key || 'unknown',
@@ -406,11 +470,15 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
       if (!items.length) return '';
       if (state.activeTab === 'for-you' && sectionKey === 'upcomingEvents') {
+        const nextLine = portfolioContext.nextEarningsTicker
+          ? `<span class="news-inline-next">Next earnings: <strong>${portfolioContext.nextEarningsTicker}</strong> ${portfolioContext.nextEarningsTimeLabel || 'date TBC'}</span>`
+          : '<span class="news-inline-next">Next earnings: date TBC</span>';
         return `
           <section class="news-section">
-            <div class="section-header">
-              <h3>${section.summary?.title || 'Upcoming Events'}</h3>
+            <div class="section-header news-upcoming-header">
+              <h3>${section.summary?.title || 'Upcoming events'}</h3>
               <span class="pill">${items.length}</span>
+              ${nextLine}
             </div>
             ${renderUpcomingEventsByDate(items)}
           </section>
@@ -430,10 +498,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
       `;
     }).join('');
 
-    const portfolioContextHtml = state.activeTab === 'for-you' ? buildPortfolioContextHtml(model) : '';
     const hasMore = Boolean(tabState.pagination?.hasMore && tabState.pagination?.cursor);
     els.panel.innerHTML = `
-      ${portfolioContextHtml}
       ${sectionsHtml}
       <div class="news-load-more-wrap">
         ${hasMore ? '<button id="news-load-more-btn" class="ghost" type="button">Load more</button>' : ''}

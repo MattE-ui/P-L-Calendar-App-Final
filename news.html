@@ -38,18 +38,21 @@
       </div>
 
       <div class="news-filter-row">
-        <label class="toggle-control">
-          <input id="filter-portfolio-only" type="checkbox">
-          <span>Portfolio only</span>
-        </label>
-        <label class="toggle-control">
-          <input id="filter-high-importance" type="checkbox">
-          <span>High importance only</span>
-        </label>
-        <div class="tool-field news-date-filter" id="news-date-filter-wrap">
-          <label for="filter-calendar-from">Calendar from</label>
-          <input id="filter-calendar-from" type="date">
+        <div class="news-filter-controls">
+          <label class="toggle-control">
+            <input id="filter-portfolio-only" type="checkbox">
+            <span>Portfolio only</span>
+          </label>
+          <label class="toggle-control">
+            <input id="filter-high-importance" type="checkbox">
+            <span>High importance only</span>
+          </label>
+          <div class="tool-field news-date-filter" id="news-date-filter-wrap">
+            <label for="filter-calendar-from">Calendar from</label>
+            <input id="filter-calendar-from" type="date">
+          </div>
         </div>
+        <div id="news-filter-ticker-chips" class="news-filter-ticker-chips" aria-live="polite"></div>
       </div>
 
       <div id="news-tab-panel" class="news-content" aria-live="polite"></div>
