@@ -182,24 +182,6 @@ function deriveUserCurrentHoldingTickers(db, userId, logger = console) {
 
   const canonicalTickers = Array.from(tickers).sort();
 
-  logger.info('[OwnedTickerUniverse] user universe resolved.', {
-    userId,
-    tickerCount: tickers.size,
-    totalTradesInDb: diagnostics.totalTradesInDb,
-    tradeSources: diagnostics.tradeSources,
-    rawTradesFound: diagnostics.rawTradesFound,
-    tradesConsidered: diagnostics.tradesConsidered,
-    tradesIncluded: diagnostics.tradesIncluded,
-    tradeTickersExtracted: diagnostics.tradeTickersExtracted,
-    tradesMatchedByField: diagnostics.tradesMatchedByField,
-    tradesExcluded: diagnostics.tradesExcluded,
-    ibkrPositionsFound: diagnostics.ibkrPositionsFound,
-    ibkrPositionsIncluded: diagnostics.ibkrPositionsIncluded,
-    ibkrTickersExtracted: diagnostics.ibkrTickersExtracted,
-    canonicalTickers,
-    invalidSkippedTickers: diagnostics.invalidSkippedTickers
-  });
-
   return {
     userId,
     tickers,
@@ -249,26 +231,6 @@ function resolveOwnedTickerUniverse({ db, logger = console } = {}) {
   for (const [ticker, ownerSet] of tickerToUsers.entries()) {
     tickerOwnerMap[ticker] = Array.from(ownerSet).sort();
   }
-
-  logger.info('[OwnedTickerUniverse] aggregate universe resolved.', {
-    usersConsidered: users.length,
-    userUniversesResolved: perUserUniverse.length,
-    totalTradesInDb,
-    tradeSources: {
-      tradeJournal: journalTrades.length,
-      tradesTable: tableTrades.length
-    },
-    sampleTrades: [...journalTrades, ...tableTrades].slice(0, 5).map(summarizeTrade),
-    aggregateTickersResolved: aggregateTickerSet.size,
-    totalTradesConsidered: aggregateDiagnostics.totalTradesConsidered,
-    tradesIncluded: aggregateDiagnostics.tradesIncluded,
-    tradeTickersExtracted: aggregateDiagnostics.tradeTickersExtracted,
-    ibkrPositionsIncluded: aggregateDiagnostics.ibkrPositionsIncluded,
-    ibkrTickersExtracted: aggregateDiagnostics.ibkrTickersExtracted,
-    skippedInvalidTickers,
-    invalidSkippedTickers: aggregateDiagnostics.invalidSkippedTickers,
-    aggregateTickers: Array.from(aggregateTickerSet).sort()
-  });
 
   return {
     usersConsidered: users.length,

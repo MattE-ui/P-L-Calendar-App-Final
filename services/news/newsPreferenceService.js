@@ -58,7 +58,6 @@ function createNewsPreferenceService({
       db.userNewsPreferences.push(row);
       saveDB(db);
     }
-    logger.info('[NewsPreferences] read preferences.', { userId });
     return row;
   }
 

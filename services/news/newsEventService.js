@@ -160,13 +160,6 @@ function createNewsEventService({ loadDB, saveDB, ensureNewsEventTables, logger 
     }
 
     saveDB(db);
-    logger.info('[NewsEvents] upsert completed.', {
-      mode,
-      id: (existing || normalized).id,
-      dedupeKey: dedupeKey || null,
-      sourceType: normalized.sourceType,
-      eventType: normalized.eventType
-    });
     return existing || normalized;
   }
 
@@ -175,6 +168,7 @@ function createNewsEventService({ loadDB, saveDB, ensureNewsEventTables, logger 
     for (const input of inputs) {
       results.push(upsertEvent(input));
     }
+    logger.info('[NewsEvents] upsert batch completed.', { count: results.length });
     return results;
   }
 
@@ -219,18 +213,6 @@ function createNewsEventService({ loadDB, saveDB, ensureNewsEventTables, logger 
     } else {
       rows.sort((a, b) => String(a.scheduledAt || '').localeCompare(String(b.scheduledAt || '')));
     }
-
-    logger.info('[NewsEvents] query completed.', {
-      mode,
-      durationMs: Date.now() - startedAt,
-      resultCount: rows.length,
-      filters: {
-        sourceType: sourceType || null,
-        eventType: eventType || null,
-        ticker: ticker || null,
-        canonicalTicker: canonicalTicker || null
-      }
-    });
 
     return rows;
   }

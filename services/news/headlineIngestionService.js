@@ -301,7 +301,6 @@ async function runHeadlineIngestion(options = {}) {
   const diagnostics = buildHeadlineIngestionDiagnostics({ trigger: options.trigger || 'unknown', featureState });
   const logger = options.logger || console;
 
-  logger.info('[HeadlineIngestion] run start.', { trigger: options.trigger || 'unknown', featureState });
   if (!featureState.enabled) {
     diagnostics.skipped = true;
     diagnostics.finishedAt = nowIso();
@@ -368,15 +367,6 @@ async function runHeadlineIngestion(options = {}) {
     status.lastSuccessfulRunAt = nowIso();
   }
   saveDB(db);
-
-  logger.info('[HeadlineIngestion] run end.', {
-    trigger: options.trigger || 'unknown',
-    success: diagnostics.success,
-    elapsedMs: diagnostics.elapsedMs,
-    totals: diagnostics.totals,
-    countsByEventType: diagnostics.countsByEventType,
-    capApplications: diagnostics.capApplications
-  });
 
   return diagnostics;
 }

@@ -10,6 +10,7 @@ const { setTimeout: sleep } = require('node:timers/promises');
 const { z } = require('zod');
 const { getEnvString, getEnvUrl, getEnvNumber, getEnvBoolean } = require('./lib/env-utils');
 const { ensureArrayProperty } = require('./lib/data-utils');
+const sqliteDb = require('./lib/sqlite-db');
 let nodemailer = null;
 try {
   nodemailer = require('nodemailer');
@@ -399,6 +400,11 @@ function ensureDataStore() {
 }
 
 ensureDataStore();
+try {
+  sqliteDb.initDB();
+} catch (err) {
+  console.warn('[SQLite] Failed to initialize shadow database:', err?.message || err);
+}
 fs.mkdirSync(AVATAR_STORAGE_DIR, { recursive: true });
 
 function isStrongPassword(password) {
@@ -5225,6 +5231,7 @@ function saveDB(db) {
       }
     }
   }
+  sqliteDb.shadowWrite(db);
 }
 
 function getClientIp(req) {
@@ -9747,18 +9754,6 @@ function updateTrading212LayerMetadata(trade, {
       trade.stop = incomingBootstrapStop;
     }
   }
-  console.info('[TRADES][STOP_SYNC]', {
-    tradeId: trade.id || '',
-    provider: 'trading212',
-    sourcePath: 'automation_snapshot_reconcile',
-    existingOriginalStop: hasExistingOriginalStop ? existingOriginalStop : null,
-    existingCurrentStop: hasExistingCurrentStop ? existingCurrentStop : null,
-    incomingOriginalStop: incomingBootstrapStop,
-    incomingCurrentStop: incomingAuthoritativeStop,
-    persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
-    persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
-    currentStopPreserved: incomingAuthoritativeStop === null && hasExistingCurrentStop
-  });
   recalculateTradeRiskFromImportedStop(trade, user, rates);
 }
 
@@ -9821,14 +9816,6 @@ function getEligibleRiskAccounts(user) {
       };
     })
     .filter(Boolean);
-  console.log('[risk-resolver]', {
-    totalAccounts: allAccounts.length,
-    eligibleAccounts: eligibleAccounts.map(a => ({
-      id: a.id,
-      provider: a.provider,
-      value: a.value
-    }))
-  });
   return eligibleAccounts;
 }
 
@@ -9875,17 +9862,6 @@ function getRiskCapitalBase(user, options = {}) {
     selectedAccountIds: selectedAccounts.map(account => account.id),
     eligibleAccountIds: eligibleAccounts.map(account => account.id)
   };
-  if (options.logDiagnostics) {
-    console.debug('[risk-capital][resolver]', {
-      user: options.user || user?.username || null,
-      featureAvailable: result.featureAvailable,
-      useSelectedTradingAccountsForRisk: !!settings?.useSelectedTradingAccountsForRisk,
-      eligibleAccountIds: result.eligibleAccountIds,
-      selectedAccountIds: (settings?.selectedTradingAccountIdsForRisk || []).map(id => String(id || '').trim()).filter(Boolean),
-      resolvedRiskCapitalBase: result.riskCapitalBase,
-      fallbackReason: result.fallbackReason
-    });
-  }
   return result;
 }
 
@@ -10048,15 +10024,6 @@ function getCurrentPortfolioValueFromAccounts(accounts = []) {
         : (Number.isFinite(portfolioValueRaw) ? 'portfolioValue' : 'liveValue'),
       chosenValue
     });
-  });
-  console.info('[trace][portfolio][accounts-aggregation]', {
-    accountCount: accounts.length,
-    accounts: diagnosticAccounts,
-    total,
-    cache: {
-      enabled: false,
-      mode: 'none'
-    }
   });
   return total;
 }
@@ -10242,15 +10209,6 @@ function getCurrentPortfolioValue(user) {
   const accounts = Array.isArray(user?.tradingAccounts) ? user.tradingAccounts : [];
   if (accounts.length > 0) {
     const portfolioValue = getCurrentPortfolioValueFromAccounts(accounts);
-    console.log('PORTFOLIO DEBUG:', {
-      accountCount: accounts.length,
-      accounts: accounts.map(a => ({
-        name: a?.name || a?.label || '',
-        broker: a?.broker || a?.integrationProvider || '',
-        value: Number(a?.currentValue ?? a?.portfolioValue ?? 0) || 0
-      })),
-      total: portfolioValue
-    });
     return {
       value: portfolioValue,
       currency: 'GBP',
@@ -10754,7 +10712,6 @@ async function fetchTrading212HistoryOrders(config, username, {
     if (debug.upstreamRequestSucceeded) {
       debug.returnedDataSource = 'fresh_upstream';
     }
-    console.info(`[T212][history][raw] account=${accountId || 'default'} page=${pageCount + 1} url=${debug.historyOrdersRequestUrl} status=${debug.historyOrdersStatus ?? 'unknown'} body=${String(debug.historyOrdersRawBody).slice(0, 3000)}`);
     if (payload === null || !Array.isArray(pageItems)) {
       const err = new Trading212ParseError('Trading 212 history orders response was in an unexpected format.', {
         status: upstream?.status ?? 200,
@@ -12045,7 +12002,7 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     const accountId = options?.accountId || 'default';
     const endpointLabel = options?.endpoint || '';
     console.info(`[T212][upstream] endpoint=${endpointLabel || url} account=${accountId} url=${url} status=${status} x-ratelimit-limit=${rateLimitHeaders.limit ?? 'n/a'} x-ratelimit-remaining=${rateLimitHeaders.remaining ?? 'n/a'} x-ratelimit-reset=${rateLimitHeaders.reset ?? 'n/a'}`);
-    console.info(`[T212] status=${status} content-type=${contentType} body=${bodyText.slice(0, 300)}`);
+    console.info(`[T212] status=${status} content-type=${contentType}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
       const headerResetSeconds = Number.isFinite(rateLimitHeaders.reset) ? rateLimitHeaders.reset : null;
@@ -12167,20 +12124,6 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
       trade.currentStopLastSyncedAt = new Date().toISOString();
       trade.currentStopStale = true;
       trade.t212StopOrderId = '';
-      console.info('[TRADES][STOP_SYNC]', {
-        tradeId: trade.id || '',
-        provider: 'trading212',
-        sourcePath: 'automation_orders_sync',
-        existingOriginalStop: Number.isFinite(existingOriginalStop) ? existingOriginalStop : null,
-        existingCurrentStop: Number.isFinite(existingCurrentStop) ? existingCurrentStop : null,
-        incomingOriginalStop: null,
-        incomingCurrentStop: null,
-        persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
-        persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
-        currentStopPreserved: false,
-        currentStopOverwritten: false,
-        markedStale: true
-      });
       updated += 1;
       continue;
     }
@@ -12202,20 +12145,6 @@ function upsertTrading212StopOrders(user, ordersPayload, accountId = '', rates =
     if (!Number.isFinite(Number(trade.originalStopPrice)) || Number(trade.originalStopPrice) <= 0) {
       trade.originalStopPrice = stopPrice;
     }
-    console.info('[TRADES][STOP_SYNC]', {
-      tradeId: trade.id || '',
-      provider: 'trading212',
-      sourcePath: 'automation_orders_sync',
-      existingOriginalStop: Number.isFinite(existingOriginalStop) ? existingOriginalStop : null,
-      existingCurrentStop: Number.isFinite(existingCurrentStop) ? existingCurrentStop : null,
-      incomingOriginalStop: Number.isFinite(stopPrice) ? stopPrice : null,
-      incomingCurrentStop: Number.isFinite(stopPrice) ? stopPrice : null,
-      persistedOriginalStop: Number.isFinite(Number(trade.originalStopPrice)) ? Number(trade.originalStopPrice) : null,
-      persistedCurrentStop: Number.isFinite(Number(trade.currentStop)) ? Number(trade.currentStop) : null,
-      currentStopPreserved: Number.isFinite(existingCurrentStop) && existingCurrentStop === Number(trade.currentStop),
-      currentStopOverwritten: Number.isFinite(existingCurrentStop) && existingCurrentStop !== Number(trade.currentStop),
-      markedStale: false
-    });
     recalculateTradeRiskFromImportedStop(trade, user, rates);
     updated += 1;
   }
@@ -14765,13 +14694,6 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
   const resolvedPortfolio = portfolioSnapshot.value;
-  console.info('[trace][portfolio][endpoint-hit]', {
-    endpoint: '/api/portfolio',
-    user: req.username,
-    portfolioField: 'portfolioValue',
-    portfolioSourceField: hasManualPortfolioBaseline ? 'manualPortfolioBaseline' : 'getCurrentPortfolioValue.value',
-    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
-  });
   if (mutated) saveDB(db);
   console.info('[baseline][resolve][portfolio]', {
     user: req.username,
@@ -14814,37 +14736,7 @@ app.get('/api/portfolio', auth, async (req,res)=>{
     summarySerializerUsed: true,
     payloadTrimmed: true
   });
-  console.info('[trace][portfolio][response-payload-verification]', {
-    endpoint: '/api/portfolio',
-    computedTotalFromAccounts,
-    portfolioSnapshotValue: portfolioSnapshot.value,
-    resolvedPortfolio,
-    responseFields: {
-      portfolioValue: responsePayload.portfolioValue,
-      portfolio: responsePayload.portfolio,
-      currentPortfolioValue: responsePayload.currentPortfolioValue,
-      livePortfolio: responsePayload.livePortfolio,
-      portfolioSource: responsePayload.portfolioSource
-    },
-    fullPayload: responsePayload
-  });
-  console.info('[trace][portfolio][response-before-send]', {
-    endpoint: '/api/portfolio',
-    timestamp: new Date().toISOString(),
-    computedLiveTotalFromAccounts: computedTotalFromAccounts,
-    portfolioSnapshotValue: portfolioSnapshot.value,
-    portfolioValueInResponse: responsePayload.portfolioValue,
-    responseObjectSent: responsePayload
-  });
   res.json(responsePayload);
-  console.info('[trace][portfolio][response]', {
-    endpoint: '/api/portfolio',
-    returnedFields: responsePayload,
-    cache: {
-      enabled: false,
-      mode: 'none'
-    }
-  });
 });
 
 app.get('/api/portfolio/snapshot', auth, (req, res) => {
@@ -14853,12 +14745,6 @@ app.get('/api/portfolio/snapshot', auth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   const mutated = ensureUserShape(user, req.username);
   const snapshot = getCurrentPortfolioValue(user);
-  console.info('[trace][portfolio][endpoint-hit]', {
-    endpoint: '/api/portfolio/snapshot',
-    user: req.username,
-    portfolioField: 'portfolioValue',
-    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
-  });
   if (mutated) saveDB(db);
   res.json({
     portfolio: snapshot.value,
@@ -14866,18 +14752,6 @@ app.get('/api/portfolio/snapshot', auth, (req, res) => {
     portfolioSource: snapshot.source,
     portfolioCurrency: snapshot.currency,
     portfolioLastUpdatedAt: snapshot.lastUpdatedAt
-  });
-  console.info('[trace][portfolio][response]', {
-    endpoint: '/api/portfolio/snapshot',
-    returnedFields: {
-      portfolio: snapshot.value,
-      portfolioValue: snapshot.value,
-      portfolioSource: snapshot.source
-    },
-    cache: {
-      enabled: false,
-      mode: 'none'
-    }
   });
 });
 
@@ -14957,12 +14831,6 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     && manualPortfolioRaw !== ''
     && Number.isFinite(manualPortfolioBaseline);
   const portfolioValue = sharedSummary.portfolioValue;
-  console.info('[trace][portfolio][endpoint-hit]', {
-    endpoint: '/api/profile',
-    user: req.username,
-    portfolioField: 'portfolioValue',
-    sourceFunction: 'getCurrentPortfolioValue -> getCurrentPortfolioValueFromAccounts'
-  });
   console.info('[baseline][resolve][profile]', {
     user: req.username,
     source: baseline.source || 'history',
@@ -15037,18 +14905,6 @@ app.get('/api/profile', auth, asyncHandler(async (req,res)=>{
     profileSummary
   });
   req.perfDiag?.setMeta({ resultCount: Array.isArray(user.tradingAccounts) ? user.tradingAccounts.length : 0 });
-  console.info('[trace][portfolio][response]', {
-    endpoint: '/api/profile',
-    returnedFields: {
-      portfolio: portfolioValue,
-      portfolioValue,
-      portfolioSource: portfolioSnapshot.source
-    },
-    cache: {
-      enabled: false,
-      mode: 'none'
-    }
-  });
 }));
 
 app.get('/api/profile/bootstrap', auth, asyncHandler(async (req, res) => {
@@ -22182,12 +22038,6 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
   let didMutate = false;
   const providerPreviousClose = Number.isFinite(Number(quoteSnapshot?.previousClose)) ? Number(quoteSnapshot.previousClose) : null;
   const hadProviderPreviousClose = Number.isFinite(providerPreviousClose) && providerPreviousClose > 0;
-  console.info('[WATCHLIST_PREV_CLOSE_INGEST_PROVIDER_VALUE]', {
-    ticker: normalizedTicker,
-    source,
-    providerPreviousClose,
-    hasProviderPreviousClose: hadProviderPreviousClose
-  });
   const nyDate = getNyDateKeyForDate(new Date(), false);
   const providerReferenceDate = isUsTradingSessionDate(nyDate)
     ? previousUsTradingSessionDate(nyDate)
@@ -22201,13 +22051,6 @@ async function ingestWatchlistPreviousCloseFromProvider(db, ticker, {
       currency: quoteSnapshot?.currency || null,
       exchange: quoteSnapshot?.quote?.exchange || quoteSnapshot?.quoteType || null
     }) || didMutate;
-    console.info('[WATCHLIST_PREV_CLOSE_INGEST_STORED]', {
-      ticker: normalizedTicker,
-      marketDate: providerReferenceDate,
-      previousClose: providerPreviousClose,
-      source,
-      didMutate
-    });
   }
   const marketState = String(quoteSnapshot?.marketState || '').trim().toLowerCase();
   const regularMarketPrice = Number.isFinite(Number(quoteSnapshot?.regularMarketPrice)) ? Number(quoteSnapshot.regularMarketPrice) : null;
@@ -22535,12 +22378,7 @@ async function fetchYahooChartQuote(symbol) {
     ? result.meta.marketState.toLowerCase()
     : '';
   const previousClose = parsePositiveNumber(result?.meta?.previousClose);
-  if (Number.isFinite(previousClose) && previousClose > 0) {
-    console.info('[YAHOO_CHART_PREVIOUS_CLOSE_EXTRACTED]', {
-      ticker: trimmed,
-      previousClose
-    });
-  } else {
+  if (!Number.isFinite(previousClose) || previousClose <= 0) {
     console.info('[YAHOO_CHART_PREVIOUS_CLOSE_MISSING]', {
       ticker: trimmed
     });
@@ -22735,22 +22573,12 @@ async function fetchMarketQuoteSnapshot(symbol) {
         previousClose,
         selectedPrice: yahooChart.price
       };
-      console.info('[WATCHLIST_PREV_CLOSE_SNAPSHOT_SOURCE]', {
-        ticker: trimmed,
-        previousClose,
-        source: Number.isFinite(Number(yahooChart?.previousClose)) ? 'yahoo_chart.meta.previousClose' : 'yahoo_quote.previousClose_fallback'
-      });
     } else if (yahooQuote) {
       if (Number.isFinite(Number(yahooChart?.previousClose)) && Number(yahooChart.previousClose) > 0) {
         snapshot = {
           ...yahooQuote,
           previousClose: Number(yahooChart.previousClose)
         };
-        console.info('[WATCHLIST_PREV_CLOSE_SNAPSHOT_SOURCE]', {
-          ticker: trimmed,
-          previousClose: Number(yahooChart.previousClose),
-          source: 'yahoo_chart.meta.previousClose'
-        });
       } else {
         snapshot = yahooQuote;
       }

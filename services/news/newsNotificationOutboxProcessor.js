@@ -254,7 +254,6 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
 
   const claimed = claimPendingOutboxItems({ db, now: nowIso, batchSize, claimedBy });
   diagnostics.claimedCount = claimed.length;
-  logger.info('[NewsOutboxProcessor] run start.', { now: nowIso, claimedCount: claimed.length, batchSize });
   if (claimed.length) {
     saveDB(db);
   }
@@ -355,17 +354,6 @@ async function runNewsNotificationOutboxProcessor(options = {}) {
   diagnostics.finishedAt = new Date().toISOString();
   diagnostics.elapsedMs = Date.now() - startedAt;
   diagnostics.success = diagnostics.errors.length === 0;
-
-  logger.info('[NewsOutboxProcessor] run end.', {
-    elapsedMs: diagnostics.elapsedMs,
-    claimedCount: diagnostics.claimedCount,
-    sentCount: diagnostics.sentCount,
-    failedCount: diagnostics.failedCount,
-    retriedCount: diagnostics.retriedCount,
-    deadLetterCount: diagnostics.deadLetterCount,
-    countsByChannel: diagnostics.countsByChannel,
-    errorCount: diagnostics.errors.length
-  });
 
   return diagnostics;
 }

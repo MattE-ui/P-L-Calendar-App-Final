@@ -422,12 +422,6 @@ async function runNewsNotificationFanout(options = {}) {
     errors: []
   };
 
-  logger.info('[NewsFanout] run start.', {
-    now: nowIso,
-    users: users.length,
-    candidateCounts: diagnostics.candidateCounts
-  });
-
   const digestGroups = new Map();
   const sourceProfiles = listNewsSourceProfiles();
 
@@ -630,18 +624,6 @@ async function runNewsNotificationFanout(options = {}) {
   diagnostics.finishedAt = new Date().toISOString();
   diagnostics.elapsedMs = Date.now() - startedAt;
   diagnostics.success = diagnostics.errors.length === 0;
-
-  logger.info('[NewsFanout] run end.', {
-    elapsedMs: diagnostics.elapsedMs,
-    candidateCounts: diagnostics.candidateCounts,
-    usersEvaluated: diagnostics.usersEvaluated,
-    deliveryInserted: diagnostics.deliveryLog.inserted,
-    deduped: diagnostics.deliveryLog.deduped,
-    dispatchTotalsByChannel: diagnostics.dispatchTotalsByChannel,
-    deepLinkTabs: diagnostics.deepLinkTabs,
-    digest: diagnostics.digest,
-    errorCount: diagnostics.errors.length
-  });
 
   return diagnostics;
 }

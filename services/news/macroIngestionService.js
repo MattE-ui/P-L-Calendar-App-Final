@@ -93,7 +93,7 @@ async function runMacroIngestion({ newsEventService, providers, logger = console
 
   diagnostics.success = diagnostics.providers.some((item) => item.success);
   diagnostics.elapsedMs = Date.now() - startedAt;
-  logger.info('[MacroIngestion] run completed.', diagnostics);
+  logger.info('[MacroIngestion] run completed.', { success: diagnostics.success, elapsedMs: diagnostics.elapsedMs, totals: diagnostics.totals });
   return diagnostics;
 }
 
