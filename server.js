@@ -21944,6 +21944,8 @@ function normalizeTradeMeta(trade = {}) {
 
 const marketCache = new Map();
 const dailyLowCache = new Map();
+const DAILY_LOW_CACHE_TTL_TODAY_MS = Number(process.env.DAILY_LOW_CACHE_TTL_TODAY_MS) || 15 * 1000;
+const DAILY_LOW_CACHE_TTL_HISTORICAL_MS = Number(process.env.DAILY_LOW_CACHE_TTL_HISTORICAL_MS) || 24 * 60 * 60 * 1000;
 const optionContractResolutionCache = new Map();
 const optionQuoteCache = new Map();
 const OPTION_QUOTE_CACHE_TTL_MS = Number(process.env.OPTION_QUOTE_CACHE_TTL_MS) || 10 * 1000;
@@ -22560,7 +22562,18 @@ async function fetchYahooDayLow(symbol) {
   const data = await res.json();
   const result = data?.chart?.result?.[0];
   const lows = result?.indicators?.quote?.[0]?.low;
+  const opens = result?.indicators?.quote?.[0]?.open;
   if (!Array.isArray(lows) || lows.length === 0) throw new Error('Yahoo chart missing low');
+  let sessionOpen = null;
+  if (Array.isArray(opens) && opens.length) {
+    for (const value of opens) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        sessionOpen = parsed;
+        break;
+      }
+    }
+  }
   let min = null;
   for (const value of lows) {
     if (!Number.isFinite(value) || value <= 0) continue;
@@ -22570,7 +22583,9 @@ async function fetchYahooDayLow(symbol) {
   return {
     symbol: trimmed,
     low: min,
-    currency: result?.meta?.currency || 'USD'
+    currency: result?.meta?.currency || 'USD',
+    open: sessionOpen,
+    asOf: new Date().toISOString()
   };
 }
 
@@ -22594,7 +22609,11 @@ async function fetchYahooRegularDayLow(symbol) {
   return {
     symbol: trimmed,
     low,
-    currency: quote?.currency || 'USD'
+    currency: quote?.currency || 'USD',
+    open: Number.isFinite(Number(quote?.regularMarketOpen)) ? Number(quote.regularMarketOpen) : null,
+    asOf: Number.isFinite(Number(quote?.regularMarketTime)) && Number(quote.regularMarketTime) > 0
+      ? new Date(Number(quote.regularMarketTime) * 1000).toISOString()
+      : new Date().toISOString()
   };
 }
 
@@ -23193,7 +23212,18 @@ async function fetchYahooDayLowForDate(symbol, dateKey) {
   const data = await res.json();
   const result = data?.chart?.result?.[0];
   const lows = result?.indicators?.quote?.[0]?.low;
+  const opens = result?.indicators?.quote?.[0]?.open;
   if (!Array.isArray(lows) || lows.length === 0) throw new Error('Yahoo chart missing low');
+  let sessionOpen = null;
+  if (Array.isArray(opens) && opens.length) {
+    for (const value of opens) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        sessionOpen = parsed;
+        break;
+      }
+    }
+  }
   let min = null;
   for (const value of lows) {
     if (!Number.isFinite(value) || value <= 0) continue;
@@ -23203,7 +23233,9 @@ async function fetchYahooDayLowForDate(symbol, dateKey) {
   return {
     symbol: trimmed,
     low: min,
-    currency: result?.meta?.currency || 'USD'
+    currency: result?.meta?.currency || 'USD',
+    open: sessionOpen,
+    asOf: new Date().toISOString()
   };
 }
 
@@ -23213,7 +23245,7 @@ async function fetchDailyLow(symbol, dateKey = null) {
   const resolvedDateKey = dateKey || getNyDateKey();
   const cacheKey = `${trimmed}:${resolvedDateKey}`;
   const cached = dailyLowCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached && Number.isFinite(cached.expiresAt) && cached.expiresAt > Date.now()) return cached.payload;
   const isToday = resolvedDateKey === getNyDateKey();
   let low;
   if (isToday) {
@@ -23225,7 +23257,10 @@ async function fetchDailyLow(symbol, dateKey = null) {
   } else {
     low = await fetchYahooDayLowForDate(trimmed, resolvedDateKey);
   }
-  dailyLowCache.set(cacheKey, low);
+  dailyLowCache.set(cacheKey, {
+    payload: low,
+    expiresAt: Date.now() + (isToday ? DAILY_LOW_CACHE_TTL_TODAY_MS : DAILY_LOW_CACHE_TTL_HISTORICAL_MS)
+  });
   return low;
 }
 
