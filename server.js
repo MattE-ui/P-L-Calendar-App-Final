@@ -12743,6 +12743,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     const existing = history[ym][dateKey] || {};
     const cashIn = Number(existing.cashIn ?? 0);
     const cashOut = Number(existing.cashOut ?? 0);
+    const isManualEntry = existing.manualEntry === true;
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     const canonicalOwner = resolveCanonicalTrading212OwnerAccount(user);
@@ -12766,17 +12767,24 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       const selectedAccountRecord = existingAccounts[integratedAccount.id] && typeof existingAccounts[integratedAccount.id] === 'object'
         ? existingAccounts[integratedAccount.id]
         : {};
+      const accountCashIn = isManualEntry ? Number(selectedAccountRecord.cashIn ?? 0) : cashIn;
+      const accountCashOut = isManualEntry ? Number(selectedAccountRecord.cashOut ?? 0) : cashOut;
       payload.accounts = {
         ...existingAccounts,
         [integratedAccount.id]: {
           ...selectedAccountRecord,
           end: Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : Number(selectedAccountRecord.end) || 0,
-          cashIn,
-          cashOut
+          cashIn: accountCashIn,
+          cashOut: accountCashOut
         }
       };
       carryForwardTradingAccountDayValues(user, history, dateKey, payload, integratedAccount.id);
       applyAccountAggregatesToHistoryEntry(payload);
+      if (isManualEntry) {
+        payload.cashIn = cashIn;
+        payload.cashOut = cashOut;
+        payload.manualEntry = true;
+      }
       integratedAccount.currentValue = Number.isFinite(combinedPortfolioValue) ? combinedPortfolioValue : (Number(integratedAccount.currentValue) || 0);
       integratedAccount.portfolioValue = integratedAccount.currentValue;
       const accountNetDeposits = Number(payload.accounts[integratedAccount.id]?.cashIn || 0) - Number(payload.accounts[integratedAccount.id]?.cashOut || 0);
@@ -21680,7 +21688,8 @@ app.post('/api/pl', auth, (req,res)=>{
     const entryPayload = {
       cashIn: aggregate.cashIn,
       cashOut: aggregate.cashOut,
-      accounts: existingAccounts
+      accounts: existingAccounts,
+      manualEntry: true
     };
     if (aggregate.end !== null) {
       entryPayload.end = aggregate.end;
