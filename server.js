@@ -12422,6 +12422,36 @@ function recordTrading212Skip(accountState, endpointKey, gate = {}) {
   }
 }
 
+// Sync write queue — batches broker sync saveDB() calls to reduce disk I/O
+const syncWriteQueue = {
+  pending: false,
+  db: null,
+  timer: null,
+  FLUSH_INTERVAL_MS: 2000,
+
+  enqueue(db) {
+    this.db = db;
+    if (!this.pending) {
+      this.pending = true;
+      this.timer = setTimeout(() => this.flush(), this.FLUSH_INTERVAL_MS);
+    }
+  },
+
+  flush() {
+    if (this.db) {
+      saveDB(this.db);
+      this.db = null;
+    }
+    this.pending = false;
+    this.timer = null;
+  },
+
+  flushImmediate() {
+    if (this.timer) clearTimeout(this.timer);
+    this.flush();
+  }
+};
+
 async function syncTrading212ForUser(username, runDate = new Date(), options = {}) {
   const lane = options?.lane === 'leader_alert' ? 'leader_alert' : 'normal';
   const lockKey = `t212-sync:${username}`;
@@ -13388,7 +13418,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         }
       }
     }
-    saveDB(db);
+    syncWriteQueue.enqueue(db);
     return { ok: true };
   })().catch((e) => {
     const db = loadDB();
@@ -13420,7 +13450,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     }
     cfg.syncInProgress = false;
     cfg.lastDataSource = 'cached_db';
-    saveDB(db);
+    syncWriteQueue.enqueue(db);
     console.error(`Trading 212 sync failed for ${username}`, e);
     return { ok: false, error: e };
   }).finally(() => {
@@ -13657,7 +13687,7 @@ async function syncIbkrForUser(username, runDate = new Date()) {
       status: 503,
       message: 'Connector offline. Please run the local IBKR connector.'
     };
-    saveDB(db);
+    syncWriteQueue.enqueue(db);
     return;
   }
   if (!cfg.lastSnapshotAt) {
@@ -13669,7 +13699,7 @@ async function syncIbkrForUser(username, runDate = new Date()) {
   } else {
     cfg.lastStatus = { ok: true, status: 200 };
   }
-  saveDB(db);
+  syncWriteQueue.enqueue(db);
 }
 
 function stopIbkrJob(username) {
@@ -26566,6 +26596,11 @@ module.exports = {
   runNewsNotificationOutboxProcessorJob,
   scheduleNewsNotificationOutboxProcessorJob
 };
+
+process.on('SIGTERM', () => {
+  syncWriteQueue.flushImmediate();
+  process.exit(0);
+});
 
 // global error handler
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
