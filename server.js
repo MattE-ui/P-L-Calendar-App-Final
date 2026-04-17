@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
@@ -7,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { setTimeout: sleep } = require('node:timers/promises');
+const { Server: SocketIOServer } = require('socket.io');
 const { z } = require('zod');
 const { getEnvString, getEnvUrl, getEnvNumber, getEnvBoolean } = require('./lib/env-utils');
 const { ensureArrayProperty } = require('./lib/data-utils');
@@ -323,6 +325,9 @@ if (missingNotificationPublicEnv.length) {
 const sessionCache = new Map(); // key: token, value: { username, user, expiresAt, cachedAt }
 const SESSION_CACHE_TTL_MS = 60_000;
 const SESSION_CACHE_MAX = 500;
+
+// socket.io instance — assigned at startup, null in test/import mode
+let io = null;
 
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
@@ -17784,6 +17789,7 @@ app.post('/api/group-chats/:groupId/messages', auth, (req, res) => {
   access.chat.updated_at = nowIso;
   saveDB(db);
   const responsePayload = { message: sanitizeGroupChatMessageForViewer(db, message) };
+  if (io) io.to(`chat:${req.params.groupId}`).emit('new_message', responsePayload.message);
   console.info('[group-chat] message-response', {
     groupId: access.group.id,
     user: req.username,
@@ -26428,7 +26434,72 @@ if (require.main === module) {
       console.warn('[WATCHLIST_PREV_CLOSE_CALC] periodic reinforcement failed', error?.message || error);
     });
   }, 30 * 60 * 1000);
-  app.listen(PORT, ()=>{
+  const httpServer = http.createServer(app);
+
+  io = new SocketIOServer(httpServer, {
+    cors: { origin: '*', methods: ['GET', 'POST'] },
+    transports: ['websocket', 'polling']
+  });
+
+  io.use((socket, next) => {
+    const cookieHeader = socket.handshake.headers.cookie || '';
+    const match = cookieHeader.split(';').map(c => c.trim()).find(c => c.startsWith('auth_token='));
+    const token = match ? match.slice('auth_token='.length) : null;
+    if (!token) return next(new Error('Unauthorized'));
+
+    const now = Date.now();
+    const cached = sessionCache.get(token);
+    if (cached && (now - cached.cachedAt) < SESSION_CACHE_TTL_MS) {
+      socket.data.username = cached.username;
+      socket.data.nickname = cached.username;
+      return next();
+    }
+
+    const db = loadDB();
+    const username = db.sessions[token];
+    if (!username) return next(new Error('Unauthorized'));
+    const user = db.users[username];
+    if (!user) return next(new Error('Unauthorized'));
+    if (user.guest && user.expiresAt) {
+      const expiresAt = Date.parse(user.expiresAt);
+      if (!Number.isNaN(expiresAt) && expiresAt <= now) return next(new Error('Unauthorized'));
+    }
+    if (sessionCache.size >= SESSION_CACHE_MAX) sessionCache.delete(sessionCache.keys().next().value);
+    sessionCache.set(token, { username, user, expiresAt: user.expiresAt || null, cachedAt: now });
+    const identity = socialIdentityForUser(db, username);
+    socket.data.username = username;
+    socket.data.nickname = identity?.nickname || username;
+    next();
+  });
+
+  io.on('connection', (socket) => {
+    const username = socket.data.username;
+
+    socket.on('join_chat', (groupId) => {
+      if (!groupId || typeof groupId !== 'string') return;
+      try {
+        const db = loadDB();
+        const access = getGroupChatAccess(db, groupId, username);
+        if (access.error) return;
+        socket.join(`chat:${groupId}`);
+      } catch {}
+    });
+
+    socket.on('leave_chat', (groupId) => {
+      if (groupId && typeof groupId === 'string') socket.leave(`chat:${groupId}`);
+    });
+
+    socket.on('typing', ({ groupChatId } = {}) => {
+      if (!groupChatId || typeof groupChatId !== 'string') return;
+      socket.to(`chat:${groupChatId}`).emit('user_typing', {
+        userId: username,
+        nickname: socket.data.nickname,
+        groupChatId
+      });
+    });
+  });
+
+  httpServer.listen(PORT, () => {
     console.log(`P&L Calendar server listening on port ${PORT}`);
   });
 }

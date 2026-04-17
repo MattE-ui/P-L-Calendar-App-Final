@@ -27,6 +27,8 @@
     sidebarPollTimer: null,
     typingTimer: null,
     isTypingActive: false,
+    socket: null,
+    socketConnected: false,
     ac: {
       visible: false,
       items: [],
@@ -210,6 +212,7 @@
     }
 
     state.sidebarPollTimer = setInterval(loadSidebar, 12000);
+    connectSocket();
     bindEvents();
   }
 
@@ -254,7 +257,9 @@
   async function selectGroup(groupId) {
     if (state.activeGroupId === groupId) return;
     stopPoll();
+    if (state.socket && state.activeGroupId) state.socket.emit('leave_chat', state.activeGroupId);
     state.activeGroupId = groupId;
+    if (state.socket && state.socketConnected) state.socket.emit('join_chat', groupId);
     state.messages = [];
     state.chatInfo = null;
     state.replyTo = null;
@@ -351,6 +356,7 @@
   // ── POLLING ───────────────────────────────────────────────────────────────
   function startPoll() {
     stopPoll();
+    if (state.socketConnected) return; // socket handles delivery
     state.msgPollTimer = setInterval(() => loadMessages(false), 3000);
   }
   function stopPoll() {
@@ -797,6 +803,9 @@
   }
   function postTyping() {
     if (!state.activeGroupId || !state.isTypingActive) return;
+    if (state.socket && state.socketConnected) {
+      state.socket.emit('typing', { groupChatId: state.activeGroupId });
+    }
     api(`/api/group-chats/${state.activeGroupId}/typing`, { method: 'POST' }).catch(() => {});
     if (state.isTypingActive) setTimeout(postTyping, 4000);
   }
@@ -1040,6 +1049,77 @@
 
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') hideAutocomplete();
+    });
+  }
+
+  // ── WEBSOCKET ─────────────────────────────────────────────────────────────
+  function connectSocket() {
+    if (typeof window.io !== 'function') return; // socket.io client not available
+
+    const socket = window.io({ transports: ['websocket', 'polling'] });
+    state.socket = socket;
+
+    socket.on('connect', () => {
+      state.socketConnected = true;
+      stopPoll(); // socket takes over
+      if (state.activeGroupId) socket.emit('join_chat', state.activeGroupId);
+    });
+
+    socket.on('disconnect', () => {
+      state.socketConnected = false;
+      if (state.activeGroupId) startPoll(); // fall back to polling
+    });
+
+    socket.on('new_message', (msg) => {
+      if (!state.activeGroupId || !msg || !msg.id) return;
+      if (state.renderedMsgIds.has(msg.id)) return;
+
+      // Replace a matching optimistic message if present
+      const optimistic = state.messages.find(m =>
+        m._optimistic &&
+        m.senderUserId === msg.senderUserId &&
+        m.rawText === msg.rawText &&
+        Math.abs(new Date(m.createdAt) - new Date(msg.createdAt)) < 10000
+      );
+
+      if (optimistic) {
+        const tempId = optimistic.id;
+        state.messages = state.messages.map(m => m.id === tempId ? msg : m);
+        state.renderedMsgIds.delete(tempId);
+        state.renderedMsgIds.add(msg.id);
+        const domNode = messagesEl.querySelector(`[data-msg-id="${tempId}"]`);
+        if (domNode) {
+          const idx = state.messages.indexOf(msg);
+          const prev = state.messages[idx - 1];
+          const groupable = !['system', 'trade_event_system'].includes(msg.messageType);
+          const isCont = groupable && prev &&
+            prev.senderUserId === msg.senderUserId && withinWindow(prev.createdAt, msg.createdAt);
+          domNode.replaceWith(buildMsgNode(msg, isCont, state.messages));
+        }
+      } else {
+        const atBottom = isNearBottom();
+        state.messages.push(msg);
+        appendMessages([msg], state.messages);
+        state.renderedMsgIds.add(msg.id);
+        if (atBottom) scrollToBottom();
+      }
+
+      markRead();
+      const entry = state.chats.find(c => c.groupId === state.activeGroupId);
+      if (entry && entry.unreadCount > 0) { entry.unreadCount = 0; renderSidebar(); }
+    });
+
+    socket.on('user_typing', ({ userId, nickname, groupChatId }) => {
+      if (groupChatId !== state.activeGroupId) return;
+      if (userId === state.currentUser?.userId) return;
+      if (state.typingUsers.some(u => u.userId === userId)) return;
+      const nick = nickname || userId;
+      state.typingUsers.push({ userId, nickname: nick });
+      renderTyping();
+      setTimeout(() => {
+        state.typingUsers = state.typingUsers.filter(u => u.userId !== userId);
+        renderTyping();
+      }, 5000);
     });
   }
 

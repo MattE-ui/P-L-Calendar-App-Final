@@ -26,6 +26,7 @@
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.11",
+    "socket.io": "^4.8.3",
     "zod": "^3.23.8"
   }
 }
