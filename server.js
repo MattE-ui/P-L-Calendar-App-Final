@@ -12797,22 +12797,6 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     if (existingNote) {
       payload.note = existingNote;
     }
-    // Re-read the database immediately before writing to pick up any manual edits
-    // made during the async T212 API call window (race condition guard).
-    const freshDb = loadDB();
-    const freshUser = freshDb.users[username];
-    const freshEntry = freshUser?.portfolioHistory?.[ym]?.[dateKey];
-    console.info(`[T212][sync] pre_write_fresh_check username=${username} dateKey=${dateKey} freshManualEntry=${freshEntry?.manualEntry ?? 'undefined'} freshCashIn=${freshEntry?.cashIn ?? 'n/a'} freshCashOut=${freshEntry?.cashOut ?? 'n/a'}`);
-    if (freshEntry?.manualEntry === true) {
-      payload.cashIn = freshEntry.cashIn;
-      payload.cashOut = freshEntry.cashOut;
-      payload.manualEntry = true;
-    }
-    if (freshUser?.portfolioHistory) {
-      freshUser.portfolioHistory[ym] ||= {};
-      freshUser.portfolioHistory[ym][dateKey] = payload;
-      saveDB(freshDb);
-    }
     history[ym][dateKey] = payload;
     if (Number.isFinite(combinedPortfolioValue)) {
       user.portfolio = combinedPortfolioValue;
@@ -13356,6 +13340,27 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       delete cfg.cooldownUntil;
     }
     processPendingTrading212GroupAlerts(db, { now: new Date() });
+    // Merge manual entries from fresh DB before final save so any user edits made
+    // during the async API call window are never overwritten.
+    const preSaveDb = loadDB();
+    const preSaveUser = preSaveDb.users[username];
+    if (preSaveUser?.portfolioHistory) {
+      const syncedHistory = db.users[username].portfolioHistory;
+      for (const ym of Object.keys(preSaveUser.portfolioHistory)) {
+        for (const dateKey of Object.keys(preSaveUser.portfolioHistory[ym])) {
+          const freshEntry = preSaveUser.portfolioHistory[ym][dateKey];
+          if (freshEntry?.manualEntry === true) {
+            if (!syncedHistory[ym]) syncedHistory[ym] = {};
+            syncedHistory[ym][dateKey] = {
+              ...syncedHistory[ym][dateKey],
+              cashIn: freshEntry.cashIn,
+              cashOut: freshEntry.cashOut,
+              manualEntry: true,
+            };
+          }
+        }
+      }
+    }
     saveDB(db);
     return { ok: true };
   })().catch((e) => {
