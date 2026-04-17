@@ -52,8 +52,7 @@ const {
 const { createNewsNotificationDispatchService } = require('./services/news/newsNotificationDispatchService');
 const { runNewsNotificationOutboxProcessor } = require('./services/news/newsNotificationOutboxProcessor');
 const { resolveOwnedTickerUniverse, deriveUserCurrentHoldingTickers, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
-const makeNewsMarketDataRouter = require('./routes/newsMarketData');
-const { fetchMarketEarnings } = makeNewsMarketDataRouter;
+const { makeNewsMarketDataRouter, fetchMarketEarnings } = require('./routes/newsMarketData');
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -170,7 +169,7 @@ const newsReadModelService = createNewsReadModelService({
   resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(loadDB(), userId),
   getUserNewsPreferences: (userId) => newsPreferenceService.getUserNewsPreferences(userId),
   listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
-  fetchMarketEarnings: typeof fetchMarketEarnings === 'function' ? fetchMarketEarnings : async () => [],
+  fetchMarketEarnings,
   logger: console
 });
 

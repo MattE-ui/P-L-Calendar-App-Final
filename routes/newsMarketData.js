@@ -7,7 +7,7 @@
  * All use Finnhub free-tier endpoints only.
  *
  * Registered by server.js via:
- *   const makeNewsMarketDataRouter = require('./routes/newsMarketData');
+ *   const { makeNewsMarketDataRouter, fetchMarketEarnings } = require('./routes/newsMarketData');
  *   app.use('/api/news', makeNewsMarketDataRouter({ auth, asyncHandler, loadDB, sleep }));
  */
 
@@ -319,7 +319,7 @@ async function fetchMarketEarnings() {
  * @param {Function} deps.loadDB          JSON-file DB loader from server.js
  * @param {Function} deps.sleep           node:timers/promises setTimeout
  */
-module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB, sleep }) {
+function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB, sleep }) {
   const router = Router();
 
   // -------------------------------------------------------------------------
@@ -672,6 +672,4 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
   return router;
 };
 
-// Export fetchMarketEarnings so server.js can inject it into the calendar read model
-// without making an internal HTTP round-trip.
-module.exports.fetchMarketEarnings = fetchMarketEarnings;
+module.exports = { makeNewsMarketDataRouter, fetchMarketEarnings };
