@@ -126,6 +126,12 @@ function eventTypeEnabledByPreference(preferences, event) {
     case 'cpi':
     case 'rate_decision':
       return !!preferences.macroEnabled;
+    case 'nfp':
+      return !!preferences.nfpEnabled;
+    case 'gdp':
+      return !!preferences.gdpEnabled;
+    case 'ipo':
+      return !!preferences.ipoEnabled;
     case 'earnings':
       return !!preferences.earningsEnabled;
     case 'stock_news':

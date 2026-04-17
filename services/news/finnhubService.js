@@ -155,6 +155,16 @@ async function getPriceTarget(symbol) {
   return finnhubFetch('/stock/price-target', { symbol });
 }
 
+/**
+ * GET /calendar/earnings — earnings events in a date range.
+ * @param {string} from  YYYY-MM-DD
+ * @param {string} to    YYYY-MM-DD
+ * Returns { earningsCalendar: Array<{ symbol, date, hour, epsActual, epsEstimate, revenueActual, revenueEstimate }> }
+ */
+async function getEarningsCalendar(from, to) {
+  return finnhubFetch('/calendar/earnings', { from, to });
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -164,5 +174,6 @@ module.exports = {
   getMetrics,
   getCompanyNews,
   getRecommendations,
-  getPriceTarget
+  getPriceTarget,
+  getEarningsCalendar
 };

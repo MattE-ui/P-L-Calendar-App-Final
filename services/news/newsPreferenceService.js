@@ -18,6 +18,9 @@ function defaultNewsPreferences(userId, existing = null) {
   return {
     userId,
     macroEnabled: existing?.macroEnabled ?? true,
+    nfpEnabled: existing?.nfpEnabled ?? true,
+    gdpEnabled: existing?.gdpEnabled ?? true,
+    ipoEnabled: existing?.ipoEnabled ?? false,
     earningsEnabled: existing?.earningsEnabled ?? true,
     stockNewsEnabled: existing?.stockNewsEnabled ?? true,
     worldNewsEnabled: existing?.worldNewsEnabled ?? true,
@@ -71,7 +74,7 @@ function createNewsPreferenceService({
     }
 
     const booleanFields = [
-      'macroEnabled', 'earningsEnabled', 'stockNewsEnabled', 'worldNewsEnabled', 'internalPostsEnabled',
+      'macroEnabled', 'nfpEnabled', 'gdpEnabled', 'ipoEnabled', 'earningsEnabled', 'stockNewsEnabled', 'worldNewsEnabled', 'internalPostsEnabled',
       'portfolioOnly', 'watchlistOnly', 'highImportanceOnly', 'notifyPush', 'notifyInApp', 'notifyEmail',
       'notifyImmediate', 'notifyOneDayBefore', 'notifyOneHourBefore', 'notifyFifteenMinutesBefore',
       'dailyDigestEnabled'
@@ -96,6 +99,12 @@ function createNewsPreferenceService({
       case 'cpi':
       case 'rate_decision':
         return preferences.macroEnabled;
+      case 'nfp':
+        return preferences.nfpEnabled;
+      case 'gdp':
+        return preferences.gdpEnabled;
+      case 'ipo':
+        return preferences.ipoEnabled;
       case 'earnings':
         return preferences.earningsEnabled;
       case 'stock_news':

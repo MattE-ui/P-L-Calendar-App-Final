@@ -208,6 +208,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
 
   const preferenceControls = [
     { key: 'macroEnabled', label: 'Macro events', group: 'Categories' },
+    { key: 'nfpEnabled', label: 'Jobs reports (NFP)', group: 'Categories' },
+    { key: 'gdpEnabled', label: 'GDP releases', group: 'Categories' },
+    { key: 'ipoEnabled', label: 'IPO calendar', group: 'Categories' },
     { key: 'earningsEnabled', label: 'Earnings events', group: 'Categories' },
     { key: 'stockNewsEnabled', label: 'Stock headlines (coming soon)', group: 'Categories', comingSoon: true },
     { key: 'worldNewsEnabled', label: 'World headlines (coming soon)', group: 'Categories', comingSoon: true },
@@ -305,6 +308,8 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const variant = item.accentVariant
       || (item.eventType === 'earnings' ? 'earnings' : '')
       || (item.eventType === 'macro' ? (Number(item.importance || 0) >= 80 ? 'macro-critical' : 'macro') : '')
+      || (item.eventType === 'nfp' || item.eventType === 'gdp' ? 'macro' : '')
+      || (item.eventType === 'ipo' ? 'catalyst' : '')
       || (item.eventType === 'dividend' ? 'dividend' : '')
       || (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news' ? 'news' : '')
       || 'catalyst';
@@ -314,6 +319,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   function compactTypeLabel(item = {}) {
     if (item.eventType === 'earnings') return 'Earnings';
     if (item.eventType === 'macro') return 'Macro';
+    if (item.eventType === 'nfp') return 'Jobs Report';
+    if (item.eventType === 'gdp') return 'GDP Release';
+    if (item.eventType === 'ipo') return 'IPO';
     if (item.eventType === 'dividend') return 'Dividend';
     if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'News';
     const badge = String(item.badgeLabel || '').toLowerCase();
@@ -326,6 +334,9 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
   function compactPillLabel(item = {}) {
     if (item.eventType === 'earnings') return 'earnings';
     if (item.eventType === 'macro') return 'macro';
+    if (item.eventType === 'nfp') return 'jobs';
+    if (item.eventType === 'gdp') return 'gdp';
+    if (item.eventType === 'ipo') return 'ipo';
     if (item.eventType === 'dividend') return 'dividend';
     if (item.eventType === 'news' || item.eventType === 'stock_news' || item.eventType === 'world_news') return 'news';
     return String(item.badgeLabel || 'update').toLowerCase();
@@ -494,11 +505,16 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
     const countdownText = computeTimeToEvent(rowDate) || '';
     const exposureLabel = resolveExposureLabel(item);
     const isPortfolioEarnings = item.eventType === 'earnings' && item.isPortfolioRelevant;
+    const isMarketEarnings = item.isMarketEarnings === true && !item.isPortfolioRelevant;
     const rowPriorityClass = isPortfolioEarnings
       ? 'news-event-row--priority'
-      : (item.isHighImportance ? 'news-event-row--elevated' : 'news-event-row--standard');
+      : isMarketEarnings
+        ? 'news-event-row--market'
+        : (item.isHighImportance ? 'news-event-row--elevated' : 'news-event-row--standard');
     const macroClass = item.eventType === 'macro' ? 'news-event-row--macro' : '';
     const dividendClass = item.eventType === 'dividend' ? 'news-event-row--dividend' : '';
+    const marketBadge = isMarketEarnings
+      ? '<span class="news-event-row__badge news-event-row__badge--market">Market</span>' : '';
     const sourceLink = item.sourceUrl
       ? `<a class="news-source-link news-source-link--row" href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer">↗</a>`
       : '';
@@ -511,6 +527,7 @@ if (typeof window === 'undefined' || typeof document === 'undefined') {
         </div>
         <div class="news-event-row__time">${timingText}</div>
         <div class="news-event-row__meta">
+          ${marketBadge}
           ${highBadge}
           ${newEstBadge}
           ${fomcProb}

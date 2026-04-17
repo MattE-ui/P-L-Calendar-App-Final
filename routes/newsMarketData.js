@@ -19,7 +19,8 @@ const {
   getMetrics,
   getCompanyNews,
   getRecommendations,
-  getPriceTarget
+  getPriceTarget,
+  getEarningsCalendar
 } = require('../services/news/finnhubService');
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,93 @@ function deriveRatingLabel(period) {
   if (bullish >= bearish && bullish >= neutral) return 'Buy';
   if (bearish > bullish && bearish >= neutral) return 'Sell';
   return 'Hold';
+}
+
+// ---------------------------------------------------------------------------
+// Market-earnings: S&P 500 movers that broadly affect the market
+// ---------------------------------------------------------------------------
+
+const MARKET_MOVER_TICKERS = new Set([
+  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'JPM', 'V', 'UNH',
+  'XOM', 'WMT', 'LLY', 'JNJ', 'BAC', 'MA', 'PG', 'HD', 'CVX', 'MRK',
+  'ABBV', 'COST', 'PEP', 'KO', 'NFLX'
+]);
+
+const MARKET_EARNINGS_CACHE_KEY = 'market-earnings';
+const MARKET_EARNINGS_TTL_SECONDS = 60 * 60; // 1 hour
+
+/**
+ * Fetch upcoming earnings for well-known S&P 500 market movers from Finnhub's
+ * earnings calendar (next 45 days). Falls back to an empty array on any error.
+ *
+ * This function is also exported so it can be injected into the calendar read
+ * model service without making an internal HTTP round-trip.
+ *
+ * @returns {Promise<Array>} Array of event-compatible objects with isMarketEarnings: true
+ */
+async function fetchMarketEarnings() {
+  const cached = cache.get(MARKET_EARNINGS_CACHE_KEY);
+  if (cached) return cached;
+
+  const nowMs = Date.now();
+  const fromDate = new Date(nowMs).toISOString().slice(0, 10);
+  const toDate = new Date(nowMs + 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  let earningsCalendar = [];
+  try {
+    const data = await getEarningsCalendar(fromDate, toDate);
+    earningsCalendar = Array.isArray(data?.earningsCalendar) ? data.earningsCalendar : [];
+  } catch (err) {
+    console.warn('[MarketEarnings] Finnhub calendar fetch failed, falling back to empty list:', err.message);
+    return [];
+  }
+
+  // Filter to the hardcoded market-mover list
+  const filtered = earningsCalendar.filter(
+    (item) => item?.symbol && MARKET_MOVER_TICKERS.has(String(item.symbol).toUpperCase())
+  );
+
+  const results = filtered.map((item) => {
+    const ticker = String(item.symbol).toUpperCase();
+    const dateStr = String(item.date || '').slice(0, 10);
+    // Finnhub 'hour' field: 'bmo' = before market open (09:30 ET → 14:30 UTC),
+    // 'amc' = after market close (21:00 ET → 02:00+1 UTC), 'dmh' = during market hours.
+    // Use 14:30 UTC as a sensible default when hour is unknown.
+    const hourOffsets = { bmo: '13:30', amc: '21:00', dmh: '14:30' };
+    const hourKey = String(item.hour || '').toLowerCase();
+    const timeStr = hourOffsets[hourKey] || '14:30';
+    const scheduledAt = dateStr ? `${dateStr}T${timeStr}:00.000Z` : null;
+    if (!scheduledAt) return null;
+    return {
+      id: `earnings:market:${ticker}:${dateStr}`,
+      sourceType: 'earnings',
+      eventType: 'earnings',
+      title: `${ticker} Earnings`,
+      summary: `${ticker} quarterly earnings report.`,
+      ticker,
+      canonicalTicker: ticker,
+      importance: 75,
+      scheduledAt,
+      sourceName: 'Finnhub',
+      sourceUrl: null,
+      sourceExternalId: `finnhub:earnings:${ticker}:${dateStr}`,
+      status: 'upcoming',
+      isActive: true,
+      isMarketEarnings: true,
+      isPortfolioRelevant: false,
+      country: 'US',
+      region: 'US',
+      metadataJson: {
+        hour: hourKey || null,
+        epsEstimate: Number.isFinite(Number(item.epsEstimate)) ? Number(item.epsEstimate) : null,
+        revenueEstimate: Number.isFinite(Number(item.revenueEstimate)) ? Number(item.revenueEstimate) : null,
+        isMarketEarnings: true
+      }
+    };
+  }).filter(Boolean);
+
+  cache.set(MARKET_EARNINGS_CACHE_KEY, results, MARKET_EARNINGS_TTL_SECONDS);
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -562,5 +650,28 @@ module.exports = function makeNewsMarketDataRouter({ auth, asyncHandler, loadDB,
     res.json({ data: filtered });
   }));
 
+  // -------------------------------------------------------------------------
+  // GET /api/news/market-earnings
+  // -------------------------------------------------------------------------
+  // Returns upcoming earnings for ~25 major S&P 500 market movers regardless
+  // of the user's holdings. Cached for 1 hour.
+  // -------------------------------------------------------------------------
+  router.get('/market-earnings', auth, asyncHandler(async (req, res) => {
+    try {
+      const results = await fetchMarketEarnings();
+      res.json({ data: results });
+    } catch (err) {
+      console.error('[MarketEarnings] endpoint error:', err.message);
+      if (err.code === 'rate_limited') {
+        return res.status(429).json({ error: 'rate_limited', retryAfter: 60 });
+      }
+      res.status(503).json({ error: 'data_unavailable' });
+    }
+  }));
+
   return router;
 };
+
+// Export fetchMarketEarnings so server.js can inject it into the calendar read model
+// without making an internal HTTP round-trip.
+module.exports.fetchMarketEarnings = fetchMarketEarnings;

@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 
 const SOURCE_TYPES = ['macro', 'earnings', 'news', 'social_post'];
-const EVENT_TYPES = ['fomc', 'cpi', 'rate_decision', 'earnings', 'stock_news', 'world_news', 'internal_post'];
-const SCHEDULED_EVENT_TYPES = new Set(['fomc', 'cpi', 'rate_decision', 'earnings']);
+const EVENT_TYPES = ['fomc', 'cpi', 'rate_decision', 'nfp', 'gdp', 'ipo', 'earnings', 'stock_news', 'world_news', 'internal_post'];
+const SCHEDULED_EVENT_TYPES = new Set(['fomc', 'cpi', 'rate_decision', 'nfp', 'gdp', 'ipo', 'earnings']);
 const PUBLISHED_EVENT_TYPES = new Set(['stock_news', 'world_news', 'internal_post']);
 
 function normalizeString(value) {

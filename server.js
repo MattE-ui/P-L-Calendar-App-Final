@@ -53,6 +53,7 @@ const { createNewsNotificationDispatchService } = require('./services/news/newsN
 const { runNewsNotificationOutboxProcessor } = require('./services/news/newsNotificationOutboxProcessor');
 const { resolveOwnedTickerUniverse, deriveUserCurrentHoldingTickers, isEventRelevantToUser } = require('./services/news/ownedTickerUniverseService');
 const makeNewsMarketDataRouter = require('./routes/newsMarketData');
+const { fetchMarketEarnings } = makeNewsMarketDataRouter;
 const {
   parseCsvTable,
   parseIbkrDateTime,
@@ -169,6 +170,7 @@ const newsReadModelService = createNewsReadModelService({
   resolveUserWatchlistTickerUniverse: (userId) => resolveUserWatchlistTickerUniverse(loadDB(), userId),
   getUserNewsPreferences: (userId) => newsPreferenceService.getUserNewsPreferences(userId),
   listNewsSourceProfiles: () => newsSourceRegistryService.listSources(),
+  fetchMarketEarnings: typeof fetchMarketEarnings === 'function' ? fetchMarketEarnings : async () => [],
   logger: console
 });
 
@@ -18820,15 +18822,15 @@ app.get('/api/news/for-you', auth, (req, res) => {
   res.json(model);
 });
 
-app.get('/api/news/calendar', auth, (req, res) => {
-  const model = newsReadModelService.getCalendarNewsModel({
+app.get('/api/news/calendar', auth, asyncHandler(async (req, res) => {
+  const model = await newsReadModelService.getCalendarNewsModel({
     userId: req.username,
     limit: parseNewsEventsLimit(req.query?.limit),
     cursor: typeof req.query?.cursor === 'string' ? req.query.cursor.trim() : '',
     filters: getNewsReadModelFilters(req.query)
   });
   res.json(model);
-});
+}));
 
 app.get('/api/news/latest', auth, (req, res) => {
   const model = newsReadModelService.getLatestNewsModel({

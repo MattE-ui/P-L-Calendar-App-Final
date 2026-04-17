@@ -1,5 +1,7 @@
 const { fetchFedFomcEvents } = require('../../providers/macro/fedFomcProvider');
 const { fetchBlsCpiEvents } = require('../../providers/macro/blsCpiProvider');
+const { fetchBlsNfpEvents } = require('../../providers/macro/blsNfpProvider');
+const { fetchBeaGdpEvents } = require('../../providers/macro/beaGdpProvider');
 
 function createProviderDiagnostic(name) {
   return {
@@ -24,7 +26,9 @@ async function runMacroIngestion({ newsEventService, providers, logger = console
   const startedAt = Date.now();
   const providerConfig = providers || [
     { name: 'fomc', fetch: fetchFedFomcEvents },
-    { name: 'cpi', fetch: fetchBlsCpiEvents }
+    { name: 'cpi', fetch: fetchBlsCpiEvents },
+    { name: 'nfp', fetch: fetchBlsNfpEvents },
+    { name: 'gdp', fetch: fetchBeaGdpEvents }
   ];
 
   const diagnostics = {

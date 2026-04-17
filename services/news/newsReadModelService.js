@@ -579,19 +579,52 @@ function getForYouNewsModel(deps, { userId, limit, cursor, filters = {} }) {
   };
 }
 
-function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
-  const { newsEventService, resolveUserTickerUniverse, logger = console } = deps;
+async function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
+  const {
+    newsEventService,
+    resolveUserTickerUniverse,
+    fetchMarketEarnings = async () => [],
+    logger = console
+  } = deps;
   const startedAt = Date.now();
   const normalizedFilters = normalizeFilters(filters);
   const context = { userId, userTickers: resolveUserTickerUniverse(userId), now: new Date().toISOString() };
 
-  const cards = applyFilterRows(newsEventService.listUpcomingEvents({}), normalizedFilters)
+  const localCards = applyFilterRows(newsEventService.listUpcomingEvents({}), normalizedFilters)
     .filter((event) => isScheduledSignal(event.sourceType, event.eventType))
     .map((event) => buildNewsEventCardModel(event, context))
     .filter((card) => normalizedFilters.includePast || card.isUpcoming)
     .filter((card) => !normalizedFilters.portfolioOnly || card.isPortfolioRelevant)
-    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance)
-    .sort(sortStableByTimestampAsc);
+    .filter((card) => !normalizedFilters.highImportanceOnly || card.isHighImportance);
+
+  // Build a set of ticker+date keys already covered by portfolio earnings to avoid duplicates
+  const existingEarningsKeys = new Set(
+    localCards
+      .filter((c) => c.eventType === 'earnings')
+      .map((c) => `${normalizeTickerForMatch(c.canonicalTicker || c.ticker)}|${String(c.scheduledAt || '').slice(0, 10)}`)
+  );
+
+  let marketEarningsCards = [];
+  try {
+    const rawMarketEarnings = await fetchMarketEarnings();
+    if (Array.isArray(rawMarketEarnings) && rawMarketEarnings.length) {
+      for (const item of rawMarketEarnings) {
+        const key = `${normalizeTickerForMatch(item.ticker || '')}|${String(item.scheduledAt || '').slice(0, 10)}`;
+        if (existingEarningsKeys.has(key)) continue;
+        const card = buildNewsEventCardModel(item, context);
+        card.isMarketEarnings = true;
+        card.isPortfolioRelevant = false;
+        if (!normalizedFilters.includePast && !card.isUpcoming) continue;
+        if (normalizedFilters.portfolioOnly) continue; // market earnings are never portfolio-only
+        if (normalizedFilters.highImportanceOnly && !card.isHighImportance) continue;
+        marketEarningsCards.push(card);
+      }
+    }
+  } catch (error) {
+    logger.warn('[NewsReadModel] market-earnings fetch failed, continuing without.', { error: error?.message });
+  }
+
+  const cards = [...localCards, ...marketEarningsCards].sort(sortStableByTimestampAsc);
 
   const nowMs = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
@@ -621,6 +654,7 @@ function getCalendarNewsModel(deps, { userId, limit, cursor, filters = {} }) {
     userId,
     filters: normalizedFilters,
     counts: Object.fromEntries(sections.map((section) => [section.summary.key, section.summary.count])),
+    marketEarningsCount: marketEarningsCards.length,
     durationMs: Date.now() - startedAt,
     pagination: paged.pagination
   });
