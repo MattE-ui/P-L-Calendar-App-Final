@@ -843,11 +843,13 @@ async function refreshAnalytics() {
   document.querySelector('#analytics-range').textContent = rangeText.join(' ') || 'All time';
   updateFilterChips();
 
-  const summary = await api(`/api/analytics/summary${query}`);
-  const equityRes = await api(`/api/analytics/equity-curve${query}`);
-  const drawdownRes = await api(`/api/analytics/drawdown${query}`);
-  const distRes = await api(`/api/analytics/distribution${query}`);
-  const streakRes = await api(`/api/analytics/streaks${query}`);
+  const [summary, equityRes, drawdownRes, distRes, streakRes] = await Promise.all([
+    api(`/api/analytics/summary${query}`),
+    api(`/api/analytics/equity-curve${query}`),
+    api(`/api/analytics/drawdown${query}`),
+    api(`/api/analytics/distribution${query}`),
+    api(`/api/analytics/streaks${query}`),
+  ]);
 
   updateKpis(summary.summary || {}, distRes.distribution || {}, drawdownRes.drawdown || {}, streakRes.streaks || {});
   renderEquityCurve(equityRes.curve || []);

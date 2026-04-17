@@ -19,6 +19,7 @@ try {
 } catch (error) {
   console.warn('Nodemailer not installed; falling back to console email logging.');
 }
+const compression = require('compression');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const analytics = require('./lib/analytics');
 const { createNewsEventService, isScheduledSignal, isPublishedSignal } = require('./services/news/newsEventService');
@@ -13744,6 +13745,7 @@ function bootstrapIbkrSchedules() {
   }
 }
 
+app.use(compression());
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -13836,8 +13838,8 @@ app.use('/api', (req, res, next) => {
 });
 
 // static
-app.use(AVATAR_PUBLIC_PREFIX.replace(/\/$/, ''), express.static(AVATAR_STORAGE_DIR));
-app.use('/static', express.static(path.join(__dirname, 'static')));
+app.use(AVATAR_PUBLIC_PREFIX.replace(/\/$/, ''), express.static(AVATAR_STORAGE_DIR, { maxAge: '1d', etag: true, lastModified: true }));
+app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '7d', etag: true, lastModified: true }));
 app.get('/serviceWorker.js', (req,res)=>{
   const template = fs.readFileSync(path.join(__dirname,'serviceWorker.js'),'utf-8');
   const fcmConfig = JSON.stringify(getNotificationConfig());
