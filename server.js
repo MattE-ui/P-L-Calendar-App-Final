@@ -12768,8 +12768,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       const selectedAccountRecord = existingAccounts[integratedAccount.id] && typeof existingAccounts[integratedAccount.id] === 'object'
         ? existingAccounts[integratedAccount.id]
         : {};
-      const accountCashIn = isManualEntry ? Number(selectedAccountRecord.cashIn ?? 0) : cashIn;
-      const accountCashOut = isManualEntry ? Number(selectedAccountRecord.cashOut ?? 0) : cashOut;
+      const accountCashIn = Number(selectedAccountRecord.cashIn ?? 0);
+      const accountCashOut = Number(selectedAccountRecord.cashOut ?? 0);
       payload.accounts = {
         ...existingAccounts,
         [integratedAccount.id]: {
@@ -13514,8 +13514,13 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
   const ym = dateKey.slice(0, 7);
   history[ym] ||= {};
   const existing = history[ym][dateKey] || {};
-  let cashIn = Number(existing.cashIn ?? 0);
-  let cashOut = Number(existing.cashOut ?? 0);
+  const integratedAccount = getIntegratedTradingAccount(user, 'ibkr');
+  const ibkrExistingAccounts = existing.accounts && typeof existing.accounts === 'object' ? existing.accounts : {};
+  const ibkrAccountRecord = integratedAccount?.id && ibkrExistingAccounts[integratedAccount.id] && typeof ibkrExistingAccounts[integratedAccount.id] === 'object'
+    ? ibkrExistingAccounts[integratedAccount.id]
+    : {};
+  let cashIn = Number(ibkrAccountRecord.cashIn ?? 0);
+  let cashOut = Number(ibkrAccountRecord.cashOut ?? 0);
   const netDepositsMeta = extractIbkrNetDeposits(snapshot.raw?.summary, snapshot.raw?.ledger);
   if (netDepositsMeta && Number.isFinite(netDepositsMeta.value)) {
     const netDepositsCurrency = netDepositsMeta.currency || rootCurrency || 'GBP';
@@ -13538,7 +13543,6 @@ async function applyIbkrSnapshotToUser(user, snapshot, derivedStopByTicker = {})
       cfg.lastNetDeposits = netDepositsGBP;
     }
   }
-  const integratedAccount = getIntegratedTradingAccount(user, 'ibkr');
   const payload = {
     ...existing,
     end: Number.isFinite(nextPortfolio) ? nextPortfolio : existing.end,
