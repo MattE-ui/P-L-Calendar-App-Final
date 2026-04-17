@@ -13757,6 +13757,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use('/api', (req, res, next) => {
+  if (!shouldEnablePerfDiagnostics(req)) return next();
   const startedAt = process.hrtime.bigint();
   const enabled = shouldEnablePerfDiagnostics(req);
   const routePath = req.path || req.originalUrl || '';
@@ -13975,6 +13976,32 @@ function createSession(db, username, res, maxAgeMs = 7 * 24 * 60 * 60 * 1000, re
     maxAge: maxAgeMs
   });
   return token;
+}
+
+// API response cache — short TTL cache for expensive read-only endpoints
+const apiCache = new Map();
+
+function getCached(key) {
+  const entry = apiCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > entry.ttl) {
+    apiCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCached(key, data, ttlMs) {
+  if (apiCache.size > 200) {
+    apiCache.delete(apiCache.keys().next().value);
+  }
+  apiCache.set(key, { data, cachedAt: Date.now(), ttl: ttlMs });
+}
+
+function invalidateUserCache(username) {
+  for (const key of apiCache.keys()) {
+    if (key.includes(`:${username}`)) apiCache.delete(key);
+  }
 }
 
 app.post('/api/signup', asyncHandler(async (req,res)=>{
@@ -21616,6 +21643,9 @@ app.get('/api/pl', auth, (req,res)=>{
   const selectedMonthKey = year && month ? `${year}-${String(month).padStart(2,'0')}` : '';
   const includeTrades = req.query?.includeTrades !== '0';
   const visibleWindowOnly = ['1', 'true', 'yes'].includes(String(req.query?.visibleWindowOnly || '').toLowerCase());
+  const cacheKey = `pl:${req.username}:${year}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
@@ -21665,16 +21695,19 @@ app.get('/api/pl', auth, (req,res)=>{
       dashboardOriginDateKnown: !!firstRecordedDate,
       dashboardOriginTileInWindow: originInWindow
     });
-    return res.json({
+    const responseData = {
       ...monthPayload,
       __meta: {
         firstRecordedDate,
         selectedMonthKey,
         originTileInWindow: originInWindow
       }
-    });
+    };
+    setCached(cacheKey, responseData, 30000);
+    return res.json(responseData);
   }
   req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots || {}).length, cache: 'bypass' });
+  setCached(cacheKey, snapshots, 30000);
   res.json(snapshots);
 });
 
@@ -21803,6 +21836,7 @@ app.post('/api/pl', auth, (req,res)=>{
   }
   normalizePortfolioHistory(user);
   refreshAnchors(user, history);
+  invalidateUserCache(req.username);
   saveDB(db);
   res.json({ ok: true });
 });
@@ -23916,6 +23950,9 @@ function shapeTradeSummary(trade = {}) {
 }
 
 app.get('/api/trades', auth, async (req, res) => {
+  const cacheKey = `trades:${req.username}:${JSON.stringify(req.query)}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
@@ -23971,7 +24008,7 @@ app.get('/api/trades', auth, async (req, res) => {
     serializationTrimmed,
     responseBytesReduced: summaryMode ? Math.max(0, untrimmedSizeBytes - payloadSizeBytes) : 0
   });
-  res.json({
+  const tradesResponseData = {
     trades: responseTrades,
     total,
     limit,
@@ -23980,7 +24017,9 @@ app.get('/api/trades', auth, async (req, res) => {
     hasMore: pageEnd < total,
     summaryMode,
     paginated: true
-  });
+  };
+  setCached(cacheKey, tradesResponseData, 15000);
+  res.json(tradesResponseData);
 });
 
 app.get('/api/weekly-recap/latest', auth, (req, res) => {
@@ -24990,6 +25029,7 @@ app.post('/api/trades', auth, async (req, res) => {
     eventType: isClosedOnCreate ? 'trade_closed' : 'trade_opened',
     context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
   }).catch((error) => console.warn('[Notifications] trade create event failed:', error?.message || error));
+  invalidateUserCache(req.username);
   saveDB(db);
   res.json({
     ok: true,
@@ -25280,6 +25320,7 @@ app.put('/api/trades/:id', auth, async (req, res) => {
       context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
     }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
   }
+  invalidateUserCache(req.username);
   saveDB(db);
   res.json({ ok: true, trade: applyInstrumentMappingToTrade({ ...trade, openDate: found.dateKey }, db, req.username) });
 });
@@ -25332,6 +25373,7 @@ app.post('/api/trades/:id/trim', auth, async (req, res) => {
       });
     }
   }
+  invalidateUserCache(req.username);
   saveDB(db);
   res.json({
     ok: true,
@@ -25362,6 +25404,7 @@ app.delete('/api/trades/:id', auth, (req, res) => {
     revertHistoryForClose(user, history, closedDate, pnl);
   }
   user.trades.splice(index, 1);
+  invalidateUserCache(req.username);
   saveDB(db);
   res.json({ ok: true });
 });
@@ -25445,6 +25488,7 @@ app.post('/api/trades/close', auth, (req, res) => {
           eventType: 'trade_closed',
           context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
         }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
+        invalidateUserCache(req.username);
         saveDB(db);
         return res.json({
           ok: true,
@@ -25470,6 +25514,7 @@ app.post('/api/trades/close', auth, (req, res) => {
         eventType: 'trade_closed',
         context: { symbol: trade.symbol || trade.displaySymbol, tradeId: trade.id }
       }).catch((error) => console.warn('[Notifications] trade close event failed:', error?.message || error));
+      invalidateUserCache(req.username);
       saveDB(db);
       res.json({
         ok: true,
@@ -25834,6 +25879,9 @@ async function loadFilteredTrades(username, query = {}) {
 }
 
 app.get('/api/analytics/summary', auth, async (req, res) => {
+  const cacheKey = `analytics:summary:${req.username}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
@@ -25843,7 +25891,7 @@ app.get('/api/analytics/summary', auth, async (req, res) => {
   const dist = analytics.distribution(closed);
   const streak = analytics.streaks(closed);
   const breakdown = analytics.breakdowns(closed);
-  res.json({
+  const responseData = {
     range: {
       from: req.query?.from || null,
       to: req.query?.to || null
@@ -25863,40 +25911,62 @@ app.get('/api/analytics/summary', auth, async (req, res) => {
     },
     breakdowns: breakdown,
     streaks: streak
-  });
+  };
+  setCached(cacheKey, responseData, 60000);
+  res.json(responseData);
 });
 
 app.get('/api/analytics/equity-curve', auth, async (req, res) => {
+  const cacheKey = `analytics:equity-curve:${req.username}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
   const curve = analytics.equityCurve(closed);
-  res.json({ curve });
+  const responseData = { curve };
+  setCached(cacheKey, responseData, 60000);
+  res.json(responseData);
 });
 
 app.get('/api/analytics/drawdown', auth, async (req, res) => {
+  const cacheKey = `analytics:drawdown:${req.username}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
   const curve = analytics.equityCurve(closed);
   const dd = analytics.drawdowns(curve);
-  res.json({ drawdown: dd });
+  const responseData = { drawdown: dd };
+  setCached(cacheKey, responseData, 60000);
+  res.json(responseData);
 });
 
 app.get('/api/analytics/distribution', auth, async (req, res) => {
+  const cacheKey = `analytics:distribution:${req.username}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
   const dist = analytics.distribution(closed);
-  res.json({ distribution: dist });
+  const responseData = { distribution: dist };
+  setCached(cacheKey, responseData, 60000);
+  res.json(responseData);
 });
 
 app.get('/api/analytics/streaks', auth, async (req, res) => {
+  const cacheKey = `analytics:streaks:${req.username}`;
+  const cached = getCached(cacheKey);
+  if (cached) return res.json(cached);
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
   const streak = analytics.streaks(closed);
-  res.json({ streaks: streak });
+  const responseData = { streaks: streak };
+  setCached(cacheKey, responseData, 60000);
+  res.json(responseData);
 });
 
 function bootstrapTrading212Schedules() {
