@@ -6127,11 +6127,20 @@ function ensureTradeJournal(user) {
   return user.tradeJournal;
 }
 
+function extractTradeOpenDate(trade) {
+  if (!trade || typeof trade !== 'object') return '';
+  const cleanDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (typeof trade.openDate === 'string' && cleanDate.test(trade.openDate)) return trade.openDate;
+  if (typeof trade.entryDate === 'string' && cleanDate.test(trade.entryDate)) return trade.entryDate;
+  if (typeof trade.createdAt === 'string' && trade.createdAt.length >= 10) return trade.createdAt.slice(0, 10);
+  return '';
+}
+
 function buildJournalViewFromTrades(user) {
   const out = {};
   for (const trade of (Array.isArray(user?.trades) ? user.trades : [])) {
     if (!trade || typeof trade !== 'object') continue;
-    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
+    const dateKey = extractTradeOpenDate(trade);
     if (!dateKey) continue;
     if (!out[dateKey]) out[dateKey] = [];
     out[dateKey].push(trade);
@@ -7361,7 +7370,7 @@ function flattenTrades(user, rates = {}, options = {}) {
   const to = typeof options.to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(options.to) ? options.to : null;
   for (const trade of rawTrades) {
     if (!trade || typeof trade !== 'object') continue;
-    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
+    const dateKey = extractTradeOpenDate(trade);
     if (from && dateKey < from) continue;
     if (to && dateKey > to) continue;
     const normalized = normalizeTradeMeta(trade);
@@ -7462,7 +7471,7 @@ function findTradeById(user, id) {
   for (let index = 0; index < trades.length; index += 1) {
     const trade = trades[index];
     if (trade && trade.id === id) {
-      return { trade, dateKey: typeof trade.openDate === 'string' ? trade.openDate : '', index };
+      return { trade, dateKey: extractTradeOpenDate(trade), index };
     }
   }
   return null;
@@ -23118,7 +23127,7 @@ async function buildActiveTrades(user, rates = {}) {
   for (const trade of rawTrades) {
     if (!trade || typeof trade !== 'object') continue;
     {
-      const canonicalTrade = { ...trade, openDate: trade.openDate || '' };
+      const canonicalTrade = { ...trade, openDate: extractTradeOpenDate(trade) };
       const positionState = deriveTradePositionState(canonicalTrade, rates);
       const includeByCanonicalOpenQty = positionState.isValid && positionState.openQuantity > 0;
       const source = trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual'));
@@ -23152,7 +23161,7 @@ async function buildActiveTrades(user, rates = {}) {
       if (!includeByCanonicalOpenQty) continue;
       const base = {
         ...trade,
-        date: trade.openDate || '',
+        date: extractTradeOpenDate(trade),
         executions: positionState.executions,
         entryExecutions: positionState.entries,
         exitExecutions: positionState.exits,
@@ -23545,7 +23554,7 @@ function computeActiveTradesFingerprint(user) {
   const dateBuckets = new Set();
   for (const trade of rawTrades) {
     if (!trade || typeof trade !== 'object') continue;
-    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
+    const dateKey = extractTradeOpenDate(trade);
     if (dateKey && !dateBuckets.has(dateKey)) { dateBuckets.add(dateKey); bucketCount += 1; }
     tradeCount += 1;
     const status = String(trade.status || '');
@@ -24852,7 +24861,7 @@ app.post('/api/trades', auth, async (req, res) => {
       source: 'manual',
     executions: hasExecutionInput ? normalizedExecutionInput : undefined
     });
-  trade.openDate = targetDate;
+  trade.entryDate = targetDate;
   user.trades.push(trade);
   if (hasExecutionInput) {
     const executionSummary = summarizeExecutionLegs(trade, rates);

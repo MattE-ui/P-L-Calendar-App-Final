@@ -54,7 +54,9 @@ function flattenTradeJournalForUser(user = {}, userId = '') {
     .map(t => ({
       ...t,
       __ownerUserId: userId,
-      __tradeDate: typeof t.openDate === 'string' ? t.openDate : '',
+      __tradeDate: typeof t.openDate === 'string' && t.openDate ? t.openDate
+        : typeof t.entryDate === 'string' && t.entryDate ? t.entryDate
+        : (typeof t.createdAt === 'string' && t.createdAt.length >= 10 ? t.createdAt.slice(0, 10) : ''),
       __tradeSource: 'user.trades'
     }));
 }
