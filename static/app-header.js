@@ -890,6 +890,8 @@
     window.socialRequestSync = createSocialRequestSync();
   }
 
+  const tradeGroupRefreshChannel = window.AppRefreshCoordinator?.createChannel('social-trade-group-notifications');
+
   window.socialRequestSync.startPolling();
 
   const state = {
@@ -904,7 +906,6 @@
     tradeGroupNotifications: [],
     hiddenTradeGroupNotificationIds: new Set()
   };
-  const tradeGroupRefreshChannel = window.AppRefreshCoordinator?.createChannel('social-trade-group-notifications');
 
   function createAlertShell() {
     if (document.getElementById('global-friend-request-alert')) return;

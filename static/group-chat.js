@@ -704,7 +704,7 @@
         method: 'POST',
         body: JSON.stringify({
           content: savedText, rawText: savedText,
-          replyToMessageId: savedReply?.id || null
+          replyToMessageId: savedReply?.id ?? undefined
         })
       });
 
@@ -729,7 +729,7 @@
       textarea.value = savedText;
       resizeTextarea();
       if (savedReply) setReplyTo(savedReply);
-      showInputError(e.data?.error || 'Failed to send. Try again.');
+      showInputError(typeof e.data?.error === 'string' ? e.data.error : 'Failed to send. Try again.');
     } finally {
       state.sending = false;
       sendBtn.disabled = textarea.value.trim().length === 0;

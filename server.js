@@ -2598,14 +2598,11 @@ function isBrokerConnected(user) {
 }
 
 function canBePlatformVerified(user) {
-  const journal = user?.tradeJournal || {};
+  const trades = Array.isArray(user?.trades) ? user.trades : [];
   let closedWithPnL = 0;
-  for (const trades of Object.values(journal)) {
-    if (!Array.isArray(trades)) continue;
-    for (const trade of trades) {
-      if (trade?.status === 'closed' && Number.isFinite(Number(trade?.realizedPnlGBP))) {
-        closedWithPnL += 1;
-      }
+  for (const trade of trades) {
+    if (trade?.status === 'closed' && Number.isFinite(Number(trade?.realizedPnlGBP))) {
+      closedWithPnL += 1;
     }
   }
   return closedWithPnL >= 5;
@@ -6130,6 +6127,18 @@ function ensureTradeJournal(user) {
   return user.tradeJournal;
 }
 
+function buildJournalViewFromTrades(user) {
+  const out = {};
+  for (const trade of (Array.isArray(user?.trades) ? user.trades : [])) {
+    if (!trade || typeof trade !== 'object') continue;
+    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
+    if (!dateKey) continue;
+    if (!out[dateKey]) out[dateKey] = [];
+    out[dateKey].push(trade);
+  }
+  return out;
+}
+
 function ensureImportBatches(user) {
   if (!user) return [];
   if (!Array.isArray(user.importBatches)) {
@@ -7346,57 +7355,56 @@ function computeGuaranteedPnl(trade, rates = {}) {
 }
 
 function flattenTrades(user, rates = {}, options = {}) {
-  const journal = ensureTradeJournal(user);
+  const rawTrades = Array.isArray(user?.trades) ? user.trades : [];
   const trades = [];
   const from = typeof options.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(options.from) ? options.from : null;
   const to = typeof options.to === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(options.to) ? options.to : null;
-  for (const [dateKey, items] of Object.entries(journal)) {
+  for (const trade of rawTrades) {
+    if (!trade || typeof trade !== 'object') continue;
+    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
     if (from && dateKey < from) continue;
     if (to && dateKey > to) continue;
-    for (const trade of items || []) {
-      if (!trade || typeof trade !== 'object') continue;
-      const normalized = normalizeTradeMeta(trade);
-      const base = { ...normalized, openDate: dateKey };
-      base.currency = base.currency || 'GBP';
-      if (!base.createdAt) {
-        base.createdAt = new Date().toISOString();
-      }
-      const executionSummary = deriveTradePositionState(base, rates);
-      base.executions = executionSummary.executions;
-      base.entryExecutions = executionSummary.entries;
-      base.exitExecutions = executionSummary.exits;
-      base.totalEnteredQuantity = executionSummary.totalEntered;
-      base.totalExitedQuantity = executionSummary.totalExited;
-      base.openQuantity = executionSummary.openQuantity;
-      base.avgEntryPrice = executionSummary.avgEntry;
-      base.avgExitPrice = executionSummary.avgExit;
-      base.status = executionSummary.status;
-      if (Number.isFinite(executionSummary.avgEntry) && executionSummary.avgEntry > 0) {
-        base.entry = executionSummary.avgEntry;
-      }
-      if (Number.isFinite(executionSummary.openQuantity) && executionSummary.openQuantity >= 0) {
-        base.sizeUnits = executionSummary.openQuantity;
-      }
-      if (executionSummary.status !== 'open' && Number.isFinite(executionSummary.avgExit)) {
-        base.closePrice = executionSummary.avgExit;
-      }
-      if (executionSummary.lastExitDate) {
-        base.closeDate = executionSummary.lastExitDate;
-      }
-      const pnl = computeRealizedPnl(base, rates);
-      if (pnl) {
-        base.realizedPnlGBP = pnl.realizedPnlGBP;
-        base.realizedPnlCurrency = pnl.realizedPnlCurrency;
-        base.rMultiple = pnl.rMultiple;
-      }
-      const guaranteedPnlGBP = computeGuaranteedPnl(base, rates);
-      if (guaranteedPnlGBP !== null) {
-        base.guaranteedPnlGBP = guaranteedPnlGBP;
-      }
-      const closeDate = typeof base.closeDate === 'string' ? base.closeDate : null;
-      base.closeDate = closeDate || base.close_at || base.openDate;
-      trades.push(base);
+    const normalized = normalizeTradeMeta(trade);
+    const base = { ...normalized, openDate: dateKey };
+    base.currency = base.currency || 'GBP';
+    if (!base.createdAt) {
+      base.createdAt = new Date().toISOString();
     }
+    const executionSummary = deriveTradePositionState(base, rates);
+    base.executions = executionSummary.executions;
+    base.entryExecutions = executionSummary.entries;
+    base.exitExecutions = executionSummary.exits;
+    base.totalEnteredQuantity = executionSummary.totalEntered;
+    base.totalExitedQuantity = executionSummary.totalExited;
+    base.openQuantity = executionSummary.openQuantity;
+    base.avgEntryPrice = executionSummary.avgEntry;
+    base.avgExitPrice = executionSummary.avgExit;
+    base.status = executionSummary.status;
+    if (Number.isFinite(executionSummary.avgEntry) && executionSummary.avgEntry > 0) {
+      base.entry = executionSummary.avgEntry;
+    }
+    if (Number.isFinite(executionSummary.openQuantity) && executionSummary.openQuantity >= 0) {
+      base.sizeUnits = executionSummary.openQuantity;
+    }
+    if (executionSummary.status !== 'open' && Number.isFinite(executionSummary.avgExit)) {
+      base.closePrice = executionSummary.avgExit;
+    }
+    if (executionSummary.lastExitDate) {
+      base.closeDate = executionSummary.lastExitDate;
+    }
+    const pnl = computeRealizedPnl(base, rates);
+    if (pnl) {
+      base.realizedPnlGBP = pnl.realizedPnlGBP;
+      base.realizedPnlCurrency = pnl.realizedPnlCurrency;
+      base.rMultiple = pnl.rMultiple;
+    }
+    const guaranteedPnlGBP = computeGuaranteedPnl(base, rates);
+    if (guaranteedPnlGBP !== null) {
+      base.guaranteedPnlGBP = guaranteedPnlGBP;
+    }
+    const closeDate = typeof base.closeDate === 'string' ? base.closeDate : null;
+    base.closeDate = closeDate || base.close_at || base.openDate;
+    trades.push(base);
   }
   return trades;
 }
@@ -7450,13 +7458,11 @@ function filterTrades(trades = [], filters = {}) {
 }
 
 function findTradeById(user, id) {
-  const journal = ensureTradeJournal(user);
-  for (const [dateKey, trades] of Object.entries(journal)) {
-    for (let index = 0; index < (trades || []).length; index += 1) {
-      const trade = trades[index];
-      if (trade && trade.id === id) {
-        return { trade, dateKey, index };
-      }
+  const trades = Array.isArray(user?.trades) ? user.trades : [];
+  for (let index = 0; index < trades.length; index += 1) {
+    const trade = trades[index];
+    if (trade && trade.id === id) {
+      return { trade, dateKey: typeof trade.openDate === 'string' ? trade.openDate : '', index };
     }
   }
   return null;
@@ -21509,8 +21515,7 @@ app.get('/api/pl', auth, (req,res)=>{
   }
   const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
   let mutated = normalizePortfolioHistory(user);
-  const journal = req.perfDiag?.timeSync('trade_journal_load', () => ensureTradeJournal(user)) || ensureTradeJournal(user);
-  if (normalizeTradeJournal(user)) mutated = true;
+  const journal = req.perfDiag?.timeSync('trade_journal_load', () => buildJournalViewFromTrades(user)) || buildJournalViewFromTrades(user);
   const { baseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   const mapper = createTradeInstrumentMapper(db, req.username);
@@ -23101,7 +23106,7 @@ async function fetchDailyLow(symbol, dateKey = null) {
 }
 
 async function buildActiveTrades(user, rates = {}) {
-  const journal = ensureTradeJournal(user);
+  const rawTrades = Array.isArray(user?.trades) ? user.trades : [];
   const trades = [];
   let liveOpenPnlGBP = 0;
   let openLossPotentialGBP = 0;
@@ -23110,10 +23115,10 @@ async function buildActiveTrades(user, rates = {}) {
   let providerCurrency = null;
   const ibkrTradeKeys = new Set();
   let loggedManualDebugSample = false;
-  for (const [dateKey, items] of Object.entries(journal)) {
-    for (const trade of items || []) {
-      if (!trade || typeof trade !== 'object') continue;
-      const canonicalTrade = { ...trade, openDate: dateKey };
+  for (const trade of rawTrades) {
+    if (!trade || typeof trade !== 'object') continue;
+    {
+      const canonicalTrade = { ...trade, openDate: trade.openDate || '' };
       const positionState = deriveTradePositionState(canonicalTrade, rates);
       const includeByCanonicalOpenQty = positionState.isValid && positionState.openQuantity > 0;
       const source = trade.source || (trade.trading212Id ? 'trading212' : (trade.ibkrPositionId ? 'ibkr' : 'manual'));
@@ -23147,7 +23152,7 @@ async function buildActiveTrades(user, rates = {}) {
       if (!includeByCanonicalOpenQty) continue;
       const base = {
         ...trade,
-        date: dateKey,
+        date: trade.openDate || '',
         executions: positionState.executions,
         entryExecutions: positionState.entries,
         exitExecutions: positionState.exits,
@@ -23532,31 +23537,31 @@ function dedupeActiveTradesByIdentity(trades = []) {
 }
 
 function computeActiveTradesFingerprint(user) {
-  const journal = ensureTradeJournal(user);
+  const rawTrades = Array.isArray(user?.trades) ? user.trades : [];
   let bucketCount = 0;
   let tradeCount = 0;
   let openCount = 0;
   const tradeVectors = [];
-  for (const [dateKey, items] of Object.entries(journal)) {
-    bucketCount += 1;
-    for (const trade of items || []) {
-      if (!trade || typeof trade !== 'object') continue;
-      tradeCount += 1;
-      const status = String(trade.status || '');
-      if (status !== 'closed') openCount += 1;
-      tradeVectors.push([
-        dateKey,
-        String(trade.id || ''),
-        status,
-        String(trade.updatedAt || trade.createdAt || ''),
-        String(trade.currentStop || ''),
-        String(trade.currentStopLastSyncedAt || ''),
-        String(trade.lastSyncPrice || ''),
-        String(trade.ppl || ''),
-        String(trade.sizeUnits || ''),
-        String(trade.openQuantity || '')
-      ].join('|'));
-    }
+  const dateBuckets = new Set();
+  for (const trade of rawTrades) {
+    if (!trade || typeof trade !== 'object') continue;
+    const dateKey = typeof trade.openDate === 'string' ? trade.openDate : '';
+    if (dateKey && !dateBuckets.has(dateKey)) { dateBuckets.add(dateKey); bucketCount += 1; }
+    tradeCount += 1;
+    const status = String(trade.status || '');
+    if (status !== 'closed') openCount += 1;
+    tradeVectors.push([
+      dateKey,
+      String(trade.id || ''),
+      status,
+      String(trade.updatedAt || trade.createdAt || ''),
+      String(trade.currentStop || ''),
+      String(trade.currentStopLastSyncedAt || ''),
+      String(trade.lastSyncPrice || ''),
+      String(trade.ppl || ''),
+      String(trade.sizeUnits || ''),
+      String(trade.openQuantity || '')
+    ].join('|'));
   }
   const ibkrLiveCount = Array.isArray(user?.ibkr?.livePositions) ? user.ibkr.livePositions.length : 0;
   const tradingSyncHint = String(user?.trading212?.lastSuccessfulSyncAt || user?.trading212?.lastSyncAt || '');
@@ -24753,10 +24758,9 @@ app.post('/api/trades', auth, async (req, res) => {
   if (tradeCurrency !== 'GBP' && !rates?.[tradeCurrency]) {
     return res.status(400).json({ error: `Missing FX rate for ${tradeCurrency}` });
   }
-  const journal = ensureTradeJournal(user);
+  if (!Array.isArray(user.trades)) user.trades = [];
   const history = ensurePortfolioHistory(user);
   normalizePortfolioHistory(user);
-  normalizeTradeJournal(user);
   const portfolioGBP = getPortfolioGBPForRisk(user);
   const portfolioInCurrency = convertGBPToCurrency(portfolioGBP, tradeCurrency, rates);
   if (!Number.isFinite(portfolioInCurrency) || portfolioInCurrency <= 0) {
@@ -24848,11 +24852,8 @@ app.post('/api/trades', auth, async (req, res) => {
       source: 'manual',
     executions: hasExecutionInput ? normalizedExecutionInput : undefined
     });
-  journal[targetDate] ||= [];
-  journal[targetDate].push(trade);
-  if (journal[targetDate].length > 50) {
-    journal[targetDate] = journal[targetDate].slice(-50);
-  }
+  trade.openDate = targetDate;
+  user.trades.push(trade);
   if (hasExecutionInput) {
     const executionSummary = summarizeExecutionLegs(trade, rates);
     if (!executionSummary.isValid) {
@@ -25238,7 +25239,6 @@ app.delete('/api/trades/:id', auth, (req, res) => {
   const found = findTradeById(user, req.params.id);
   if (!found) return res.status(404).json({ error: 'Trade not found' });
   const { dateKey, index, trade } = found;
-  const journal = ensureTradeJournal(user);
   const isProviderTrade = trade?.source === 'trading212' || trade?.trading212Id || trade?.source === 'ibkr' || trade?.ibkrPositionId;
   const closedDate = typeof trade?.closeDate === 'string' ? trade.closeDate : dateKey;
   const pnl = Number(trade?.realizedPnlGBP);
@@ -25251,10 +25251,7 @@ app.delete('/api/trades/:id', auth, (req, res) => {
     const history = ensurePortfolioHistory(user);
     revertHistoryForClose(user, history, closedDate, pnl);
   }
-  journal[dateKey].splice(index, 1);
-  if (!journal[dateKey].length) {
-    delete journal[dateKey];
-  }
+  user.trades.splice(index, 1);
   saveDB(db);
   res.json({ ok: true });
 });
@@ -25270,7 +25267,6 @@ app.post('/api/trades/close', auth, (req, res) => {
   const user = db.users[req.username];
   if (!user) return res.status(404).json({ error: 'User not found' });
   ensureUserShape(user, req.username);
-  const journal = ensureTradeJournal(user);
   const history = ensurePortfolioHistory(user);
   const found = findTradeById(user, id);
   if (!found || found.trade.status === 'closed') {

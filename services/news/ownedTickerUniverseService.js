@@ -48,23 +48,15 @@ function summarizeTrade(trade = {}) {
 }
 
 function flattenTradeJournalForUser(user = {}, userId = '') {
-  const journal = user?.tradeJournal && typeof user.tradeJournal === 'object'
-    ? user.tradeJournal
-    : {};
-  const flattened = [];
-  for (const [tradeDate, trades] of Object.entries(journal)) {
-    if (!Array.isArray(trades)) continue;
-    for (const trade of trades) {
-      if (!trade || typeof trade !== 'object') continue;
-      flattened.push({
-        ...trade,
-        __ownerUserId: userId,
-        __tradeDate: tradeDate,
-        __tradeSource: 'user.tradeJournal'
-      });
-    }
-  }
-  return flattened;
+  const trades = Array.isArray(user?.trades) ? user.trades : [];
+  return trades
+    .filter(t => t && typeof t === 'object')
+    .map(t => ({
+      ...t,
+      __ownerUserId: userId,
+      __tradeDate: typeof t.openDate === 'string' ? t.openDate : '',
+      __tradeSource: 'user.trades'
+    }));
 }
 
 function tradeMatchesUser(trade = {}, userId = '', user = null) {
@@ -107,7 +99,7 @@ function deriveUserCurrentHoldingTickers(db, userId, logger = console) {
   const diagnostics = {
     totalTradesInDb: trades.length,
     tradeSources: {
-      tradeJournal: journalTrades.length,
+      userTrades: journalTrades.length,
       tradesTable: tableTrades.length
     },
     rawTradesFound: 0,
