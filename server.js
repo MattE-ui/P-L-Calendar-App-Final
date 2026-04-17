@@ -12744,6 +12744,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     const cashIn = Number(existing.cashIn ?? 0);
     const cashOut = Number(existing.cashOut ?? 0);
     const isManualEntry = existing.manualEntry === true;
+    console.info(`[T212][sync] stale_read_check username=${username} dateKey=${dateKey} existingManualEntry=${existing.manualEntry ?? 'undefined'} cashIn=${cashIn} cashOut=${cashOut}`);
     const existingNote = typeof existing.note === 'string' ? existing.note.trim() : '';
     const integratedAccount = getIntegratedTradingAccount(user, 'trading212');
     const canonicalOwner = resolveCanonicalTrading212OwnerAccount(user);
@@ -12795,6 +12796,22 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     }
     if (existingNote) {
       payload.note = existingNote;
+    }
+    // Re-read the database immediately before writing to pick up any manual edits
+    // made during the async T212 API call window (race condition guard).
+    const freshDb = loadDB();
+    const freshUser = freshDb.users[username];
+    const freshEntry = freshUser?.portfolioHistory?.[ym]?.[dateKey];
+    console.info(`[T212][sync] pre_write_fresh_check username=${username} dateKey=${dateKey} freshManualEntry=${freshEntry?.manualEntry ?? 'undefined'} freshCashIn=${freshEntry?.cashIn ?? 'n/a'} freshCashOut=${freshEntry?.cashOut ?? 'n/a'}`);
+    if (freshEntry?.manualEntry === true) {
+      payload.cashIn = freshEntry.cashIn;
+      payload.cashOut = freshEntry.cashOut;
+      payload.manualEntry = true;
+    }
+    if (freshUser?.portfolioHistory) {
+      freshUser.portfolioHistory[ym] ||= {};
+      freshUser.portfolioHistory[ym][dateKey] = payload;
+      saveDB(freshDb);
     }
     history[ym][dateKey] = payload;
     if (Number.isFinite(combinedPortfolioValue)) {
