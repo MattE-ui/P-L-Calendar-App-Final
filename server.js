@@ -319,6 +319,11 @@ if (missingNotificationPublicEnv.length) {
   console.info('[Notifications] All required public web push env vars are present.');
 }
 
+// Session cache — avoids loadDB() on every authenticated request
+const sessionCache = new Map(); // key: token, value: { username, user, expiresAt, cachedAt }
+const SESSION_CACHE_TTL_MS = 60_000;
+const SESSION_CACHE_MAX = 500;
+
 const guestRateLimit = new Map();
 const ibkrRateLimit = new Map();
 const socialCodeLookupRateLimit = new Map();
@@ -5269,6 +5274,7 @@ function clearSessionsForUser(db, username) {
       if (db.sessionMetadata && typeof db.sessionMetadata === 'object') {
         delete db.sessionMetadata[token];
       }
+      sessionCache.delete(token);
     }
   }
 }
@@ -5298,10 +5304,20 @@ function auth(req, res, next) {
     });
     return res.status(401).json({ error: 'Unauthenticated' });
   }
+  const now = Date.now();
+  const cached = sessionCache.get(token);
+  if (cached && (now - cached.cachedAt) < SESSION_CACHE_TTL_MS) {
+    req.username = cached.username;
+    req.user = cached.user;
+    req.isGuest = !!cached.user.guest;
+    req.authToken = token;
+    return next();
+  }
   const db = loadDB();
   db.sessionMetadata ||= {};
   const username = db.sessions[token];
   if (!username) {
+    sessionCache.delete(token);
     console.info('[auth] protected request rejected', {
       path: req.originalUrl?.split('?')[0] || req.path,
       reason: 'unknown_session',
@@ -5311,6 +5327,7 @@ function auth(req, res, next) {
   }
   const user = db.users[username];
   if (!user) {
+    sessionCache.delete(token);
     console.info('[auth] protected request rejected', {
       path: req.originalUrl?.split('?')[0] || req.path,
       reason: 'missing_user',
@@ -5321,7 +5338,8 @@ function auth(req, res, next) {
   }
   if (user.guest && user.expiresAt) {
     const expiresAt = Date.parse(user.expiresAt);
-    if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) {
+    if (!Number.isNaN(expiresAt) && expiresAt <= now) {
+      sessionCache.delete(token);
       delete db.users[username];
       clearSessionsForUser(db, username);
       saveDB(db);
@@ -5331,6 +5349,10 @@ function auth(req, res, next) {
       });
     }
   }
+  if (sessionCache.size >= SESSION_CACHE_MAX) {
+    sessionCache.delete(sessionCache.keys().next().value);
+  }
+  sessionCache.set(token, { username, user, expiresAt: user.expiresAt || null, cachedAt: now });
   req.username = username;
   req.user = user;
   req.isGuest = !!user.guest;
@@ -14259,6 +14281,7 @@ app.post('/api/logout', (req,res)=>{
     if (db.sessionMetadata && typeof db.sessionMetadata === 'object') {
       delete db.sessionMetadata[token];
     }
+    sessionCache.delete(token);
     saveDB(db);
   }
   res.clearCookie(AUTH_COOKIE_NAME, AUTH_COOKIE_OPTIONS);
@@ -19948,6 +19971,7 @@ app.post('/api/account/password', auth, async (req, res) => {
   user.passwordHash = await bcrypt.hash(newPassword, 10);
   user.security ||= {};
   user.security.passwordUpdatedAt = new Date().toISOString();
+  for (const [t, entry] of sessionCache) { if (entry.username === req.username) sessionCache.delete(t); }
   saveDB(db);
   res.json({ ok: true });
 });
@@ -20114,6 +20138,7 @@ app.post('/api/security/2fa/verify', auth, (req, res) => {
   user.security.twoFactorEnabledAt = new Date().toISOString();
   user.security.twoFactorBackupCodeHashes = backupCodes.map(hashBackupCode);
   delete db.twoFactorSetups[setupId];
+  for (const [t, entry] of sessionCache) { if (entry.username === req.username) sessionCache.delete(t); }
   saveDB(db);
   console.info('[2FA] Enabled.', { username: req.username });
   res.json({ ok: true, backupCodes });
@@ -20130,6 +20155,7 @@ app.post('/api/security/2fa/disable', auth, (req, res) => {
   user.security.twoFactorBackupCodeHashes = [];
   user.security.twoFactorDisabledAt = new Date().toISOString();
   console.info('[2FA] Disabled.', { username: req.username });
+  for (const [t, entry] of sessionCache) { if (entry.username === req.username) sessionCache.delete(t); }
   saveDB(db);
   res.json({ ok: true });
 });
@@ -20172,6 +20198,7 @@ app.post('/api/account/security/sessions/logout', auth, (req, res) => {
   if (targetToken === req.authToken) return res.status(400).json({ error: 'Use regular logout for the current session.' });
   delete db.sessions[targetToken];
   delete db.sessionMetadata[targetToken];
+  sessionCache.delete(targetToken);
   saveDB(db);
   res.json({ ok: true });
 });
@@ -20183,6 +20210,7 @@ app.post('/api/account/security/sessions/logout-others', auth, (req, res) => {
     if (username === req.username && token !== req.authToken) {
       delete db.sessions[token];
       delete db.sessionMetadata[token];
+      sessionCache.delete(token);
     }
   }
   saveDB(db);
