@@ -678,7 +678,7 @@
     const overlay = document.getElementById('manage-overlay');
     const drawer = document.getElementById('manage-drawer');
     if (overlay) { overlay.hidden = false; overlay.removeAttribute('aria-hidden'); }
-    if (drawer) { drawer.hidden = false; }
+    if (drawer) { drawer.hidden = false; requestAnimationFrame(() => drawer.classList.add('ia-drawer-open')); }
     document.body.classList.add('ia-drawer-open');
   }
 
@@ -686,7 +686,7 @@
     const overlay = document.getElementById('manage-overlay');
     const drawer = document.getElementById('manage-drawer');
     if (overlay) { overlay.hidden = true; overlay.setAttribute('aria-hidden', 'true'); }
-    if (drawer) drawer.hidden = true;
+    if (drawer) { drawer.classList.remove('ia-drawer-open'); drawer.hidden = true; }
     document.body.classList.remove('ia-drawer-open');
     drawerInvestorId = null;
   }

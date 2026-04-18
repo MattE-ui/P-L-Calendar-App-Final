@@ -12898,7 +12898,7 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   display: flex;
   transform: translateX(100%);
 }
-.ia-drawer.ia-drawer--open {
+.ia-drawer.ia-drawer-open {
   transform: translateX(0);
 }
 body.ia-drawer-open {

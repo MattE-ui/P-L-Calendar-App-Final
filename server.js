@@ -14804,16 +14804,6 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
   res.status(201).json({ valuation: row });
 });
 
-app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  const summary = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
-  if (summary.error) return res.status(summary.error === 'Investor not found.' ? 404 : 400).json({ error: summary.error });
-  res.json(summary);
-});
-
 app.get('/api/master/investors/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
@@ -14847,6 +14837,16 @@ app.get('/api/master/investors/performance', requireMasterAuth, requireMasterInv
     };
   });
   res.json({ investors: items });
+});
+
+app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const summary = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
+  if (summary.error) return res.status(summary.error === 'Investor not found.' ? 404 : 400).json({ error: summary.error });
+  res.json(summary);
 });
 
 app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
