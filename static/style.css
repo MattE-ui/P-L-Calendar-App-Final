@@ -12786,22 +12786,16 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Show-deleted toggle row ────────────────────────────────── */
 .ia-show-deleted-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 6px 0 10px;
 }
 .ia-toggle-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   font-size: 13px;
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;
-}
-.ia-toggle-label input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--accent);
-  cursor: pointer;
 }
 
 /* ── Password field with generator button ───────────────────── */
@@ -12974,17 +12968,24 @@ body.ia-drawer-open {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.ia-perf-item__label {
+.ia-perf-item__label,
+.ia-perf-item > span:first-child {
   font-size: 11px;
   color: var(--text-dim);
-  margin: 0 0 4px;
+  margin: 0;
+  line-height: 1.3;
 }
-.ia-perf-item__value {
+.ia-perf-item__value,
+.ia-perf-item > strong {
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
   margin: 0;
+  line-height: 1.2;
 }
 
 /* ── Cashflow form inside drawer ────────────────────────────── */

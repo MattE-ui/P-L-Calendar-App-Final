@@ -199,8 +199,8 @@ function setHtml(id, value) {
 }
 
 async function renderInvestorDashboard(data) {
-  // Must-change-password guard: redirect if flag still set
-  if (data.mustChangePassword) {
+  // Must-change-password guard: redirect if flag still set (skip for master previews)
+  if (data.mustChangePassword && !data.preview) {
     window.location.href = '/investor/change-password';
     return;
   }
@@ -300,22 +300,38 @@ async function initInvestorDashboardOrPreview() {
   const previewBadge = document.getElementById('investor-preview-badge');
   if (previewBadge) previewBadge.hidden = !(isPreview && previewToken);
 
+  // Boot overlay — full-page branded loading screen
+  const bootOverlay = document.getElementById('investor-boot-overlay');
+  function showBootOverlay() {
+    if (!bootOverlay) return;
+    bootOverlay.classList.remove('hidden', 'is-exiting');
+    requestAnimationFrame(() => bootOverlay.classList.add('is-visible'));
+  }
+  function hideBootOverlay() {
+    if (!bootOverlay) return;
+    bootOverlay.classList.add('is-exiting');
+    bootOverlay.classList.remove('is-visible');
+    setTimeout(() => bootOverlay.classList.add('hidden'), 380);
+  }
+  showBootOverlay();
+
   async function load() {
-    if (loadingEl) loadingEl.hidden = false;
+    if (loadingEl) loadingEl.hidden = true; // inline spinner hidden while overlay is up
     if (errorEl) errorEl.hidden = true;
     contentEl.hidden = true;
 
     try {
       const data = await investorApi('/api/investor/me', {}, previewToken);
-      if (loadingEl) loadingEl.hidden = true;
+      hideBootOverlay();
       contentEl.hidden = false;
       await renderInvestorDashboard(data);
     } catch (error) {
-      if (loadingEl) loadingEl.hidden = true;
+      hideBootOverlay();
       if (error.status === 401 && !isPreview) {
         window.location.href = '/investor/login';
         return;
       }
+      if (loadingEl) loadingEl.hidden = true;
       if (errorEl) errorEl.hidden = false;
       if (errorMsgEl) errorMsgEl.textContent = error.message || 'Unable to load dashboard.';
     }

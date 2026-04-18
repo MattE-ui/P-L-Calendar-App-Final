@@ -15,7 +15,7 @@
   <header class="investor-header">
     <div class="investor-header__inner">
       <div class="investor-header__brand">
-        <span class="investor-header__logomark" aria-hidden="true">V</span>
+        <img class="investor-header__logo" src="/static/veracity-logo.png" alt="Veracity">
         <span class="investor-header__brand-label">VERACITY · INVESTOR PORTAL</span>
       </div>
       <div class="investor-header__account">
@@ -132,6 +132,15 @@
 
     </div>
   </main>
+
+  <div id="investor-boot-overlay" class="dashboard-loading-overlay hidden" role="status" aria-label="Loading investor portal">
+    <div class="dashboard-loading-overlay__content">
+      <img class="dashboard-loading-overlay__logo" src="/static/veracity-logo.png" alt="Veracity Trading Suite">
+      <div class="dashboard-loading-overlay__progress" aria-hidden="true">
+        <span class="dashboard-loading-overlay__progress-line"></span>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/investor-portal.js"></script>
 </body>

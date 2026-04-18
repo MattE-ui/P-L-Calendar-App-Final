@@ -1,24 +1,33 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Investor Activation</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investor Portal — Activate Account</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/investor-portal.css">
 </head>
-<body>
-  <main class="auth-shell">
-    <section class="auth-card">
-      <h1>Activate investor access</h1>
-      <p class="helper">Create a password for your investor portal.</p>
-      <input id="investor-activate-password" type="password" placeholder="New password">
-      <input id="investor-activate-password-confirm" type="password" placeholder="Confirm password">
-      <button id="investor-activate-btn" class="primary">Activate account</button>
-      <div id="investor-activate-error" class="error"></div>
-      <div id="investor-activate-ok" class="helper"></div>
+<body class="investor-auth-body">
+  <main class="investor-auth-shell">
+    <div class="investor-auth-brand">
+      <img class="investor-auth-logo" src="/static/veracity-logo.png" alt="Veracity">
+    </div>
+    <section class="investor-auth-card">
+      <h1 class="investor-auth-title">Activate investor access</h1>
+      <p class="investor-auth-subtitle">Create a password for your investor portal account.</p>
+
+      <label for="investor-activate-password">New password</label>
+      <input id="investor-activate-password" type="password" autocomplete="new-password" placeholder="12+ chars, upper, lower, number, symbol">
+
+      <label for="investor-activate-password-confirm">Confirm password</label>
+      <input id="investor-activate-password-confirm" type="password" autocomplete="new-password" placeholder="Repeat new password">
+
+      <button id="investor-activate-btn" class="primary investor-auth-submit" type="button">Activate account</button>
+      <div id="investor-activate-error" class="error" style="min-height:1.2em"></div>
+      <div id="investor-activate-ok" class="helper" style="min-height:1.2em"></div>
     </section>
   </main>
   <script src="/static/investor-portal.js"></script>
