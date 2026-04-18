@@ -5406,6 +5406,11 @@ function ensureInvestorTables(db) {
     if (invite.used_at && !invite.usedAt) invite.usedAt = invite.used_at;
     if (invite.investor_profile_id && !invite.investorProfileId) invite.investorProfileId = invite.investor_profile_id;
   }
+
+  for (const profile of db.investorProfiles) {
+    if (!('deletedAt' in profile)) profile.deletedAt = null;
+    if (!('deletedBy' in profile)) profile.deletedBy = null;
+  }
 }
 
 function appBaseUrl(req) {
@@ -5675,8 +5680,8 @@ function requireInvestorAuth(req, res, next) {
   if (!authContext?.investorProfileId) return res.status(401).json({ error: 'Unauthenticated investor session.' });
   const profile = db.investorProfiles.find(p => p.id === authContext.investorProfileId);
   if (!profile) return res.status(403).json({ error: 'Investor account not found.' });
+  if (profile.deletedAt) return res.status(403).json({ error: 'This investor account has been removed.' });
   // Suspended investors may still read their dashboard — they just see a suspended indicator.
-  // Fully block only if the profile record is missing entirely.
   req.investorAuth = authContext;
   req.investorProfile = profile;
   req.investorDb = db;
@@ -14371,6 +14376,7 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
   const profile = db.investorProfiles.find(p => p.id === login.investorProfileId);
   if (!profile) return res.status(401).json({ error: 'Invalid credentials.' });
+  if (profile.deletedAt) return res.status(403).json({ error: 'This investor account has been removed.' });
   if (profile.status === 'suspended') return res.status(403).json({ error: 'Investor account is suspended.' });
   if (profile.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
   const token = crypto.randomBytes(24).toString('hex');
@@ -14527,8 +14533,9 @@ app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
 app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
+  const includeDeleted = req.query.include_deleted === 'true';
   const list = db.investorProfiles
-    .filter(p => p.masterUserId === req.username)
+    .filter(p => p.masterUserId === req.username && (includeDeleted || p.deletedAt == null))
     .map(profile => {
       const login = db.investorLogins.find(l => l.investorProfileId === profile.id) || null;
       const split = getInvestorProfitSplit(db, profile.id);
@@ -14541,6 +14548,25 @@ app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess,
       };
     });
   res.json({ investors: list });
+});
+
+app.get('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const login = db.investorLogins.find(l => l.investorProfileId === profile.id) || null;
+  const split = getInvestorProfitSplit(db, profile.id);
+  const perf = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
+  res.json({
+    ...profile,
+    email: login?.email || null,
+    lastLoginAt: login?.lastLoginAt || null,
+    investor_share_bps: split.investorShareBps,
+    master_share_bps: split.masterShareBps,
+    effective_from: split.effectiveFrom,
+    performance: perf.error ? null : perf
+  });
 });
 
 app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
@@ -14576,8 +14602,75 @@ app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess
     profile.displayName = name;
   }
   if (typeof req.body?.status === 'string' && ['active','suspended'].includes(req.body.status)) profile.status = req.body.status;
+  if (req.body?.investor_share_bps !== undefined) {
+    const investorShare = parseInvestorShareBps(req.body.investor_share_bps);
+    if (investorShare === null) return res.status(400).json({ error: 'investor_share_bps must be an integer between 0 and 10000.' });
+    let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
+    if (!split) {
+      split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0,10) };
+      db.investorProfitSplits.push(split);
+    }
+    split.investorShareBps = investorShare;
+    split.masterShareBps = 10000 - investorShare;
+    split.effectiveFrom = new Date().toISOString().slice(0,10);
+  }
   saveDB(db);
-  res.json({ ok: true, investor: profile });
+  const split = getInvestorProfitSplit(db, profile.id);
+  res.json({ ok: true, investor: { ...profile, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom } });
+});
+
+app.delete('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  if (profile.deletedAt) return res.status(409).json({ error: 'Investor is already deleted.' });
+  const nowIso = new Date().toISOString();
+  profile.deletedAt = nowIso;
+  profile.deletedBy = req.username;
+  // Invalidate all active sessions for this investor
+  for (const token of Object.keys(db.investorSessions)) {
+    if (db.investorSessions[token]?.investorProfileId === profile.id) {
+      delete db.investorSessions[token];
+    }
+  }
+  saveDB(db);
+  res.json({ ok: true, deletedAt: nowIso });
+});
+
+app.post('/api/master/investors/:id/restore', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  if (!profile.deletedAt) return res.status(409).json({ error: 'Investor is not deleted.' });
+  profile.deletedAt = null;
+  profile.deletedBy = null;
+  saveDB(db);
+  res.json({ ok: true });
+});
+
+app.delete('/api/master/investors/:id/purge', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profileIdx = db.investorProfiles.findIndex(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (profileIdx < 0) return res.status(404).json({ error: 'Investor not found.' });
+  const profile = db.investorProfiles[profileIdx];
+  if (!profile.deletedAt) return res.status(409).json({ error: 'Investor must be soft-deleted before purging. Call DELETE /api/master/investors/:id first.' });
+  const id = profile.id;
+  db.investorProfiles.splice(profileIdx, 1);
+  db.investorLogins = db.investorLogins.filter(l => l.investorProfileId !== id);
+  db.investorProfitSplits = db.investorProfitSplits.filter(s => s.investorProfileId !== id);
+  db.investorCashflows = db.investorCashflows.filter(c => c.investorProfileId !== id);
+  db.investorInvites = db.investorInvites.filter(i => i.investorProfileId !== id);
+  for (const token of Object.keys(db.investorSessions)) {
+    if (db.investorSessions[token]?.investorProfileId === id) delete db.investorSessions[token];
+  }
+  saveDB(db);
+  res.json({ ok: true, purged: true });
 });
 
 app.get('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
@@ -14724,7 +14817,8 @@ app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMaste
 app.get('/api/master/investors/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
-  const items = db.investorProfiles.filter(p => p.masterUserId === req.username).map(profile => {
+  const includeDeleted = req.query.include_deleted === 'true';
+  const items = db.investorProfiles.filter(p => p.masterUserId === req.username && (includeDeleted || p.deletedAt == null)).map(profile => {
     const summary = computeInvestorPerformance({ db, masterUserId: req.username, investorId: profile.id });
     if (summary.error) {
       return {

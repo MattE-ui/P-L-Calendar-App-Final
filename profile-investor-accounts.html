@@ -32,36 +32,17 @@
     </div>
     <button id="create-investor-btn" class="primary small" type="button">+ New investor</button>
   </div>
+  <div class="ia-show-deleted-row">
+    <label class="ia-toggle-label">
+      <input type="checkbox" id="show-deleted-toggle">
+      <span>Show deleted investors</span>
+    </label>
+  </div>
   <div id="investor-list" class="investor-card-grid"></div>
 </section>
 
-<!-- Create investor modal -->
-<div id="create-investor-modal" class="modal-overlay" hidden>
-  <div class="modal-dialog card">
-    <div class="modal-header">
-      <h3>Create investor account</h3>
-      <button class="ghost small modal-close" data-modal="create-investor-modal" type="button" aria-label="Close">✕</button>
-    </div>
-    <div class="modal-body">
-      <label for="ci-name">Display name</label>
-      <input id="ci-name" type="text" placeholder="e.g. Janette Ellwood" autocomplete="off">
-      <label for="ci-email">Login email</label>
-      <input id="ci-email" type="email" placeholder="investor@example.com" autocomplete="off">
-      <label for="ci-temp-password">Temporary password <span class="helper" style="display:inline;margin:0">(recommended)</span></label>
-      <input id="ci-temp-password" type="text" placeholder="Share this with the investor — they must change it on first login" autocomplete="new-password">
-      <p class="helper" style="margin-top:6px">Leave blank to use the invite-link flow instead.</p>
-      <div id="create-investor-error" class="error" style="min-height:1.2em"></div>
-      <div id="create-investor-result" hidden class="create-investor-result card"></div>
-    </div>
-    <div class="profile-actions modal-footer">
-      <button id="ci-submit-btn" class="primary" type="button">Create account</button>
-      <button class="ghost modal-close" data-modal="create-investor-modal" type="button">Cancel</button>
-    </div>
-  </div>
-</div>
-
 <section class="card profile-card">
-  <div class="profile-card-header"><h2>Performance & Reporting</h2></div>
+  <div class="profile-card-header"><h2>Performance &amp; Reporting</h2></div>
   <div class="investor-reporting-grid">
     <article class="investor-report-card">
       <span>Profit split settings</span>
@@ -81,9 +62,139 @@
   </div>
   <div class="profile-actions">
     <a class="primary" href="/profile.html#investor-section">Configure settings</a>
-    <a class="ghost" href="/investor-dashboard.html">Open investor dashboard</a>
+    <a class="ghost" href="/investor/dashboard">Open investor dashboard</a>
   </div>
 </section>
 </main>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Create investor modal
+═══════════════════════════════════════════════════════════ -->
+<div id="create-investor-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="ci-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="ci-modal-title">Create investor account</h3>
+      <button class="ghost small modal-close" data-modal="create-investor-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <label for="ci-name">Display name</label>
+      <input id="ci-name" type="text" placeholder="e.g. Alex Morgan" autocomplete="off">
+      <label for="ci-email">Login email</label>
+      <input id="ci-email" type="email" placeholder="investor@example.com" autocomplete="off">
+      <label for="ci-temp-password">Temporary password <span class="helper" style="display:inline;margin:0">(recommended)</span></label>
+      <div class="ia-pw-field">
+        <input id="ci-temp-password" type="text" placeholder="Share this with the investor — they must change it on first login" autocomplete="new-password">
+        <button class="ia-gen-btn" id="ci-gen-btn" type="button" title="Generate strong password" aria-label="Generate strong password">
+          <svg class="ia-gen-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13.65 2.35A7 7 0 1 0 15 8h-1.5A5.5 5.5 0 1 1 8 2.5c1.52 0 2.9.62 3.9 1.6L9.5 6.5H15V1l-1.35 1.35Z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <p class="helper" style="margin-top:6px">Leave blank to use the invite-link flow instead.</p>
+      <div id="create-investor-error" class="error" style="min-height:1.2em"></div>
+      <div id="create-investor-result" hidden class="create-investor-result card"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="ci-submit-btn" class="primary" type="button">Create account</button>
+      <button class="ghost modal-close" data-modal="create-investor-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Reset-password modal
+═══════════════════════════════════════════════════════════ -->
+<div id="reset-pw-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="rp-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="rp-modal-title">Reset investor password</h3>
+      <button class="ghost small modal-close" data-modal="reset-pw-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="helper" id="rp-investor-name" style="margin:0 0 12px"></p>
+      <label for="rp-password">Temporary password</label>
+      <div class="ia-pw-field">
+        <input id="rp-password" type="text" readonly autocomplete="off">
+        <button class="ia-gen-btn" id="rp-gen-btn" type="button" title="Generate new password" aria-label="Generate new password">
+          <svg class="ia-gen-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13.65 2.35A7 7 0 1 0 15 8h-1.5A5.5 5.5 0 1 1 8 2.5c1.52 0 2.9.62 3.9 1.6L9.5 6.5H15V1l-1.35 1.35Z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <p class="helper" style="margin-top:6px;font-size:12px">Share this securely. The investor must change it on first login.</p>
+      <div id="rp-copy-status" class="helper" style="min-height:1.2em;margin-top:4px;color:var(--accent)"></div>
+      <div id="rp-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="rp-set-btn" class="primary" type="button">Set this password</button>
+      <button id="rp-copy-btn" class="ghost" type="button">Copy password</button>
+      <button class="ghost modal-close" data-modal="reset-pw-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Soft-delete confirm modal
+═══════════════════════════════════════════════════════════ -->
+<div id="delete-confirm-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="dc-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="dc-modal-title">Delete investor</h3>
+      <button class="ghost small modal-close" data-modal="delete-confirm-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="dc-message" style="margin:0 0 8px"></p>
+      <p class="helper" style="margin:0">Their records are retained and can be restored at any time.</p>
+      <div id="dc-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="dc-confirm-btn" class="danger" type="button">Delete investor</button>
+      <button class="ghost modal-close" data-modal="delete-confirm-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Purge (hard-delete) confirm modal
+═══════════════════════════════════════════════════════════ -->
+<div id="purge-confirm-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="pc-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="pc-modal-title" style="color:var(--danger)">Permanently delete investor</h3>
+      <button class="ghost small modal-close" data-modal="purge-confirm-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="ia-purge-warning">This will permanently erase all records for this investor — profile, login, cashflows, invites. <strong>This cannot be undone.</strong></p>
+      <p class="helper" style="margin:0 0 10px">Type <strong id="pc-name-hint"></strong> to confirm:</p>
+      <input id="pc-name-input" type="text" placeholder="Type the investor's name exactly" autocomplete="off">
+      <div id="pc-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="pc-confirm-btn" class="danger" type="button" disabled>Permanently delete</button>
+      <button class="ghost modal-close" data-modal="purge-confirm-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Manage investor drawer (side sheet)
+═══════════════════════════════════════════════════════════ -->
+<div id="manage-overlay" class="ia-drawer-overlay" hidden aria-hidden="true"></div>
+<aside id="manage-drawer" class="ia-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="md-investor-name">
+
+  <div class="ia-drawer-header">
+    <div class="ia-drawer-header__info">
+      <h2 class="ia-drawer-header__name" id="md-investor-name">—</h2>
+      <span class="ia-drawer-header__badge status-badge" id="md-status-badge">Active</span>
+    </div>
+    <button id="manage-drawer-close" class="ghost small" type="button" aria-label="Close manage panel">✕</button>
+  </div>
+
+  <div class="ia-drawer-body" id="manage-drawer-body">
+    <p class="helper ia-drawer-loading">Loading…</p>
+  </div>
+
+</aside>
+
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-investor-accounts-page.js"></script>
 </body></html>
