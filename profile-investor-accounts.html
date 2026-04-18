@@ -2,28 +2,50 @@
 <main class="container profile-hub-container investor-dashboard-page">
 <section class="card profile-subsection-card"><p class="profile-hub-summary__eyebrow">Account center</p><h1>Investor Management</h1><p class="helper">Manage investor mode, capital performance, investor accounts, and reporting configuration.</p><div class="profile-actions"><a class="ghost account-center-back-link" href="/profile.html"><span aria-hidden="true">←</span> Back to Account Center</a></div></section>
 
-<section class="card profile-card investor-mode-panel">
-  <div class="profile-card-header investor-mode-header">
-    <div>
-      <p class="profile-date">Investor mode control</p>
-      <h2>Investor Mode: <span id="investor-mode-label">Disabled</span></h2>
-      <p class="helper">Enable master investor operations to manage investor access, profit allocation, NAV-based performance, and reporting workflows.</p>
+<!-- ── Status strip ─────────────────────────────────────────── -->
+<section class="card profile-card ia-status-strip-card" id="investor-status-strip-card">
+  <div class="ia-status-strip">
+    <div class="ia-status-strip__left">
+      <span id="ia-strip-dot" class="ia-status-dot ia-status-dot--off" aria-hidden="true"></span>
+      <span id="ia-strip-label" class="ia-strip-label">Investor mode <strong>disabled</strong></span>
     </div>
-    <span id="investor-mode-badge" class="status-badge suspended">Disabled</span>
+    <div class="ia-status-strip__actions">
+      <button id="investor-mode-toggle" class="primary small" type="button">Enable investor mode</button>
+      <button id="ia-settings-btn" class="ghost small" type="button">Settings</button>
+    </div>
   </div>
-  <div id="investor-mode-metrics" class="hero-metrics key-metrics investor-mode-metrics"></div>
-  <div class="profile-actions">
-    <button id="investor-mode-toggle" class="primary" type="button">Enable investor mode</button>
-    <a id="investor-configure-link" class="ghost" href="/profile.html#investor-section">Configure</a>
-  </div>
+  <div id="investor-mode-metrics" class="ia-mode-summary" hidden></div>
   <div id="investor-status" class="status-line"></div>
 </section>
 
-<section class="card profile-card">
-  <div class="profile-card-header"><h2>Investor Summary</h2></div>
-  <div id="investor-summary-metrics" class="hero-metrics key-metrics investor-summary-metrics"></div>
+<!-- ── Summary row (5 metrics) ─────────────────────────────── -->
+<section class="card profile-card" id="investor-summary-card">
+  <div class="ia-summary-row" id="investor-summary-metrics"></div>
 </section>
 
+<!-- ── NAV card ─────────────────────────────────────────────── -->
+<section class="card profile-card ia-nav-card" id="investor-nav-card">
+  <div class="ia-nav-header">
+    <div>
+      <p class="profile-date">Net Asset Value</p>
+      <div class="ia-nav-value-row">
+        <span class="ia-nav-value" id="ia-nav-current">—</span>
+        <span class="ia-nav-delta" id="ia-nav-delta" hidden></span>
+      </div>
+      <p class="helper ia-nav-date" id="ia-nav-date"></p>
+    </div>
+    <div class="ia-nav-actions">
+      <button id="ia-record-nav-btn" class="primary small" type="button">Record NAV</button>
+      <button id="ia-nav-history-btn" class="ghost small" type="button">History</button>
+    </div>
+  </div>
+  <div class="ia-sparkline-area" id="ia-sparkline-area">
+    <svg id="ia-sparkline" class="ia-sparkline" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"></svg>
+  </div>
+  <p class="ia-sparkline-hint" id="ia-sparkline-hint"></p>
+</section>
+
+<!-- ── Investor accounts ────────────────────────────────────── -->
 <section class="card profile-card">
   <div class="profile-card-header">
     <div>
@@ -40,31 +62,6 @@
     <label class="ia-toggle-label" for="show-deleted-toggle">Show deleted investors</label>
   </div>
   <div id="investor-list" class="investor-card-grid"></div>
-</section>
-
-<section class="card profile-card">
-  <div class="profile-card-header"><h2>Performance &amp; Reporting</h2></div>
-  <div class="investor-reporting-grid">
-    <article class="investor-report-card">
-      <span>Profit split settings</span>
-      <strong id="report-profit-split">Not configured</strong>
-      <p class="helper">Investor share configuration across active accounts.</p>
-    </article>
-    <article class="investor-report-card">
-      <span>NAV update frequency</span>
-      <strong id="report-nav-frequency">No NAV history</strong>
-      <p class="helper">Derived from your recorded master valuations.</p>
-    </article>
-    <article class="investor-report-card">
-      <span>Reporting status</span>
-      <strong id="reporting-status">Offline</strong>
-      <p class="helper">Status of investor reporting readiness.</p>
-    </article>
-  </div>
-  <div class="profile-actions">
-    <a class="primary" href="/profile.html#investor-section">Configure settings</a>
-    <a class="ghost" href="/investor/dashboard">Open investor dashboard</a>
-  </div>
 </section>
 </main>
 
@@ -182,7 +179,6 @@
 ═══════════════════════════════════════════════════════════ -->
 <div id="manage-overlay" class="ia-drawer-overlay" hidden aria-hidden="true"></div>
 <aside id="manage-drawer" class="ia-drawer" hidden aria-modal="true" role="dialog" aria-labelledby="md-investor-name">
-
   <div class="ia-drawer-header">
     <div class="ia-drawer-header__info">
       <h2 class="ia-drawer-header__name" id="md-investor-name">—</h2>
@@ -190,12 +186,156 @@
     </div>
     <button id="manage-drawer-close" class="ghost small" type="button" aria-label="Close manage panel">✕</button>
   </div>
-
   <div class="ia-drawer-body" id="manage-drawer-body">
     <p class="helper ia-drawer-loading">Loading…</p>
   </div>
-
 </aside>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Record NAV modal
+═══════════════════════════════════════════════════════════ -->
+<div id="record-nav-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="rn-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="rn-modal-title">Record NAV</h3>
+      <button class="ghost small modal-close" data-modal="record-nav-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <label for="rn-date">Valuation date</label>
+      <input id="rn-date" type="date" autocomplete="off">
+      <label for="rn-nav" style="margin-top:12px">Net Asset Value (NAV)</label>
+      <input id="rn-nav" type="number" min="0.01" step="any" placeholder="e.g. 1250000.00" autocomplete="off">
+      <label for="rn-notes" style="margin-top:12px">Notes <span class="helper" style="display:inline;margin:0">(optional)</span></label>
+      <textarea id="rn-notes" rows="2" maxlength="500" placeholder="e.g. End of month valuation" style="resize:vertical"></textarea>
+      <div id="rn-overwrite-warning" class="ia-overwrite-warning" hidden>
+        <strong>A valuation already exists for this date.</strong>
+        <span id="rn-overwrite-detail"></span>
+        <div class="ia-overwrite-actions">
+          <button id="rn-overwrite-confirm" class="danger small" type="button">Overwrite existing</button>
+          <button id="rn-overwrite-cancel" class="ghost small" type="button">Keep existing</button>
+        </div>
+      </div>
+      <div id="rn-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="rn-submit-btn" class="primary" type="button">Save NAV</button>
+      <button class="ghost modal-close" data-modal="record-nav-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     NAV History modal
+═══════════════════════════════════════════════════════════ -->
+<div id="nav-history-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="nh-modal-title">
+  <div class="modal-dialog modal-dialog--wide card">
+    <div class="modal-header">
+      <h3 id="nh-modal-title">NAV History</h3>
+      <button class="ghost small modal-close" data-modal="nav-history-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="nh-dup-banner" class="ia-dup-banner" hidden></div>
+      <div class="ia-history-chart-wrap">
+        <svg id="nh-chart" class="ia-history-chart" viewBox="0 0 500 120" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
+      <table class="ia-history-table" id="nh-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>NAV</th>
+            <th>Change</th>
+            <th>Source</th>
+            <th>Notes</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="nh-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     NAV Edit modal (inline from history)
+═══════════════════════════════════════════════════════════ -->
+<div id="nav-edit-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="ne-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="ne-modal-title">Edit NAV entry</h3>
+      <button class="ghost small modal-close" data-modal="nav-edit-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <input id="ne-id" type="hidden">
+      <label for="ne-date">Valuation date</label>
+      <input id="ne-date" type="date" autocomplete="off">
+      <label for="ne-nav" style="margin-top:12px">NAV</label>
+      <input id="ne-nav" type="number" min="0.01" step="any" autocomplete="off">
+      <label for="ne-notes" style="margin-top:12px">Notes <span class="helper" style="display:inline;margin:0">(optional)</span></label>
+      <textarea id="ne-notes" rows="2" maxlength="500" style="resize:vertical"></textarea>
+      <div id="ne-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="ne-submit-btn" class="primary" type="button">Save changes</button>
+      <button class="ghost modal-close" data-modal="nav-edit-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     NAV Delete confirm modal
+═══════════════════════════════════════════════════════════ -->
+<div id="nav-delete-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="nd-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="nd-modal-title">Delete NAV entry</h3>
+      <button class="ghost small modal-close" data-modal="nav-delete-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="nd-message" style="margin:0 0 8px"></p>
+      <p class="helper" style="margin:0">This cannot be undone.</p>
+      <div id="nd-error" class="error" style="min-height:1.2em"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="nd-confirm-btn" class="danger" type="button">Delete entry</button>
+      <button class="ghost modal-close" data-modal="nav-delete-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     Investor Settings modal
+═══════════════════════════════════════════════════════════ -->
+<div id="investor-settings-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="is-modal-title">
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3 id="is-modal-title">Investor settings</h3>
+      <button class="ghost small modal-close" data-modal="investor-settings-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="ia-settings-row">
+        <div>
+          <strong>Investor mode</strong>
+          <p class="helper" style="margin:2px 0 0">Enable or disable investor tracking and reporting.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="is-mode-toggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="ia-settings-row" style="margin-top:16px">
+        <div>
+          <strong>Invite base URL</strong>
+          <p class="helper" style="margin:2px 0 0">Set via <code>INVESTOR_INVITE_BASE_URL</code> environment variable.</p>
+          <p class="ia-settings-url" id="is-invite-url">—</p>
+        </div>
+      </div>
+      <div id="is-status" class="status-line" style="margin-top:8px"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button class="ghost modal-close" data-modal="investor-settings-modal" type="button">Close</button>
+    </div>
+  </div>
+</div>
 
 <script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-investor-accounts-page.js"></script>
 </body></html>

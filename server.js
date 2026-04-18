@@ -5421,6 +5421,12 @@ function ensureInvestorTables(db) {
     if (!('deletedAt' in profile)) profile.deletedAt = null;
     if (!('deletedBy' in profile)) profile.deletedBy = null;
   }
+
+  for (const val of db.masterValuations) {
+    if (!('source' in val)) val.source = 'manual';
+    if (!('notes' in val)) val.notes = null;
+    if (!('updatedAt' in val)) val.updatedAt = null;
+  }
 }
 
 function appBaseUrl(req) {
@@ -14838,7 +14844,13 @@ app.delete('/api/master/investors/:investorId/cashflows/:cashflowId', requireMas
 app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
   ensureInvestorTables(db);
-  const vals = db.masterValuations.filter(v => v.masterUserId === req.username).sort((a,b)=>String(b.valuationDate).localeCompare(String(a.valuationDate)));
+  const vals = db.masterValuations
+    .filter(v => v.masterUserId === req.username)
+    .sort((a, b) => {
+      const dateCmp = String(b.valuationDate).localeCompare(String(a.valuationDate));
+      if (dateCmp !== 0) return dateCmp;
+      return String(b.createdAt).localeCompare(String(a.createdAt));
+    });
   res.json({ valuations: vals });
 });
 
@@ -14846,6 +14858,9 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
   if (rejectGuest(req, res)) return;
   const valuationDate = normalizeIsoDateInput(req.body?.valuation_date);
   const nav = Number(req.body?.nav);
+  const rawNotes = req.body?.notes ?? null;
+  const notes = typeof rawNotes === 'string' ? rawNotes.trim().slice(0, 500) || null : null;
+  const source = req.body?.source === 'manual' ? 'manual' : 'manual';
   const today = currentDateKey();
   if (!valuationDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
   if (valuationDate > today) return res.status(400).json({ error: 'Valuation date cannot be in the future.' });
@@ -14854,11 +14869,67 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
     const db = loadDB();
     ensureInvestorTables(db);
     const exists = db.masterValuations.find(v => v.masterUserId === req.username && v.valuationDate === valuationDate);
-    if (exists) { res.status(409).json({ error: 'A valuation already exists for this date.' }); return; }
-    const row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, createdAt: new Date().toISOString() };
+    if (exists) {
+      res.status(409).json({
+        error: 'A valuation already exists for this date.',
+        existing: { id: exists.id, valuationDate: exists.valuationDate, nav: exists.nav, notes: exists.notes ?? null, source: exists.source ?? 'manual' },
+      });
+      return;
+    }
+    const row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, notes, source, createdAt: new Date().toISOString(), updatedAt: null };
     db.masterValuations.push(row);
     saveDB(db);
     res.status(201).json({ valuation: row });
+  });
+}));
+
+app.patch('/api/master/valuations/:id', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const { id } = req.params;
+  const rawDate = req.body?.valuation_date !== undefined ? normalizeIsoDateInput(req.body.valuation_date) : undefined;
+  const rawNav  = req.body?.nav !== undefined ? Number(req.body.nav) : undefined;
+  const rawNotes = req.body?.notes !== undefined ? req.body.notes : undefined;
+
+  if (rawDate !== undefined && !rawDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
+  if (rawDate !== undefined && rawDate > currentDateKey()) return res.status(400).json({ error: 'Valuation date cannot be in the future.' });
+  if (rawNav !== undefined && (!Number.isFinite(rawNav) || rawNav <= 0)) return res.status(400).json({ error: 'NAV must be a number greater than 0.' });
+
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const val = db.masterValuations.find(v => v.id === id && v.masterUserId === req.username);
+    if (!val) { res.status(404).json({ error: 'Valuation not found.' }); return; }
+
+    if (rawDate !== undefined && rawDate !== val.valuationDate) {
+      const conflict = db.masterValuations.find(v => v.id !== id && v.masterUserId === req.username && v.valuationDate === rawDate);
+      if (conflict) {
+        res.status(409).json({
+          error: 'A valuation already exists for this date.',
+          existing: { id: conflict.id, valuationDate: conflict.valuationDate, nav: conflict.nav, notes: conflict.notes ?? null, source: conflict.source ?? 'manual' },
+        });
+        return;
+      }
+      val.valuationDate = rawDate;
+    }
+    if (rawNav !== undefined) val.nav = rawNav;
+    if (rawNotes !== undefined) val.notes = typeof rawNotes === 'string' ? rawNotes.trim().slice(0, 500) || null : null;
+    val.updatedAt = new Date().toISOString();
+    saveDB(db);
+    res.json({ valuation: val });
+  });
+}));
+
+app.delete('/api/master/valuations/:id', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const { id } = req.params;
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const idx = db.masterValuations.findIndex(v => v.id === id && v.masterUserId === req.username);
+    if (idx < 0) { res.status(404).json({ error: 'Valuation not found.' }); return; }
+    db.masterValuations.splice(idx, 1);
+    saveDB(db);
+    res.json({ ok: true });
   });
 }));
 
@@ -20526,7 +20597,8 @@ app.get('/api/master/settings', auth, (req, res) => {
   ensureUserShape(user, req.username);
   res.json({
     investor_portal_enabled: !!user.investorAccountsEnabled,
-    investor_portal_enabled_at: user.investorPortalEnabledAt || null
+    investor_portal_enabled_at: user.investorPortalEnabledAt || null,
+    invite_base_url: INVESTOR_INVITE_BASE_URL || null
   });
 });
 

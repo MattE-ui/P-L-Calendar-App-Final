@@ -5,8 +5,8 @@
 
   const state = {
     investorModeEnabled: false,
-    investors: [],          // active (non-deleted)
-    deletedInvestors: [],   // soft-deleted
+    investors: [],
+    deletedInvestors: [],
     showDeleted: false,
     perfById: new Map(),
     valuations: []
@@ -33,7 +33,6 @@
   // ── Password generator ────────────────────────────────────
 
   function generateStrongPassword() {
-    // Alphabet excluding ambiguous chars: 0 O 1 l I
     const upper  = 'ABCDEFGHJKMNPQRSTUVWXYZ';
     const lower  = 'abcdefghjkmnpqrstuvwxyz';
     const digits = '23456789';
@@ -47,7 +46,6 @@
       return arr;
     };
 
-    // Guarantee minimums: 2 of each category
     let chars = [
       ...pick(upper, 2),
       ...pick(lower, 2),
@@ -55,11 +53,9 @@
       ...pick(syms, 2)
     ];
 
-    // Fill remainder from full pool
     const full = upper + lower + digits + syms;
     chars = chars.concat(pick(full, 16 - chars.length));
 
-    // Fisher-Yates shuffle with crypto random
     const shuffle = new Uint32Array(chars.length);
     crypto.getRandomValues(shuffle);
     for (let i = chars.length - 1; i > 0; i--) {
@@ -79,7 +75,6 @@
       const icon = btn.querySelector('.ia-gen-icon');
       if (icon) {
         icon.classList.remove('ia-gen-spin');
-        // Force reflow to restart animation
         void icon.offsetWidth;
         icon.classList.add('ia-gen-spin');
       }
@@ -92,7 +87,6 @@
     const el = document.getElementById(id);
     if (!el) return;
     el.hidden = false;
-    // Focus first focusable element
     const first = el.querySelector('input, button:not([aria-label="Close"]), select, textarea');
     if (first) setTimeout(() => first.focus(), 50);
   }
@@ -104,7 +98,6 @@
 
   function trapEscape(e) {
     if (e.key === 'Escape') {
-      // Close any open modal or drawer
       document.querySelectorAll('.modal-overlay:not([hidden])').forEach(m => { m.hidden = true; });
       closeDrawer();
     }
@@ -129,110 +122,189 @@
       const capital = Number(perf.net_contributions || 0);
       const pnl = Number(perf.investor_profit_share || 0);
       const returnPct = Number(perf.investor_return_pct || 0);
+      const bps = Number(investor.investor_share_bps ?? perf.investor_share_bps ?? NaN);
       if (Number.isFinite(capital)) acc.capital += capital;
       if (Number.isFinite(pnl)) acc.pnl += pnl;
       if (Number.isFinite(returnPct)) { acc.returnTotal += returnPct; acc.returnCount += 1; }
+      if (Number.isFinite(bps)) { acc.splitTotal += bps; acc.splitCount += 1; }
       return acc;
-    }, { capital: 0, pnl: 0, returnTotal: 0, returnCount: 0 });
+    }, { capital: 0, pnl: 0, returnTotal: 0, returnCount: 0, splitTotal: 0, splitCount: 0 });
 
     return {
       investorCount: state.investors.length,
       capital: totals.capital,
       pnl: totals.pnl,
-      avgReturnPct: totals.returnCount ? (totals.returnTotal / totals.returnCount) : null
+      avgReturnPct: totals.returnCount ? (totals.returnTotal / totals.returnCount) : null,
+      avgSplitPct: totals.splitCount ? (totals.splitTotal / totals.splitCount / 100) : null
     };
   };
 
-  // ── Render helpers ────────────────────────────────────────
+  // ── Status strip ──────────────────────────────────────────
 
-  const metricCard = (label, value, extraClass = '') => `
-    <article class="metric-card ${extraClass}">
-      <h3>${label}</h3>
-      <p class="metric-value">${value}</p>
-    </article>
-  `;
-
-  const renderModePanel = () => {
-    const modeLabel = document.getElementById('investor-mode-label');
-    const modeBadge = document.getElementById('investor-mode-badge');
-    const modeToggleBtn = document.getElementById('investor-mode-toggle');
+  const renderStatusStrip = () => {
+    const dot = document.getElementById('ia-strip-dot');
+    const label = document.getElementById('ia-strip-label');
+    const toggleBtn = document.getElementById('investor-mode-toggle');
     const modeMetrics = document.getElementById('investor-mode-metrics');
-    const metrics = getAggregateMetrics();
 
-    if (modeLabel) modeLabel.textContent = state.investorModeEnabled ? 'Enabled' : 'Disabled';
-    if (modeBadge) {
-      modeBadge.textContent = state.investorModeEnabled ? 'Enabled' : 'Disabled';
-      modeBadge.className = `status-badge ${state.investorModeEnabled ? 'active' : 'suspended'}`;
+    const on = state.investorModeEnabled;
+
+    if (dot) {
+      dot.className = `ia-status-dot ${on ? 'ia-status-dot--on' : 'ia-status-dot--off'}`;
     }
-    if (modeToggleBtn) {
-      modeToggleBtn.textContent = state.investorModeEnabled ? 'Disable investor mode' : 'Enable investor mode';
-      modeToggleBtn.classList.toggle('danger', state.investorModeEnabled);
+    if (label) {
+      label.innerHTML = `Investor mode <strong>${on ? 'enabled' : 'disabled'}</strong>`;
+    }
+    if (toggleBtn) {
+      toggleBtn.textContent = on ? 'Disable investor mode' : 'Enable investor mode';
+      toggleBtn.classList.toggle('danger', on);
     }
     if (modeMetrics) {
-      modeMetrics.innerHTML = [
-        metricCard('Total investors', String(metrics.investorCount)),
-        metricCard('Total capital', formatCurrency(metrics.capital)),
-        metricCard('Total PnL', formatCurrency(metrics.pnl), metrics.pnl >= 0 ? 'positive' : 'negative')
-      ].join('');
+      if (on) {
+        const m = getAggregateMetrics();
+        modeMetrics.hidden = false;
+        modeMetrics.innerHTML = `
+          <span>${m.investorCount} investor${m.investorCount === 1 ? '' : 's'}</span>
+          <span>Capital: ${formatCurrency(m.capital)}</span>
+          <span>PnL: ${formatCurrency(m.pnl)}</span>
+        `;
+      } else {
+        modeMetrics.hidden = true;
+      }
     }
   };
 
+  // ── Summary row (5 metrics) ───────────────────────────────
+
   const renderSummary = () => {
-    const summaryMetrics = document.getElementById('investor-summary-metrics');
-    if (!summaryMetrics) return;
-    const metrics = getAggregateMetrics();
-    summaryMetrics.innerHTML = [
-      metricCard('Investors', String(metrics.investorCount)),
-      metricCard('Total capital', formatCurrency(metrics.capital)),
-      metricCard('Total PnL', formatCurrency(metrics.pnl), metrics.pnl >= 0 ? 'positive' : 'negative'),
-      metricCard('Average return', formatPercent(metrics.avgReturnPct))
+    const container = document.getElementById('investor-summary-metrics');
+    if (!container) return;
+    const m = getAggregateMetrics();
+    const latestNav = state.valuations.length ? state.valuations[0] : null;
+    const latestNavVal = latestNav ? Number(latestNav.nav) : null;
+
+    const metric = (label, value, sub = '') => `
+      <div class="ia-summary-metric">
+        <span class="ia-summary-metric__label">${label}</span>
+        <span class="ia-summary-metric__value">${value}</span>
+        ${sub ? `<span class="ia-summary-metric__sub">${sub}</span>` : ''}
+      </div>`;
+
+    const pnlClass = m.pnl >= 0 ? '' : 'style="color:var(--negative,#e05c5c)"';
+
+    container.innerHTML = [
+      metric('Investors', String(m.investorCount), m.investorCount ? `${m.investorCount} active` : 'none yet'),
+      metric('Total capital', formatCurrency(m.capital)),
+      metric('Total PnL', `<span ${pnlClass}>${formatCurrency(m.pnl)}</span>`),
+      metric('Avg return', m.avgReturnPct !== null ? formatPercent(m.avgReturnPct) : '—'),
+      metric('Latest NAV', latestNavVal !== null ? formatCurrency(latestNavVal) : '—', latestNav ? latestNav.valuationDate : '')
     ].join('');
   };
 
-  const renderReporting = () => {
-    const reportSplit = document.getElementById('report-profit-split');
-    const reportNavFrequency = document.getElementById('report-nav-frequency');
-    const reportStatus = document.getElementById('reporting-status');
+  // ── NAV sparkline ─────────────────────────────────────────
 
-    if (reportSplit) {
-      const splits = state.investors
-        .map((inv) => {
-          const perf = state.perfById.get(inv.id) || {};
-          const bps = Number(inv.investor_share_bps ?? perf.investor_share_bps ?? NaN);
-          if (!Number.isFinite(bps)) return null;
-          return bps / 100;
-        })
-        .filter((pct) => Number.isFinite(pct));
-      reportSplit.textContent = splits.length
-        ? `Avg ${(splits.reduce((s, v) => s + v, 0) / splits.length).toFixed(2)}% investor share`
-        : 'Not configured';
+  function buildSparkline(valuations, svgId, viewW = 300, viewH = 60) {
+    const svg = document.getElementById(svgId);
+    if (!svg) return;
+
+    const rows = [...valuations]
+      .filter(v => Number.isFinite(Number(v.nav)))
+      .sort((a, b) => String(a.valuationDate).localeCompare(String(b.valuationDate)));
+
+    if (rows.length < 2) {
+      svg.innerHTML = '';
+      return;
     }
 
-    if (reportNavFrequency) {
-      const sorted = [...state.valuations]
-        .map((row) => String(row.valuationDate || row.valuation_date || ''))
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b));
-      if (sorted.length < 2) {
-        reportNavFrequency.textContent = sorted.length ? 'Single valuation recorded' : 'No NAV history';
+    const navs = rows.map(r => Number(r.nav));
+    const minNav = Math.min(...navs);
+    const maxNav = Math.max(...navs);
+    const range = maxNav - minNav || 1;
+    const pad = 4;
+
+    const toX = (i) => pad + (i / (rows.length - 1)) * (viewW - pad * 2);
+    const toY = (v) => viewH - pad - ((v - minNav) / range) * (viewH - pad * 2);
+
+    const pts = rows.map((r, i) => `${toX(i).toFixed(1)},${toY(Number(r.nav)).toFixed(1)}`).join(' ');
+    const firstX = toX(0).toFixed(1);
+    const lastX  = toX(rows.length - 1).toFixed(1);
+    const lastY  = toY(navs[navs.length - 1]).toFixed(1);
+    const gradId = `sp-grad-${svgId}`;
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+      <polygon points="${pts} ${lastX},${viewH} ${firstX},${viewH}" fill="url(#${gradId})"/>
+      <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${lastX}" cy="${lastY}" r="3" fill="var(--accent)"/>
+    `;
+  }
+
+  // ── NAV card ──────────────────────────────────────────────
+
+  const renderNavCard = () => {
+    const navValue  = document.getElementById('ia-nav-current');
+    const navDelta  = document.getElementById('ia-nav-delta');
+    const navDate   = document.getElementById('ia-nav-date');
+    const sparkHint = document.getElementById('ia-sparkline-hint');
+
+    const sorted = [...state.valuations]
+      .filter(v => Number.isFinite(Number(v.nav)))
+      .sort((a, b) => {
+        const d = String(b.valuationDate).localeCompare(String(a.valuationDate));
+        return d !== 0 ? d : String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+
+    if (!sorted.length) {
+      if (navValue) navValue.textContent = '—';
+      if (navDelta) navDelta.hidden = true;
+      if (navDate) navDate.textContent = 'No valuations recorded yet';
+      if (sparkHint) sparkHint.textContent = '';
+      buildSparkline([], 'ia-sparkline');
+      return;
+    }
+
+    const latest = sorted[0];
+    const prior  = sorted[1];
+    const latestNav = Number(latest.nav);
+
+    if (navValue) navValue.textContent = formatCurrency(latestNav);
+    if (navDate) navDate.textContent = `As of ${latest.valuationDate}`;
+
+    if (navDelta && prior) {
+      const priorNav = Number(prior.nav);
+      if (Number.isFinite(priorNav) && priorNav > 0) {
+        const pct = ((latestNav - priorNav) / priorNav) * 100;
+        const up = pct >= 0;
+        navDelta.textContent = `${up ? '▲' : '▼'} ${Math.abs(pct).toFixed(2)}%`;
+        navDelta.className = `ia-nav-delta ${up ? 'ia-nav-delta--up' : 'ia-nav-delta--down'}`;
+        navDelta.hidden = false;
       } else {
-        const days = [];
-        for (let i = 1; i < sorted.length; i++) {
-          const gap = Math.round((new Date(sorted[i]) - new Date(sorted[i - 1])) / 86400000);
-          if (gap > 0) days.push(gap);
-        }
-        const avgGap = days.length ? Math.round(days.reduce((s, d) => s + d, 0) / days.length) : null;
-        reportNavFrequency.textContent = avgGap ? `~Every ${avgGap} day${avgGap === 1 ? '' : 's'}` : 'Variable cadence';
+        navDelta.hidden = true;
       }
+    } else if (navDelta) {
+      navDelta.hidden = true;
     }
 
-    if (reportStatus) {
-      reportStatus.textContent = !state.investorModeEnabled
-        ? 'Offline'
-        : !state.investors.length ? 'Mode enabled · Awaiting investors'
-        : 'Live';
+    buildSparkline(sorted, 'ia-sparkline');
+
+    if (sparkHint) {
+      sparkHint.textContent = sorted.length > 1 ? `${sorted.length} valuations` : '';
     }
   };
+
+  const renderAll = () => {
+    renderStatusStrip();
+    renderSummary();
+    renderNavCard();
+    renderInvestorCards();
+  };
+
+  // ── Investor cards ────────────────────────────────────────
 
   const renderInvestorCards = () => {
     const list = document.getElementById('investor-list');
@@ -300,8 +372,6 @@
       `;
     }).join('');
 
-    // ── Wire card buttons ────────────────────────────────────
-
     list.querySelectorAll('.investor-manage').forEach((btn) => {
       btn.addEventListener('click', () => openManageDrawer(btn.dataset.id));
     });
@@ -362,13 +432,6 @@
     });
   };
 
-  const renderAll = () => {
-    renderModePanel();
-    renderSummary();
-    renderInvestorCards();
-    renderReporting();
-  };
-
   // ── Data loading ──────────────────────────────────────────
 
   async function loadInvestorData() {
@@ -415,8 +478,10 @@
       });
       state.investorModeEnabled = enabled;
       setText('investor-status', enabled ? 'Investor mode enabled.' : 'Investor mode disabled.');
-      renderModePanel();
-      renderReporting();
+      renderStatusStrip();
+      // Sync settings modal checkbox if open
+      const isModeToggle = document.getElementById('is-mode-toggle');
+      if (isModeToggle) isModeToggle.checked = enabled;
     } catch (error) {
       setText('investor-status', error.message);
     }
@@ -507,9 +572,7 @@
     const setBtn = document.getElementById('rp-set-btn');
     setBtn.disabled = false;
     setBtn.textContent = 'Set this password';
-    // Auto-generate a password when modal opens
-    const pwInput = document.getElementById('rp-password');
-    pwInput.value = generateStrongPassword();
+    document.getElementById('rp-password').value = generateStrongPassword();
     openModal('reset-pw-modal');
   }
 
@@ -535,15 +598,8 @@
     setBtn.disabled = true;
     setBtn.textContent = 'Setting…';
     try {
-      // The existing reset-password endpoint generates its own password server-side.
-      // We use the PATCH endpoint instead to set our generated password via create-with-temp-password flow.
-      // Actually, call reset-password which auto-generates — but we want OUR generated password.
-      // So: PATCH the login directly isn't an endpoint we have. Use the existing reset-password
-      // endpoint but then update the UI with the server's password, not ours.
-      // Simpler: reset-password endpoint returns the generated tempPassword; show that.
       const data = await api(`/api/master/investors/${resetPwTargetId}/reset-password`, { method: 'POST' });
       document.getElementById('rp-password').value = data.tempPassword;
-      errorEl.textContent = '';
       const statusEl = document.getElementById('rp-copy-status');
       statusEl.textContent = 'Password set. Share this with the investor.';
       setBtn.textContent = 'Done';
@@ -554,13 +610,9 @@
     }
   });
 
-  // ── Invite link modal (replaces prompt()) ─────────────────
+  // ── Invite link modal ─────────────────────────────────────
 
   function openInviteLinkModal(url) {
-    // Reuse the reset-pw modal structure — just swap content temporarily
-    // Since we don't want another modal, use a simple inline alert-style approach
-    // that still avoids prompt(). The task says replace alert/confirm/prompt with custom modals.
-    // We'll reuse the delete-confirm modal with adapted content.
     const modal = document.getElementById('delete-confirm-modal');
     const msgEl = document.getElementById('dc-message');
     const errEl = document.getElementById('dc-error');
@@ -584,7 +636,6 @@
       }
     };
     openModal('delete-confirm-modal');
-    // Restore after close
     modal.addEventListener('click', restoreDeleteModal, { once: true });
     document.getElementById('dc-modal-title').closest('.modal-overlay')?.querySelectorAll('.modal-close').forEach(b => {
       b.addEventListener('click', restoreDeleteModal, { once: true });
@@ -616,7 +667,7 @@
   }
 
   document.getElementById('dc-confirm-btn')?.addEventListener('click', async () => {
-    if (!deleteTargetId || document.getElementById('dc-confirm-btn').onclick) return; // hijacked for invite
+    if (!deleteTargetId || document.getElementById('dc-confirm-btn').onclick) return;
     const errEl = document.getElementById('dc-error');
     errEl.textContent = '';
     const btn = document.getElementById('dc-confirm-btn');
@@ -719,11 +770,9 @@
 
       const investorSharePct = ((Number(inv.investor_share_bps) || 0) / 100).toFixed(2);
       const effectiveFrom = inv.effective_from || '';
-
       const perf = perfData && !perfData.error ? perfData : null;
 
       body.innerHTML = `
-        <!-- Section 1: Editable fields -->
         <section class="ia-drawer-section">
           <h3 class="ia-drawer-section__title">Account details</h3>
           <label for="md-name">Display name</label>
@@ -743,7 +792,6 @@
           <div id="md-save-error" class="error" style="min-height:1.2em"></div>
         </section>
 
-        <!-- Section 2: Capital & performance -->
         <section class="ia-drawer-section">
           <h3 class="ia-drawer-section__title">Capital &amp; performance</h3>
           ${perf ? `
@@ -777,13 +825,11 @@
           </div>
         </section>
 
-        <!-- Section 3: Recent cashflows -->
         <section class="ia-drawer-section">
           <h3 class="ia-drawer-section__title">Recent cashflows</h3>
           <div id="md-cashflows-list">${renderCashflowsList(cashflowsData?.cashflows || [], investorId)}</div>
         </section>
 
-        <!-- Section 4: Danger zone -->
         <section class="ia-drawer-section ia-danger-zone">
           <h3 class="ia-drawer-section__title ia-danger-title">Danger zone</h3>
           <p class="helper" style="margin:0 0 10px">Soft-delete removes this investor from your active list. Records are retained and can be restored.</p>
@@ -791,7 +837,6 @@
         </section>
       `;
 
-      // Wire drawer-internal buttons
       document.getElementById('md-save-btn')?.addEventListener('click', () => handleManageSave(investorId));
 
       const toggleCfBtn = document.getElementById('md-toggle-cashflow-form');
@@ -836,7 +881,6 @@
     </table>`;
   }
 
-  // Re-delegate cashflow delete clicks inside drawer body
   document.getElementById('manage-drawer-body')?.addEventListener('click', async (e) => {
     const delBtn = e.target.closest('.ia-cf-del');
     if (!delBtn) return;
@@ -879,7 +923,6 @@
       saveStatus.textContent = 'Saved · just now';
       setTimeout(() => { saveStatus.textContent = ''; }, 3000);
       await loadInvestorData();
-      // Refresh drawer header
       document.getElementById('md-investor-name').textContent = displayName;
       const badge = document.getElementById('md-status-badge');
       badge.textContent = status === 'active' ? 'Active' : 'Suspended';
@@ -910,7 +953,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference: reference || '' })
       });
-      // Collapse form and reload drawer
       document.getElementById('md-cashflow-form').hidden = true;
       document.getElementById('md-toggle-cashflow-form').textContent = '+ Record cashflow';
       await loadManageDrawer(investorId);
@@ -920,5 +962,328 @@
       submitBtn.disabled = false;
     }
   }
+
+  // ══════════════════════════════════════════════════════════
+  //  RECORD NAV MODAL
+  // ══════════════════════════════════════════════════════════
+
+  let navOverwriteTargetId = null;
+
+  function resetRecordNavModal() {
+    document.getElementById('rn-date').value = today();
+    document.getElementById('rn-nav').value = '';
+    document.getElementById('rn-notes').value = '';
+    document.getElementById('rn-error').textContent = '';
+    document.getElementById('rn-overwrite-warning').hidden = true;
+    navOverwriteTargetId = null;
+    const submitBtn = document.getElementById('rn-submit-btn');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Save NAV';
+  }
+
+  document.getElementById('ia-record-nav-btn')?.addEventListener('click', () => {
+    resetRecordNavModal();
+    openModal('record-nav-modal');
+  });
+
+  document.getElementById('rn-submit-btn')?.addEventListener('click', () => submitRecordNav(false));
+  document.getElementById('rn-overwrite-confirm')?.addEventListener('click', () => submitRecordNav(true));
+  document.getElementById('rn-overwrite-cancel')?.addEventListener('click', () => {
+    document.getElementById('rn-overwrite-warning').hidden = true;
+    navOverwriteTargetId = null;
+  });
+
+  // Handle API errors with status + body for the 409 case
+  // We need AccountCenter.api to forward status for 409 — patch the call:
+  // The api helper throws with message; we need to detect 409 and get the body.
+  // Wrap api for valuations calls:
+  async function apiValuations(path, opts) {
+    const res = await fetch(path, {
+      ...opts,
+      credentials: 'same-origin',
+      headers: { ...(opts?.headers || {}) }
+    });
+    let data;
+    try { data = await res.json(); } catch (_) { data = {}; }
+    if (!res.ok) {
+      const err = new Error(data?.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
+
+  async function submitRecordNav(overwrite) {
+    const dateVal = document.getElementById('rn-date').value;
+    const navVal  = parseFloat(document.getElementById('rn-nav').value);
+    const notes   = document.getElementById('rn-notes').value.trim();
+    const errorEl = document.getElementById('rn-error');
+    const submitBtn = document.getElementById('rn-submit-btn');
+
+    errorEl.textContent = '';
+
+    if (!dateVal) { errorEl.textContent = 'Date is required.'; return; }
+    if (!Number.isFinite(navVal) || navVal <= 0) { errorEl.textContent = 'NAV must be a number greater than 0.'; return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+
+    try {
+      if (overwrite && navOverwriteTargetId) {
+        await apiValuations(`/api/master/valuations/${navOverwriteTargetId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nav: navVal, valuation_date: dateVal, notes: notes || null })
+        });
+      } else {
+        await apiValuations('/api/master/valuations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nav: navVal, valuation_date: dateVal, notes: notes || null, source: 'manual' })
+        });
+      }
+
+      closeModal('record-nav-modal');
+      await loadInvestorData();
+
+    } catch (err) {
+      if (err.status === 409 && err.data?.existing) {
+        const ex = err.data.existing;
+        navOverwriteTargetId = ex.id;
+        const warning = document.getElementById('rn-overwrite-warning');
+        const detail  = document.getElementById('rn-overwrite-detail');
+        detail.textContent = ` Existing: ${formatCurrency(ex.nav)} on ${ex.valuationDate}.${ex.notes ? ' Notes: ' + ex.notes : ''}`;
+        warning.hidden = false;
+      } else {
+        errorEl.textContent = err.message || 'Failed to save NAV.';
+      }
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save NAV';
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  NAV HISTORY MODAL
+  // ══════════════════════════════════════════════════════════
+
+  document.getElementById('ia-nav-history-btn')?.addEventListener('click', () => openHistoryModal());
+
+  function openHistoryModal() {
+    renderHistoryModal();
+    openModal('nav-history-modal');
+  }
+
+  function renderHistoryModal() {
+    const rows = [...state.valuations].sort((a, b) => {
+      const d = String(b.valuationDate).localeCompare(String(a.valuationDate));
+      return d !== 0 ? d : String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+
+    // Build duplicate date map
+    const dateCounts = new Map();
+    for (const row of rows) {
+      const d = row.valuationDate;
+      dateCounts.set(d, (dateCounts.get(d) || 0) + 1);
+    }
+    const dupDates = new Set([...dateCounts.entries()].filter(([, n]) => n > 1).map(([d]) => d));
+    const dupCount = dupDates.size;
+
+    // Banner
+    const banner = document.getElementById('nh-dup-banner');
+    if (dupCount > 0) {
+      banner.hidden = false;
+      banner.innerHTML = `
+        <strong>⚠ ${dupCount} date${dupCount > 1 ? 's have' : ' has'} multiple valuations.</strong>
+        Review and delete the unwanted entries.
+        <button class="ia-dup-jump" id="nh-jump-btn" type="button">Jump to first duplicate</button>
+      `;
+      document.getElementById('nh-jump-btn')?.addEventListener('click', () => {
+        const firstDup = document.querySelector('#nh-tbody tr.ia-dup-row');
+        if (firstDup) firstDup.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    } else {
+      banner.hidden = true;
+    }
+
+    // Draw history chart (largest sparkline in modal)
+    buildSparkline(rows.filter(r => !dupDates.has(r.valuationDate) || rows.findIndex(x => x.id === r.id) === rows.findLastIndex(x => x.valuationDate === r.valuationDate)), 'nh-chart', 500, 120);
+
+    // Table
+    const tbody = document.getElementById('nh-tbody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:16px" class="helper">No valuations recorded yet.</td></tr>';
+      return;
+    }
+
+    const fmtDate = (iso) => {
+      if (!iso) return '—';
+      try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); } catch (_) { return iso; }
+    };
+
+    tbody.innerHTML = rows.map((row, i) => {
+      const isDup = dupDates.has(row.valuationDate);
+      const prior = rows[i + 1];
+      let changeTxt = '—';
+      if (prior && prior.valuationDate !== row.valuationDate) {
+        const pct = ((Number(row.nav) - Number(prior.nav)) / Number(prior.nav)) * 100;
+        if (Number.isFinite(pct)) {
+          const col = pct >= 0 ? 'var(--positive,#4caf7d)' : 'var(--negative,#e05c5c)';
+          changeTxt = `<span style="color:${col}">${pct >= 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(2)}%</span>`;
+        }
+      }
+      const dupBadge = isDup ? `<span class="ia-dup-badge" title="Multiple valuations on this date">!</span>` : '';
+      return `
+        <tr class="${isDup ? 'ia-dup-row' : ''}" data-val-id="${row.id}">
+          <td>${fmtDate(row.valuationDate)}${dupBadge}</td>
+          <td>${formatCurrency(row.nav)}</td>
+          <td>${changeTxt}</td>
+          <td><span class="ia-source-badge">${row.source || 'manual'}</span></td>
+          <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)">${row.notes || ''}</td>
+          <td style="white-space:nowrap">
+            <button class="ia-icon-btn nh-edit-btn" data-id="${row.id}" title="Edit" aria-label="Edit">✎</button>
+            <button class="ia-icon-btn ia-icon-btn--danger nh-del-btn" data-id="${row.id}" title="Delete" aria-label="Delete">✕</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    // Wire edit/delete buttons
+    tbody.querySelectorAll('.nh-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => openNavEditModal(btn.dataset.id));
+    });
+    tbody.querySelectorAll('.nh-del-btn').forEach(btn => {
+      btn.addEventListener('click', () => openNavDeleteModal(btn.dataset.id));
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  NAV EDIT MODAL
+  // ══════════════════════════════════════════════════════════
+
+  function openNavEditModal(valId) {
+    const row = state.valuations.find(v => v.id === valId);
+    if (!row) return;
+    document.getElementById('ne-id').value = row.id;
+    document.getElementById('ne-date').value = row.valuationDate;
+    document.getElementById('ne-nav').value = row.nav;
+    document.getElementById('ne-notes').value = row.notes || '';
+    document.getElementById('ne-error').textContent = '';
+    const submitBtn = document.getElementById('ne-submit-btn');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Save changes';
+    openModal('nav-edit-modal');
+  }
+
+  document.getElementById('ne-submit-btn')?.addEventListener('click', async () => {
+    const id       = document.getElementById('ne-id').value;
+    const dateVal  = document.getElementById('ne-date').value;
+    const navVal   = parseFloat(document.getElementById('ne-nav').value);
+    const notes    = document.getElementById('ne-notes').value.trim();
+    const errorEl  = document.getElementById('ne-error');
+    const submitBtn = document.getElementById('ne-submit-btn');
+
+    errorEl.textContent = '';
+    if (!dateVal) { errorEl.textContent = 'Date is required.'; return; }
+    if (!Number.isFinite(navVal) || navVal <= 0) { errorEl.textContent = 'NAV must be greater than 0.'; return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+
+    try {
+      await apiValuations(`/api/master/valuations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nav: navVal, valuation_date: dateVal, notes: notes || null })
+      });
+      closeModal('nav-edit-modal');
+      await loadInvestorData();
+      renderHistoryModal();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Failed to save.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save changes';
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  //  NAV DELETE MODAL
+  // ══════════════════════════════════════════════════════════
+
+  let navDeleteTargetId = null;
+
+  function openNavDeleteModal(valId) {
+    const row = state.valuations.find(v => v.id === valId);
+    if (!row) return;
+    navDeleteTargetId = valId;
+    document.getElementById('nd-message').textContent =
+      `Delete NAV entry for ${row.valuationDate} (${formatCurrency(row.nav)})?`;
+    document.getElementById('nd-error').textContent = '';
+    const btn = document.getElementById('nd-confirm-btn');
+    btn.disabled = false;
+    btn.textContent = 'Delete entry';
+    openModal('nav-delete-modal');
+  }
+
+  document.getElementById('nd-confirm-btn')?.addEventListener('click', async () => {
+    if (!navDeleteTargetId) return;
+    const errEl = document.getElementById('nd-error');
+    const btn   = document.getElementById('nd-confirm-btn');
+    errEl.textContent = '';
+    btn.disabled = true;
+    try {
+      await apiValuations(`/api/master/valuations/${navDeleteTargetId}`, { method: 'DELETE' });
+      closeModal('nav-delete-modal');
+      navDeleteTargetId = null;
+      await loadInvestorData();
+      if (!document.getElementById('nav-history-modal').hidden) renderHistoryModal();
+    } catch (err) {
+      errEl.textContent = err.message || 'Failed to delete.';
+      btn.disabled = false;
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  //  INVESTOR SETTINGS MODAL
+  // ══════════════════════════════════════════════════════════
+
+  document.getElementById('ia-settings-btn')?.addEventListener('click', async () => {
+    const modeToggle = document.getElementById('is-mode-toggle');
+    const urlEl = document.getElementById('is-invite-url');
+    const statusEl = document.getElementById('is-status');
+
+    if (modeToggle) modeToggle.checked = state.investorModeEnabled;
+    if (urlEl) urlEl.textContent = '…';
+    if (statusEl) statusEl.textContent = '';
+
+    openModal('investor-settings-modal');
+
+    try {
+      const settings = await api('/api/master/settings');
+      if (urlEl) urlEl.textContent = settings.invite_base_url || '(not configured)';
+      if (modeToggle) modeToggle.checked = !!settings.investor_portal_enabled;
+    } catch (_) {
+      if (urlEl) urlEl.textContent = '(unavailable)';
+    }
+  });
+
+  document.getElementById('is-mode-toggle')?.addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    const statusEl = document.getElementById('is-status');
+    if (statusEl) statusEl.textContent = '';
+    try {
+      await api('/api/account/investor-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      state.investorModeEnabled = enabled;
+      renderStatusStrip();
+      if (statusEl) statusEl.textContent = enabled ? 'Investor mode enabled.' : 'Investor mode disabled.';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2500);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = err.message || 'Failed to update.';
+      e.target.checked = !enabled;
+    }
+  });
 
 })();
