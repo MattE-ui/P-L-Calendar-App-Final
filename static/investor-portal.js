@@ -315,15 +315,21 @@ async function initInvestorDashboardOrPreview() {
   }
   showBootOverlay();
 
+  function setLoadingState(state) {
+    // state: 'loading' | 'success' | 'error'
+    // All three conditions are mutually exclusive — exactly one visible at a time.
+    if (loadingEl) loadingEl.hidden = (state !== 'loading');
+    if (errorEl)   errorEl.hidden   = (state !== 'error');
+    contentEl.hidden                 = (state !== 'success');
+  }
+
   async function load() {
-    if (loadingEl) loadingEl.hidden = true; // inline spinner hidden while overlay is up
-    if (errorEl) errorEl.hidden = true;
-    contentEl.hidden = true;
+    setLoadingState('loading');
 
     try {
       const data = await investorApi('/api/investor/me', {}, previewToken);
       hideBootOverlay();
-      contentEl.hidden = false;
+      setLoadingState('success');
       await renderInvestorDashboard(data);
     } catch (error) {
       hideBootOverlay();
@@ -331,8 +337,7 @@ async function initInvestorDashboardOrPreview() {
         window.location.href = '/investor/login';
         return;
       }
-      if (loadingEl) loadingEl.hidden = true;
-      if (errorEl) errorEl.hidden = false;
+      setLoadingState('error');
       if (errorMsgEl) errorMsgEl.textContent = error.message || 'Unable to load dashboard.';
     }
   }

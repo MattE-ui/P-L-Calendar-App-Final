@@ -270,6 +270,12 @@
   text-align: center;
 }
 
+/* Prevent CSS display:flex from overriding the HTML [hidden] attribute */
+.investor-dash-loading[hidden],
+.investor-dash-error[hidden] {
+  display: none;
+}
+
 /* ── Page title block ───────────────────────────────────────── */
 
 .investor-dash-title {
