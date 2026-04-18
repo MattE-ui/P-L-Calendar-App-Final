@@ -5243,6 +5243,16 @@ function saveDB(db) {
   sqliteDb.shadowWrite(db);
 }
 
+// Single in-process write serialiser.
+// Wraps the entire loadDB → mutate → saveDB cycle as a critical section so
+// concurrent requests cannot overwrite each other with stale snapshots.
+let _dbWriteLock = Promise.resolve();
+function withDbLock(fn) {
+  const next = _dbWriteLock.then(fn);
+  _dbWriteLock = next.catch(() => {});
+  return next;
+}
+
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.length) {
@@ -14368,34 +14378,43 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const login = db.investorLogins.find(l => l.email === email);
-  if (!login || !login.passwordHash) return res.status(401).json({ error: 'Invalid credentials.' });
-  const ok = await bcrypt.compare(password, login.passwordHash);
+
+  // bcrypt.compare is expensive (~100ms) — do it outside the lock using a
+  // read-only snapshot, then re-enter the lock only to write the session.
+  const dbSnap = loadDB();
+  ensureInvestorTables(dbSnap);
+  const loginSnap = dbSnap.investorLogins.find(l => l.email === email);
+  if (!loginSnap || !loginSnap.passwordHash) return res.status(401).json({ error: 'Invalid credentials.' });
+  const ok = await bcrypt.compare(password, loginSnap.passwordHash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials.' });
-  const profile = db.investorProfiles.find(p => p.id === login.investorProfileId);
-  if (!profile) return res.status(401).json({ error: 'Invalid credentials.' });
-  if (profile.deletedAt) return res.status(403).json({ error: 'This investor account has been removed.' });
-  if (profile.status === 'suspended') return res.status(403).json({ error: 'Investor account is suspended.' });
-  if (profile.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
+  const profileSnap = dbSnap.investorProfiles.find(p => p.id === loginSnap.investorProfileId);
+  if (!profileSnap) return res.status(401).json({ error: 'Invalid credentials.' });
+  if (profileSnap.deletedAt) return res.status(403).json({ error: 'This investor account has been removed.' });
+  if (profileSnap.status === 'suspended') return res.status(403).json({ error: 'Investor account is suspended.' });
+  if (profileSnap.status !== 'active') return res.status(401).json({ error: 'Invalid credentials.' });
+
   const token = crypto.randomBytes(24).toString('hex');
-  db.investorSessions[token] = {
-    role: 'investor',
-    investorProfileId: profile.id,
-    masterUserId: profile.masterUserId,
-    email
-  };
-  login.lastLoginAt = new Date().toISOString();
-  login.last_login_at = login.lastLoginAt;
-  saveDB(db);
+  let mustChangePassword = false;
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === loginSnap.investorProfileId);
+    if (!profile || profile.deletedAt || profile.status !== 'active') return;
+    const login = db.investorLogins.find(l => l.email === email);
+    if (!login) return;
+    db.investorSessions[token] = { role: 'investor', investorProfileId: profile.id, masterUserId: profile.masterUserId, email };
+    login.lastLoginAt = new Date().toISOString();
+    login.last_login_at = login.lastLoginAt;
+    mustChangePassword = login.mustChangePassword === true;
+    saveDB(db);
+  });
   res.cookie('investor_session', token, {
     httpOnly: true,
     sameSite: 'Strict',
     secure: !!process.env.RENDER,
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
-  res.json({ ok: true, mustChangePassword: login.mustChangePassword === true });
+  res.json({ ok: true, mustChangePassword });
 }));
 
 app.post('/api/investor/auth/change-password', requireInvestorAuth, asyncHandler(async (req, res) => {
@@ -14403,63 +14422,85 @@ app.post('/api/investor/auth/change-password', requireInvestorAuth, asyncHandler
   const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword are required.' });
   if (!isStrongPassword(newPassword)) return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol).' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const login = db.investorLogins.find(l => l.investorProfileId === req.investorProfile.id);
-  if (!login || !login.passwordHash) return res.status(400).json({ error: 'No password set on this account.' });
-  const ok = await bcrypt.compare(currentPassword, login.passwordHash);
-  if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
   if (currentPassword === newPassword) return res.status(400).json({ error: 'New password must differ from the current password.' });
-  login.passwordHash = await bcrypt.hash(newPassword, 10);
-  login.mustChangePassword = false;
-  saveDB(db);
+
+  // Verify current password and hash the new one outside the lock.
+  const dbSnap = loadDB();
+  ensureInvestorTables(dbSnap);
+  const loginSnap = dbSnap.investorLogins.find(l => l.investorProfileId === req.investorProfile.id);
+  if (!loginSnap || !loginSnap.passwordHash) return res.status(400).json({ error: 'No password set on this account.' });
+  const ok = await bcrypt.compare(currentPassword, loginSnap.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
+  const newHash = await bcrypt.hash(newPassword, 10);
+
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const login = db.investorLogins.find(l => l.investorProfileId === req.investorProfile.id);
+    if (!login) return;
+    login.passwordHash = newHash;
+    login.mustChangePassword = false;
+    saveDB(db);
+  });
   res.json({ ok: true });
 }));
 
-app.post('/api/investor/auth/logout', (req, res) => {
+app.post('/api/investor/auth/logout', asyncHandler(async (req, res) => {
   const token = req.cookies?.investor_session;
-  const db = loadDB();
-  ensureInvestorTables(db);
   if (token) {
-    delete db.investorSessions[token];
-    saveDB(db);
+    await withDbLock(async () => {
+      const db = loadDB();
+      ensureInvestorTables(db);
+      delete db.investorSessions[token];
+      saveDB(db);
+    });
   }
   res.clearCookie('investor_session');
   res.json({ ok: true });
-});
+}));
 
 app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
   const rawToken = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!rawToken || !password) return res.status(400).json({ error: 'Token and password are required.' });
   if (!isStrongPassword(password)) return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol).' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const invite = db.investorInvites.find(inv => inv.tokenHash === hashInviteToken(rawToken));
+
+  // Validate token and hash the password outside the lock.
+  const dbSnap = loadDB();
+  ensureInvestorTables(dbSnap);
+  const invite = dbSnap.investorInvites.find(inv => inv.tokenHash === hashInviteToken(rawToken));
   if (!invite) return res.status(400).json({ error: 'Invalid invite token.' });
   if (invite.usedAt) return res.status(400).json({ error: 'Invite link has already been used.' });
   if (Date.parse(invite.expiresAt) <= Date.now()) return res.status(400).json({ error: 'Invite link has expired.' });
-  const profile = db.investorProfiles.find(p => p.id === invite.investorProfileId);
-  if (!profile) return res.status(404).json({ error: 'Investor profile not found.' });
-  if (profile.status !== 'active') return res.status(400).json({ error: 'Investor account inactive.' });
+  const profileSnap = dbSnap.investorProfiles.find(p => p.id === invite.investorProfileId);
+  if (!profileSnap) return res.status(404).json({ error: 'Investor profile not found.' });
+  if (profileSnap.status !== 'active') return res.status(400).json({ error: 'Investor account inactive.' });
   const passwordHash = await bcrypt.hash(password, 10);
-  let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
-  if (!login) {
-    login = {
-      id: crypto.randomUUID(),
-      investorProfileId: profile.id,
-      email: profile.email || `investor+${profile.id}@example.local`,
-      passwordHash,
-      lastLoginAt: null,
-      last_login_at: null,
-      createdAt: new Date().toISOString()
-    };
-    db.investorLogins.push(login);
-  } else {
-    login.passwordHash = passwordHash;
-  }
-  invite.usedAt = new Date().toISOString();
-  saveDB(db);
+
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const inv = db.investorInvites.find(i => i.tokenHash === hashInviteToken(rawToken));
+    if (!inv || inv.usedAt) return;
+    let login = db.investorLogins.find(l => l.investorProfileId === invite.investorProfileId);
+    if (!login) {
+      db.investorLogins.push({
+        id: crypto.randomUUID(),
+        investorProfileId: invite.investorProfileId,
+        email: profileSnap.email || `investor+${invite.investorProfileId}@example.local`,
+        passwordHash,
+        mustChangePassword: false,
+        lastLoginAt: null,
+        last_login_at: null,
+        createdAt: new Date().toISOString()
+      });
+    } else {
+      login.passwordHash = passwordHash;
+      login.mustChangePassword = false;
+    }
+    inv.usedAt = new Date().toISOString();
+    saveDB(db);
+  });
   res.json({ ok: true });
 }));
 
@@ -14550,7 +14591,9 @@ app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess,
   res.json({ investors: list });
 });
 
-app.get('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.get('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res, next) => {
+  // 'performance' is a static sub-route registered later — pass through so Express can match it.
+  if (req.params.id === 'performance') return next();
   const db = loadDB();
   ensureInvestorTables(db);
   const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
@@ -14577,101 +14620,113 @@ app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess
   if (!displayName) return res.status(400).json({ error: 'display_name is required.' });
   if (!email) return res.status(400).json({ error: 'email is required.' });
   if (tempPassword && tempPassword.length < 4) return res.status(400).json({ error: 'Temporary password must be at least 4 characters.' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  if (db.investorLogins.find(l => l.email === email)) return res.status(409).json({ error: 'Email already in use.' });
-  const id = crypto.randomUUID();
-  const nowIso = new Date().toISOString();
   const passwordHash = tempPassword ? await bcrypt.hash(tempPassword, 10) : '';
-  db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', defaultCurrency: 'GBP', createdAt: nowIso });
-  db.investorProfitSplits.push({ investorProfileId: id, investorShareBps: 8000, masterShareBps: 2000, effectiveFrom: nowIso.slice(0,10), createdAt: nowIso });
-  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash, mustChangePassword: !!tempPassword, lastLoginAt: null, last_login_at: null, createdAt: nowIso });
-  saveDB(db);
-  res.status(201).json({ id, displayName, status: 'active', loginReady: !!tempPassword });
+  const id = crypto.randomUUID();
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    if (db.investorLogins.find(l => l.email === email)) {
+      res.status(409).json({ error: 'Email already in use.' });
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', defaultCurrency: 'GBP', createdAt: nowIso });
+    db.investorProfitSplits.push({ investorProfileId: id, investorShareBps: 8000, masterShareBps: 2000, effectiveFrom: nowIso.slice(0, 10), createdAt: nowIso });
+    db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash, mustChangePassword: !!tempPassword, lastLoginAt: null, last_login_at: null, createdAt: nowIso });
+    saveDB(db);
+    res.status(201).json({ id, displayName, status: 'active', loginReady: !!tempPassword });
+  });
 }));
 
-(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  if (typeof req.body?.display_name === 'string') {
-    const name = req.body.display_name.trim();
-    if (!name) return res.status(400).json({ error: 'display_name cannot be empty.' });
-    profile.displayName = name;
-  }
-  if (typeof req.body?.status === 'string' && ['active','suspended'].includes(req.body.status)) profile.status = req.body.status;
   if (req.body?.investor_share_bps !== undefined) {
     const investorShare = parseInvestorShareBps(req.body.investor_share_bps);
     if (investorShare === null) return res.status(400).json({ error: 'investor_share_bps must be an integer between 0 and 10000.' });
-    let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
-    if (!split) {
-      split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0,10) };
-      db.investorProfitSplits.push(split);
+  }
+  if (typeof req.body?.display_name === 'string' && !req.body.display_name.trim()) {
+    return res.status(400).json({ error: 'display_name cannot be empty.' });
+  }
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (!profile) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    if (typeof req.body?.display_name === 'string') profile.displayName = req.body.display_name.trim();
+    if (typeof req.body?.status === 'string' && ['active', 'suspended'].includes(req.body.status)) profile.status = req.body.status;
+    if (req.body?.investor_share_bps !== undefined) {
+      const investorShare = parseInvestorShareBps(req.body.investor_share_bps);
+      let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
+      if (!split) {
+        split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0, 10) };
+        db.investorProfitSplits.push(split);
+      }
+      split.investorShareBps = investorShare;
+      split.masterShareBps = 10000 - investorShare;
+      split.effectiveFrom = new Date().toISOString().slice(0, 10);
     }
-    split.investorShareBps = investorShare;
-    split.masterShareBps = 10000 - investorShare;
-    split.effectiveFrom = new Date().toISOString().slice(0,10);
-  }
-  saveDB(db);
-  const split = getInvestorProfitSplit(db, profile.id);
-  res.json({ ok: true, investor: { ...profile, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom } });
-});
+    saveDB(db);
+    const split = getInvestorProfitSplit(db, profile.id);
+    res.json({ ok: true, investor: { ...profile, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom } });
+  });
+}));
 
-app.delete('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.delete('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  if (profile.deletedAt) return res.status(409).json({ error: 'Investor is already deleted.' });
-  const nowIso = new Date().toISOString();
-  profile.deletedAt = nowIso;
-  profile.deletedBy = req.username;
-  // Invalidate all active sessions for this investor
-  for (const token of Object.keys(db.investorSessions)) {
-    if (db.investorSessions[token]?.investorProfileId === profile.id) {
-      delete db.investorSessions[token];
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (!profile) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    if (profile.deletedAt) { res.status(409).json({ error: 'Investor is already deleted.' }); return; }
+    const nowIso = new Date().toISOString();
+    profile.deletedAt = nowIso;
+    profile.deletedBy = req.username;
+    for (const token of Object.keys(db.investorSessions)) {
+      if (db.investorSessions[token]?.investorProfileId === profile.id) delete db.investorSessions[token];
     }
-  }
-  saveDB(db);
-  res.json({ ok: true, deletedAt: nowIso });
-});
+    saveDB(db);
+    res.json({ ok: true, deletedAt: nowIso });
+  });
+}));
 
-app.post('/api/master/investors/:id/restore', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.post('/api/master/investors/:id/restore', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
-  if (!profile.deletedAt) return res.status(409).json({ error: 'Investor is not deleted.' });
-  profile.deletedAt = null;
-  profile.deletedBy = null;
-  saveDB(db);
-  res.json({ ok: true });
-});
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (!profile) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    if (!profile.deletedAt) { res.status(409).json({ error: 'Investor is not deleted.' }); return; }
+    profile.deletedAt = null;
+    profile.deletedBy = null;
+    saveDB(db);
+    res.json({ ok: true });
+  });
+}));
 
-app.delete('/api/master/investors/:id/purge', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.delete('/api/master/investors/:id/purge', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profileIdx = db.investorProfiles.findIndex(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (profileIdx < 0) return res.status(404).json({ error: 'Investor not found.' });
-  const profile = db.investorProfiles[profileIdx];
-  if (!profile.deletedAt) return res.status(409).json({ error: 'Investor must be soft-deleted before purging. Call DELETE /api/master/investors/:id first.' });
-  const id = profile.id;
-  db.investorProfiles.splice(profileIdx, 1);
-  db.investorLogins = db.investorLogins.filter(l => l.investorProfileId !== id);
-  db.investorProfitSplits = db.investorProfitSplits.filter(s => s.investorProfileId !== id);
-  db.investorCashflows = db.investorCashflows.filter(c => c.investorProfileId !== id);
-  db.investorInvites = db.investorInvites.filter(i => i.investorProfileId !== id);
-  for (const token of Object.keys(db.investorSessions)) {
-    if (db.investorSessions[token]?.investorProfileId === id) delete db.investorSessions[token];
-  }
-  saveDB(db);
-  res.json({ ok: true, purged: true });
-});
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profileIdx = db.investorProfiles.findIndex(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (profileIdx < 0) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    const profile = db.investorProfiles[profileIdx];
+    if (!profile.deletedAt) { res.status(409).json({ error: 'Investor must be soft-deleted before purging. Call DELETE /api/master/investors/:id first.' }); return; }
+    const id = profile.id;
+    db.investorProfiles.splice(profileIdx, 1);
+    db.investorLogins = db.investorLogins.filter(l => l.investorProfileId !== id);
+    db.investorProfitSplits = db.investorProfitSplits.filter(s => s.investorProfileId !== id);
+    db.investorCashflows = db.investorCashflows.filter(c => c.investorProfileId !== id);
+    db.investorInvites = db.investorInvites.filter(i => i.investorProfileId !== id);
+    for (const token of Object.keys(db.investorSessions)) {
+      if (db.investorSessions[token]?.investorProfileId === id) delete db.investorSessions[token];
+    }
+    saveDB(db);
+    res.json({ ok: true, purged: true });
+  });
+}));
 
 app.get('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
@@ -14682,24 +14737,26 @@ app.get('/api/master/investors/:id/profit-split', requireMasterAuth, requireMast
   res.json({ investor_profile_id: profile.id, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom });
 });
 
-app.put('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.put('/api/master/investors/:id/profit-split', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
   const investorShare = parseInvestorShareBps(req.body?.investor_share_bps);
   if (investorShare === null) return res.status(400).json({ error: 'Investor share must be an integer between 0 and 10000 bps.' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
-  if (error) return res.status(error.status).json({ error: error.message });
-  let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
-  if (!split) {
-    split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0,10) };
-    db.investorProfitSplits.push(split);
-  }
-  split.investorShareBps = investorShare;
-  split.masterShareBps = 10000 - investorShare;
-  saveDB(db);
-  res.json({ investor_profile_id: profile.id, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom });
-});
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
+    if (error) { res.status(error.status).json({ error: error.message }); return; }
+    let split = db.investorProfitSplits.find(p => p.investorProfileId === profile.id);
+    if (!split) {
+      split = { investorProfileId: profile.id, createdAt: new Date().toISOString(), effectiveFrom: new Date().toISOString().slice(0, 10) };
+      db.investorProfitSplits.push(split);
+    }
+    split.investorShareBps = investorShare;
+    split.masterShareBps = 10000 - investorShare;
+    saveDB(db);
+    res.json({ investor_profile_id: profile.id, investor_share_bps: split.investorShareBps, master_share_bps: split.masterShareBps, effective_from: split.effectiveFrom });
+  });
+}));
 
 app.get('/api/master/investors/:id/cashflows', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
@@ -14712,72 +14769,71 @@ app.get('/api/master/investors/:id/cashflows', requireMasterAuth, requireMasterI
   res.json({ cashflows });
 });
 
-app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
-  if (error) return res.status(error.status).json({ error: error.message });
   const type = typeof req.body?.type === 'string' ? req.body.type : '';
   const amount = Number(req.body?.amount);
   const effectiveDate = normalizeIsoDateInput(req.body?.effective_date);
   const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
-  if (!['deposit','withdrawal','fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
-  if (!effectiveDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
-  const navRecord = findNavForDate(db, req.username, effectiveDate);
-  if (!navRecord) return res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' });
-  const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, navReferenceDate: navRecord.valuationDate, reference: reference || null, createdAt: new Date().toISOString() };
-  db.investorCashflows.push(row);
-  saveDB(db);
-  res.status(201).json({ cashflow: row });
-});
-
-(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
-  if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
-  if (error) return res.status(error.status).json({ error: error.message });
-  const cashflow = db.investorCashflows.find((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
-  if (!cashflow) return res.status(404).json({ error: 'Cashflow not found.' });
-
-  const type = typeof req.body?.type === 'string' ? req.body.type : '';
-  const amount = Number(req.body?.amount);
-  const effectiveDate = normalizeIsoDateInput(req.body?.effective_date);
-  const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
-
   if (!['deposit', 'withdrawal', 'fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
   if (!effectiveDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const { profile, error } = findMasterInvestorProfile(db, req.params.id, req.username);
+    if (error) { res.status(error.status).json({ error: error.message }); return; }
+    const navRecord = findNavForDate(db, req.username, effectiveDate);
+    if (!navRecord) { res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' }); return; }
+    const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, navReferenceDate: navRecord.valuationDate, reference: reference || null, createdAt: new Date().toISOString() };
+    db.investorCashflows.push(row);
+    saveDB(db);
+    res.status(201).json({ cashflow: row });
+  });
+}));
 
-  const navRecord = findNavForDate(db, req.username, effectiveDate);
-  if (!navRecord) return res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' });
-
-  cashflow.type = type;
-  cashflow.amount = amount;
-  cashflow.effectiveDate = effectiveDate;
-  cashflow.navReferenceDate = navRecord.valuationDate;
-  cashflow.reference = reference || null;
-
-  saveDB(db);
-  res.json({ cashflow });
-});
-
-app.delete('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+(typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
-  if (error) return res.status(error.status).json({ error: error.message });
+  const type = typeof req.body?.type === 'string' ? req.body.type : '';
+  const amount = Number(req.body?.amount);
+  const effectiveDate = normalizeIsoDateInput(req.body?.effective_date);
+  const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim() : '';
+  if (!['deposit', 'withdrawal', 'fee'].includes(type)) return res.status(400).json({ error: 'type must be deposit, withdrawal, or fee.' });
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount must be > 0.' });
+  if (!effectiveDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
+    if (error) { res.status(error.status).json({ error: error.message }); return; }
+    const cashflow = db.investorCashflows.find((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
+    if (!cashflow) { res.status(404).json({ error: 'Cashflow not found.' }); return; }
+    const navRecord = findNavForDate(db, req.username, effectiveDate);
+    if (!navRecord) { res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' }); return; }
+    cashflow.type = type;
+    cashflow.amount = amount;
+    cashflow.effectiveDate = effectiveDate;
+    cashflow.navReferenceDate = navRecord.valuationDate;
+    cashflow.reference = reference || null;
+    saveDB(db);
+    res.json({ cashflow });
+  });
+}));
 
-  const index = db.investorCashflows.findIndex((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
-  if (index < 0) return res.status(404).json({ error: 'Cashflow not found.' });
-
-  const [deleted] = db.investorCashflows.splice(index, 1);
-  saveDB(db);
-  res.json({ deleted: { id: deleted.id } });
-});
+app.delete('/api/master/investors/:investorId/cashflows/:cashflowId', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const { profile, error } = findMasterInvestorProfile(db, req.params.investorId, req.username);
+    if (error) { res.status(error.status).json({ error: error.message }); return; }
+    const index = db.investorCashflows.findIndex((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
+    if (index < 0) { res.status(404).json({ error: 'Cashflow not found.' }); return; }
+    const [deleted] = db.investorCashflows.splice(index, 1);
+    saveDB(db);
+    res.json({ deleted: { id: deleted.id } });
+  });
+}));
 
 app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
@@ -14786,7 +14842,7 @@ app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess
   res.json({ valuations: vals });
 });
 
-app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
   const valuationDate = normalizeIsoDateInput(req.body?.valuation_date);
   const nav = Number(req.body?.nav);
@@ -14794,15 +14850,17 @@ app.post('/api/master/valuations', requireMasterAuth, requireMasterInvestorAcces
   if (!valuationDate) return res.status(400).json({ error: 'Invalid date. Use YYYY-MM-DD.' });
   if (valuationDate > today) return res.status(400).json({ error: 'Valuation date cannot be in the future.' });
   if (!Number.isFinite(nav) || nav <= 0) return res.status(400).json({ error: 'NAV must be a number greater than 0.' });
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const exists = db.masterValuations.find(v => v.masterUserId === req.username && v.valuationDate === valuationDate);
-  if (exists) return res.status(409).json({ error: 'A valuation already exists for this date.' });
-  const row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, createdAt: new Date().toISOString() };
-  db.masterValuations.push(row);
-  saveDB(db);
-  res.status(201).json({ valuation: row });
-});
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const exists = db.masterValuations.find(v => v.masterUserId === req.username && v.valuationDate === valuationDate);
+    if (exists) { res.status(409).json({ error: 'A valuation already exists for this date.' }); return; }
+    const row = { id: crypto.randomUUID(), masterUserId: req.username, valuationDate, nav, createdAt: new Date().toISOString() };
+    db.masterValuations.push(row);
+    saveDB(db);
+    res.status(201).json({ valuation: row });
+  });
+}));
 
 app.get('/api/master/investors/performance', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
@@ -14849,34 +14907,38 @@ app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMaste
   res.json(summary);
 });
 
-app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
   const rawToken = crypto.randomBytes(32).toString('hex');
-  const nowIso = new Date().toISOString();
-  const invite = { id: crypto.randomUUID(), investorProfileId: profile.id, tokenHash: hashInviteToken(rawToken), expiresAt: new Date(Date.now() + (72 * 60 * 60 * 1000)).toISOString(), usedAt: null, createdAt: nowIso };
-  db.investorInvites.push(invite);
-  saveDB(db);
-  const inviteUrl = `${INVESTOR_INVITE_BASE_URL}/investor/activate?token=${rawToken}`;
-  res.json({ inviteUrl });
-});
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (!profile) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    const nowIso = new Date().toISOString();
+    const invite = { id: crypto.randomUUID(), investorProfileId: profile.id, tokenHash: hashInviteToken(rawToken), expiresAt: new Date(Date.now() + (72 * 60 * 60 * 1000)).toISOString(), usedAt: null, createdAt: nowIso };
+    db.investorInvites.push(invite);
+    saveDB(db);
+    res.json({ inviteUrl: `${INVESTOR_INVITE_BASE_URL}/investor/activate?token=${rawToken}` });
+  });
+}));
 
 app.post('/api/master/investors/:id/reset-password', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
-  const db = loadDB();
-  ensureInvestorTables(db);
-  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
-  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
   const tempPassword = `${crypto.randomBytes(6).toString('base64url')}Aa1!`;
-  let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
-  if (!login) return res.status(400).json({ error: 'Create login email first.' });
-  login.passwordHash = await bcrypt.hash(tempPassword, 10);
-  login.mustChangePassword = true;
-  saveDB(db);
-  res.json({ tempPassword, email: login.email });
+  const newHash = await bcrypt.hash(tempPassword, 10);
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+    if (!profile) { res.status(404).json({ error: 'Investor not found.' }); return; }
+    const login = db.investorLogins.find(l => l.investorProfileId === profile.id);
+    if (!login) { res.status(400).json({ error: 'Create login email first.' }); return; }
+    login.passwordHash = newHash;
+    login.mustChangePassword = true;
+    saveDB(db);
+    res.json({ tempPassword, email: login.email });
+  });
 }));
 
 app.get('/api/master/investors/:id/preview-token', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
