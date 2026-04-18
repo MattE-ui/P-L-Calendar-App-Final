@@ -176,6 +176,8 @@
           <div class="profile-actions investor-account-card__actions">
             <a class="ghost small" href="/profile.html#investor-section">Manage</a>
             <button class="ghost small investor-view" data-id="${inv.id}" type="button">View</button>
+            <button class="ghost small investor-reset-pw" data-id="${inv.id}" type="button">Reset password</button>
+            <button class="ghost small investor-invite" data-id="${inv.id}" type="button">Send invite</button>
             <button class="ghost small investor-suspend" data-id="${inv.id}" data-next="${status === 'active' ? 'suspended' : 'active'}" type="button">${status === 'active' ? 'Suspend' : 'Reactivate'}</button>
           </div>
         </article>
@@ -188,6 +190,25 @@
         window.open(`/investor/preview?token=${encodeURIComponent(data.token)}`, '_blank', 'noopener');
       } catch (error) {
         setText('investor-status', error.message || 'Unable to open investor preview.');
+      }
+    }));
+
+    list.querySelectorAll('.investor-reset-pw').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!confirm('Generate a new temporary password for this investor? They will be required to change it on next login.')) return;
+      try {
+        const data = await api(`/api/master/investors/${btn.dataset.id}/reset-password`, { method: 'POST' });
+        alert(`Temporary password set.\n\nEmail: ${data.email}\nPassword: ${data.tempPassword}\n\nShare this securely — the investor must change it on first login.`);
+      } catch (error) {
+        setText('investor-status', error.message || 'Unable to reset password.');
+      }
+    }));
+
+    list.querySelectorAll('.investor-invite').forEach((btn) => btn.addEventListener('click', async () => {
+      try {
+        const data = await api(`/api/master/investors/${btn.dataset.id}/invite`, { method: 'POST' });
+        prompt('Invite link (valid 72 hours):', data.inviteUrl);
+      } catch (error) {
+        setText('investor-status', error.message || 'Unable to generate invite link.');
       }
     }));
 
@@ -262,4 +283,78 @@
   });
 
   await loadInvestorData();
+
+  // ── Create investor modal ─────────────────────────────────────────────
+  function openModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = false;
+  }
+  function closeModal(id) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+
+  document.getElementById('create-investor-btn')?.addEventListener('click', () => {
+    document.getElementById('ci-name').value = '';
+    document.getElementById('ci-email').value = '';
+    document.getElementById('ci-temp-password').value = '';
+    document.getElementById('create-investor-error').textContent = '';
+    document.getElementById('create-investor-result').hidden = true;
+    openModal('create-investor-modal');
+  });
+
+  document.querySelectorAll('.modal-close[data-modal]').forEach((btn) => {
+    btn.addEventListener('click', () => closeModal(btn.dataset.modal));
+  });
+
+  document.getElementById('create-investor-modal')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeModal('create-investor-modal');
+  });
+
+  document.getElementById('ci-submit-btn')?.addEventListener('click', async () => {
+    const errorEl = document.getElementById('create-investor-error');
+    const resultEl = document.getElementById('create-investor-result');
+    errorEl.textContent = '';
+    resultEl.hidden = true;
+
+    const displayName = document.getElementById('ci-name').value.trim();
+    const email = document.getElementById('ci-email').value.trim();
+    const tempPassword = document.getElementById('ci-temp-password').value;
+
+    if (!displayName) { errorEl.textContent = 'Display name is required.'; return; }
+    if (!email) { errorEl.textContent = 'Email is required.'; return; }
+
+    const submitBtn = document.getElementById('ci-submit-btn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    try {
+      const body = { display_name: displayName, email };
+      if (tempPassword) body.temp_password = tempPassword;
+      await api('/api/master/investors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (tempPassword) {
+        resultEl.innerHTML = `
+          <p style="margin:0 0 6px;font-weight:600;color:var(--accent)">Account created — share these credentials</p>
+          <p style="margin:0 0 2px;font-size:13px;color:var(--text-muted)">Login URL: <strong style="color:var(--text)">${window.location.origin}/investor/login</strong></p>
+          <p style="margin:0 0 2px;font-size:13px;color:var(--text-muted)">Email: <strong style="color:var(--text)">${email}</strong></p>
+          <p style="margin:0;font-size:13px;color:var(--text-muted)">Temporary password: <strong style="color:var(--text);font-family:monospace">${tempPassword}</strong></p>
+          <p style="margin:8px 0 0;font-size:12px;color:var(--text-dim)">The investor must change their password on first login.</p>
+        `;
+      } else {
+        resultEl.innerHTML = `<p style="margin:0;color:var(--accent);font-weight:600">Account created. Use "Send invite" on the card to generate an activation link.</p>`;
+      }
+      resultEl.hidden = false;
+      document.getElementById('ci-submit-btn').textContent = 'Done';
+      await loadInvestorData();
+    } catch (err) {
+      errorEl.textContent = err.message || 'Failed to create investor account.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create account';
+    }
+  });
 })();

@@ -1,0 +1,571 @@
+/* ════════════════════════════════════════════════════════════
+   Investor Portal — standalone stylesheet
+   Imports no external values; uses only CSS custom properties
+   defined in style.css (:root block).
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Auth pages (login / change-password / activate) ───────── */
+
+.investor-auth-body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.investor-auth-shell {
+  width: 100%;
+  max-width: 420px;
+  padding: 24px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+}
+
+.investor-auth-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.investor-auth-logomark {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #051a10;
+  font-size: 15px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: 0;
+}
+
+.investor-auth-brand-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.investor-auth-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.investor-auth-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.investor-auth-subtitle {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.investor-auth-submit {
+  width: 100%;
+  margin-top: 16px;
+  min-height: 42px;
+}
+
+/* ── Dashboard — portal body & header ──────────────────────── */
+
+.investor-portal-body {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.investor-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(13, 17, 23, 0.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-soft);
+  box-shadow: 0 1px 0 0 var(--border-soft);
+}
+
+.investor-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(16, 185, 129, 0.30) 30%,
+    rgba(16, 185, 129, 0.50) 50%,
+    rgba(16, 185, 129, 0.30) 70%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.investor-header__inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 20px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.investor-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.investor-header__logomark {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #051a10;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+  flex-shrink: 0;
+}
+
+.investor-header__brand-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.investor-header__account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.investor-header__avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.investor-header__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.investor-header__logout {
+  font-size: 12px;
+  padding: 5px 10px;
+  min-height: auto;
+}
+
+/* ── Preview banner ─────────────────────────────────────────── */
+
+.investor-preview-banner {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--warning);
+  text-align: center;
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── Dashboard shell ────────────────────────────────────────── */
+
+.investor-dash-shell {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 32px 20px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Loading / error states ─────────────────────────────────── */
+
+.investor-dash-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 80px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.investor-dash-loading__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: investor-spin 0.7s linear infinite;
+}
+
+@keyframes investor-spin {
+  to { transform: rotate(360deg); }
+}
+
+.investor-dash-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 0;
+  color: var(--danger);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── Page title block ───────────────────────────────────────── */
+
+.investor-dash-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.investor-dash-welcome {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.investor-dash-h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.investor-dash-valuation {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+
+/* ── Hero card ──────────────────────────────────────────────── */
+
+.investor-hero-card {
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border) 82%);
+  border-radius: 14px;
+  padding: 24px 24px 0;
+  box-shadow: var(--shadow-soft);
+}
+
+.investor-hero-card__label {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.investor-hero-card__value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.investor-hero-card__big-number {
+  font-size: 36px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.investor-hero-card__delta {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.investor-hero-card__delta.is-positive { color: var(--success); }
+.investor-hero-card__delta.is-negative { color: var(--danger); }
+
+.investor-hero-card__cols {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--border-soft);
+  margin: 0 -24px;
+}
+
+.investor-hero-card__col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 20px;
+}
+
+.investor-hero-card__col + .investor-hero-card__col {
+  border-left: 1px solid var(--border-soft);
+}
+
+.investor-hero-card__col-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+
+.investor-hero-card__col-val {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Two metric cards ───────────────────────────────────────── */
+
+.investor-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.investor-metric-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: var(--shadow-soft);
+}
+
+.investor-metric-card__label {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.investor-metric-card__value {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Status dot ─────────────────────────────────────────────── */
+
+.investor-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.investor-status-dot.active  { background: var(--success); }
+.investor-status-dot.suspended { background: var(--danger); }
+
+/* ── Chart placeholder card ─────────────────────────────────── */
+
+.investor-chart-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px 0;
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.investor-chart-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.investor-chart-card__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.investor-chart-card__coming {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.investor-chart-placeholder {
+  height: 96px;
+  position: relative;
+  overflow: hidden;
+}
+
+.investor-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 100%;
+  padding-bottom: 0;
+}
+
+.investor-chart-bar {
+  flex: 1;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2) 82%);
+  border-radius: 3px 3px 0 0;
+  opacity: 0.45;
+}
+
+/* Fade the placeholder out at the bottom */
+.investor-chart-placeholder::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent 40%,
+    var(--surface-1) 100%
+  );
+  pointer-events: none;
+}
+
+/* ── Account details card ───────────────────────────────────── */
+
+.investor-details-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: var(--shadow-soft);
+}
+
+.investor-details-card__title {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.investor-details-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.investor-details-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.investor-details-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.investor-details-row:first-child {
+  padding-top: 0;
+}
+
+.investor-details-row__key {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.investor-details-row__val {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: right;
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+
+.investor-dash-footer {
+  text-align: center;
+  padding: 8px 0 0;
+}
+
+.investor-dash-footer p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 540px) {
+  .investor-header__brand-label { display: none; }
+  .investor-header__name { display: none; }
+  .investor-dash-shell { padding: 20px 14px 48px; }
+  .investor-hero-card { padding: 18px 16px 0; }
+  .investor-hero-card__big-number { font-size: 28px; }
+  .investor-hero-card__cols { margin: 0 -16px; }
+  .investor-hero-card__col { padding: 12px 14px; }
+  .investor-metric-grid { grid-template-columns: 1fr; }
+  .investor-auth-card { padding: 22px 18px; }
+}
+
+@media (max-width: 360px) {
+  .investor-hero-card__cols {
+    grid-template-columns: 1fr;
+  }
+  .investor-hero-card__col + .investor-hero-card__col {
+    border-left: none;
+    border-top: 1px solid var(--border-soft);
+  }
+}

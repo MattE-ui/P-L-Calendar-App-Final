@@ -3,41 +3,149 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Investor Portal - Dashboard</title>
+  <title>Investor Portal — Dashboard</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/investor-portal.css">
 </head>
-<body>
-  <main class="container">
-    <section class="hero-metrics key-metrics" id="investor-metrics"></section>
-    <section class="card investor-equity-card">
-      <div class="investor-equity-head">
-        <div>
-          <h3>Equity Curve</h3>
-          <p class="helper investor-equity-subtitle">Net value over time</p>
-        </div>
-        <div class="investor-equity-ranges" id="investor-equity-ranges">
-          <button type="button" class="ghost is-active" data-range="1M">1M</button>
-          <button type="button" class="ghost" data-range="3M">3M</button>
-          <button type="button" class="ghost" data-range="1Y">1Y</button>
-          <button type="button" class="ghost" data-range="ALL">ALL</button>
-        </div>
+<body class="investor-portal-body">
+
+  <!-- Header -->
+  <header class="investor-header">
+    <div class="investor-header__inner">
+      <div class="investor-header__brand">
+        <span class="investor-header__logomark" aria-hidden="true">V</span>
+        <span class="investor-header__brand-label">VERACITY · INVESTOR PORTAL</span>
       </div>
-      <div id="investor-equity" class="investor-equity-wrap">
-        <p class="helper">Loading…</p>
+      <div class="investor-header__account">
+        <span class="investor-header__avatar" id="dash-avatar" aria-hidden="true"></span>
+        <span class="investor-header__name" id="dash-first-name"></span>
+        <button class="investor-header__logout ghost small" id="investor-logout-btn" type="button">Sign out</button>
       </div>
-    </section>
-    <section class="card">
-      <h3>Cashflows</h3>
-      <div id="investor-cashflows"></div>
-    </section>
-    <section class="card">
-      <button id="investor-logout-btn" class="ghost">Logout</button>
-    </section>
+    </div>
+  </header>
+
+  <!-- Preview badge (master preview mode only) -->
+  <div id="investor-preview-badge" class="investor-preview-banner" hidden>
+    <span>Preview mode — you are viewing this dashboard as an investor</span>
+  </div>
+
+  <main class="investor-dash-shell" id="investor-dash-main">
+
+    <!-- Loading state -->
+    <div id="investor-dash-loading" class="investor-dash-loading">
+      <div class="investor-dash-loading__spinner"></div>
+      <p>Loading your dashboard…</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="investor-dash-error" class="investor-dash-error" hidden>
+      <p id="investor-dash-error-msg">Unable to load dashboard.</p>
+      <button class="ghost small" id="investor-dash-retry" type="button">Retry</button>
+    </div>
+
+    <!-- Dashboard content (hidden until data loads) -->
+    <div id="investor-dash-content" hidden>
+
+      <!-- Page title block -->
+      <div class="investor-dash-title">
+        <p class="investor-dash-welcome" id="dash-welcome"></p>
+        <h1 class="investor-dash-h1">Your investment</h1>
+        <p class="investor-dash-valuation" id="dash-valuation-line"></p>
+      </div>
+
+      <!-- Hero card -->
+      <section class="investor-hero-card" id="dash-hero">
+        <p class="investor-hero-card__label">CURRENT VALUE</p>
+        <div class="investor-hero-card__value-row">
+          <span class="investor-hero-card__big-number" id="dash-current-value"></span>
+          <span class="investor-hero-card__delta" id="dash-delta"></span>
+        </div>
+        <div class="investor-hero-card__cols">
+          <div class="investor-hero-card__col">
+            <span class="investor-hero-card__col-label">Capital invested</span>
+            <span class="investor-hero-card__col-val" id="dash-capital"></span>
+          </div>
+          <div class="investor-hero-card__col">
+            <span class="investor-hero-card__col-label">Profit / loss</span>
+            <span class="investor-hero-card__col-val" id="dash-pnl"></span>
+          </div>
+          <div class="investor-hero-card__col">
+            <span class="investor-hero-card__col-label">Your share</span>
+            <span class="investor-hero-card__col-val" id="dash-split"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Two metric cards -->
+      <div class="investor-metric-grid">
+        <section class="investor-metric-card">
+          <p class="investor-metric-card__label">Return since inception</p>
+          <p class="investor-metric-card__value" id="dash-return"></p>
+        </section>
+        <section class="investor-metric-card">
+          <p class="investor-metric-card__label">Account status</p>
+          <p class="investor-metric-card__value" id="dash-status-cell"></p>
+        </section>
+      </div>
+
+      <!-- Performance chart placeholder -->
+      <section class="investor-chart-card">
+        <div class="investor-chart-card__head">
+          <h2 class="investor-chart-card__title">Performance over time</h2>
+          <span class="investor-chart-card__coming">Coming in stage 2</span>
+        </div>
+        <div class="investor-chart-placeholder" aria-hidden="true">
+          <div class="investor-chart-bars">
+            <div class="investor-chart-bar" style="height:28%"></div>
+            <div class="investor-chart-bar" style="height:45%"></div>
+            <div class="investor-chart-bar" style="height:38%"></div>
+            <div class="investor-chart-bar" style="height:62%"></div>
+            <div class="investor-chart-bar" style="height:55%"></div>
+            <div class="investor-chart-bar" style="height:71%"></div>
+            <div class="investor-chart-bar" style="height:66%"></div>
+            <div class="investor-chart-bar" style="height:80%"></div>
+            <div class="investor-chart-bar" style="height:74%"></div>
+            <div class="investor-chart-bar" style="height:88%"></div>
+            <div class="investor-chart-bar" style="height:82%"></div>
+            <div class="investor-chart-bar" style="height:95%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Account details card -->
+      <section class="investor-details-card">
+        <h2 class="investor-details-card__title">Your account</h2>
+        <div class="investor-details-rows">
+          <div class="investor-details-row">
+            <span class="investor-details-row__key">Account holder</span>
+            <span class="investor-details-row__val" id="dash-holder"></span>
+          </div>
+          <div class="investor-details-row">
+            <span class="investor-details-row__key">Profit split</span>
+            <span class="investor-details-row__val" id="dash-split-detail"></span>
+          </div>
+          <div class="investor-details-row">
+            <span class="investor-details-row__key">Last valuation</span>
+            <span class="investor-details-row__val" id="dash-last-val"></span>
+          </div>
+          <div class="investor-details-row">
+            <span class="investor-details-row__key">Reporting status</span>
+            <span class="investor-details-row__val" id="dash-reporting"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="investor-dash-footer">
+        <p>Values reflect the most recent valuation recorded by your account manager.</p>
+      </footer>
+
+    </div><!-- /investor-dash-content -->
   </main>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <script src="/static/investor-portal.js"></script>
 </body>
 </html>

@@ -5397,6 +5397,7 @@ function ensureInvestorTables(db) {
     if (login.password_hash && !login.passwordHash) login.passwordHash = login.password_hash;
     if (login.last_login_at && !login.lastLoginAt) login.lastLoginAt = login.last_login_at;
     if (login.investor_profile_id && !login.investorProfileId) login.investorProfileId = login.investor_profile_id;
+    if (typeof login.mustChangePassword !== 'boolean') login.mustChangePassword = false;
   }
 
   for (const invite of db.investorInvites) {
@@ -5673,7 +5674,9 @@ function requireInvestorAuth(req, res, next) {
   }
   if (!authContext?.investorProfileId) return res.status(401).json({ error: 'Unauthenticated investor session.' });
   const profile = db.investorProfiles.find(p => p.id === authContext.investorProfileId);
-  if (!profile || profile.status !== 'active') return res.status(403).json({ error: 'Investor account inactive.' });
+  if (!profile) return res.status(403).json({ error: 'Investor account not found.' });
+  // Suspended investors may still read their dashboard — they just see a suspended indicator.
+  // Fully block only if the profile record is missing entirely.
   req.investorAuth = authContext;
   req.investorProfile = profile;
   req.investorDb = db;
@@ -13906,6 +13909,9 @@ app.get('/profile/billing', (req, res) => {
 app.get('/profile/settings', (req, res) => {
   res.sendFile(path.join(__dirname, 'profile-settings.html'));
 });
+app.get('/investor/change-password', (req, res) => {
+  res.sendFile(path.join(__dirname, 'investor-change-password.html'));
+});
 app.get('/investor/login', (req, res) => {
   res.sendFile(path.join(__dirname, 'investor-login.html'));
 });
@@ -14383,6 +14389,24 @@ app.post('/api/investor/auth/login', asyncHandler(async (req, res) => {
     secure: !!process.env.RENDER,
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
+  res.json({ ok: true, mustChangePassword: login.mustChangePassword === true });
+}));
+
+app.post('/api/investor/auth/change-password', requireInvestorAuth, asyncHandler(async (req, res) => {
+  const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword are required.' });
+  if (!isStrongPassword(newPassword)) return res.status(400).json({ error: 'Choose a stronger password (12+ characters with upper, lower, number, symbol).' });
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const login = db.investorLogins.find(l => l.investorProfileId === req.investorProfile.id);
+  if (!login || !login.passwordHash) return res.status(400).json({ error: 'No password set on this account.' });
+  const ok = await bcrypt.compare(currentPassword, login.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'Current password is incorrect.' });
+  if (currentPassword === newPassword) return res.status(400).json({ error: 'New password must differ from the current password.' });
+  login.passwordHash = await bcrypt.hash(newPassword, 10);
+  login.mustChangePassword = false;
+  saveDB(db);
   res.json({ ok: true });
 }));
 
@@ -14434,9 +14458,39 @@ app.post('/api/investor/auth/activate', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/investor/me', requireInvestorAuth, (req, res) => {
+  const db = req.investorDb;
+  const profile = req.investorProfile;
+  const login = db.investorLogins.find(l => l.investorProfileId === profile.id) || null;
+
+  const perf = computeInvestorPerformance({ db, masterUserId: profile.masterUserId, investorId: profile.id });
+  const latestNav = latestMasterNav(db, profile.masterUserId);
+
+  const nameParts = (profile.displayName || '').trim().split(/\s+/);
+  const firstName = nameParts[0] || profile.displayName || 'Investor';
+
+  const capitalInvested = perf.error ? 0 : perf.net_contributions;
+  const pnl = perf.error ? 0 : perf.investor_profit_share;
+  const currentValue = capitalInvested + pnl;
+  const returnPct = perf.error ? 0 : roundTo(perf.investor_return_pct * 100, 4);
+  const split = getInvestorProfitSplit(db, profile.id);
+  const profitSplitPct = roundTo(split.investorShareBps / 100, 2);
+  const masterSplitPct = roundTo(split.masterShareBps / 100, 2);
+  const lastValuationAt = latestNav ? new Date(latestNav.valuationDate + 'T00:00:00Z').toISOString() : null;
+
   res.json({
-    displayName: req.investorProfile.displayName,
-    status: req.investorProfile.status,
+    name: profile.displayName,
+    firstName,
+    email: login?.email || null,
+    status: profile.status,
+    mustChangePassword: login?.mustChangePassword === true,
+    capitalInvested: roundTo(capitalInvested),
+    pnl: roundTo(pnl),
+    currentValue: roundTo(currentValue),
+    returnPct,
+    profitSplitPct,
+    masterSplitPct,
+    lastValuationAt,
+    currency: profile.defaultCurrency || 'GBP',
     preview: req.investorAuth.role === 'investor_preview'
   });
 });
@@ -14489,23 +14543,26 @@ app.get('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess,
   res.json({ investors: list });
 });
 
-app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+app.post('/api/master/investors', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;
   const displayName = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const tempPassword = typeof req.body?.temp_password === 'string' ? req.body.temp_password : '';
   if (!displayName) return res.status(400).json({ error: 'display_name is required.' });
   if (!email) return res.status(400).json({ error: 'email is required.' });
+  if (tempPassword && tempPassword.length < 4) return res.status(400).json({ error: 'Temporary password must be at least 4 characters.' });
   const db = loadDB();
   ensureInvestorTables(db);
   if (db.investorLogins.find(l => l.email === email)) return res.status(409).json({ error: 'Email already in use.' });
   const id = crypto.randomUUID();
   const nowIso = new Date().toISOString();
+  const passwordHash = tempPassword ? await bcrypt.hash(tempPassword, 10) : '';
   db.investorProfiles.push({ id, masterUserId: req.username, displayName, status: 'active', defaultCurrency: 'GBP', createdAt: nowIso });
   db.investorProfitSplits.push({ investorProfileId: id, investorShareBps: 8000, masterShareBps: 2000, effectiveFrom: nowIso.slice(0,10), createdAt: nowIso });
-  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash: '', lastLoginAt: null, last_login_at: null, createdAt: nowIso });
+  db.investorLogins.push({ id: crypto.randomUUID(), investorProfileId: id, email, passwordHash, mustChangePassword: !!tempPassword, lastLoginAt: null, last_login_at: null, createdAt: nowIso });
   saveDB(db);
-  res.status(201).json({ id, displayName, status: 'active' });
-});
+  res.status(201).json({ id, displayName, status: 'active', loginReady: !!tempPassword });
+}));
 
 (typeof app.patch === 'function' ? app.patch.bind(app) : app.post.bind(app))('/api/master/investors/:id', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   if (rejectGuest(req, res)) return;
@@ -14723,6 +14780,7 @@ app.post('/api/master/investors/:id/reset-password', requireMasterAuth, requireM
   let login = db.investorLogins.find(l => l.investorProfileId === profile.id);
   if (!login) return res.status(400).json({ error: 'Create login email first.' });
   login.passwordHash = await bcrypt.hash(tempPassword, 10);
+  login.mustChangePassword = true;
   saveDB(db);
   res.json({ tempPassword, email: login.email });
 }));

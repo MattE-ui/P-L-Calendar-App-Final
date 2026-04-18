@@ -3,22 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Investor Portal - Login</title>
+  <title>Investor Portal — Login</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/investor-portal.css">
 </head>
-<body>
-  <main class="login-container">
-    <section class="card">
-      <h2>Investor Portal Login</h2>
-      <label>Email</label>
-      <input id="investor-email" type="email" placeholder="investor@email.com">
-      <label>Password</label>
-      <input id="investor-password" type="password">
-      <button id="investor-login-btn" class="primary">Login</button>
-      <div id="investor-login-error" class="error"></div>
+<body class="investor-auth-body">
+  <main class="investor-auth-shell">
+    <div class="investor-auth-brand">
+      <span class="investor-auth-logomark" aria-hidden="true">V</span>
+      <span class="investor-auth-brand-label">VERACITY · INVESTOR PORTAL</span>
+    </div>
+    <section class="investor-auth-card">
+      <h1 class="investor-auth-title">Sign in</h1>
+      <p class="investor-auth-subtitle">Enter the email and password provided by your account manager.</p>
+
+      <label for="investor-email">Email address</label>
+      <input id="investor-email" type="email" autocomplete="email" placeholder="you@example.com">
+
+      <label for="investor-password">Password</label>
+      <input id="investor-password" type="password" autocomplete="current-password" placeholder="Your password">
+
+      <button id="investor-login-btn" class="primary investor-auth-submit" type="button">Sign in</button>
+      <div id="investor-login-error" class="error" style="min-height:1.2em"></div>
     </section>
   </main>
   <script src="/static/investor-portal.js"></script>

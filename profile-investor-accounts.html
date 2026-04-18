@@ -25,9 +25,40 @@
 </section>
 
 <section class="card profile-card">
-  <div class="profile-card-header"><h2>Investor Accounts</h2><p class="helper">Each account includes capital, performance, and direct operational actions.</p></div>
+  <div class="profile-card-header">
+    <div>
+      <h2>Investor Accounts</h2>
+      <p class="helper">Each account includes capital, performance, and direct operational actions.</p>
+    </div>
+    <button id="create-investor-btn" class="primary small" type="button">+ New investor</button>
+  </div>
   <div id="investor-list" class="investor-card-grid"></div>
 </section>
+
+<!-- Create investor modal -->
+<div id="create-investor-modal" class="modal-overlay" hidden>
+  <div class="modal-dialog card">
+    <div class="modal-header">
+      <h3>Create investor account</h3>
+      <button class="ghost small modal-close" data-modal="create-investor-modal" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <label for="ci-name">Display name</label>
+      <input id="ci-name" type="text" placeholder="e.g. Janette Ellwood" autocomplete="off">
+      <label for="ci-email">Login email</label>
+      <input id="ci-email" type="email" placeholder="investor@example.com" autocomplete="off">
+      <label for="ci-temp-password">Temporary password <span class="helper" style="display:inline;margin:0">(recommended)</span></label>
+      <input id="ci-temp-password" type="text" placeholder="Share this with the investor — they must change it on first login" autocomplete="new-password">
+      <p class="helper" style="margin-top:6px">Leave blank to use the invite-link flow instead.</p>
+      <div id="create-investor-error" class="error" style="min-height:1.2em"></div>
+      <div id="create-investor-result" hidden class="create-investor-result card"></div>
+    </div>
+    <div class="profile-actions modal-footer">
+      <button id="ci-submit-btn" class="primary" type="button">Create account</button>
+      <button class="ghost modal-close" data-modal="create-investor-modal" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <section class="card profile-card">
   <div class="profile-card-header"><h2>Performance & Reporting</h2></div>
