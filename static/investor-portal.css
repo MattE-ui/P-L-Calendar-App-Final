@@ -276,13 +276,21 @@
   display: none;
 }
 
+/* ── Dashboard content — uniform gap between all major sections ── */
+
+#investor-dash-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
 /* ── Page title block ───────────────────────────────────────── */
 
 .investor-dash-title {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: 4px;
+  margin-bottom: 0; /* gap on parent now handles section spacing */
 }
 
 .investor-dash-welcome {
