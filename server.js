@@ -22128,6 +22128,15 @@ app.get('/api/pl', auth, (req,res)=>{
   const cacheKey = `pl:${req.username}:${year}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    try {
+      const plData = sqliteDb.computePlFromSQLite(req.username, req.query);
+      if (plData) return res.json(plData);
+    } catch (err) {
+      console.error('[PL SQLite] Fallback to JSON:', err.message);
+      // Falls through to existing logic
+    }
+  }
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
