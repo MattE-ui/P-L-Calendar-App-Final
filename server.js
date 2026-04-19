@@ -24868,36 +24868,46 @@ function resolveT212PositionDisplayTicker(t212Ticker, positionRaw) {
 }
 
 function parseT212PositionFields(positionRaw) {
-  const t212Ticker = String(positionRaw?.ticker || positionRaw?.symbol || '').trim();
+  const instrument = positionRaw?.instrument || {};
+  // ticker lives inside the instrument sub-object in the T212 positions response
+  const t212Ticker = String(instrument.ticker || positionRaw?.ticker || positionRaw?.symbol || '').trim();
   const normalised = normalizeTrading212Symbol(t212Ticker);
-  const displayTicker = resolveT212PositionDisplayTicker(t212Ticker, positionRaw);
+  // shortName (e.g. "PL") is the market-facing ticker; prefer it over registry lookup
+  const shortName = String(instrument.shortName || '').trim();
+  const displayTicker = shortName || resolveT212PositionDisplayTicker(t212Ticker, positionRaw);
   const quantity = parseTradingNumber(positionRaw?.quantity ?? positionRaw?.qty);
   const avgPricePaid = parseTradingNumber(
-    positionRaw?.averagePricePaid ?? positionRaw?.averagePrice ?? positionRaw?.avgPrice ?? positionRaw?.openPrice
+    positionRaw?.averagePrice ?? positionRaw?.averagePricePaid ?? positionRaw?.avgPrice ?? positionRaw?.openPrice
   );
   const currentPrice = parseTradingNumber(
     positionRaw?.currentPrice ?? positionRaw?.lastPrice ?? positionRaw?.marketPrice
   );
   const walletImpact = positionRaw?.walletImpact || {};
   const ppl = parseTradingNumber(
-    positionRaw?.ppl ?? positionRaw?.unrealizedPnl ??
-    walletImpact.unrealizedProfitLoss ?? walletImpact.unrealizedPnl ??
-    walletImpact.profitLoss ?? walletImpact.pnl
+    walletImpact.unrealizedProfitLoss ?? positionRaw?.ppl ?? positionRaw?.unrealizedPnl ??
+    walletImpact.unrealizedPnl ?? walletImpact.profitLoss ?? walletImpact.pnl
   );
+  // walletImpact.currency is the account currency (GBP for this user) — use it as authoritative
+  const pplCurrency = String(
+    walletImpact.currency ?? instrument.currencyCode ?? positionRaw?.currency ?? 'GBP'
+  ).trim().toUpperCase() || 'GBP';
   const currency = String(
-    positionRaw?.currency ?? walletImpact.currency ?? positionRaw?.instrument?.currency ?? 'USD'
+    instrument.currencyCode ?? walletImpact.currency ?? positionRaw?.currency ?? 'USD'
   ).trim().toUpperCase() || 'USD';
   const createdAt = positionRaw?.createdAt
     ? new Date(positionRaw.createdAt).toISOString()
     : new Date().toISOString();
   const direction = Number.isFinite(quantity) && quantity < 0 ? 'short' : 'long';
-  return { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, currency, createdAt, direction };
+  return { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, pplCurrency, currency, createdAt, direction };
 }
 
 function buildT212SyntheticActiveTrade(positionRaw, rates) {
   const fields = parseT212PositionFields(positionRaw);
-  const { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, currency, createdAt, direction } = fields;
-  const unrealizedGBP = Number.isFinite(ppl) ? (convertToGBP(ppl, currency, rates) ?? null) : null;
+  const { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, pplCurrency, currency, createdAt, direction } = fields;
+  // pplCurrency is walletImpact.currency — already in account currency (GBP), skip conversion
+  const unrealizedGBP = Number.isFinite(ppl)
+    ? (pplCurrency === 'GBP' ? ppl : (convertToGBP(ppl, pplCurrency, rates) ?? null))
+    : null;
   return {
     id: `t212:${normalised || t212Ticker}`,
     source: 'broker',
