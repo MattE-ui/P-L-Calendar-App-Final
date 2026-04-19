@@ -1614,4 +1614,81 @@
     }
   });
 
+  // ── Master aggregate chart ────────────────────────────────
+
+  let masterChart = null;
+  let masterChartRange = 'ALL';
+  let masterChartView = 'value';
+
+  async function loadMasterChart() {
+    const card = document.getElementById('ia-master-chart-card');
+    const wrap = document.getElementById('ia-master-chart-wrap');
+    const loadingEl = document.getElementById('ia-master-chart-loading');
+    if (!card || !wrap || typeof window.createInvestorChart !== 'function') return;
+
+    if (!state.investorModeEnabled) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+
+    try {
+      const result = await api('/api/master/investors/performance/chart?range=' + masterChartRange);
+
+      if (loadingEl) loadingEl.hidden = true;
+
+      // Sync prefs from server on first load
+      if (!masterChart) {
+        masterChartRange = result.chartRangePref || masterChartRange;
+        masterChartView  = result.chartViewPref  || masterChartView;
+      }
+
+      const aumPts = Array.isArray(result.aum) ? result.aum : [];
+      const navPts = Array.isArray(result.nav) ? result.nav : [];
+
+      const series = [
+        { id: 'aum', label: 'Total AUM', color: 'var(--accent)',   points: aumPts, visible: true },
+        { id: 'nav', label: 'NAV',        color: '#6366f1',         points: navPts, visible: true },
+      ];
+
+      if (!masterChart) {
+        masterChart = window.createInvestorChart(wrap, {
+          series,
+          viewMode:       masterChartView,
+          range:          masterChartRange,
+          showViewToggle: true,
+          showLegend:     true,
+          currency:       '£',
+          emptyMessage:   'Record NAVs and cashflows to see portfolio history.',
+          onRangeChange: function (r) {
+            masterChartRange = r;
+            loadMasterChart();
+            api('/api/master/chart-preferences', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chartRangePref: r }),
+            }).catch(function () {});
+          },
+          onViewChange: function (v) {
+            masterChartView = v;
+            api('/api/master/chart-preferences', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chartViewPref: v }),
+            }).catch(function () {});
+          },
+        });
+      } else {
+        masterChart.update({ series, range: masterChartRange, viewMode: masterChartView });
+      }
+    } catch (err) {
+      if (loadingEl) {
+        loadingEl.textContent = 'Chart unavailable.';
+        loadingEl.hidden = false;
+      }
+    }
+  }
+
+  loadMasterChart().catch(function () {});
+
 })();

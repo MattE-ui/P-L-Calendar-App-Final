@@ -323,6 +323,64 @@ async function initInvestorDashboardOrPreview() {
     contentEl.hidden                 = (state !== 'success');
   }
 
+  // ── Performance chart ──────────────────────────────────────
+  let investorChart = null;
+  let chartRange = 'ALL';
+  let chartView = 'value';
+
+  async function loadInvestorChart() {
+    const wrap = document.getElementById('investor-chart-wrap');
+    const loadingIndicator = document.getElementById('investor-chart-loading');
+    if (!wrap || typeof window.createInvestorChart !== 'function') return;
+
+    try {
+      const result = await investorApi('/api/investor/equity-curve?range=' + chartRange, {}, previewToken);
+      const pts = (result && result.points) || [];
+
+      if (loadingIndicator) loadingIndicator.hidden = true;
+
+      const seriesLabel = 'Portfolio value';
+      if (!investorChart) {
+        investorChart = window.createInvestorChart(wrap, {
+          series: [{ id: 'value', label: seriesLabel, color: 'var(--accent)', points: pts, visible: true }],
+          viewMode: chartView,
+          range: chartRange,
+          showViewToggle: true,
+          showLegend: false,
+          currency: '£',
+          emptyMessage: 'No valuation data available for this period.',
+          onRangeChange: function (r) {
+            chartRange = r;
+            loadInvestorChart();
+            investorApi('/api/investor/me/preferences', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chartRangePref: r })
+            }, previewToken).catch(function () {});
+          },
+          onViewChange: function (v) {
+            chartView = v;
+            investorApi('/api/investor/me/preferences', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chartViewPref: v })
+            }, previewToken).catch(function () {});
+          },
+        });
+      } else {
+        investorChart.update({
+          series: [{ id: 'value', label: seriesLabel, color: 'var(--accent)', points: pts, visible: true }],
+          range: chartRange,
+        });
+      }
+    } catch (err) {
+      if (loadingIndicator) {
+        loadingIndicator.textContent = 'Chart unavailable.';
+        loadingIndicator.hidden = false;
+      }
+    }
+  }
+
   async function load() {
     setLoadingState('loading');
 
@@ -330,7 +388,10 @@ async function initInvestorDashboardOrPreview() {
       const data = await investorApi('/api/investor/me', {}, previewToken);
       hideBootOverlay();
       setLoadingState('success');
+      chartRange = (data && data.chartRangePref) || 'ALL';
+      chartView  = (data && data.chartViewPref)  || 'value';
       await renderInvestorDashboard(data);
+      loadInvestorChart().catch(function () {});
     } catch (error) {
       hideBootOverlay();
       if (error.status === 401 && !isPreview) {

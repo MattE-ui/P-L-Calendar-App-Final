@@ -14623,7 +14623,9 @@ app.get('/api/investor/me', requireInvestorAuth, (req, res) => {
     masterSplitPct,
     lastValuationAt,
     currency: profile.defaultCurrency || 'GBP',
-    preview: req.investorAuth.role === 'investor_preview'
+    preview: req.investorAuth.role === 'investor_preview',
+    chartViewPref: profile.chartViewPref || 'value',
+    chartRangePref: profile.chartRangePref || 'ALL',
   });
 });
 
@@ -14645,6 +14647,22 @@ app.get('/api/investor/equity-curve', requireInvestorAuth, (req, res) => {
   if (curve.error) return res.status(curve.error === 'Investor not found.' ? 404 : 400).json({ error: curve.error });
   res.json({ points: curve.points || [] });
 });
+
+app.patch('/api/investor/me/preferences', requireInvestorAuth, asyncHandler(async (req, res) => {
+  const VALID_VIEWS = ['value', 'return'];
+  const VALID_RANGES = ['1M', '3M', '1Y', 'ALL'];
+  const { chartViewPref, chartRangePref } = req.body || {};
+  await withDbLock(async () => {
+    const db = loadDB();
+    ensureInvestorTables(db);
+    const profile = db.investorProfiles.find(p => p.id === req.investorProfile.id);
+    if (!profile) { res.status(404).json({ error: 'Profile not found.' }); return; }
+    if (chartViewPref && VALID_VIEWS.includes(chartViewPref)) profile.chartViewPref = chartViewPref;
+    if (chartRangePref && VALID_RANGES.includes(chartRangePref)) profile.chartRangePref = chartRangePref;
+    saveDB(db);
+    res.json({ ok: true });
+  });
+}));
 
 app.get('/api/investor/cashflows', requireInvestorAuth, (req, res) => {
   const limitRaw = Number(req.query?.limit);
@@ -15075,6 +15093,65 @@ app.get('/api/master/investors/:id/performance', requireMasterAuth, requireMaste
   if (summary.error) return res.status(summary.error === 'Investor not found.' ? 404 : 400).json({ error: summary.error });
   res.json(summary);
 });
+
+app.get('/api/master/investors/performance/chart', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  const rawRange = typeof req.query?.range === 'string' ? req.query.range.toUpperCase() : 'ALL';
+  const range = ['1M', '3M', '1Y', 'ALL'].includes(rawRange) ? rawRange : 'ALL';
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const user = db.users[req.username];
+
+  const rangeDays = range === '1M' ? 31 : range === '3M' ? 93 : range === '1Y' ? 366 : null;
+  const minDate = rangeDays
+    ? new Date(Date.now() - (rangeDays * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)
+    : null;
+
+  const navSeries = db.masterValuations
+    .filter(v => v.masterUserId === req.username)
+    .map(v => ({ date: String(v.valuationDate || ''), value: Number(v.nav) || 0 }))
+    .filter(v => /^\d{4}-\d{2}-\d{2}$/.test(v.date) && v.value > 0)
+    .filter(v => !minDate || v.date >= minDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const activeProfiles = db.investorProfiles.filter(
+    p => p.masterUserId === req.username && p.deletedAt == null
+  );
+
+  const dateAum = new Map();
+  for (const profile of activeProfiles) {
+    const curve = computeInvestorEquityCurve({ db, masterUserId: req.username, investorId: profile.id, range });
+    for (const pt of (curve.points || [])) {
+      dateAum.set(pt.date, (dateAum.get(pt.date) || 0) + pt.value);
+    }
+  }
+
+  const aumSeries = [...dateAum.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, value]) => ({ date, value: roundTo(value) }));
+
+  res.json({
+    nav: navSeries,
+    aum: aumSeries,
+    chartViewPref: user?.chartViewPref || 'value',
+    chartRangePref: user?.chartRangePref || 'ALL',
+  });
+});
+
+app.patch('/api/master/chart-preferences', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
+  if (rejectGuest(req, res)) return;
+  const VALID_VIEWS = ['value', 'return'];
+  const VALID_RANGES = ['1M', '3M', '1Y', 'ALL'];
+  const { chartViewPref, chartRangePref } = req.body || {};
+  await withDbLock(async () => {
+    const db = loadDB();
+    const user = db.users[req.username];
+    if (!user) { res.status(404).json({ error: 'User not found.' }); return; }
+    if (chartViewPref && VALID_VIEWS.includes(chartViewPref)) user.chartViewPref = chartViewPref;
+    if (chartRangePref && VALID_RANGES.includes(chartRangePref)) user.chartRangePref = chartRangePref;
+    saveDB(db);
+    res.json({ ok: true });
+  });
+}));
 
 app.post('/api/master/investors/:id/invite', requireMasterAuth, requireMasterInvestorAccess, asyncHandler(async (req, res) => {
   if (rejectGuest(req, res)) return;

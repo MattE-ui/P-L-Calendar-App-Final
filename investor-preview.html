@@ -81,27 +81,13 @@
         </section>
       </div>
 
-      <section class="investor-chart-card">
+      <!-- Performance chart -->
+      <section class="investor-chart-card" id="investor-chart-card">
         <div class="investor-chart-card__head">
           <h2 class="investor-chart-card__title">Performance over time</h2>
-          <span class="investor-chart-card__coming">Coming in stage 2</span>
         </div>
-        <div class="investor-chart-placeholder" aria-hidden="true">
-          <div class="investor-chart-bars">
-            <div class="investor-chart-bar" style="height:28%"></div>
-            <div class="investor-chart-bar" style="height:45%"></div>
-            <div class="investor-chart-bar" style="height:38%"></div>
-            <div class="investor-chart-bar" style="height:62%"></div>
-            <div class="investor-chart-bar" style="height:55%"></div>
-            <div class="investor-chart-bar" style="height:71%"></div>
-            <div class="investor-chart-bar" style="height:66%"></div>
-            <div class="investor-chart-bar" style="height:80%"></div>
-            <div class="investor-chart-bar" style="height:74%"></div>
-            <div class="investor-chart-bar" style="height:88%"></div>
-            <div class="investor-chart-bar" style="height:82%"></div>
-            <div class="investor-chart-bar" style="height:95%"></div>
-          </div>
-        </div>
+        <div class="ic-chart-loading" id="investor-chart-loading">Loading chart…</div>
+        <div id="investor-chart-wrap"></div>
       </section>
 
       <section class="investor-details-card">
@@ -142,6 +128,7 @@
     </div>
   </div>
 
+  <script src="/static/investor-chart.js"></script>
   <script src="/static/investor-portal.js"></script>
 </body>
 </html>

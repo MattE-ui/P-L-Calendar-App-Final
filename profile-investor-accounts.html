@@ -64,6 +64,18 @@
   <p class="ia-sparkline-hint" id="ia-auto-nav-off-indicator" hidden>Automatic recording is off — <button class="ghost small" id="ia-auto-nav-settings-link" style="font-size:11px;padding:1px 7px;min-height:unset" type="button">Settings</button></p>
 </section>
 
+<!-- ── Portfolio overview chart ─────────────────────────────── -->
+<section class="card profile-card" id="ia-master-chart-card" hidden>
+  <div class="profile-card-header" style="margin-bottom:14px">
+    <div>
+      <h2>Portfolio overview</h2>
+      <p class="helper">Total investor AUM and master NAV over time.</p>
+    </div>
+  </div>
+  <div class="ic-chart-loading" id="ia-master-chart-loading">Loading chart…</div>
+  <div id="ia-master-chart-wrap"></div>
+</section>
+
 <!-- ── Investor accounts ────────────────────────────────────── -->
 <section class="card profile-card">
   <div class="profile-card-header">
@@ -378,5 +390,5 @@
   </div>
 </div>
 
-<script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/profile-investor-accounts-page.js"></script>
+<script src="/static/theme-utils.js"></script><script src="/static/app-header.js"></script><script src="/static/guest.js"></script><script src="/static/account-center-common.js"></script><script src="/static/investor-chart.js"></script><script src="/static/profile-investor-accounts-page.js"></script>
 </body></html>
