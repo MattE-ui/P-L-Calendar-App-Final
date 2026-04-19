@@ -16172,6 +16172,47 @@ app.get('/api/admin/t212-client-v2-test', auth, requireAuthenticatedUser, requir
   return res.json(result);
 });
 
+// ── DB trades diagnostic (admin, temporary) ───────────────────────────────────
+app.get('/api/admin/db-trades-count', auth, requireAuthenticatedUser, requireAdmin, (req, res) => {
+  const targetUsername = typeof req.query.username === 'string' && req.query.username.trim()
+    ? req.query.username.trim()
+    : req.username;
+  const db = loadDB();
+  const user = db.users[targetUsername];
+  if (!user) return res.status(404).json({ error: `User '${targetUsername}' not found.` });
+  const rawTrades = Array.isArray(user.trades) ? user.trades : [];
+  const bySource = {};
+  let openTrades = 0;
+  let closedTrades = 0;
+  let mostRecentTs = null;
+  let oldestTs = null;
+  for (const trade of rawTrades) {
+    const source = trade?.source || (trade?.trading212Id ? 'trading212' : (trade?.ibkrPositionId ? 'ibkr' : 'manual'));
+    bySource[source] = (bySource[source] || 0) + 1;
+    const isClosed = String(trade?.status || '').toLowerCase() === 'closed'
+      || trade?.closedAt || trade?.closeDate;
+    if (isClosed) closedTrades += 1; else openTrades += 1;
+    const ts = trade?.createdAt || trade?.openDate || trade?.date || null;
+    if (ts) {
+      const t = new Date(ts).getTime();
+      if (Number.isFinite(t)) {
+        if (mostRecentTs === null || t > mostRecentTs) mostRecentTs = t;
+        if (oldestTs === null || t < oldestTs) oldestTs = t;
+      }
+    }
+  }
+  console.info(`[db-trades-count] user=${targetUsername} total=${rawTrades.length} open=${openTrades} closed=${closedTrades}`);
+  return res.json({
+    username: targetUsername,
+    totalTrades: rawTrades.length,
+    openTrades,
+    closedTrades,
+    bySource,
+    mostRecentTradeCreatedAt: mostRecentTs ? new Date(mostRecentTs).toISOString() : null,
+    oldestTradeCreatedAt: oldestTs ? new Date(oldestTs).toISOString() : null
+  });
+});
+
 app.get('/api/notifications/config', auth, (req, res) => {
   const config = getNotificationConfig();
   const missing = missingNotificationConfigKeys(config);
@@ -24935,6 +24976,7 @@ async function computeActiveTradesSnapshot(username) {
 
   // Fetch T212 live positions to merge broker positions not yet in the journal.
   // All saveDB calls are complete above — safe to mutate in-memory user.trades here.
+  console.log('[active-trades] reroute entered', { username, t212Enabled: Boolean(tradingCfg?.enabled), accountCount: tradingAccounts.length });
   let t212LivePositions = [];
   let t212PositionsStale = false;
   if (tradingCfg?.enabled && tradingAccounts.length) {
