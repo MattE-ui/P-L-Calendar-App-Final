@@ -5427,6 +5427,41 @@ function ensureInvestorTables(db) {
     if (!('notes' in val)) val.notes = null;
     if (!('updatedAt' in val)) val.updatedAt = null;
   }
+
+  db.investorUnitLedger ||= [];
+}
+
+function backfillInvestorUnitLedger(db) {
+  let added = 0;
+  for (const cashflow of db.investorCashflows) {
+    if (db.investorUnitLedger.some(e => e.cashflowId === cashflow.id)) continue;
+    if (!cashflow.navReferenceDate) {
+      console.warn(`[ledger-backfill] cashflow ${cashflow.id} has no navReferenceDate, skipping`);
+      continue;
+    }
+    const navRecord = (db.masterValuations || []).find(v => v.valuationDate === cashflow.navReferenceDate);
+    if (!navRecord) {
+      console.warn(`[ledger-backfill] cashflow ${cashflow.id} references missing NAV ${cashflow.navReferenceDate}, skipping`);
+      continue;
+    }
+    const sign = cashflow.type === 'deposit' ? 1 : -1;
+    db.investorUnitLedger.push({
+      id: crypto.randomUUID(),
+      cashflowId: cashflow.id,
+      investorProfileId: cashflow.investorProfileId,
+      type: cashflow.type,
+      amount: cashflow.amount,
+      currency: cashflow.currency || 'GBP',
+      effectiveDate: cashflow.effectiveDate,
+      navReferenceDate: cashflow.navReferenceDate,
+      navAtReference: navRecord.nav,
+      unitsDelta: roundTo((sign * cashflow.amount) / navRecord.nav, 6),
+      createdAt: cashflow.createdAt || new Date().toISOString(),
+      backfilled: true,
+    });
+    added++;
+  }
+  return added;
 }
 
 function appBaseUrl(req) {
@@ -14793,6 +14828,8 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
     if (!navRecord) { res.status(400).json({ error: 'Record a master NAV on or before this cashflow date.' }); return; }
     const row = { id: crypto.randomUUID(), investorProfileId: profile.id, type, amount, currency: 'GBP', effectiveDate, navReferenceDate: navRecord.valuationDate, reference: reference || null, createdAt: new Date().toISOString() };
     db.investorCashflows.push(row);
+    const _sign = type === 'deposit' ? 1 : -1;
+    db.investorUnitLedger.push({ id: crypto.randomUUID(), cashflowId: row.id, investorProfileId: row.investorProfileId, type: row.type, amount: row.amount, currency: row.currency, effectiveDate: row.effectiveDate, navReferenceDate: row.navReferenceDate, navAtReference: navRecord.nav, unitsDelta: roundTo((_sign * row.amount) / navRecord.nav, 6), createdAt: row.createdAt });
     saveDB(db);
     res.status(201).json({ cashflow: row });
   });
@@ -14821,6 +14858,10 @@ app.post('/api/master/investors/:id/cashflows', requireMasterAuth, requireMaster
     cashflow.effectiveDate = effectiveDate;
     cashflow.navReferenceDate = navRecord.valuationDate;
     cashflow.reference = reference || null;
+    const _oldIdx = db.investorUnitLedger.findIndex(e => e.cashflowId === cashflow.id);
+    if (_oldIdx >= 0) db.investorUnitLedger.splice(_oldIdx, 1);
+    const _sign2 = cashflow.type === 'deposit' ? 1 : -1;
+    db.investorUnitLedger.push({ id: crypto.randomUUID(), cashflowId: cashflow.id, investorProfileId: cashflow.investorProfileId, type: cashflow.type, amount: cashflow.amount, currency: cashflow.currency || 'GBP', effectiveDate: cashflow.effectiveDate, navReferenceDate: cashflow.navReferenceDate, navAtReference: navRecord.nav, unitsDelta: roundTo((_sign2 * cashflow.amount) / navRecord.nav, 6), createdAt: cashflow.createdAt || new Date().toISOString() });
     saveDB(db);
     res.json({ cashflow });
   });
@@ -14836,10 +14877,23 @@ app.delete('/api/master/investors/:investorId/cashflows/:cashflowId', requireMas
     const index = db.investorCashflows.findIndex((row) => row.id === req.params.cashflowId && row.investorProfileId === profile.id);
     if (index < 0) { res.status(404).json({ error: 'Cashflow not found.' }); return; }
     const [deleted] = db.investorCashflows.splice(index, 1);
+    const _ledgerIdx = db.investorUnitLedger.findIndex(e => e.cashflowId === deleted.id);
+    if (_ledgerIdx >= 0) db.investorUnitLedger.splice(_ledgerIdx, 1);
     saveDB(db);
     res.json({ deleted: { id: deleted.id } });
   });
 }));
+
+app.get('/api/master/investors/:id/ledger', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
+  const db = loadDB();
+  ensureInvestorTables(db);
+  const profile = db.investorProfiles.find(p => p.id === req.params.id && p.masterUserId === req.username);
+  if (!profile) return res.status(404).json({ error: 'Investor not found.' });
+  const entries = db.investorUnitLedger
+    .filter(e => e.investorProfileId === profile.id)
+    .sort((a, b) => String(b.effectiveDate).localeCompare(String(a.effectiveDate)));
+  res.json({ ledger: entries });
+});
 
 app.get('/api/master/valuations', requireMasterAuth, requireMasterInvestorAccess, (req, res) => {
   const db = loadDB();
@@ -26791,6 +26845,12 @@ async function runWatchlistPreviousCloseReinforcement() {
 }
 
 if (require.main === module) {
+  try {
+    const _bfDb = loadDB();
+    ensureInvestorTables(_bfDb);
+    const _bfAdded = backfillInvestorUnitLedger(_bfDb);
+    if (_bfAdded > 0) { saveDB(_bfDb); console.log(`[ledger-backfill] backfilled ${_bfAdded} unit ledger entries on startup`); }
+  } catch (_bfErr) { console.warn('[ledger-backfill] startup backfill failed:', _bfErr.message); }
   bootstrapTrading212Schedules();
   bootstrapIbkrSchedules();
   runGuestCleanup();

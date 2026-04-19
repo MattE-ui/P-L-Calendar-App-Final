@@ -17,6 +17,9 @@
     }
   };
 
+  // Per-session set of effectiveDates where the stale-NAV warning was dismissed
+  const navWarnDismissed = new Set();
+
   // ── Formatting ────────────────────────────────────────────
 
   const formatCurrency = (value) => {
@@ -917,6 +920,7 @@
             <input id="md-cf-date" type="date" value="${today()}">
             <label for="md-cf-ref">Reference (optional)</label>
             <input id="md-cf-ref" type="text" placeholder="e.g. Initial deposit">
+            <div id="md-cf-nav-warn" class="ia-stale-banner" hidden></div>
             <div id="md-cf-error" class="error" style="min-height:1.2em"></div>
             <div class="profile-actions" style="margin-top:10px">
               <button id="md-cf-submit" class="primary small" type="button">Record cashflow</button>
@@ -939,6 +943,12 @@
       document.getElementById('md-save-btn')?.addEventListener('click', () => handleManageSave(investorId));
       document.getElementById('md-cf-submit')?.addEventListener('click', () => handleCashflowSubmit(investorId));
       document.querySelector('.ia-drawer-perf-retry')?.addEventListener('click', () => loadManageDrawer(investorId));
+
+      const cfDateEl = document.getElementById('md-cf-date');
+      if (cfDateEl) {
+        cfDateEl.addEventListener('change', () => updateNavWarning(cfDateEl.value));
+        updateNavWarning(cfDateEl.value);
+      }
 
       document.getElementById('md-delete-btn')?.addEventListener('click', (e) => {
         closeDrawer();
@@ -1027,6 +1037,32 @@
     } finally {
       saveBtn.disabled = false;
     }
+  }
+
+  function updateNavWarning(effectiveDate) {
+    const warn = document.getElementById('md-cf-nav-warn');
+    if (!warn) return;
+    if (!effectiveDate) { warn.hidden = true; return; }
+    if (navWarnDismissed.has(effectiveDate)) { warn.hidden = true; return; }
+
+    const valuations = state.valuations || [];
+    const onOrBefore = valuations.filter(v => v.valuationDate <= effectiveDate).sort((a, b) => b.valuationDate.localeCompare(a.valuationDate));
+
+    let html = '';
+    if (!onOrBefore.length) {
+      html = `<span aria-hidden="true">⚠</span><span style="flex:1">No NAV recorded on or before this date — the cashflow cannot be saved until one exists.</span><button class="ghost small" id="md-cf-warn-dismiss" type="button" style="margin-left:auto">Dismiss</button>`;
+    } else {
+      const days = Math.round((new Date(effectiveDate) - new Date(onOrBefore[0].valuationDate)) / 86400000);
+      if (days <= 3) { warn.hidden = true; return; }
+      html = `<span aria-hidden="true">⚠</span><span style="flex:1">Last NAV was recorded ${days} day${days === 1 ? '' : 's'} before this cashflow date. Consider recording a more recent NAV first.</span><button class="ghost small" id="md-cf-warn-dismiss" type="button" style="margin-left:auto">Dismiss</button>`;
+    }
+
+    warn.hidden = false;
+    warn.innerHTML = html;
+    document.getElementById('md-cf-warn-dismiss')?.addEventListener('click', () => {
+      navWarnDismissed.add(effectiveDate);
+      warn.hidden = true;
+    });
   }
 
   async function handleCashflowSubmit(investorId) {
