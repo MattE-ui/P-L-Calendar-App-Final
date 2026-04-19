@@ -22129,14 +22129,20 @@ app.get('/api/pl', auth, (req,res)=>{
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
     try {
       const plData = sqliteDb.computePlFromSQLite(req.username, req.query);
-      if (plData) return res.json(plData);
+      if (plData) {
+        console.log(`[PL] SQLite path took ${Date.now() - start}ms for ${req.username}`);
+        return res.json(plData);
+      } else {
+        console.log(`[PL] SQLite returned null, falling to JSON`);
+      }
     } catch (err) {
-      console.error('[PL SQLite] Fallback to JSON:', err.message);
-      // Falls through to existing logic
+      console.error('[PL] SQLite error, falling to JSON:', err.message);
     }
   }
+  const jsonStart = Date.now();
   const db = req.perfDiag?.timeSync('db_load', () => loadDB()) || loadDB();
   const user = db.users[req.username];
   req.perfDiag?.timeSync('user_shape', () => ensureUserShape(user, req.username));
@@ -22195,10 +22201,12 @@ app.get('/api/pl', auth, (req,res)=>{
       }
     };
     setCached(cacheKey, responseData, 30000);
+    console.log(`[PL] JSON path took ${Date.now() - jsonStart}ms for ${req.username}`);
     return res.json(responseData);
   }
   req.perfDiag?.setMeta({ resultCount: Object.keys(snapshots || {}).length, cache: 'bypass' });
   setCached(cacheKey, snapshots, 30000);
+  console.log(`[PL] JSON path took ${Date.now() - jsonStart}ms for ${req.username}`);
   res.json(snapshots);
 });
 
