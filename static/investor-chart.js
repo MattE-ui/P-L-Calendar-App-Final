@@ -129,10 +129,17 @@
     svgWrap.className = 'ic-svg-wrap';
     container.appendChild(svgWrap);
 
+    // Inline critical layout so chart is self-sufficient even if investor-portal.css isn't loaded
+    svgWrap.style.position = 'relative';
+    svgWrap.style.lineHeight = '0';
+
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('class', 'ic-svg');
     svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('overflow', 'visible'); // prevents x-label clipping at right edge
+    svg.style.display = 'block';
+    svg.style.width = '100%';
     svgWrap.appendChild(svg);
 
     const tooltip = document.createElement('div');
@@ -197,8 +204,9 @@
       });
 
       const allPts = display.reduce(function (acc, s) { return acc.concat(s.pts); }, []);
+      const maxSeriesLen = display.reduce(function (m, s) { return Math.max(m, s.pts.length); }, 0);
 
-      if (!allPts.length) {
+      if (maxSeriesLen < 2) {
         emptyEl.textContent = state.emptyMessage;
         emptyEl.hidden = false;
         svgWrap.hidden = true;
@@ -208,7 +216,7 @@
       svgWrap.hidden = false;
 
       const W = (svgWrap.getBoundingClientRect().width || 500);
-      const H = 162;
+      const H = 240;
       svg.setAttribute('width', W);
       svg.setAttribute('height', H);
       svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
@@ -268,18 +276,19 @@
         svg.appendChild(mkEl('path', { d: pathD, class: 'ic-line', style: 'stroke:' + s.color, fill: 'none' }));
       });
 
-      // X labels
+      // X labels — first anchors left, last anchors right, middle anchors centre
       const xMax = W < 360 ? 4 : W < 520 ? 5 : 6;
       const xIdxs = pickXLabelIdxs(longest.pts, xMax);
       const useMonthFmt = longest.pts.length > 200;
-      xIdxs.forEach(function (i) {
+      xIdxs.forEach(function (i, ai) {
         const pt = longest.pts[i];
         if (!pt) return;
+        const anchor = ai === 0 ? 'start' : ai === xIdxs.length - 1 ? 'end' : 'middle';
         const t = mkEl('text', {
           x: toX(i, longest.pts.length),
           y: cY + cH + 18,
           class: 'ic-x-label',
-          'text-anchor': 'middle',
+          'text-anchor': anchor,
         });
         t.textContent = useMonthFmt ? fmtMonthYear(pt.date) : fmtDateShort(pt.date);
         svg.appendChild(t);

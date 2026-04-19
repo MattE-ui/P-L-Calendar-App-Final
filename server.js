@@ -5695,6 +5695,10 @@ function computeInvestorEquityCurve({ db, masterUserId, investorId, range = 'ALL
     .filter(c => c.amount > 0 && /^\d{4}-\d{2}-\d{2}$/.test(c.effectiveDate) && /^\d{4}-\d{2}-\d{2}$/.test(c.navReferenceDate))
     .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
 
+  // No valid cashflows means no join date — nothing to chart
+  if (!cashflows.length) return { points: [] };
+  const joinDate = cashflows[0].effectiveDate; // earliest deposit/withdrawal = investor join date
+
   const navByDate = new Map(valuations.map(v => [v.date, v.nav]));
   const split = getInvestorProfitSplit(db, profile.id);
   const investorShareBps = Number(split.investorShareBps) || 0;
@@ -5724,6 +5728,9 @@ function computeInvestorEquityCurve({ db, masterUserId, investorId, range = 'ALL
       }
       flowIndex += 1;
     }
+
+    // Exclude NAV dates before the investor's first cashflow
+    if (valuation.date < joinDate) continue;
 
     const currentValueGross = totalUnits * valuation.nav;
     const netContributions = depositsTotal - withdrawalsTotal - feesTotal;
