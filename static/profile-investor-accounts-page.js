@@ -251,6 +251,7 @@
     const navDelta  = document.getElementById('ia-nav-delta');
     const navDate   = document.getElementById('ia-nav-date');
     const sparkHint = document.getElementById('ia-sparkline-hint');
+    const sparkArea = document.getElementById('ia-sparkline-area');
 
     const sorted = [...state.valuations]
       .filter(v => Number.isFinite(Number(v.nav)))
@@ -263,7 +264,8 @@
       if (navValue) navValue.textContent = '—';
       if (navDelta) navDelta.hidden = true;
       if (navDate) navDate.textContent = 'No valuations recorded yet';
-      if (sparkHint) sparkHint.textContent = '';
+      if (sparkArea) sparkArea.hidden = false;
+      if (sparkHint) { sparkHint.textContent = ''; sparkHint.classList.remove('ia-sparkline-hint--trend'); }
       buildSparkline([], 'ia-sparkline');
       return;
     }
@@ -274,6 +276,17 @@
 
     if (navValue) navValue.textContent = formatCurrency(latestNav);
     if (navDate) navDate.textContent = `As of ${latest.valuationDate}`;
+
+    if (sorted.length === 1) {
+      if (navDelta) navDelta.hidden = true;
+      if (sparkArea) sparkArea.hidden = true;
+      if (sparkHint) {
+        sparkHint.textContent = 'Record another valuation to start seeing a trend.';
+        sparkHint.classList.add('ia-sparkline-hint--trend');
+      }
+      buildSparkline([], 'ia-sparkline');
+      return;
+    }
 
     if (navDelta && prior) {
       const priorNav = Number(prior.nav);
@@ -290,11 +303,9 @@
       navDelta.hidden = true;
     }
 
+    if (sparkArea) sparkArea.hidden = false;
+    if (sparkHint) { sparkHint.textContent = `${sorted.length} valuations`; sparkHint.classList.remove('ia-sparkline-hint--trend'); }
     buildSparkline(sorted, 'ia-sparkline');
-
-    if (sparkHint) {
-      sparkHint.textContent = sorted.length > 1 ? `${sorted.length} valuations` : '';
-    }
   };
 
   const renderAll = () => {
@@ -445,28 +456,22 @@
       safe(api('/api/master/valuations'))
     ]);
 
-    let anyChange = false;
-
     if (livePayload !== sentinel) {
       state.investors = Array.isArray(livePayload?.investors) ? livePayload.investors : [];
-      anyChange = true;
     }
     if (deletedPayload !== sentinel) {
       const allInvestors = Array.isArray(deletedPayload?.investors) ? deletedPayload.investors : [];
       state.deletedInvestors = allInvestors.filter(i => i.deletedAt != null);
-      anyChange = true;
     }
     if (performancePayload !== sentinel) {
       const performanceRows = Array.isArray(performancePayload?.investors) ? performancePayload.investors : [];
       state.perfById = new Map(performanceRows.map((row) => [row.investor_profile_id, row]));
-      anyChange = true;
     }
     if (valuationPayload !== sentinel) {
       state.valuations = Array.isArray(valuationPayload?.valuations) ? valuationPayload.valuations : [];
-      anyChange = true;
     }
 
-    if (anyChange) renderAll();
+    renderAll();
   }
 
   // ── Init mode toggle ──────────────────────────────────────
@@ -813,8 +818,7 @@
             </div>
           ` : '<p class="helper" style="margin:0">No valuations recorded yet.</p>'}
           <p class="helper" style="margin:10px 0 12px;font-size:12px">Capital and PnL are derived from cashflows and master valuations.</p>
-          <button class="ghost small" id="md-toggle-cashflow-form" type="button">+ Record cashflow</button>
-          <div id="md-cashflow-form" class="ia-cashflow-form" hidden>
+          <div id="md-cashflow-form" class="ia-cashflow-form">
             <label for="md-cf-type">Type</label>
             <select id="md-cf-type">
               <option value="deposit">Deposit</option>
@@ -830,7 +834,6 @@
             <div id="md-cf-error" class="error" style="min-height:1.2em"></div>
             <div class="profile-actions" style="margin-top:10px">
               <button id="md-cf-submit" class="primary small" type="button">Record cashflow</button>
-              <button id="md-cf-cancel" class="ghost small" type="button">Cancel</button>
             </div>
           </div>
         </section>
@@ -848,18 +851,6 @@
       `;
 
       document.getElementById('md-save-btn')?.addEventListener('click', () => handleManageSave(investorId));
-
-      const toggleCfBtn = document.getElementById('md-toggle-cashflow-form');
-      const cfForm = document.getElementById('md-cashflow-form');
-      toggleCfBtn?.addEventListener('click', () => {
-        const isHidden = cfForm.hidden;
-        cfForm.hidden = !isHidden;
-        toggleCfBtn.textContent = isHidden ? '− Cancel cashflow' : '+ Record cashflow';
-      });
-      document.getElementById('md-cf-cancel')?.addEventListener('click', () => {
-        cfForm.hidden = true;
-        toggleCfBtn.textContent = '+ Record cashflow';
-      });
       document.getElementById('md-cf-submit')?.addEventListener('click', () => handleCashflowSubmit(investorId));
 
       document.getElementById('md-delete-btn')?.addEventListener('click', (e) => {
@@ -906,6 +897,7 @@
     try {
       await api(`/api/master/investors/${investorId}/cashflows/${cashflowId}`, { method: 'DELETE' });
       await loadManageDrawer(investorId);
+      await loadInvestorData();
     } catch (error) {
       setText('investor-status', error.message || 'Unable to delete cashflow.');
     }
@@ -969,9 +961,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference: reference || '' })
       });
-      document.getElementById('md-cashflow-form').hidden = true;
-      document.getElementById('md-toggle-cashflow-form').textContent = '+ Record cashflow';
       await loadManageDrawer(investorId);
+      await loadInvestorData();
     } catch (error) {
       errorEl.textContent = error.message || 'Failed to record cashflow.';
     } finally {

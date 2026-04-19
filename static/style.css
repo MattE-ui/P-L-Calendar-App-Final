@@ -13227,6 +13227,16 @@ body.ia-drawer-open {
   margin: 4px 0 0;
   text-align: right;
 }
+.ia-sparkline-hint--trend {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+}
 
 /* ── Record NAV overwrite warning ─────────────────────────── */
 .ia-overwrite-warning {
