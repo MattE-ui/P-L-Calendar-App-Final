@@ -1363,36 +1363,48 @@ function cancelPendingInviteNotifications(db, inviteId) {
 }
 
 function buildGroupCurrentPositions(db, group) {
-  const user = db?.users?.[group?.leader_user_id];
-  if (!user) return [];
-  const journal = ensureTradeJournal(user);
+  const activeMembers = getTradeGroupMembers(db, group.id, { status: 'active' });
+  const memberUserIds = [...new Set([group.leader_user_id, ...activeMembers.map(m => m.user_id)])].filter(Boolean);
+  const seen = new Set();
   const positions = [];
-  for (const [dateKey, trades] of Object.entries(journal || {})) {
-    for (const trade of (trades || [])) {
-      if (!trade || trade.status === 'closed' || Number.isFinite(Number(trade.closePrice))) continue;
-      const entry = Number(trade.entry);
-      if (!Number.isFinite(entry) || entry <= 0) continue;
-      const stop = Number(trade.stop);
-      const riskPct = Number(trade.riskPct);
-      const livePrice = Number(trade.lastSyncPrice);
-      const direction = trade.direction === 'short' ? 'short' : 'long';
-      const gainLossPct = (Number.isFinite(livePrice) && livePrice > 0)
-        ? (direction === 'short'
-          ? ((entry - livePrice) / entry) * 100
-          : ((livePrice - entry) / entry) * 100)
-        : null;
-      const mappedTrade = applyInstrumentMappingToTrade(trade, db, group.leader_user_id) || trade;
-      const ticker = resolveCanonicalTickerForTrade(mappedTrade);
-      positions.push({
-        id: trade.id,
-        ticker,
-        entry_price: entry,
-        stop_price: (Number.isFinite(stop) && stop > 0) ? stop : null,
-        risk_pct: (Number.isFinite(riskPct) && riskPct > 0) ? riskPct : null,
-        gain_loss_pct: gainLossPct,
-        created_at: trade.createdAt || trade.created_at || dateKey,
-        updated_at: trade.updatedAt || trade.updated_at || null
-      });
+  for (const userId of memberUserIds) {
+    const user = db?.users?.[userId];
+    if (!user) continue;
+    const journal = ensureTradeJournal(user);
+    const identity = socialIdentityForUser(db, userId);
+    for (const [dateKey, trades] of Object.entries(journal || {})) {
+      for (const trade of (trades || [])) {
+        if (!trade || trade.status === 'closed' || Number.isFinite(Number(trade.closePrice))) continue;
+        const entry = Number(trade.entry);
+        if (!Number.isFinite(entry) || entry <= 0) continue;
+        const tradeKey = trade.id || `${userId}:${dateKey}:${trade.entry}:${trade.symbol}`;
+        if (seen.has(tradeKey)) continue;
+        seen.add(tradeKey);
+        const stop = Number(trade.stop);
+        const riskPct = Number(trade.riskPct);
+        const livePrice = Number(trade.lastSyncPrice);
+        const direction = trade.direction === 'short' ? 'short' : 'long';
+        const gainLossPct = (Number.isFinite(livePrice) && livePrice > 0)
+          ? (direction === 'short'
+            ? ((entry - livePrice) / entry) * 100
+            : ((livePrice - entry) / entry) * 100)
+          : null;
+        const mappedTrade = applyInstrumentMappingToTrade(trade, db, userId) || trade;
+        const ticker = resolveCanonicalTickerForTrade(mappedTrade);
+        positions.push({
+          id: trade.id,
+          ticker,
+          member_user_id: userId,
+          member_nickname: identity.nickname || 'Unknown trader',
+          direction,
+          entry_price: entry,
+          stop_price: (Number.isFinite(stop) && stop > 0) ? stop : null,
+          risk_pct: (Number.isFinite(riskPct) && riskPct > 0) ? riskPct : null,
+          gain_loss_pct: gainLossPct,
+          created_at: trade.createdAt || trade.created_at || dateKey,
+          updated_at: trade.updatedAt || trade.updated_at || null
+        });
+      }
     }
   }
   return positions
@@ -16495,6 +16507,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
     const lows = Array.isArray(quote.low) ? quote.low : [];
     const opens = Array.isArray(quote.open) ? quote.open : [];
     const volumes = Array.isArray(quote.volume) ? quote.volume : [];
+    const closes = Array.isArray(quote.close) ? quote.close : [];
     const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
 
     let latestIndex = opens.length - 1;
@@ -16612,6 +16625,7 @@ async function fetchWatchlistTickerMetrics(db, ticker) {
       dayOpenPrice,
       percentChangeToday,
       adrPercent: Number.isFinite(adrPercent) ? adrPercent : null,
+      recentCloses: closes.map(Number).filter(Number.isFinite).slice(-10),
       dollarVolume: Number.isFinite(dollarVolumeRaw) ? dollarVolumeRaw : null,
       dollarVolumeDisplay: Number.isFinite(dollarVolumeRaw) ? formatAbbrevNumber(dollarVolumeRaw) : '—',
       currency: snapshot?.currency || 'USD',

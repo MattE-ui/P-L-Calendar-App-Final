@@ -129,6 +129,19 @@ if (initialWatchlistId) socialState.activeGroupWatchlistId = initialWatchlistId;
 const TRANSIENT_FEEDBACK_TTL_MS = 15000;
 const feedbackTimers = new WeakMap();
 
+// Compute the R-multiple for a closed trade item. Returns null when data is insufficient.
+function computeRMultiple(item) {
+  const entry = Number(item?.entry_price);
+  const stop  = Number(item?.stop_price);
+  const exit  = Number(item?.fill_price);
+  const side  = String(item?.side || '').toUpperCase();
+  if (!Number.isFinite(entry) || !Number.isFinite(stop) || !Number.isFinite(exit)) return null;
+  const riskPerUnit = Math.abs(entry - stop);
+  if (riskPerUnit < 0.00001) return null;
+  const profit = side === 'SELL' ? entry - exit : exit - entry;
+  return profit / riskPerUnit;
+}
+
 const SOCIAL_SYNC_EVENT = 'social:state-changed';
 const SOCIAL_REFRESH_EVENT = 'social:refresh-requested';
 const ALERT_RISK_PREFILL_STORAGE_KEY = 'plc-risk-calculator-prefill-v1';
@@ -628,6 +641,102 @@ function renderLeaderboardFilters() {
   });
 }
 
+// Shared row builder used by both the full leaderboard page and the compact sidebar.
+// opts.compact = true → rank | avatar | name | metric (no verification pill, no stats)
+// opts.compact = false (default) → full layout with verification and stats
+function createLeaderboardRow(entry, opts = {}) {
+  const compact = opts.compact === true;
+  const isMine = opts.myNickname
+    ? String(entry?.nickname || '').trim().toLowerCase() === opts.myNickname
+    : false;
+
+  if (compact) {
+    const row = document.createElement('div');
+    row.className = `sov-lb-row${isMine ? ' sov-lb-row--mine' : ''}`;
+
+    const rank = document.createElement('span');
+    rank.className = `sov-lb-rank${entry.rank === 1 ? ' sov-lb-rank--gold' : ''}`;
+    rank.textContent = `#${entry.rank}`;
+
+    const av = window.VeracitySocialAvatar?.createAvatar({
+      nickname: entry.nickname,
+      avatar_url: entry.avatar_url,
+      avatar_initials: entry.avatar_initials,
+    }, 'xs');
+
+    const name = document.createElement('span');
+    name.className = 'sov-lb-name';
+    name.textContent = entry.nickname || 'Unknown';
+
+    const isPos = Number.isFinite(entry.return_pct) && entry.return_pct >= 0;
+    const isNeg = Number.isFinite(entry.return_pct) && entry.return_pct < 0;
+    const metric = document.createElement('span');
+    metric.className = `sov-lb-metric${isPos ? ' sov-lb-metric--pos' : isNeg ? ' sov-lb-metric--neg' : ''}`;
+    metric.textContent = formatReturnPct(entry.return_pct);
+
+    row.appendChild(rank);
+    if (av) row.appendChild(av);
+    row.appendChild(name);
+    row.appendChild(metric);
+    return row;
+  }
+
+  // Full layout (existing profile/leaderboard page style)
+  const row = document.createElement('article');
+  row.className = 'social-list-row social-list-row--leaderboard';
+  if (entry.rank <= 3) row.classList.add('is-top-rank');
+
+  const left = document.createElement('div');
+  left.className = 'social-leaderboard-left';
+  const rankSpan = document.createElement('span');
+  rankSpan.className = 'social-rank';
+  rankSpan.textContent = `#${entry.rank}`;
+  left.appendChild(rankSpan);
+  left.appendChild(createIdentityRow(entry.nickname, '', '', {
+    nickname: entry.nickname,
+    avatar_url: entry.avatar_url,
+    avatar_initials: entry.avatar_initials,
+  }));
+
+  const right = document.createElement('div');
+  right.className = 'social-leaderboard-right';
+  const ret = document.createElement('div');
+  ret.className = 'social-leaderboard-return';
+  ret.textContent = formatReturnPct(entry.return_pct);
+  ret.classList.toggle('is-negative', Number.isFinite(entry.return_pct) && entry.return_pct < 0);
+  right.appendChild(ret);
+
+  const verification = getVerificationDisplay(entry.verification_status, entry.verification_source);
+  const meta = document.createElement('div');
+  meta.className = 'social-row-meta';
+  const statusBadge = document.createElement('span');
+  statusBadge.className = `social-status-pill ${verification.badgeClass}`;
+  statusBadge.textContent = verification.label;
+  meta.appendChild(statusBadge);
+  if (entry.leaderboard_source) {
+    const source = document.createElement('span');
+    source.textContent = formatVerificationSource(entry.leaderboard_source);
+    meta.appendChild(source);
+  }
+  const stats = [];
+  if (socialState.leaderboardMode === 'account') {
+    stats.push('Account performance');
+  } else {
+    if (Number.isFinite(entry.trade_count)) stats.push(`${entry.trade_count} trades`);
+    const winRateLabel = formatWinRate(entry.win_rate);
+    if (winRateLabel) stats.push(winRateLabel);
+  }
+  if (stats.length) {
+    const secondary = document.createElement('span');
+    secondary.textContent = stats.join(' • ');
+    meta.appendChild(secondary);
+  }
+  right.appendChild(meta);
+  row.appendChild(left);
+  row.appendChild(right);
+  return row;
+}
+
 function renderLeaderboardSection() {
   const listEl = getEl('social-leaderboard-list');
   const loadingEl = getEl('social-leaderboard-loading');
@@ -674,73 +783,16 @@ function renderLeaderboardSection() {
     return;
   }
   clearNode(listEl);
-  listEl.classList.toggle('hidden', !hasEntries || !!socialState.leaderboardError);
+  // social-leaderboard-list is hidden on the overview page; always hide it here
+  // so that only sov-lb-rows (rendered by renderSidebarLeaderboard) is visible.
+  listEl.classList.toggle('hidden', true);
   if (!hasEntries || socialState.leaderboardError) {
     renderSocialOverview();
     return;
   }
 
   leaderboardEntries.forEach(entry => {
-    const row = document.createElement('article');
-    row.className = 'social-list-row social-list-row--leaderboard';
-    if (entry.rank <= 3) row.classList.add('is-top-rank');
-
-    const left = document.createElement('div');
-    left.className = 'social-leaderboard-left';
-
-    const rank = document.createElement('span');
-    rank.className = 'social-rank';
-    rank.textContent = `#${entry.rank}`;
-    left.appendChild(rank);
-
-    left.appendChild(createIdentityRow(entry.nickname, '', '', {
-      nickname: entry.nickname,
-      avatar_url: entry.avatar_url,
-      avatar_initials: entry.avatar_initials
-    }));
-
-    const right = document.createElement('div');
-    right.className = 'social-leaderboard-right';
-
-    const ret = document.createElement('div');
-    ret.className = 'social-leaderboard-return';
-    ret.textContent = formatReturnPct(entry.return_pct);
-    ret.classList.toggle('is-negative', Number.isFinite(entry.return_pct) && entry.return_pct < 0);
-    right.appendChild(ret);
-
-    const verification = getVerificationDisplay(entry.verification_status, entry.verification_source);
-    const meta = document.createElement('div');
-    meta.className = 'social-row-meta';
-
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `social-status-pill ${verification.badgeClass}`;
-    statusBadge.textContent = verification.label;
-    meta.appendChild(statusBadge);
-
-    if (entry.leaderboard_source) {
-      const source = document.createElement('span');
-      source.textContent = formatVerificationSource(entry.leaderboard_source);
-      meta.appendChild(source);
-    }
-
-    const stats = [];
-    if (socialState.leaderboardMode === 'account') {
-      stats.push('Account performance');
-    } else {
-      if (Number.isFinite(entry.trade_count)) stats.push(`${entry.trade_count} trades`);
-      const winRateLabel = formatWinRate(entry.win_rate);
-      if (winRateLabel) stats.push(winRateLabel);
-    }
-    if (stats.length) {
-      const secondary = document.createElement('span');
-      secondary.textContent = stats.join(' • ');
-      meta.appendChild(secondary);
-    }
-
-    right.appendChild(meta);
-    row.appendChild(left);
-    row.appendChild(right);
-    listEl.appendChild(row);
+    listEl.appendChild(createLeaderboardRow(entry, { compact: false }));
   });
   renderGroupWatchlistsSection(isLeader);
   renderSocialOverview();
@@ -1371,38 +1423,57 @@ function formatWatchlistValue(value, kind = 'number') {
 }
 
 function renderGroupWatchlistsSection(isLeader = false) {
-  const listEl = getEl('social-group-watchlists-list');
-  const postSelect = getEl('social-group-post-watchlist-select');
-  const postBtn = getEl('social-group-post-watchlist-btn');
-  const feedback = getEl('social-group-watchlist-feedback');
-  if (listEl) listEl.innerHTML = '';
+  const card = getEl('sg-watchlists-card');
+  if (!card) return; // not on the groups page redesign
+  card.innerHTML = '';
 
-  if (postSelect) {
-    postSelect.innerHTML = '';
-    const mine = Array.isArray(socialState.myWatchlists) ? socialState.myWatchlists : [];
-    if (!isLeader || !mine.length) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = isLeader ? 'No personal watchlists found' : 'Leader only';
-      postSelect.appendChild(option);
-      postSelect.disabled = true;
-      if (postBtn) postBtn.disabled = true;
-    } else {
-      mine.forEach((watchlist) => {
-        const option = document.createElement('option');
-        option.value = watchlist.id;
-        option.textContent = `${watchlist.name} (${watchlist.tickerCount || 0})`;
-        postSelect.appendChild(option);
-      });
-      postSelect.disabled = false;
-      if (postBtn) postBtn.disabled = false;
-    }
-  }
-
+  // Card header
+  const header = document.createElement('div');
+  header.className = 'sg-card-header';
+  const titleWrap = document.createElement('div');
+  titleWrap.className = 'sg-card-title-wrap';
+  const titleEl = document.createElement('span');
+  titleEl.className = 'sg-card-title';
+  titleEl.textContent = 'Shared watchlists';
   const rows = Array.isArray(socialState.selectedTradeGroupWatchlists) ? socialState.selectedTradeGroupWatchlists : [];
+  const countEl = document.createElement('span');
+  countEl.className = 'sg-count-pill';
+  countEl.textContent = String(rows.length);
+  titleWrap.appendChild(titleEl);
+  titleWrap.appendChild(countEl);
+  header.appendChild(titleWrap);
+  if (isLeader) {
+    const shareBtn = createActionButton('+ Share a watchlist', 'ghost sg-card-header-btn');
+    shareBtn.addEventListener('click', () => showSgModal('share-watchlist'));
+    header.appendChild(shareBtn);
+  }
+  card.appendChild(header);
+
+  const listEl = document.createElement('div');
+  card.appendChild(listEl);
+  const feedback = { _msg: '' }; // local feedback handle for watchlist operations
+
   if (!rows.length) {
-    listEl?.appendChild(createEmptyState('No shared watchlists yet', isLeader ? 'Post one of your personal watchlists to this group.' : 'The group leader has not posted any watchlists yet.'));
-    setFeedback(feedback, '', 'muted');
+    const empty = document.createElement('div');
+    empty.className = 'sg-watchlists-empty';
+    const icon = document.createElement('div');
+    icon.className = 'sg-watchlists-empty-icon';
+    icon.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
+    const emptyTitle = document.createElement('p');
+    emptyTitle.className = 'sg-watchlists-empty-title';
+    emptyTitle.textContent = 'No shared watchlists yet';
+    const emptyBody = document.createElement('p');
+    emptyBody.className = 'sg-watchlists-empty-body';
+    emptyBody.textContent = 'Share a watchlist from your personal lists so the group can track the same setups.';
+    empty.appendChild(icon);
+    empty.appendChild(emptyTitle);
+    empty.appendChild(emptyBody);
+    if (isLeader) {
+      const browseBtn = createActionButton('Browse my watchlists', 'ghost sg-watchlists-browse-btn');
+      browseBtn.addEventListener('click', () => showSgModal('share-watchlist'));
+      empty.appendChild(browseBtn);
+    }
+    listEl.appendChild(empty);
     return;
   }
 
@@ -1470,11 +1541,8 @@ function renderGroupWatchlistsSection(isLeader = false) {
       removeBtn.addEventListener('click', async () => {
         try {
           await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists/${encodeURIComponent(posted.id)}`, { method: 'DELETE' });
-          setFeedback(feedback, 'Shared watchlist removed.', 'success');
           await loadTradeGroupDetail(socialState.selectedTradeGroupId);
-        } catch (error) {
-          setFeedback(feedback, error?.message || 'Unable to remove watchlist.', 'error');
-        }
+        } catch (_error) {}
       });
       const wrap = document.createElement('div'); wrap.className = 'social-row-actions'; wrap.appendChild(removeBtn);
       card.appendChild(wrap);
@@ -1546,285 +1614,616 @@ function renderGroupWatchlistsSection(isLeader = false) {
 
 
 function renderTradeGroupSection() {
-  const listEl = getEl('social-trade-groups-list');
-  const invitesEl = getEl('social-trade-group-invitations');
-  const membersEl = getEl('social-trade-group-members');
-  const pendingEl = getEl('social-trade-group-pending-invites');
-  const alertsEl = getEl('social-trade-group-alerts');
-  const positionsEl = getEl('social-trade-group-positions');
-  const headingEl = getEl('social-group-detail-heading');
-  const detailPanelEl = getEl('social-trade-group-detail-panel');
-  const detailEmptyEl = getEl('social-group-detail-empty');
-  const detailContentEl = getEl('social-group-detail-content');
-  const friendSelect = getEl('social-group-friend-select');
-  const addMemberBtn = getEl('social-group-add-member-btn');
-  const announcementBtn = getEl('social-group-announcement-btn');
-  const deleteGroupBtn = getEl('social-group-delete-btn');
-  const groupWatchlistWrap = getEl('social-group-watchlists-wrap');
-  const postWatchlistBtn = getEl('social-group-post-watchlist-btn');
+  if (SOCIAL_PAGE_KIND === 'groups') {
+    renderSgSidebar();
+    const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [];
+    const selected = groups.find(g => g.id === socialState.selectedTradeGroupId);
+    renderSgWorkspace(selected);
+  }
+  renderSocialOverview();
+}
 
-  const leaderOnlyNodes = document.querySelectorAll('.social-leader-only');
+// ---- GROUPS PAGE (sg-*) -------------------------------------------------------
 
-  [listEl, invitesEl, membersEl, pendingEl, alertsEl, positionsEl, detailEmptyEl].forEach(el => { if (el) el.innerHTML = ''; });
-  if (headingEl) headingEl.textContent = 'Select a joined group to view members and alerts.';
-
-  const pendingInvites = Array.isArray(socialState.pendingTradeGroupInvites) ? socialState.pendingTradeGroupInvites : [];
-  if (!pendingInvites.length) {
-    invitesEl?.appendChild(createEmptyState('No pending invitations'));
-  } else {
-    pendingInvites.forEach(invite => {
-      const row = document.createElement('article');
-      row.className = 'social-list-row social-list-row--request';
-      row.appendChild(createIdentityRow(invite.group_name || 'Unnamed group', formatInviteTimestamp(invite.created_at), 'Invite', {
-        avatar_url: invite.leader_avatar_url,
-        avatar_initials: invite.leader_avatar_initials
-      }));
-      const actionWrap = document.createElement('div');
-      actionWrap.className = 'social-row-actions';
-      const acceptBtn = createActionButton('Accept', 'primary');
-      acceptBtn.addEventListener('click', () => respondToInviteFromPage(invite.invite_id, 'accept'));
-      const declineBtn = createActionButton('Decline', 'ghost');
-      declineBtn.addEventListener('click', () => respondToInviteFromPage(invite.invite_id, 'decline'));
-      actionWrap.appendChild(acceptBtn);
-      actionWrap.appendChild(declineBtn);
-      row.appendChild(actionWrap);
-      invitesEl?.appendChild(row);
+function initSgPage() {
+  getEl('sg-new-group-btn')?.addEventListener('click', () => showSgModal('new-group'));
+  getEl('sg-join-code-btn')?.addEventListener('click', () => showSgModal('join-code'));
+  getEl('sg-search')?.addEventListener('input', () => renderSgGroupsList());
+  const collapseBtn = getEl('sg-groups-collapse');
+  if (collapseBtn) {
+    collapseBtn.addEventListener('click', () => {
+      const list = getEl('sg-groups-list');
+      const collapsed = list?.classList.toggle('hidden');
+      collapseBtn.setAttribute('aria-expanded', String(!collapsed));
     });
   }
-
-  const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [];
-  if (!groups.length) {
-    listEl?.appendChild(createEmptyState('No active trade groups yet', 'Accept an invitation or create a private group to get started.'));
-    if (detailPanelEl) detailPanelEl.classList.add('hidden');
-    if (detailContentEl) detailContentEl.classList.add('hidden');
-    renderSocialOverview();
-    return;
-  }
-
-  groups.forEach(group => {
-    const row = document.createElement('article');
-    row.className = 'social-list-row social-list-row--friend';
-    row.classList.toggle('is-selected', group.id === socialState.selectedTradeGroupId);
-    row.tabIndex = 0;
-    row.setAttribute('role', 'button');
-    row.appendChild(createIdentityRow(group.name || 'Unnamed group', `${group.member_count || 0} members`, group.role === 'leader' ? 'Leader' : 'Member', group?.leader || {}));
-    row.addEventListener('click', () => loadTradeGroupDetail(group.id));
-    row.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        loadTradeGroupDetail(group.id);
-      }
-    });
-    listEl?.appendChild(row);
+  getEl('sg-modal-backdrop')?.addEventListener('click', (e) => {
+    if (e.target === getEl('sg-modal-backdrop')) closeSgModal();
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !getEl('sg-modal-backdrop')?.classList.contains('hidden')) closeSgModal();
+  });
+  // Restore group from URL
+  const urlGroup = new URLSearchParams(window.location.search).get('group');
+  if (urlGroup && !socialState.selectedTradeGroupId) socialState.selectedTradeGroupId = urlGroup;
+  window.addEventListener('popstate', () => {
+    const id = new URLSearchParams(window.location.search).get('group') || '';
+    if (id !== socialState.selectedTradeGroupId) loadTradeGroupDetail(id);
+  });
+}
 
-  const selected = groups.find(group => group.id === socialState.selectedTradeGroupId);
-  if (!selected) {
-    if (detailPanelEl) detailPanelEl.classList.add('hidden');
-    if (detailContentEl) detailContentEl.classList.add('hidden');
-    renderSocialOverview();
+function renderSgSidebar() {
+  renderSgPendingPanel();
+  renderSgGroupsList();
+}
+
+function renderSgPendingPanel() {
+  const panel = getEl('sg-pending-panel');
+  if (!panel) return;
+  const invites = Array.isArray(socialState.pendingTradeGroupInvites) ? socialState.pendingTradeGroupInvites : [];
+  if (!invites.length) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  panel.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'sg-pending-header';
+  header.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg><span>${invites.length} INVITATION${invites.length !== 1 ? 'S' : ''}</span>`;
+  panel.appendChild(header);
+  invites.forEach(invite => {
+    const item = document.createElement('div');
+    item.className = 'sg-invite-item';
+    const info = document.createElement('div'); info.className = 'sg-invite-info';
+    const name = document.createElement('div'); name.className = 'sg-invite-name'; name.textContent = invite.group_name || 'Unnamed group';
+    const meta = document.createElement('div'); meta.className = 'sg-invite-meta';
+    meta.textContent = `Invited by ${invite.leader_nickname || 'Unknown'}`;
+    info.appendChild(name); info.appendChild(meta); item.appendChild(info);
+    const actions = document.createElement('div'); actions.className = 'sg-invite-actions';
+    const acceptBtn = document.createElement('button'); acceptBtn.type = 'button'; acceptBtn.className = 'sg-invite-accept'; acceptBtn.textContent = 'Accept';
+    acceptBtn.addEventListener('click', () => respondToInviteFromPage(invite.invite_id, 'accept'));
+    const declineBtn = document.createElement('button'); declineBtn.type = 'button'; declineBtn.className = 'sg-invite-decline'; declineBtn.textContent = 'Decline';
+    declineBtn.addEventListener('click', () => respondToInviteFromPage(invite.invite_id, 'decline'));
+    actions.appendChild(acceptBtn); actions.appendChild(declineBtn); item.appendChild(actions);
+    panel.appendChild(item);
+  });
+}
+
+function renderSgGroupsList() {
+  const listEl = getEl('sg-groups-list');
+  const labelEl = getEl('sg-groups-label');
+  if (!listEl) return;
+  const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [];
+  const query = String(getEl('sg-search')?.value || '').trim().toLowerCase();
+  const filtered = query ? groups.filter(g => (g.name || '').toLowerCase().includes(query)) : groups;
+  if (labelEl) labelEl.textContent = `YOUR GROUPS (${groups.length})`;
+  listEl.innerHTML = '';
+  if (!groups.length) {
+    listEl.appendChild(createEmptyState('No groups yet', 'Create one or accept an invitation.'));
     return;
   }
+  filtered.forEach(group => {
+    const item = document.createElement('div');
+    item.className = `sg-group-item${group.id === socialState.selectedTradeGroupId ? ' is-active' : ''}`;
+    item.setAttribute('role', 'button'); item.tabIndex = 0;
+    const av = window.VeracitySocialAvatar?.createSeededAvatar(group.name || 'G', 'xs');
+    if (av) item.appendChild(av);
+    const text = document.createElement('div'); text.className = 'sg-group-item-text';
+    const nameRow = document.createElement('div'); nameRow.className = 'sg-group-item-name-row';
+    const nameSpan = document.createElement('span'); nameSpan.className = 'sg-group-item-name'; nameSpan.textContent = group.name || 'Unnamed group';
+    const badge = document.createElement('span'); badge.className = `sg-role-badge sg-role-badge--${group.role === 'leader' ? 'leader' : 'member'}`; badge.textContent = group.role === 'leader' ? 'LEADER' : 'MEMBER';
+    nameRow.appendChild(nameSpan); nameRow.appendChild(badge);
+    const metaLine = document.createElement('div'); metaLine.className = 'sg-group-item-meta'; metaLine.textContent = `${group.member_count || 0} members`;
+    text.appendChild(nameRow); text.appendChild(metaLine); item.appendChild(text);
+    item.addEventListener('click', () => selectSgGroup(group.id));
+    item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectSgGroup(group.id); } });
+    listEl.appendChild(item);
+  });
+}
 
-  if (detailPanelEl) detailPanelEl.classList.remove('hidden');
-  if (detailContentEl) detailContentEl.classList.remove('hidden');
-  if (headingEl) headingEl.textContent = `${selected.name} • ${selected.role === 'leader' ? 'Leader view' : 'Member view'}`;
+function selectSgGroup(groupId) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('group', groupId);
+  window.history.pushState({ groupId }, '', url.toString());
+  loadTradeGroupDetail(groupId);
+}
 
-  const inviteShortcutBtn = getEl('social-group-invite-shortcut');
-  const leaveGroupBtn = getEl('social-group-leave-btn');
-  const settingsShortcutBtn = getEl('social-group-settings-shortcut');
-
+function renderSgWorkspace(selected) {
+  const emptyEl = getEl('sg-workspace-empty');
+  const headerCard = getEl('sg-group-header');
+  const cardsRow = getEl('sg-cards-row');
+  const watchlistsCard = getEl('sg-watchlists-card');
+  const activityCard = getEl('sg-activity-card');
+  if (!selected) {
+    emptyEl?.classList.remove('hidden');
+    [headerCard, cardsRow, watchlistsCard, activityCard].forEach(el => el?.classList.add('hidden'));
+    return;
+  }
+  emptyEl?.classList.add('hidden');
+  [headerCard, cardsRow, watchlistsCard, activityCard].forEach(el => el?.classList.remove('hidden'));
+  const members = Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [];
+  const positions = Array.isArray(socialState.selectedTradeGroupPositions) ? socialState.selectedTradeGroupPositions : [];
+  const feed = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
   const isLeader = selected.role === 'leader';
-  leaderOnlyNodes.forEach(node => node.classList.toggle('hidden', !isLeader));
-  if (inviteShortcutBtn) {
-    inviteShortcutBtn.disabled = !isLeader;
-    inviteShortcutBtn.onclick = () => getEl('social-group-friend-select')?.focus();
+  renderSgGroupHeader(selected, members, positions, isLeader);
+  renderSgMembersCard(members, isLeader);
+  renderSgPositionsCard(positions);
+  renderGroupWatchlistsSection(isLeader);
+  renderSgActivityFeed(feed, isLeader);
+}
+
+function renderSgGroupHeader(group, members, positions, isLeader) {
+  const card = getEl('sg-group-header');
+  if (!card) return;
+  card.innerHTML = '';
+  const topRow = document.createElement('div'); topRow.className = 'sg-header-top';
+  const av = window.VeracitySocialAvatar?.createSeededAvatar(group.name || 'G', 'sm');
+  if (av) { av.classList.add('sg-header-avatar'); topRow.appendChild(av); }
+  const info = document.createElement('div'); info.className = 'sg-header-info';
+  const nameRow = document.createElement('div'); nameRow.className = 'sg-header-name-row';
+  const nameSpan = document.createElement('span'); nameSpan.className = 'sg-header-name'; nameSpan.textContent = group.name || 'Unnamed group';
+  const roleBadge = document.createElement('span'); roleBadge.className = `sg-role-badge sg-role-badge--${isLeader ? 'leader' : 'member'}`; roleBadge.textContent = isLeader ? 'LEADER' : 'MEMBER';
+  const privBadge = document.createElement('span'); privBadge.className = 'sg-privacy-badge'; privBadge.textContent = 'PRIVATE';
+  nameRow.appendChild(nameSpan); nameRow.appendChild(roleBadge); nameRow.appendChild(privBadge);
+  const metaLine = document.createElement('div'); metaLine.className = 'sg-header-meta';
+  const created = group.created_at ? new Date(group.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+  metaLine.textContent = `A private trading group · Created ${created}`;
+  info.appendChild(nameRow); info.appendChild(metaLine); topRow.appendChild(info);
+  const actions = document.createElement('div'); actions.className = 'sg-header-actions';
+  const invBtn = document.createElement('button'); invBtn.type = 'button'; invBtn.className = 'ghost sg-header-btn'; invBtn.textContent = '+ Invite';
+  invBtn.addEventListener('click', () => showSgModal('invite'));
+  actions.appendChild(invBtn);
+  if (isLeader) {
+    const setBtn = document.createElement('button'); setBtn.type = 'button'; setBtn.className = 'ghost sg-header-btn'; setBtn.textContent = 'Settings';
+    setBtn.addEventListener('click', () => showSgModal('settings'));
+    actions.appendChild(setBtn);
+  } else {
+    const leaveBtn = document.createElement('button'); leaveBtn.type = 'button'; leaveBtn.className = 'ghost sg-header-btn sg-leave-btn'; leaveBtn.textContent = 'Leave';
+    leaveBtn.addEventListener('click', () => showSgModal('leave'));
+    actions.appendChild(leaveBtn);
   }
-  if (settingsShortcutBtn) {
-    settingsShortcutBtn.onclick = () => { window.location.href = '/social/profile'; };
+  topRow.appendChild(actions); card.appendChild(topRow);
+  const hr = document.createElement('hr'); hr.className = 'sg-divider'; card.appendChild(hr);
+  const strip = document.createElement('div'); strip.className = 'sg-stats-strip';
+  [
+    { label: 'MEMBERS', value: String(group.member_count || 0) },
+    { label: 'OPEN POSITIONS', value: String(positions.length) },
+    { label: 'GROUP AVG R (7D)', value: '\u2014', dim: true },
+    { label: 'TRADES THIS WEEK', value: '\u2014', dim: true },
+  ].forEach(def => {
+    const stat = document.createElement('div'); stat.className = 'sg-stat';
+    const lbl = document.createElement('div'); lbl.className = 'sg-stat-label'; lbl.textContent = def.label;
+    const val = document.createElement('div'); val.className = `sg-stat-value${def.dim ? ' sg-stat-value--dim' : ''}`; val.textContent = def.value;
+    if (def.dim) val.title = 'Requires a dedicated trades history endpoint \u2014 coming soon.';
+    stat.appendChild(lbl); stat.appendChild(val); strip.appendChild(stat);
+  });
+  card.appendChild(strip);
+}
+
+function renderSgMembersCard(members, isLeader) {
+  const card = getEl('sg-members-card');
+  if (!card) return;
+  card.innerHTML = '';
+  const header = document.createElement('div'); header.className = 'sg-card-header';
+  const tw = document.createElement('div'); tw.className = 'sg-card-title-wrap';
+  const title = document.createElement('span'); title.className = 'sg-card-title'; title.textContent = 'Members';
+  const count = document.createElement('span'); count.className = 'sg-count-pill'; count.textContent = String(members.length);
+  tw.appendChild(title); tw.appendChild(count); header.appendChild(tw);
+  const invBtn = createActionButton('+ Invite', 'ghost sg-card-header-btn');
+  invBtn.addEventListener('click', () => showSgModal('invite'));
+  header.appendChild(invBtn); card.appendChild(header);
+  if (!members.length) { card.appendChild(createEmptyState('No members yet')); return; }
+  members.forEach(member => {
+    const row = document.createElement('div'); row.className = 'sg-member-row';
+    const avWrap = document.createElement('div'); avWrap.className = 'sg-member-av-wrap';
+    const av = window.VeracitySocialAvatar?.createSeededAvatar(member.nickname || 'U', 'xs');
+    if (av) avWrap.appendChild(av);
+    const info = document.createElement('div'); info.className = 'sg-member-info';
+    const nameRow = document.createElement('div'); nameRow.className = 'sg-member-name-row';
+    const nameSpan = document.createElement('span'); nameSpan.className = 'sg-member-name'; nameSpan.textContent = member.nickname || 'Unknown trader';
+    const badge = document.createElement('span'); badge.className = `sg-role-badge sg-role-badge--${member.role === 'leader' ? 'leader' : 'member'}`; badge.textContent = member.role === 'leader' ? 'LEADER' : 'MEMBER';
+    nameRow.appendChild(nameSpan); nameRow.appendChild(badge);
+    const status = document.createElement('div'); status.className = 'sg-member-status'; status.textContent = 'Offline';
+    info.appendChild(nameRow); info.appendChild(status);
+    const perf = document.createElement('div'); perf.className = 'sg-member-perf';
+    const pv = document.createElement('div'); pv.className = 'sg-member-perf-val'; pv.textContent = '\u2014';
+    const pl = document.createElement('div'); pl.className = 'sg-member-perf-label'; pl.textContent = '7d';
+    perf.appendChild(pv); perf.appendChild(pl);
+    row.appendChild(avWrap); row.appendChild(info); row.appendChild(perf);
+    if (isLeader && member.role !== 'leader') {
+      const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'sg-member-remove'; rm.textContent = '\u2715'; rm.title = `Remove ${member.nickname}`;
+      rm.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members/${encodeURIComponent(member.user_id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
+      row.appendChild(rm);
+    }
+    card.appendChild(row);
+  });
+  const footer = document.createElement('div'); footer.className = 'sg-members-footer'; footer.textContent = 'Live presence coming soon';
+  card.appendChild(footer);
+}
+
+function renderSgPositionsCard(positions) {
+  const card = getEl('sg-positions-card');
+  if (!card) return;
+  card.innerHTML = '';
+  const header = document.createElement('div'); header.className = 'sg-card-header';
+  const tw = document.createElement('div'); tw.className = 'sg-card-title-wrap';
+  const title = document.createElement('span'); title.className = 'sg-card-title'; title.textContent = 'Group positions';
+  const count = document.createElement('span'); count.className = 'sg-count-pill'; count.textContent = `${positions.length} open`;
+  tw.appendChild(title); tw.appendChild(count); header.appendChild(tw); card.appendChild(header);
+  if (!positions.length) {
+    card.appendChild(createEmptyState('No open positions across the group \u2014 all flat'));
+    return;
   }
-  if (leaveGroupBtn) {
-    leaveGroupBtn.disabled = isLeader || !socialState.profile?.user_id;
-    leaveGroupBtn.title = isLeader ? 'Leaders can delete the group instead.' : '';
-    leaveGroupBtn.onclick = async () => {
+  positions.forEach(pos => {
+    const row = document.createElement('div'); row.className = 'sg-position-row';
+    const isShort = pos.direction === 'short';
+    const col1 = document.createElement('div'); col1.className = 'sg-pos-col1';
+    const tr = document.createElement('div'); tr.className = 'sg-pos-ticker-row';
+    const tk = document.createElement('span'); tk.className = 'sg-pos-ticker'; tk.textContent = pos.ticker || '\u2014';
+    const dir = document.createElement('span'); dir.className = `sg-dir-badge sg-dir-badge--${isShort ? 'short' : 'long'}`; dir.textContent = isShort ? 'SHORT' : 'LONG';
+    tr.appendChild(tk); tr.appendChild(dir);
+    const ml = document.createElement('div'); ml.className = 'sg-pos-member';
+    ml.textContent = [pos.member_nickname, pos.entry_price ? `entry $${Number(pos.entry_price).toFixed(2)}` : ''].filter(Boolean).join(' \u00b7 ');
+    col1.appendChild(tr); col1.appendChild(ml);
+    const col2 = document.createElement('div'); col2.className = 'sg-pos-col2';
+    const glPct = Number(pos.gain_loss_pct);
+    const glEl = document.createElement('div'); glEl.className = `sg-pos-gl${Number.isFinite(glPct) ? (glPct >= 0 ? ' is-pos' : ' is-neg') : ''}`;
+    glEl.textContent = Number.isFinite(glPct) ? `${glPct >= 0 ? '+' : '\u2212'}${Math.abs(glPct).toFixed(2)}%` : '\u2014';
+    col2.appendChild(glEl);
+    const col3 = document.createElement('div'); col3.className = 'sg-pos-col3';
+    const rk = document.createElement('div'); rk.className = 'sg-pos-risk';
+    rk.textContent = pos.risk_pct ? `Risk ${Number(pos.risk_pct).toFixed(2)}%` : '\u2014';
+    col3.appendChild(rk);
+    const col4 = document.createElement('div'); col4.className = 'sg-pos-col4';
+    const sizeBtn = createActionButton('Size', 'ghost sg-size-btn');
+    if (pos.stop_price && pos.entry_price) {
+      sizeBtn.addEventListener('click', () => launchAlertRiskSizing({ ticker: pos.ticker, side: isShort ? 'SELL' : 'BUY', entry_price: pos.entry_price, stop_price: pos.stop_price, risk_pct: pos.risk_pct }));
+    } else { sizeBtn.disabled = true; sizeBtn.title = 'Stop price required for risk sizing'; }
+    col4.appendChild(sizeBtn);
+    row.appendChild(col1); row.appendChild(col2); row.appendChild(col3); row.appendChild(col4);
+    card.appendChild(row);
+  });
+}
+
+function renderSgActivityFeed(feed, isLeader) {
+  const card = getEl('sg-activity-card');
+  if (!card) return;
+  card.innerHTML = '';
+  const header = document.createElement('div'); header.className = 'sg-card-header';
+  const title = document.createElement('span'); title.className = 'sg-card-title'; title.textContent = 'Recent activity';
+  header.appendChild(title);
+  const filterBar = document.createElement('div'); filterBar.className = 'sg-feed-filter';
+  ['All', 'Trades', 'Notes'].forEach(label => {
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = `sg-feed-filter-btn${label === 'All' ? ' is-active' : ''}`; btn.dataset.filter = label.toLowerCase(); btn.textContent = label;
+    filterBar.appendChild(btn);
+  });
+  header.appendChild(filterBar); card.appendChild(header);
+  const feedList = document.createElement('div'); feedList.className = 'sg-feed-list'; card.appendChild(feedList);
+  filterBar.addEventListener('click', e => {
+    const btn = e.target.closest('.sg-feed-filter-btn');
+    if (!btn) return;
+    filterBar.querySelectorAll('.sg-feed-filter-btn').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    renderSgFeedItems(feedList, feed, isLeader, btn.dataset.filter);
+  });
+  renderSgFeedItems(feedList, feed, isLeader, 'all');
+  if (feed.length) {
+    const footer = document.createElement('div'); footer.className = 'sg-feed-footer';
+    const viewAll = document.createElement('button'); viewAll.type = 'button'; viewAll.className = 'sg-feed-view-all'; viewAll.textContent = 'View all activity';
+    footer.appendChild(viewAll); card.appendChild(footer);
+  }
+}
+
+function renderSgFeedItems(container, feed, isLeader, filter) {
+  container.innerHTML = '';
+  const filtered = filter === 'trades' ? feed.filter(i => i.type === 'alert')
+    : filter === 'notes' ? feed.filter(i => i.type === 'announcement') : feed;
+  if (!filtered.length) { container.appendChild(createEmptyState(feed.length ? 'No matching activity' : 'No activity yet')); return; }
+  filtered.forEach(item => {
+    const row = document.createElement('div'); row.className = 'sg-feed-item';
+    const av = window.VeracitySocialAvatar?.createSeededAvatar(item.leader_nickname || 'L', 'xs');
+    const hrow = document.createElement('div'); hrow.className = 'sg-feed-item-header';
+    if (av) hrow.appendChild(av);
+    const ts = item.created_at ? formatRelativeTimestamp(item.created_at) : '';
+    if (item.type === 'announcement') {
+      row.classList.add('sg-feed-item--note');
+      const who = document.createElement('span'); who.className = 'sg-feed-item-who';
+      who.innerHTML = `<strong>${item.leader_nickname || 'Leader'}</strong> posted a note <span class="sg-feed-ts">${ts}</span>`;
+      hrow.appendChild(who); row.appendChild(hrow);
+      const body = document.createElement('div'); body.className = 'sg-feed-item-body'; body.textContent = item.text || ''; row.appendChild(body);
+      if (isLeader) {
+        const del = createActionButton('Delete', 'danger outline sg-feed-del-btn');
+        del.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/announcements/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
+        row.appendChild(del);
+      }
+    } else {
+      row.classList.add('sg-feed-item--trade');
+      const nc = normalizeTradeGroupActivityEvent(item);
+      const isTrim = nc === 'trim', isAdd = nc === 'add', isSell = nc === 'trim' || nc === 'close';
+      const verb = isSell ? (isTrim ? 'trimmed' : 'closed') : (isAdd ? 'added to' : 'opened a long in');
+      const price = Number.isFinite(Number(item.fill_price)) ? Number(item.fill_price) : (Number.isFinite(Number(item.entry_price)) ? Number(item.entry_price) : null);
+      const priceStr = price !== null ? ` at $${price.toFixed(2)}` : '';
+      const badgeCls = isSell ? 'sell' : 'buy';
+      const who = document.createElement('span'); who.className = 'sg-feed-item-who';
+      who.innerHTML = `<strong>${item.leader_nickname || 'Leader'}</strong> ${verb} ${item.ticker || '\u2014'} <span class="sg-feed-badge sg-feed-badge--${badgeCls}">${isSell ? 'SELL' : 'BUY'}</span>${priceStr} <span class="sg-feed-ts">${ts}</span>`;
+      hrow.appendChild(who); row.appendChild(hrow);
+      const actRow = document.createElement('div'); actRow.className = 'sg-feed-item-actions';
+      if (!isSell && !isLeader) {
+        const missingStop = Number(item.stop_price) <= 0;
+        const prefill = normalizeAlertRiskPrefillPayload(item);
+        const sizeBtn = createActionButton('Size this trade', 'ghost sg-feed-size-btn');
+        if (missingStop || !prefill) { sizeBtn.disabled = true; if (missingStop) sizeBtn.title = 'Stop required for risk sizing'; }
+        else sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
+        actRow.appendChild(sizeBtn);
+      }
+      if (isLeader) {
+        const del = createActionButton('Delete', 'danger outline sg-feed-del-btn');
+        del.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/alerts/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
+        actRow.appendChild(del);
+      }
+      if (actRow.childElementCount) row.appendChild(actRow);
+    }
+    container.appendChild(row);
+  });
+}
+
+// Modal system ----------------------------------------------------------------
+
+function showSgModal(type) {
+  const backdrop = getEl('sg-modal-backdrop');
+  const container = getEl('sg-modal-container');
+  if (!backdrop || !container) return;
+  container.innerHTML = '';
+  const content = buildSgModalContent(type);
+  if (!content) return;
+  container.appendChild(content);
+  backdrop.classList.remove('hidden');
+  backdrop.removeAttribute('aria-hidden');
+  container.querySelector('input:not([disabled]), button:not([disabled]), select, textarea')?.focus();
+}
+
+function closeSgModal() {
+  const backdrop = getEl('sg-modal-backdrop');
+  if (backdrop) { backdrop.classList.add('hidden'); backdrop.setAttribute('aria-hidden', 'true'); }
+}
+
+function buildSgModalContent(type) {
+  const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [];
+  const selected = groups.find(g => g.id === socialState.selectedTradeGroupId);
+  const isLeader = selected?.role === 'leader';
+  switch (type) {
+    case 'new-group':    return buildSgNewGroupModal();
+    case 'join-code':   return buildSgJoinCodeModal();
+    case 'invite':      return buildSgInviteModal(selected, isLeader);
+    case 'leave':       return buildSgLeaveModal(selected, isLeader);
+    case 'settings':    return buildSgSettingsModal(selected, isLeader);
+    case 'share-watchlist': return buildSgShareWatchlistModal(selected, isLeader);
+    default: return null;
+  }
+}
+
+function sgModalShell(titleText) {
+  const wrap = document.createElement('div'); wrap.className = 'sg-modal-body';
+  const title = document.createElement('h2'); title.className = 'sg-modal-title'; title.textContent = titleText;
+  const fbEl = document.createElement('p'); fbEl.className = 'sg-modal-feedback';
+  return { wrap, title, fbEl };
+}
+
+function buildSgNewGroupModal() {
+  const { wrap, title, fbEl } = sgModalShell('Create a new group');
+  const nameField = document.createElement('div'); nameField.className = 'sg-modal-field';
+  const nameLbl = document.createElement('label'); nameLbl.className = 'sg-modal-label'; nameLbl.textContent = 'Group name'; nameLbl.htmlFor = 'sg-modal-name';
+  const nameInput = document.createElement('input'); nameInput.id = 'sg-modal-name'; nameInput.className = 'sg-modal-input'; nameInput.type = 'text'; nameInput.maxLength = 64; nameInput.placeholder = 'e.g. Swing setups'; nameInput.autocomplete = 'off';
+  const nameHint = document.createElement('p'); nameHint.className = 'sg-modal-helper'; nameHint.textContent = 'Choose something your members will recognise.';
+  nameField.appendChild(nameLbl); nameField.appendChild(nameInput); nameField.appendChild(nameHint);
+  const descField = document.createElement('div'); descField.className = 'sg-modal-field';
+  const descLbl = document.createElement('label'); descLbl.className = 'sg-modal-label'; descLbl.textContent = 'Description (optional)'; descLbl.htmlFor = 'sg-modal-desc';
+  const descInput = document.createElement('textarea'); descInput.id = 'sg-modal-desc'; descInput.className = 'sg-modal-input sg-modal-textarea'; descInput.maxLength = 200; descInput.placeholder = 'What does this group focus on?';
+  descField.appendChild(descLbl); descField.appendChild(descInput);
+  const privField = document.createElement('div'); privField.className = 'sg-modal-field';
+  const privLbl = document.createElement('div'); privLbl.className = 'sg-modal-label'; privLbl.textContent = 'Privacy';
+  const privStatic = document.createElement('div'); privStatic.className = 'sg-modal-static';
+  const privVal = document.createElement('div'); privVal.className = 'sg-modal-static-value'; privVal.textContent = 'Private \u00b7 Invite only';
+  const privHint = document.createElement('div'); privHint.className = 'sg-modal-static-label'; privHint.textContent = 'Members join by invite only. You control who\u2019s in.';
+  privStatic.appendChild(privVal); privStatic.appendChild(privHint); privField.appendChild(privLbl); privField.appendChild(privStatic);
+  const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+  const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+  const createBtn = document.createElement('button'); createBtn.type = 'button'; createBtn.className = 'primary'; createBtn.textContent = 'Create group \u2192';
+  createBtn.addEventListener('click', async () => {
+    const name = String(nameInput.value || '').trim();
+    if (!name) { fbEl.textContent = 'Group name is required.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+    if (name.length > 64) { fbEl.textContent = 'Group name is too long.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+    createBtn.disabled = true; createBtn.textContent = 'Creating\u2026';
+    try {
+      await socialApi('/api/social/trade-groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+      closeSgModal(); await loadTradeGroups();
+    } catch (err) { fbEl.textContent = err?.message || 'Unable to create group.'; fbEl.className = 'sg-modal-feedback is-error'; createBtn.disabled = false; createBtn.textContent = 'Create group \u2192'; }
+  });
+  footer.appendChild(cancelBtn); footer.appendChild(createBtn);
+  wrap.appendChild(title); wrap.appendChild(nameField); wrap.appendChild(descField); wrap.appendChild(privField); wrap.appendChild(fbEl); wrap.appendChild(footer);
+  return wrap;
+}
+
+function buildSgJoinCodeModal() {
+  const { wrap, title, fbEl } = sgModalShell('Join a group by invite code');
+  const field = document.createElement('div'); field.className = 'sg-modal-field';
+  const lbl = document.createElement('label'); lbl.className = 'sg-modal-label'; lbl.textContent = 'Invite code'; lbl.htmlFor = 'sg-modal-code';
+  const input = document.createElement('input'); input.id = 'sg-modal-code'; input.className = 'sg-modal-input'; input.type = 'text'; input.placeholder = 'TG-XXXX'; input.autocomplete = 'off';
+  input.addEventListener('input', () => { input.value = input.value.toUpperCase(); });
+  const hint = document.createElement('p'); hint.className = 'sg-modal-helper'; hint.textContent = 'Ask a group leader for their invite code.';
+  field.appendChild(lbl); field.appendChild(input); field.appendChild(hint);
+  const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+  const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+  const joinBtn = document.createElement('button'); joinBtn.type = 'button'; joinBtn.className = 'primary'; joinBtn.textContent = 'Join group \u2192';
+  joinBtn.addEventListener('click', async () => {
+    const code = String(input.value || '').trim().toUpperCase();
+    if (!code) { fbEl.textContent = 'Enter an invite code.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+    joinBtn.disabled = true; joinBtn.textContent = 'Joining\u2026';
+    try {
+      await socialApi('/api/social/trade-groups/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inviteCode: code }) });
+      closeSgModal(); await loadTradeGroups();
+    } catch (err) {
+      const msg = err?.message || '';
+      fbEl.textContent = msg.includes('501') || msg.includes('not implemented') ? 'Join by code is coming soon.' : (msg || 'Invalid or expired invite code.');
+      fbEl.className = 'sg-modal-feedback is-error'; joinBtn.disabled = false; joinBtn.textContent = 'Join group \u2192';
+    }
+  });
+  footer.appendChild(cancelBtn); footer.appendChild(joinBtn);
+  wrap.appendChild(title); wrap.appendChild(field); wrap.appendChild(fbEl); wrap.appendChild(footer);
+  return wrap;
+}
+
+function buildSgInviteModal(group, isLeader) {
+  const { wrap, title, fbEl } = sgModalShell(`Invite someone to ${group?.name || 'this group'}`);
+  const field = document.createElement('div'); field.className = 'sg-modal-field';
+  const lbl = document.createElement('label'); lbl.className = 'sg-modal-label'; lbl.textContent = 'Friend'; lbl.htmlFor = 'sg-modal-friend';
+  const sel = document.createElement('select'); sel.id = 'sg-modal-friend'; sel.className = 'sg-modal-input';
+  const friends = Array.isArray(socialState.eligibleTradeGroupFriends) ? socialState.eligibleTradeGroupFriends : [];
+  if (!friends.length) {
+    const opt = document.createElement('option'); opt.value = ''; opt.textContent = isLeader ? 'No eligible friends to invite' : 'Leader only'; sel.appendChild(opt); sel.disabled = true;
+  } else {
+    friends.forEach(f => { const opt = document.createElement('option'); opt.value = f.friend_user_id; opt.textContent = f.nickname || 'Unknown trader'; sel.appendChild(opt); });
+  }
+  field.appendChild(lbl); field.appendChild(sel);
+  const codeField = document.createElement('div'); codeField.className = 'sg-modal-field';
+  const codeLbl = document.createElement('div'); codeLbl.className = 'sg-modal-label'; codeLbl.textContent = 'Or share invite code';
+  const codeStatic = document.createElement('div'); codeStatic.className = 'sg-modal-static';
+  const codeVal = document.createElement('div'); codeVal.className = 'sg-modal-static-value'; codeVal.textContent = '\u2014';
+  const codeHint = document.createElement('div'); codeHint.className = 'sg-modal-static-label'; codeHint.textContent = 'Invite codes are not yet supported by the backend.';
+  codeStatic.appendChild(codeVal); codeStatic.appendChild(codeHint); codeField.appendChild(codeLbl); codeField.appendChild(codeStatic);
+  const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+  const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+  const sendBtn = document.createElement('button'); sendBtn.type = 'button'; sendBtn.className = 'primary'; sendBtn.textContent = 'Send invite \u2192';
+  if (!isLeader || !friends.length) sendBtn.disabled = true;
+  sendBtn.addEventListener('click', async () => {
+    const friendId = String(sel.value || '').trim();
+    if (!friendId) { fbEl.textContent = 'Select a friend to invite.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+    sendBtn.disabled = true; sendBtn.textContent = 'Sending\u2026';
+    try {
+      await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ friend_user_id: friendId }) });
+      fbEl.textContent = 'Invitation sent.'; fbEl.className = 'sg-modal-feedback is-success';
+      sendBtn.textContent = 'Sent'; window.setTimeout(closeSgModal, 1200);
+      await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+    } catch (err) { fbEl.textContent = err?.message || 'Unable to send invitation.'; fbEl.className = 'sg-modal-feedback is-error'; sendBtn.disabled = false; sendBtn.textContent = 'Send invite \u2192'; }
+  });
+  footer.appendChild(cancelBtn); footer.appendChild(sendBtn);
+  wrap.appendChild(title); wrap.appendChild(field); wrap.appendChild(codeField); wrap.appendChild(fbEl); wrap.appendChild(footer);
+  return wrap;
+}
+
+function buildSgLeaveModal(group, isLeader) {
+  const { wrap, title, fbEl } = sgModalShell(isLeader ? 'Transfer leadership first' : `Leave ${group?.name || 'this group'}?`);
+  if (isLeader) {
+    const copy = document.createElement('p'); copy.className = 'sg-modal-danger-copy';
+    copy.textContent = `You're the leader of ${group?.name || 'this group'}. Leaders can't leave without transferring ownership. Go to group settings to transfer leadership, then leave.`;
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const settingsBtn = document.createElement('button'); settingsBtn.type = 'button'; settingsBtn.className = 'primary'; settingsBtn.textContent = 'Open settings';
+    settingsBtn.addEventListener('click', () => { closeSgModal(); showSgModal('settings'); });
+    const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+    footer.appendChild(settingsBtn); footer.appendChild(cancelBtn);
+    wrap.appendChild(title); wrap.appendChild(copy); wrap.appendChild(footer);
+  } else {
+    const copy = document.createElement('p'); copy.style.cssText = 'font-size:13px;color:var(--text-muted);margin:0';
+    copy.textContent = `You'll lose access to the group workspace, shared watchlists, and activity feed. This cannot be undone.`;
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+    const leaveBtn = document.createElement('button'); leaveBtn.type = 'button'; leaveBtn.className = 'danger'; leaveBtn.textContent = `Leave ${group?.name || 'group'} \u2192`;
+    leaveBtn.addEventListener('click', async () => {
       if (!socialState.profile?.user_id || !socialState.selectedTradeGroupId) return;
-      if (!window.confirm('Leave this trade group?')) return;
+      leaveBtn.disabled = true; leaveBtn.textContent = 'Leaving\u2026';
       try {
         await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members/${encodeURIComponent(socialState.profile.user_id)}`, { method: 'DELETE' });
-        await loadTradeGroups();
-      } catch (_error) {}
-    };
-  }
-
-  if (friendSelect) {
-    friendSelect.innerHTML = '';
-    const friends = Array.isArray(socialState.eligibleTradeGroupFriends) ? socialState.eligibleTradeGroupFriends : [];
-    if (!isLeader || !friends.length) {
-      friendSelect.disabled = true;
-      const option = document.createElement('option'); option.value = ''; option.textContent = isLeader ? 'No eligible friends' : 'Leader only';
-      friendSelect.appendChild(option);
-      if (addMemberBtn) addMemberBtn.disabled = true;
-    } else {
-      friendSelect.disabled = false;
-      friends.forEach(friend => { const option = document.createElement('option'); option.value = friend.friend_user_id; option.textContent = friend.nickname || 'Unknown trader'; friendSelect.appendChild(option); });
-      if (addMemberBtn) addMemberBtn.disabled = false;
-    }
-  }
-  if (announcementBtn) announcementBtn.disabled = !isLeader;
-  if (deleteGroupBtn) deleteGroupBtn.classList.toggle('hidden', !isLeader);
-  if (groupWatchlistWrap) groupWatchlistWrap.classList.remove('hidden');
-  if (postWatchlistBtn) {
-    postWatchlistBtn.classList.toggle('hidden', !isLeader);
-    postWatchlistBtn.onclick = async () => {
-      const select = getEl('social-group-post-watchlist-select');
-      const feedback = getEl('social-group-watchlist-feedback');
-      const sourceWatchlistId = String(select?.value || '').trim();
-      if (!sourceWatchlistId) return setFeedback(feedback, 'Select a watchlist to post.', 'error');
-      try {
-        await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourceWatchlistId })
-        });
-        setFeedback(feedback, 'Watchlist posted to group.', 'success');
-        await loadTradeGroupDetail(socialState.selectedTradeGroupId);
-      } catch (error) {
-        setFeedback(feedback, error?.message || 'Unable to post watchlist.', 'error');
-      }
-    };
-  }
-
-  const members = Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [];
-  if (!members.length) membersEl?.appendChild(createEmptyState('No active members'));
-  members.forEach(member => {
-    const row = document.createElement('article');
-    row.className = 'social-list-row social-list-row--friend';
-    row.appendChild(createIdentityRow(member.nickname || 'Unknown trader', '', member.role === 'leader' ? 'Leader' : 'Member', member));
-    if (isLeader && member.role !== 'leader') {
-      const removeBtn = createActionButton('Remove', 'danger outline');
-      removeBtn.addEventListener('click', async () => {
-        try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/members/${encodeURIComponent(member.user_id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {}
-      });
-      const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(removeBtn); row.appendChild(actionWrap);
-    }
-    membersEl?.appendChild(row);
-  });
-
-  const pending = Array.isArray(socialState.selectedTradeGroupPendingInvites) ? socialState.selectedTradeGroupPendingInvites : [];
-  if (isLeader) {
-    if (!pending.length) pendingEl?.appendChild(createEmptyState('No pending invites'));
-    pending.forEach(invite => {
-      const row = document.createElement('article'); row.className = 'social-list-row social-list-row--request';
-      row.appendChild(createIdentityRow(invite.nickname || 'Unknown trader', '', 'Pending', invite));
-      const cancelBtn = createActionButton('Cancel', 'ghost');
-      cancelBtn.addEventListener('click', async () => {
-        try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/invites/${encodeURIComponent(invite.id || invite.invite_id || '')}/cancel`, { method: 'POST' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {}
-      });
-      const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(cancelBtn); row.appendChild(actionWrap);
-      pendingEl?.appendChild(row);
+        closeSgModal(); await loadTradeGroups();
+      } catch (err) { fbEl.textContent = err?.message || 'Unable to leave group.'; fbEl.className = 'sg-modal-feedback is-error'; leaveBtn.disabled = false; leaveBtn.textContent = `Leave ${group?.name || 'group'} \u2192`; }
     });
+    footer.appendChild(cancelBtn); footer.appendChild(leaveBtn);
+    wrap.appendChild(title); wrap.appendChild(copy); wrap.appendChild(fbEl); wrap.appendChild(footer);
   }
+  return wrap;
+}
 
-  const positions = Array.isArray(socialState.selectedTradeGroupPositions) ? socialState.selectedTradeGroupPositions : [];
-  if (!positions.length) positionsEl?.appendChild(createEmptyState('No qualifying active positions'));
-  positions.forEach(pos => {
-    const row = document.createElement('article'); row.className = 'social-list-row social-list-row--request';
-    row.appendChild(createIdentityRow(pos.ticker || 'N/A', `Entry ${Number(pos.entry_price || 0).toFixed(2)} • Stop ${Number(pos.stop_price || 0).toFixed(2)}`, `Risk ${Number(pos.risk_pct || 0).toFixed(2)}% • P/L ${Number(pos.gain_loss_pct || 0).toFixed(2)}%`));
-    positionsEl?.appendChild(row);
-  });
+function buildSgSettingsModal(group, isLeader) {
+  const { wrap, title, fbEl } = sgModalShell(`${group?.name || 'Group'} settings`);
+  if (isLeader) {
+    // Post announcement section
+    const annField = document.createElement('div'); annField.className = 'sg-modal-field';
+    const annLbl = document.createElement('label'); annLbl.className = 'sg-modal-label'; annLbl.textContent = 'Post announcement'; annLbl.htmlFor = 'sg-modal-announcement';
+    const annInput = document.createElement('input'); annInput.id = 'sg-modal-announcement'; annInput.className = 'sg-modal-input'; annInput.type = 'text'; annInput.maxLength = 500; annInput.placeholder = 'Market plan update\u2026';
+    const annBtn = createActionButton('Post', 'ghost');
+    annBtn.addEventListener('click', async () => {
+      const text = String(annInput.value || '').trim();
+      if (!text) { fbEl.textContent = 'Enter announcement text.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+      annBtn.disabled = true; annBtn.textContent = 'Posting\u2026';
+      try {
+        await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/announcements`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+        annInput.value = ''; fbEl.textContent = 'Announcement posted.'; fbEl.className = 'sg-modal-feedback is-success';
+        await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+        annBtn.disabled = false; annBtn.textContent = 'Post';
+      } catch (err) { fbEl.textContent = err?.message || 'Unable to post.'; fbEl.className = 'sg-modal-feedback is-error'; annBtn.disabled = false; annBtn.textContent = 'Post'; }
+    });
+    annField.appendChild(annLbl); annField.appendChild(annInput); annField.appendChild(annBtn);
+    // Delete group section
+    const delBtn = document.createElement('button'); delBtn.type = 'button'; delBtn.className = 'danger outline'; delBtn.style.cssText = 'width:100%;margin-top:8px'; delBtn.textContent = 'Delete group\u2026';
+    delBtn.addEventListener('click', async () => {
+      if (!window.confirm(`Delete "${group?.name}"? This will close access for all members.`)) return;
+      const deletingId = socialState.selectedTradeGroupId;
+      socialState.tradeGroups = socialState.tradeGroups.filter(g => g.id !== deletingId);
+      socialState.selectedTradeGroupId = '';
+      closeSgModal(); renderTradeGroupSection();
+      try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(deletingId)}`, { method: 'DELETE' }); await loadTradeGroups(); } catch (_e) { await loadTradeGroups(); }
+    });
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const closeBtn = createActionButton('Close', 'ghost'); closeBtn.addEventListener('click', closeSgModal);
+    footer.appendChild(closeBtn);
+    wrap.appendChild(title); wrap.appendChild(annField); wrap.appendChild(fbEl); wrap.appendChild(delBtn); wrap.appendChild(footer);
+  } else {
+    const note = document.createElement('p'); note.style.cssText = 'font-size:13px;color:var(--text-muted);margin:0';
+    note.textContent = 'Only the group leader can change settings.';
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const closeBtn = createActionButton('Close', 'ghost'); closeBtn.addEventListener('click', closeSgModal);
+    footer.appendChild(closeBtn);
+    wrap.appendChild(title); wrap.appendChild(note); wrap.appendChild(footer);
+  }
+  return wrap;
+}
 
-  const feed = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
-  if (!feed.length) alertsEl?.appendChild(createEmptyState('No activity yet'));
-  feed.forEach(item => {
-    const row = document.createElement('article'); row.className = 'social-list-row social-list-row--request';
-    if (item.type === 'announcement') {
-      row.appendChild(createIdentityRow(item.leader_nickname || 'Leader', item.created_at ? new Date(item.created_at).toLocaleString() : '', 'Announcement', { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }));
-      const meta = document.createElement('div'); meta.className = 'helper'; meta.textContent = item.text || ''; row.appendChild(meta);
-      if (isLeader) {
-        const delBtn = createActionButton('Delete', 'danger outline');
-        delBtn.addEventListener('click', async () => {
-          try {
-            await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/announcements/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-            await loadTradeGroupDetail(socialState.selectedTradeGroupId);
-          } catch (_e) {}
-        });
-        const actionWrap = document.createElement('div'); actionWrap.className = 'social-row-actions'; actionWrap.appendChild(delBtn); row.appendChild(actionWrap);
-      }
-    } else {
-      const normalizedClassification = normalizeTradeGroupActivityEvent(item);
-      if (SOCIAL_ACTIVITY_DEBUG) {
-        console.info('[social-activity-render]', {
-          itemId: item?.id || null,
-          source: item?.type || 'alert',
-          side: String(item?.side || '').trim().toUpperCase() || null,
-          classification: String(item?.alert_classification || '').trim().toLowerCase() || null,
-          positionEventType: String(item?.position_event_type || item?.event_type || '').trim().toUpperCase() || null,
-          normalizedClassification
-        });
-      }
-      const isTrim = normalizedClassification === 'trim';
-      const isAdd = normalizedClassification === 'add';
-      const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
-      const eventType = String(item?.position_event_type || item?.event_type || '').trim().toUpperCase();
-      const copyLabel = isSell
-        ? (isTrim ? 'reduced' : 'closed')
-        : (isAdd ? 'added to' : 'opened');
-      console.info('[trade-alert-copy] eventType and chosen copy label', { eventType: eventType || null, copyLabel });
-      if (!isSell) {
-        console.info('[trade-alert-copy] buy-path', {
-          eventType: eventType || null,
-          branch: isAdd ? 'POSITION_INCREASE' : 'NEW_POSITION'
-        });
-      }
-      if (isTrim) row.classList.add('social-list-row--trim');
-      const prefillPayload = normalizeAlertRiskPrefillPayload(item);
-      const canSizeTrade = !isSell && !!prefillPayload;
-      const missingStop = !isSell && Number(item.stop_price) <= 0;
-      const trimPctLabel = Number.isFinite(Number(item.trim_pct)) ? `${Number(item.trim_pct).toFixed(Number(item.trim_pct) % 1 === 0 ? 0 : 1)}%` : '';
-      const fillPriceLabel = Number.isFinite(Number(item.fill_price)) ? Number(item.fill_price).toFixed(2) : '';
-      row.appendChild(createIdentityRow(
-        item.leader_nickname || 'Leader',
-        item.created_at ? new Date(item.created_at).toLocaleString() : '',
-        isSell
-          ? (isTrim ? `${item.ticker} · Trimmed${trimPctLabel ? ` ${trimPctLabel}` : ''}` : `${item.ticker} · Closed`)
-          : (isAdd ? `${item.ticker} · Added to` : `${item.ticker} · Opened`),
-        { avatar_url: item.leader_avatar_url, avatar_initials: item.leader_avatar_initials }
-      ));
-      const meta = document.createElement('div');
-      meta.className = 'helper';
-      meta.textContent = isSell
-        ? (isTrim
-          ? `${item.leader_nickname || 'Leader'} trimmed ${trimPctLabel || 'part of'} ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`
-          : `${item.leader_nickname || 'Leader'} closed ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`)
-        : `${item.leader_nickname || 'Leader'} ${isAdd ? 'added to' : 'opened'} ${item.ticker}${fillPriceLabel ? ` at $${fillPriceLabel}` : ''}.`;
-      row.appendChild(meta);
-      if (canSizeTrade || isLeader || missingStop) {
-        const actionWrap = document.createElement('div');
-        actionWrap.className = 'social-row-actions';
-        if (!isLeader) {
-          const sizeBtn = createActionButton('Size This Trade', 'ghost social-size-alert-btn');
-          if (missingStop) {
-            sizeBtn.disabled = true;
-            sizeBtn.title = 'Stop required for risk sizing';
-          } else if (canSizeTrade) {
-            sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
-          } else {
-            sizeBtn.disabled = true;
-          }
-          actionWrap.appendChild(sizeBtn);
-        }
-        if (isLeader) {
-          const delBtn = createActionButton('Delete', 'danger outline');
-          delBtn.addEventListener('click', async () => { try { await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/alerts/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await loadTradeGroupDetail(socialState.selectedTradeGroupId); } catch (_e) {} });
-          actionWrap.appendChild(delBtn);
-        }
-        row.appendChild(actionWrap);
-      }
-    }
-    alertsEl?.appendChild(row);
+function buildSgShareWatchlistModal(group, isLeader) {
+  const { wrap, title, fbEl } = sgModalShell('Share a watchlist with the group');
+  const mine = Array.isArray(socialState.myWatchlists) ? socialState.myWatchlists : [];
+  if (!isLeader) {
+    const note = document.createElement('p'); note.style.cssText = 'font-size:13px;color:var(--text-muted);margin:0'; note.textContent = 'Only the group leader can share watchlists.';
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const closeBtn = createActionButton('Close', 'ghost'); closeBtn.addEventListener('click', closeSgModal); footer.appendChild(closeBtn);
+    wrap.appendChild(title); wrap.appendChild(note); wrap.appendChild(footer);
+    return wrap;
+  }
+  if (!mine.length) {
+    const note = document.createElement('p'); note.style.cssText = 'font-size:13px;color:var(--text-muted);margin:0'; note.textContent = 'You don\u2019t have any personal watchlists to share yet.';
+    const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+    const closeBtn = createActionButton('Close', 'ghost'); closeBtn.addEventListener('click', closeSgModal); footer.appendChild(closeBtn);
+    wrap.appendChild(title); wrap.appendChild(note); wrap.appendChild(footer);
+    return wrap;
+  }
+  const list = document.createElement('div'); list.className = 'sg-modal-watchlist-list';
+  mine.forEach(wl => {
+    const row = document.createElement('div'); row.className = 'sg-modal-watchlist-row';
+    const info = document.createElement('div');
+    const wname = document.createElement('div'); wname.className = 'sg-modal-watchlist-name'; wname.textContent = wl.name || 'Watchlist';
+    const wmeta = document.createElement('div'); wmeta.className = 'sg-modal-watchlist-meta'; wmeta.textContent = `${wl.tickerCount || 0} tickers`;
+    info.appendChild(wname); info.appendChild(wmeta); row.appendChild(info);
+    const shareBtn = createActionButton('Share', 'ghost sg-modal-share-btn');
+    shareBtn.addEventListener('click', async () => {
+      shareBtn.disabled = true; shareBtn.textContent = 'Sharing\u2026';
+      try {
+        await socialApi(`/api/trading-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/watchlists`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceWatchlistId: wl.id }) });
+        shareBtn.textContent = 'Shared \u2713';
+        fbEl.textContent = `${wl.name} shared with the group.`; fbEl.className = 'sg-modal-feedback is-success';
+        await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+      } catch (err) { fbEl.textContent = err?.message || 'Unable to share watchlist.'; fbEl.className = 'sg-modal-feedback is-error'; shareBtn.disabled = false; shareBtn.textContent = 'Share'; }
+    });
+    row.appendChild(shareBtn); list.appendChild(row);
   });
-  renderGroupWatchlistsSection(isLeader);
-  renderSocialOverview();
+  const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+  const closeBtn = createActionButton('Done', 'ghost'); closeBtn.addEventListener('click', closeSgModal); footer.appendChild(closeBtn);
+  wrap.appendChild(title); wrap.appendChild(list); wrap.appendChild(fbEl); wrap.appendChild(footer);
+  return wrap;
 }
 
 
@@ -2445,7 +2844,8 @@ function renderSocialOverview() {
     groups: Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups.length : 0,
     selectedTradeGroupId: socialState.selectedTradeGroupId || '',
     selectedTradeGroupRole: socialState.selectedTradeGroupRole || '',
-    feedTop: (Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : []).slice(0, 4).map((item) => item?.id || item?.created_at || '').join('|'),
+    memberCount: Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers.length : 0,
+    feedTop: (Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : []).slice(0, 5).map((item) => item?.id || item?.created_at || '').join('|'),
     feedFilter: socialState.overviewFeedFilter || 'all',
     rankTop: (Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries : []).slice(0, 3).map((item) => item?.nickname || '').join('|'),
     nickname: socialState.nickname || '',
@@ -2456,57 +2856,117 @@ function renderSocialOverview() {
     return;
   }
   socialState.socialOverviewSignature = nextSignature;
+
+  const friendCount = Array.isArray(socialState.friends) ? socialState.friends.length : 0;
+  const groupCount  = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups.length : 0;
+
+  // Header subtitle counts
   const friendsEl = getEl('social-overview-friends');
-  const groupsEl = getEl('social-overview-groups');
+  const groupsEl  = getEl('social-overview-groups');
+  if (friendsEl) friendsEl.textContent = String(friendCount);
+  if (groupsEl)  groupsEl.textContent  = String(groupCount);
+
+  // Sidebar stat mirrors (profile mini-card)
+  const statFriendsEl = getEl('sov-stat-friends');
+  const statGroupsEl  = getEl('sov-stat-groups');
+  if (statFriendsEl) statFriendsEl.textContent = String(friendCount);
+  if (statGroupsEl)  statGroupsEl.textContent  = String(groupCount);
+
+  // Rank (sidebar stat + used by both overview and profile mini)
+  const myNickname = String(socialState.nickname || '').trim().toLowerCase();
   const rankEl = getEl('social-overview-rank');
-  const verificationEl = getEl('social-overview-verification');
-
-  if (friendsEl) friendsEl.textContent = String(Array.isArray(socialState.friends) ? socialState.friends.length : 0);
-  if (groupsEl) groupsEl.textContent = String(Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups.length : 0);
-
   if (rankEl) {
-    const myNickname = String(socialState.nickname || '').trim().toLowerCase();
     const myEntry = (Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries : [])
       .find(entry => String(entry?.nickname || '').trim().toLowerCase() === myNickname);
-    rankEl.textContent = myEntry?.rank ? `#${myEntry.rank}` : '—';
+    const hasRank = !!myEntry?.rank;
+    rankEl.textContent = hasRank ? `#${myEntry.rank}` : '—';
+    rankEl.classList.toggle('is-ranked', hasRank);
   }
 
+  // Verification pill — show only when broker_verified or platform_verified
+  const verificationEl = getEl('social-overview-verification');
   if (verificationEl) {
     const status = socialState.settings?.verification_status || socialState.profile?.verification_status || 'none';
-    verificationEl.textContent = getVerificationDisplay(status, socialState.settings?.verification_source).label;
+    const display = getVerificationDisplay(status, socialState.settings?.verification_source);
+    verificationEl.textContent = display.label;
+    const show = status === 'broker_verified' || status === 'platform_verified';
+    verificationEl.classList.toggle('hidden', !show);
   }
 
-  const selectedGroupEl = getEl('social-overview-selected-group');
-  const groupMetaEl = getEl('social-overview-group-meta');
-  const groupActivityEl = getEl('social-overview-group-activity');
-  const groupFeedEl = getEl('social-overview-group-feed');
-  const liveIndicatorEl = getEl('social-live-indicator');
-  const feedFilterEl = getEl('social-overview-feed-filter');
-  const openGroupActionEl = getEl('social-overview-open-group-action');
-  const inviteActionEl = getEl('social-overview-invite-action');
-  const announceActionEl = getEl('social-overview-announce-action');
-  const positionsActionEl = getEl('social-overview-positions-action');
-  const group = (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : []).find(item => String(item.id) === String(socialState.selectedTradeGroupId))
+  // Profile mini-card identity
+  const profileNameEl  = getEl('sov-profile-mini-name');
+  const profileSinceEl = getEl('sov-profile-mini-since');
+  if (profileNameEl) profileNameEl.textContent = socialState.nickname || 'Your profile';
+  if (profileSinceEl) {
+    const status = socialState.settings?.verification_status || socialState.profile?.verification_status || 'none';
+    if (status === 'broker_verified')   profileSinceEl.textContent = 'Broker verified';
+    else if (status === 'platform_verified') profileSinceEl.textContent = 'Platform verified';
+    else profileSinceEl.textContent = 'Unverified';
+  }
+  const profileAvatarSlot = getEl('sov-profile-avatar');
+  if (profileAvatarSlot) {
+    clearNode(profileAvatarSlot);
+    const av = window.VeracitySocialAvatar?.createAvatar({
+      nickname: socialState.nickname,
+      avatar_url: socialState.profile?.avatar_url,
+      avatar_initials: socialState.profile?.avatar_initials,
+    }, 'sm');
+    if (av) profileAvatarSlot.appendChild(av);
+  }
+
+  // Active group
+  const group = (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups : [])
+    .find(item => String(item.id) === String(socialState.selectedTradeGroupId))
     || (Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups[0] : null);
+
+  const selectedGroupEl = getEl('social-overview-selected-group');
   if (selectedGroupEl) selectedGroupEl.textContent = group?.name || 'No group selected';
-  if (groupMetaEl) {
-    const roleLabel = group?.role === 'leader' ? 'LEADER' : group?.role ? 'MEMBER' : '—';
-    const memberCountLabel = Number.isFinite(Number(group?.member_count)) ? String(Number(group.member_count)) : '—';
-    groupMetaEl.innerHTML = '';
-    if (group?.role) {
-      const roleBadge = document.createElement('span');
-      roleBadge.className = 'social-role-badge';
-      roleBadge.textContent = roleLabel;
-      groupMetaEl.appendChild(roleBadge);
+
+  // Role badge
+  const roleBadgeEl = getEl('sov-group-role-badge');
+  if (roleBadgeEl) {
+    const roleLabel = group?.role === 'leader' ? 'LEADER' : group?.role ? 'MEMBER' : '';
+    roleBadgeEl.textContent = roleLabel;
+    roleBadgeEl.classList.toggle('hidden', !roleLabel);
+    if (roleLabel) {
+      roleBadgeEl.className = `sov-member-badge${group?.role === 'leader' ? ' is-leader' : ''}`;
     }
-    const membersText = document.createTextNode(`${memberCountLabel} members`);
-    groupMetaEl.appendChild(membersText);
   }
+
+  // Group footer: combined "N members · last active Xm ago"
   const latestAlert = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts[0] : null;
-  if (groupActivityEl) {
-    const recentActivity = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
-    groupActivityEl.textContent = `Last active: ${recentActivity || 'No recent activity'}`;
+  const groupMetaEl = getEl('social-overview-group-meta');
+  if (groupMetaEl) {
+    const memberCount = Number(group?.member_count);
+    const memberLabel = Number.isFinite(memberCount)
+      ? `${memberCount} member${memberCount !== 1 ? 's' : ''}`
+      : '—';
+    const activityTs = formatRelativeTimestamp(latestAlert?.created_at || latestAlert?.updated_at || null);
+    const activityLabel = activityTs !== 'No recent activity' ? activityTs : '—';
+    groupMetaEl.textContent = `${memberLabel} · last active ${activityLabel}`;
   }
+
+  // Member avatar stack
+  const avatarStackEl = getEl('sov-avatar-stack');
+  if (avatarStackEl) {
+    clearNode(avatarStackEl);
+    (Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [])
+      .slice(0, 4)
+      .forEach(member => {
+        const av = window.VeracitySocialAvatar?.createAvatar({
+          nickname: member.nickname,
+          avatar_url: member.avatar_url,
+          avatar_initials: member.avatar_initials,
+        }, 'xs');
+        if (av) {
+          av.classList.add('sov-stack-avatar');
+          avatarStackEl.appendChild(av);
+        }
+      });
+  }
+
+  // Feed filter active state
+  const feedFilterEl = getEl('social-overview-feed-filter');
   if (feedFilterEl) {
     const selectedFilter = socialState.overviewFeedFilter || 'all';
     Array.from(feedFilterEl.querySelectorAll('.social-feed-filter-btn')).forEach((btn) => {
@@ -2516,184 +2976,573 @@ function renderSocialOverview() {
       btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
   }
+
+  // Live indicator
+  const liveIndicatorEl = getEl('social-live-indicator');
   if (liveIndicatorEl) {
     liveIndicatorEl.classList.toggle('is-flashing', Date.now() < Number(socialState.liveFeedFlashUntil || 0));
   }
+
+  // Feed items
+  const groupFeedEl = getEl('social-overview-group-feed');
   if (groupFeedEl) {
     clearNode(groupFeedEl);
     const allItems = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
     const selectedFilter = socialState.overviewFeedFilter || 'all';
-    const previewItems = allItems.filter((item) => {
-      const type = String(item?.type || '').toLowerCase();
-      const side = String(item?.side || '').toUpperCase();
-      const isAnnouncement = type === 'announcement';
-      const isTrade = side === 'BUY' || side === 'SELL' || type === 'closed' || (!isAnnouncement && type !== 'announcement');
+    const filteredItems = allItems.filter((item) => {
+      const nc = normalizeTradeGroupActivityEvent(item);
+      const isAnnouncement = nc === 'announcement';
+      // Notes match only explicit type === 'note'; 'other' is a grab-bag, not notes.
+      const isNote = String(item?.type || '').toLowerCase() === 'note';
+      const isTrade = !isAnnouncement && !isNote;
       if (selectedFilter === 'announcements') return isAnnouncement;
-      if (selectedFilter === 'trades') return isTrade && !isAnnouncement;
+      if (selectedFilter === 'notes')         return isNote;
+      if (selectedFilter === 'trades')        return isTrade;
       return true;
-    }).slice(0, 4);
+    }).slice(0, 5);
+
     if (!group?.id) {
       groupFeedEl.appendChild(createEmptyState('No active group selected', 'Open Groups to select or create a trading group.'));
-    } else if (!previewItems.length) {
-      const emptyDetail = selectedFilter === 'all'
-        ? 'Activity from your selected group will appear here.'
-        : `No ${selectedFilter} activity in this group yet.`;
+    } else if (!filteredItems.length) {
+      const notesEmptyDetail = 'Notes are posts your group members write outside of a trade — analysis, observations, and market thoughts will appear here.';
+      const emptyDetail = selectedFilter === 'notes'
+        ? notesEmptyDetail
+        : selectedFilter === 'all'
+          ? 'Activity from your selected group will appear here.'
+          : `No ${selectedFilter} activity in this group yet.`;
       groupFeedEl.appendChild(createEmptyState('No recent activity', emptyDetail));
     } else {
-      previewItems.forEach(item => {
-        const row = document.createElement('article');
-        row.className = 'social-list-row social-list-row--request social-list-row--activity';
-        const normalizedClassification = normalizeTradeGroupActivityEvent(item);
-        const rawType = String(item.type || '').toLowerCase();
-        const isAnnouncement = normalizedClassification === 'announcement' || rawType === 'announcement';
-        const isSell = normalizedClassification === 'trim' || normalizedClassification === 'close';
-        const isBuy = normalizedClassification === 'open';
-        const badgeLabel = isAnnouncement
-          ? 'ANNOUNCEMENT'
-          : normalizedClassification === 'trim'
-            ? 'TRIM'
-            : isSell
-              ? 'SELL'
-              : 'BUY';
-        if (isBuy) row.classList.add('social-list-row--activity-buy');
-        if (isSell) row.classList.add('social-list-row--activity-sell');
-        if (isAnnouncement) row.classList.add('social-list-row--activity-announcement');
-        const avatarWrap = document.createElement('div');
-        const avatar = window.VeracitySocialAvatar?.createAvatar({
-          nickname: item.leader_nickname || 'Leader',
-          avatar_url: item.leader_avatar_url,
-          avatar_initials: item.leader_avatar_initials
-        }, 'sm');
-        if (avatar) avatarWrap.appendChild(avatar);
-        row.appendChild(avatarWrap);
-
-        const main = document.createElement('div');
-        main.className = 'social-activity-main';
-
-        const top = document.createElement('div');
-        top.className = 'social-activity-top';
-        const identity = document.createElement('div');
-        identity.className = 'social-activity-identity';
-        const user = document.createElement('span');
-        user.className = 'social-activity-user';
-        user.textContent = item.leader_nickname || 'Leader';
-        const ticker = document.createElement('span');
-        ticker.className = 'social-activity-ticker';
-        ticker.textContent = String(item.ticker || (isAnnouncement ? 'ANNOUNCEMENT' : isSell ? 'POSITION' : 'TRADE'));
-        const badge = document.createElement('span');
-        badge.className = `social-activity-badge${isBuy ? ' is-buy' : ''}${isSell ? ' is-sell' : ''}${isAnnouncement ? ' is-announcement' : ''}`;
-        badge.textContent = badgeLabel;
-        identity.appendChild(user);
-        identity.appendChild(ticker);
-        top.appendChild(identity);
-        top.appendChild(badge);
-        main.appendChild(top);
-
-        if (isAnnouncement) {
-          const announcementWrap = document.createElement('div');
-          announcementWrap.className = 'social-activity-announcement';
-
-          const summary = document.createElement('p');
-          summary.className = 'social-activity-message social-activity-keyline social-activity-keyline-announcement';
-          summary.textContent = item.text || 'Announcement posted to the group.';
-          summary.title = item.text || '';
-          announcementWrap.appendChild(summary);
-
-          const toggleBtn = document.createElement('button');
-          toggleBtn.type = 'button';
-          toggleBtn.className = 'social-activity-announcement-toggle';
-          toggleBtn.textContent = 'View more';
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          toggleBtn.hidden = true;
-          announcementWrap.appendChild(toggleBtn);
-
-          const setExpanded = (expanded) => {
-            announcementWrap.classList.toggle('is-expanded', expanded);
-            toggleBtn.textContent = expanded ? 'Show less' : 'View more';
-            toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-          };
-
-          toggleBtn.addEventListener('click', () => {
-            setExpanded(!announcementWrap.classList.contains('is-expanded'));
-          });
-
-          requestAnimationFrame(() => {
-            announcementWrap.classList.add('is-truncated');
-            const isOverflowing = summary.scrollHeight > summary.clientHeight + 1;
-            announcementWrap.classList.toggle('is-truncated', isOverflowing);
-            if (!isOverflowing) setExpanded(false);
-            toggleBtn.hidden = !isOverflowing;
-          });
-
-          main.appendChild(announcementWrap);
-        } else if (isSell) {
-          const summary = document.createElement('p');
-          summary.className = 'social-activity-message social-activity-keyline';
-          summary.textContent = summarizeSellActivity(item, normalizedClassification);
-          const overviewLabel = getTradeGroupActivityOverviewLabel(item, normalizedClassification);
-          logActivityNormalization(item, normalizedClassification, overviewLabel);
-          main.appendChild(summary);
-        } else {
-          const tradeRow = document.createElement('div');
-          tradeRow.className = 'social-activity-trade-row';
-          const keyline = document.createElement('p');
-          keyline.className = 'social-activity-message social-activity-keyline social-activity-keyline-buy';
-          keyline.textContent = formatBuyDecisionStrip(item);
-          tradeRow.appendChild(keyline);
-          const prefillPayload = normalizeAlertRiskPrefillPayload(item);
-          const sizeBtn = createActionButton('Size this trade', 'social-size-alert-btn social-size-alert-btn--compact');
-          if (prefillPayload) {
-            sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
-          } else {
-            sizeBtn.disabled = true;
-            sizeBtn.title = 'Price and stop are required for risk sizing';
-          }
-          tradeRow.appendChild(sizeBtn);
-          main.appendChild(tradeRow);
-        }
-
-        const footer = document.createElement('div');
-        footer.className = 'social-activity-footer';
-        const timestamp = document.createElement('span');
-        timestamp.className = 'social-activity-time';
-        timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
-        footer.appendChild(timestamp);
-        main.appendChild(footer);
-
-        row.appendChild(main);
-        groupFeedEl.appendChild(row);
+      filteredItems.forEach(item => {
+        groupFeedEl.appendChild(createSovFeedItem(item));
       });
     }
   }
+
+  // Group action links
   const selectedGroupId = String(group?.id || '');
   const groupsHref = selectedGroupId ? `/social/groups?group=${encodeURIComponent(selectedGroupId)}` : '/social/groups';
-  if (openGroupActionEl) openGroupActionEl.href = groupsHref;
-  if (inviteActionEl) inviteActionEl.href = `${groupsHref}#invite`;
+  const openGroupActionEl   = getEl('social-overview-open-group-action');
+  const inviteActionEl      = getEl('social-overview-invite-action');
+  const announceActionEl    = getEl('social-overview-announce-action');
+  const positionsActionEl   = getEl('social-overview-positions-action');
+  if (openGroupActionEl)  openGroupActionEl.href = groupsHref;
+  if (inviteActionEl)     inviteActionEl.href    = `${groupsHref}#invite`;
   if (announceActionEl) {
     announceActionEl.href = `${groupsHref}#announcement`;
     announceActionEl.classList.toggle('hidden', group?.role !== 'leader');
   }
-  if (positionsActionEl) positionsActionEl.href = `${groupsHref}#positions`;
+  if (positionsActionEl)  positionsActionEl.href = `${groupsHref}#positions`;
 
+  // Friends card — no user IDs displayed
   const friendsPreviewEl = getEl('social-overview-friends-preview');
   if (friendsPreviewEl) {
     clearNode(friendsPreviewEl);
-    const previewFriends = Array.isArray(socialState.friends) ? socialState.friends.slice(0, 3) : [];
+    const previewFriends = Array.isArray(socialState.friends) ? socialState.friends.slice(0, 4) : [];
     if (!previewFriends.length) {
-      friendsPreviewEl.appendChild(createEmptyState('No friends yet', 'Add traders in Friends to build your list.'));
+      const empty = document.createElement('p');
+      empty.className = 'sov-empty-hint';
+      empty.textContent = 'No friends yet.';
+      friendsPreviewEl.appendChild(empty);
     } else {
       previewFriends.forEach(friend => {
-        const row = document.createElement('article');
-        row.className = 'social-list-row social-list-row--friend';
-        row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', '', {
+        const row = document.createElement('div');
+        row.className = 'sov-friend-row';
+
+        const avatarWrap = document.createElement('div');
+        avatarWrap.className = 'sov-friend-avatar-wrap';
+        const av = window.VeracitySocialAvatar?.createAvatar({
+          nickname: friend.nickname,
           avatar_url: friend.avatar_url,
-          avatar_initials: friend.avatar_initials
-        }));
+          avatar_initials: friend.avatar_initials,
+        }, 'xs');
+        if (av) avatarWrap.appendChild(av);
+        row.appendChild(avatarWrap);
+
+        const info = document.createElement('div');
+        info.className = 'sov-friend-info';
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'sov-friend-name';
+        nameEl.textContent = friend.nickname || 'Unknown trader';
+
+        const statusEl = document.createElement('span');
+        statusEl.className = 'sov-friend-status';
+        const activityTs = friend.last_activity_at || friend.last_seen_at || null;
+        statusEl.textContent = activityTs
+          ? `Active ${formatRelativeTimestamp(activityTs)}`
+          : 'Offline';
+
+        info.appendChild(nameEl);
+        info.appendChild(statusEl);
+        row.appendChild(info);
         friendsPreviewEl.appendChild(row);
       });
     }
   }
+
+  // Sidebar sub-renders
+  renderSidebarGroupsCard();
+  renderSidebarLeaderboard();
+  renderGroupPerformanceCard();
+  renderTrendingTickersCard();
+  renderUpcomingEventsCard();
+
   logSocialPerf('social-section-reused', { section: 'overview' });
+}
+
+// Creates a single feed item element for the activity feed.
+function createSovFeedItem(item) {
+  const nc = normalizeTradeGroupActivityEvent(item);
+  const isAnnouncement = nc === 'announcement';
+  const isClose = nc === 'close' || nc === 'trim';
+  const isNote  = String(item?.type || '').toLowerCase() === 'note';
+  const isOpen  = !isAnnouncement && !isClose && !isNote;
+
+  const article = document.createElement('article');
+  article.className = `sov-feed-item${isAnnouncement ? ' sov-feed-item--announcement' : ''}`;
+
+  // Left: avatar or announcement icon
+  const avatarWrap = document.createElement('div');
+  avatarWrap.className = 'sov-feed-item-avatar';
+  if (isAnnouncement) {
+    const iconBox = document.createElement('div');
+    iconBox.className = 'sov-announcement-icon';
+    iconBox.setAttribute('aria-hidden', 'true');
+    iconBox.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2a6 6 0 100 12A6 6 0 008 2zm0 3.5a.75.75 0 01.75.75v3a.75.75 0 01-1.5 0v-3A.75.75 0 018 5.5zm0 6a.875.875 0 110-1.75.875.875 0 010 1.75z" fill="currentColor"/></svg>';
+    avatarWrap.appendChild(iconBox);
+  } else {
+    const av = window.VeracitySocialAvatar?.createAvatar({
+      nickname: item.leader_nickname || 'Leader',
+      avatar_url: item.leader_avatar_url,
+      avatar_initials: item.leader_avatar_initials,
+    }, 'sm');
+    if (av) avatarWrap.appendChild(av);
+  }
+  article.appendChild(avatarWrap);
+
+  const body = document.createElement('div');
+  body.className = 'sov-feed-item-body';
+
+  // Header line
+  const head = document.createElement('div');
+  head.className = 'sov-feed-item-head';
+
+  const timestamp = document.createElement('span');
+  timestamp.className = 'sov-feed-item-timestamp';
+  timestamp.textContent = formatRelativeTimestamp(item.created_at || item.updated_at);
+
+  if (isAnnouncement) {
+    const label = document.createElement('span');
+    label.className = 'sov-feed-item-announcement-label';
+    label.textContent = 'Group announcement';
+    head.appendChild(label);
+    head.appendChild(timestamp);
+  } else {
+    const actor = document.createElement('span');
+    actor.className = 'sov-feed-item-actor';
+    actor.textContent = item.leader_nickname || 'Leader';
+    head.appendChild(actor);
+
+    if (isNote) {
+      const action = document.createElement('span');
+      action.className = 'sov-feed-item-action';
+      action.textContent = 'posted a note';
+      head.appendChild(action);
+    } else if (isClose) {
+      const side     = String(item?.side || '').toUpperCase();
+      const sideText = side === 'SELL' ? 'short' : 'long';
+      const verb     = nc === 'trim' ? 'trimmed' : 'closed';
+      const action   = document.createElement('span');
+      action.className = 'sov-feed-item-action';
+      action.textContent = `${verb} a ${sideText} in`;
+      head.appendChild(action);
+      if (item.ticker) {
+        const tickerEl = document.createElement('span');
+        tickerEl.className = 'sov-feed-item-ticker';
+        tickerEl.textContent = String(item.ticker).toUpperCase();
+        head.appendChild(tickerEl);
+      }
+      const rVal = computeRMultiple(item);
+      if (rVal !== null) {
+        const sign   = rVal >= 0 ? '+' : '\u2212';
+        const rBadge = document.createElement('span');
+        rBadge.className = `sov-r-badge ${rVal >= 0 ? 'sov-r-badge--win' : 'sov-r-badge--loss'}`;
+        rBadge.textContent = `${sign}${Math.abs(rVal).toFixed(1)}R`;
+        head.appendChild(rBadge);
+      }
+    } else {
+      // Open trade
+      const side     = String(item?.side || '').toUpperCase();
+      const sideText = side === 'SELL' ? 'short' : 'long';
+      const action   = document.createElement('span');
+      action.className = 'sov-feed-item-action';
+      action.textContent = `opened a ${sideText} in`;
+      head.appendChild(action);
+      if (item.ticker) {
+        const tickerEl = document.createElement('span');
+        tickerEl.className = 'sov-feed-item-ticker';
+        tickerEl.textContent = String(item.ticker).toUpperCase();
+        head.appendChild(tickerEl);
+      }
+      const dirBadge = document.createElement('span');
+      dirBadge.className = `sov-dir-badge ${side === 'SELL' ? 'sov-dir-badge--sell' : 'sov-dir-badge--buy'}`;
+      dirBadge.textContent = side === 'SELL' ? 'SELL' : 'BUY';
+      head.appendChild(dirBadge);
+    }
+    head.appendChild(timestamp);
+  }
+  body.appendChild(head);
+
+  // Content
+  if (isAnnouncement) {
+    const announcementBody = document.createElement('p');
+    announcementBody.className = 'sov-feed-item-announcement-body';
+    announcementBody.textContent = item.text || 'Announcement posted to the group.';
+    body.appendChild(announcementBody);
+  } else if (isNote) {
+    const noteBody = document.createElement('p');
+    noteBody.className = 'sov-feed-item-note-body';
+    noteBody.textContent = item.text || '';
+    body.appendChild(noteBody);
+  } else if (isClose) {
+    const entry  = Number(item?.entry_price);
+    const exit   = Number(item?.fill_price);
+    const pnlPct = Number(item?.pnl_percent ?? item?.realized_pnl_percent ?? item?.percent_change);
+    body.appendChild(sovStatsGrid([
+      { label: 'Entry',  value: Number.isFinite(entry) ? entry.toFixed(2) : '—', cls: '' },
+      { label: 'Exit',   value: Number.isFinite(exit)  ? exit.toFixed(2)  : '—', cls: '' },
+      { label: 'Held',   value: '—', cls: 'sov-stats-value--muted' },
+      {
+        label: 'Result',
+        value: Number.isFinite(pnlPct)
+          ? `${pnlPct > 0 ? '+' : '\u2212'}${Math.abs(pnlPct).toFixed(2)}%`
+          : '—',
+        cls: Number.isFinite(pnlPct)
+          ? (pnlPct >= 0 ? 'sov-stats-value--success' : 'sov-stats-value--danger')
+          : '',
+      },
+    ]));
+  } else {
+    // Open trade stats
+    const entry = Number(item?.entry_price);
+    const stop  = Number(item?.stop_price);
+    const risk  = Number(item?.risk_pct);
+    body.appendChild(sovStatsGrid([
+      { label: 'Entry',   value: Number.isFinite(entry) ? entry.toFixed(2)       : '—', cls: '' },
+      { label: 'Stop',    value: Number.isFinite(stop)  ? stop.toFixed(2)        : '—', cls: 'sov-stats-value--danger' },
+      { label: 'Risk',    value: Number.isFinite(risk)  ? `${risk.toFixed(2)}%`  : '—', cls: '' },
+      { label: 'Current', value: '—', cls: 'sov-stats-value--muted' }, // TODO: live price
+    ]));
+
+    // "Size this trade" CTA
+    const actions = document.createElement('div');
+    actions.className = 'sov-feed-item-actions';
+    const prefill = normalizeAlertRiskPrefillPayload(item);
+    const sizeBtn = document.createElement('button');
+    sizeBtn.type = 'button';
+    sizeBtn.className = 'sov-action-btn-primary';
+    sizeBtn.textContent = 'Size this trade';
+    if (prefill) {
+      sizeBtn.addEventListener('click', () => launchAlertRiskSizing(item));
+    } else {
+      sizeBtn.disabled = true;
+      sizeBtn.title = 'Price and stop are required for risk sizing';
+    }
+    actions.appendChild(sizeBtn);
+    body.appendChild(actions);
+  }
+
+  article.appendChild(body);
+  return article;
+}
+
+// Shared stats grid builder for feed items.
+function sovStatsGrid(cells) {
+  const grid = document.createElement('div');
+  grid.className = 'sov-stats-grid';
+  cells.forEach(({ label, value, cls }) => {
+    const cell = document.createElement('div');
+    cell.className = 'sov-stats-cell';
+    const lbl = document.createElement('span');
+    lbl.className = 'sov-stats-label';
+    lbl.textContent = label;
+    const val = document.createElement('span');
+    val.className = cls ? `sov-stats-value ${cls}` : 'sov-stats-value';
+    val.textContent = value;
+    cell.appendChild(lbl);
+    cell.appendChild(val);
+    grid.appendChild(cell);
+  });
+  return grid;
+}
+
+// Sidebar: groups list
+function renderSidebarGroupsCard() {
+  const listEl = getEl('sov-sidebar-groups');
+  if (!listEl) return;
+  clearNode(listEl);
+  const groups = Array.isArray(socialState.tradeGroups) ? socialState.tradeGroups.slice(0, 3) : [];
+  if (!groups.length) {
+    const empty = document.createElement('p');
+    empty.className = 'sov-empty-hint';
+    empty.textContent = 'No groups yet.';
+    listEl.appendChild(empty);
+    return;
+  }
+  groups.forEach(group => {
+    const isActive = String(group.id) === String(socialState.selectedTradeGroupId)
+      || (!socialState.selectedTradeGroupId && groups[0] === group);
+    const row = document.createElement('div');
+    row.className = `sov-group-row${isActive ? ' sov-group-row--active' : ''}`;
+
+    const left = document.createElement('div');
+    left.className = 'sov-group-row-left';
+    const name = document.createElement('span');
+    name.className = 'sov-group-row-name';
+    name.textContent = group.name || 'Unnamed group';
+    const sub = document.createElement('span');
+    sub.className = 'sov-group-row-sub';
+    const roleLabel   = group.role === 'leader' ? 'Leader' : 'Member';
+    const memberCount = Number(group.member_count);
+    const memberLabel = Number.isFinite(memberCount)
+      ? `${memberCount} member${memberCount !== 1 ? 's' : ''}`
+      : '';
+    sub.textContent = [roleLabel, memberLabel].filter(Boolean).join(' · ');
+    left.appendChild(name);
+    left.appendChild(sub);
+
+    const online = document.createElement('span');
+    online.className = 'sov-group-row-online';
+    online.textContent = ''; // TODO: per-group online count when API provides it
+
+    row.appendChild(left);
+    row.appendChild(online);
+    listEl.appendChild(row);
+  });
+}
+
+// Sidebar: compact leaderboard using shared createLeaderboardRow
+function renderSidebarLeaderboard() {
+  const rowsEl = getEl('sov-lb-rows');
+  if (!rowsEl) return;
+  clearNode(rowsEl);
+
+  if (socialState.leaderboardLoading || socialState.leaderboardError) return;
+
+  const allEntries = Array.isArray(socialState.leaderboardEntries) ? socialState.leaderboardEntries : [];
+  const top3 = allEntries.slice(0, 3);
+  if (!top3.length) return;
+
+  const myNickname = String(socialState.nickname || '').trim().toLowerCase();
+  const myEntryFound = allEntries.find(e =>
+    String(e?.nickname || '').trim().toLowerCase() === myNickname
+  );
+  const myIsOutside = myEntryFound && !top3.find(e => e === myEntryFound);
+
+  top3.forEach(entry => {
+    rowsEl.appendChild(createLeaderboardRow(entry, { compact: true, myNickname }));
+  });
+
+  if (myIsOutside) {
+    const sep = document.createElement('div');
+    sep.className = 'sov-lb-sep';
+    sep.textContent = '\u00b7\u00b7\u00b7';
+    rowsEl.appendChild(sep);
+    rowsEl.appendChild(createLeaderboardRow(myEntryFound, { compact: true, myNickname }));
+  }
+}
+
+// Insights: weekly group performance card
+function renderGroupPerformanceCard() {
+  const tilesEl      = getEl('sov-perf-tiles');
+  const dateRangeEl  = getEl('sov-perf-date-range');
+  const sparkSection = getEl('sov-sparkline-section');
+  if (!tilesEl) return;
+  clearNode(tilesEl);
+
+  const alerts = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
+  const now    = Date.now();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+
+  const closedThisWeek = alerts.filter(item => {
+    const nc = normalizeTradeGroupActivityEvent(item);
+    const ts = new Date(item?.created_at || 0).getTime();
+    return nc === 'close' && now - ts <= weekMs;
+  });
+
+  const pnlValues = closedThisWeek
+    .map(item => Number(item?.pnl_percent ?? item?.realized_pnl_percent ?? item?.percent_change))
+    .filter(v => Number.isFinite(v));
+
+  const groupAvgPct  = pnlValues.length > 0
+    ? (pnlValues.reduce((a, b) => a + b, 0) / pnlValues.length)
+    : null;
+  const wins         = pnlValues.filter(v => v > 0).length;
+  const groupWinRate = pnlValues.length > 0
+    ? Math.round(wins / pnlValues.length * 100)
+    : null;
+
+  if (dateRangeEl) {
+    const start = new Date(now - weekMs);
+    const end   = new Date(now);
+    const fmt   = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    dateRangeEl.textContent = `${fmt(start)} – ${fmt(end)}`;
+  }
+
+  const avgTile = document.createElement('div');
+  avgTile.className = 'sov-perf-tile';
+  const avgVal = document.createElement('div');
+  const avgNum = groupAvgPct !== null ? groupAvgPct : null;
+  avgVal.className = `sov-perf-tile-value${avgNum === null ? '' : avgNum >= 0 ? ' sov-perf-tile-value--pos' : ' sov-perf-tile-value--neg'}`;
+  avgVal.textContent = avgNum !== null ? `${avgNum >= 0 ? '+' : ''}${avgNum.toFixed(2)}%` : '—';
+  const avgLbl = document.createElement('div');
+  avgLbl.className = 'sov-perf-tile-label';
+  avgLbl.textContent = 'Group avg return';
+  avgTile.appendChild(avgVal);
+  avgTile.appendChild(avgLbl);
+
+  const wrTile = document.createElement('div');
+  wrTile.className = 'sov-perf-tile';
+  const wrVal = document.createElement('div');
+  wrVal.className = 'sov-perf-tile-value';
+  wrVal.textContent = groupWinRate !== null ? `${groupWinRate}%` : '—';
+  const wrLbl = document.createElement('div');
+  wrLbl.className = 'sov-perf-tile-label';
+  wrLbl.textContent = 'Group win rate';
+  wrTile.appendChild(wrVal);
+  wrTile.appendChild(wrLbl);
+
+  tilesEl.appendChild(avgTile);
+  tilesEl.appendChild(wrTile);
+
+  if (sparkSection) {
+    sparkSection.style.display = closedThisWeek.length >= 2 ? '' : 'none';
+    if (closedThisWeek.length >= 2) drawPerformanceSparkline(closedThisWeek);
+  }
+}
+
+// Draws a simple sparkline on the canvas using closed-trade pnl values.
+function drawPerformanceSparkline(closedItems) {
+  const canvas = getEl('sov-perf-canvas');
+  if (!canvas || !canvas.getContext) return;
+  const ctx  = canvas.getContext('2d');
+  const w    = canvas.offsetWidth || 220;
+  const h    = 56;
+  canvas.width  = w;
+  canvas.height = h;
+  ctx.clearRect(0, 0, w, h);
+
+  const sorted = closedItems
+    .slice()
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const values = sorted.map(item =>
+    Number(item?.pnl_percent ?? item?.realized_pnl_percent ?? 0)
+  );
+
+  const minV  = Math.min(0, ...values) * 1.1;
+  const maxV  = Math.max(0, ...values) * 1.1;
+  const range = maxV - minV || 1;
+  const toY   = v => h - ((v - minV) / range) * (h - 4) - 2;
+  const toX   = i => (i / (values.length - 1)) * w;
+
+  // Dashed zero line
+  const zeroY = toY(0);
+  ctx.beginPath();
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 0.5;
+  ctx.moveTo(0, zeroY);
+  ctx.lineTo(w, zeroY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Group performance line (group avg = green)
+  ctx.beginPath();
+  ctx.strokeStyle = '#10B981';
+  ctx.lineWidth   = 1.5;
+  ctx.lineJoin    = 'round';
+  values.forEach((v, i) => {
+    i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v));
+  });
+  ctx.stroke();
+}
+
+// Insights: trending tickers card
+function renderTrendingTickersCard() {
+  const listEl = getEl('sov-trending-list');
+  if (!listEl) return;
+  clearNode(listEl);
+
+  const alerts   = Array.isArray(socialState.selectedTradeGroupAlerts) ? socialState.selectedTradeGroupAlerts : [];
+  const now      = Date.now();
+  const sevenDay = 7 * 24 * 60 * 60 * 1000;
+
+  const recent = alerts.filter(item => {
+    const nc = normalizeTradeGroupActivityEvent(item);
+    const ts = new Date(item?.created_at || 0).getTime();
+    return nc !== 'announcement' && item?.ticker && now - ts <= sevenDay;
+  });
+
+  // Aggregate by ticker: count trades + unique members
+  const tradeCount  = {};
+  const memberSets  = {};
+  recent.forEach(item => {
+    const ticker = String(item.ticker || '').toUpperCase();
+    if (!ticker) return;
+    tradeCount[ticker]  = (tradeCount[ticker] || 0) + 1;
+    if (!memberSets[ticker]) memberSets[ticker] = new Set();
+    if (item.leader_nickname) memberSets[ticker].add(item.leader_nickname);
+  });
+
+  const sorted = Object.entries(tradeCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  if (!sorted.length) {
+    const empty = document.createElement('p');
+    empty.className = 'sov-empty-hint';
+    empty.textContent = 'No trades this week — check back after open.';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  sorted.forEach(([ticker, count]) => {
+    const members = memberSets[ticker]?.size || 0;
+    const row     = document.createElement('div');
+    row.className = 'sov-trending-row';
+
+    const tickerEl = document.createElement('span');
+    tickerEl.className = 'sov-trending-ticker';
+    tickerEl.textContent = ticker;
+
+    const meta = document.createElement('span');
+    meta.className = 'sov-trending-meta';
+    meta.textContent = `${count} trade${count !== 1 ? 's' : ''} · ${members} member${members !== 1 ? 's' : ''}`;
+
+    const change = document.createElement('span');
+    change.className = 'sov-trending-change sov-trending-change--neutral';
+    change.textContent = '—'; // TODO: live price % change when quotes endpoint is available
+
+    row.appendChild(tickerEl);
+    row.appendChild(meta);
+    row.appendChild(change);
+    listEl.appendChild(row);
+  });
+}
+
+// Insights: upcoming events card
+function renderUpcomingEventsCard() {
+  const listEl = getEl('sov-events-list');
+  if (!listEl) return;
+  clearNode(listEl);
+
+  // TODO: Pull from group calendar API when available.
+  // TODO: Cross-reference group member holdings with earnings calendar when available.
+  // TODO: Include relevant macro events (FOMC, CPI, NFP) from macro calendar when available.
+  const empty = document.createElement('p');
+  empty.className = 'sov-empty-hint';
+  empty.textContent = 'Upcoming earnings for tickers your group is trading and group calendar events will appear here.';
+  listEl.appendChild(empty);
 }
 
 function applyProfile(profile) {
@@ -3445,10 +4294,6 @@ function bindActions() {
   bindSettingsChangeTracking();
   bindFriendActions();
   bindFriendsPageActions();
-  getEl('social-create-group-form')?.addEventListener('submit', createTradeGroup);
-  getEl('social-group-add-member-form')?.addEventListener('submit', addTradeGroupMember);
-  getEl('social-group-announcement-form')?.addEventListener('submit', postGroupAnnouncement);
-  getEl('social-group-delete-btn')?.addEventListener('click', deleteSelectedGroup);
   getEl('social-overview-feed-filter')?.addEventListener('click', (event) => {
     const btn = event.target instanceof Element ? event.target.closest('.social-feed-filter-btn') : null;
     const nextFilter = btn?.dataset?.feedFilter;
@@ -3461,6 +4306,7 @@ function bindActions() {
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
   if (SOCIAL_PAGE_KIND === 'profile') initProfilePage();
+  if (SOCIAL_PAGE_KIND === 'groups') initSgPage();
   const initialLoads = [loadSocialData()];
   if (SOCIAL_PAGE_KIND === 'overview') {
     initialLoads.push(loadFriendData(), loadTradeGroups());
