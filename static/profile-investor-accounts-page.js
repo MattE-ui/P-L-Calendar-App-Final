@@ -9,7 +9,12 @@
     deletedInvestors: [],
     showDeleted: false,
     perfById: new Map(),
-    valuations: []
+    valuations: [],
+    fetchStatus: {
+      investors: 'idle',
+      performance: 'idle',
+      valuations: 'idle',
+    }
   };
 
   // ── Formatting ────────────────────────────────────────────
@@ -179,6 +184,13 @@
   const renderSummary = () => {
     const container = document.getElementById('investor-summary-metrics');
     if (!container) return;
+    const staleEl = document.getElementById('ia-summary-stale');
+    if (staleEl) {
+      const anyError = state.fetchStatus.investors === 'error'
+        || state.fetchStatus.performance === 'error'
+        || state.fetchStatus.valuations === 'error';
+      staleEl.hidden = !anyError;
+    }
     const m = getAggregateMetrics();
     const latestNav = state.valuations.length ? state.valuations[0] : null;
     const latestNavVal = latestNav ? Number(latestNav.nav) : null;
@@ -247,11 +259,14 @@
   // ── NAV card ──────────────────────────────────────────────
 
   const renderNavCard = () => {
-    const navValue  = document.getElementById('ia-nav-current');
-    const navDelta  = document.getElementById('ia-nav-delta');
-    const navDate   = document.getElementById('ia-nav-date');
-    const sparkHint = document.getElementById('ia-sparkline-hint');
-    const sparkArea = document.getElementById('ia-sparkline-area');
+    const navValue    = document.getElementById('ia-nav-current');
+    const navDelta    = document.getElementById('ia-nav-delta');
+    const navDate     = document.getElementById('ia-nav-date');
+    const sparkHint   = document.getElementById('ia-sparkline-hint');
+    const sparkArea   = document.getElementById('ia-sparkline-area');
+    const errBody     = document.getElementById('ia-nav-error-body');
+    const normalBody  = document.getElementById('ia-nav-normal-body');
+    const staleBanner = document.getElementById('ia-nav-stale-banner');
 
     const sorted = [...state.valuations]
       .filter(v => Number.isFinite(Number(v.nav)))
@@ -259,6 +274,23 @@
         const d = String(b.valuationDate).localeCompare(String(a.valuationDate));
         return d !== 0 ? d : String(b.createdAt).localeCompare(String(a.createdAt));
       });
+
+    const isError = state.fetchStatus.valuations === 'error';
+    const hasPrevData = sorted.length > 0;
+
+    if (isError && !hasPrevData) {
+      if (errBody) errBody.hidden = false;
+      if (normalBody) normalBody.hidden = true;
+      if (staleBanner) staleBanner.hidden = true;
+      if (navValue) navValue.textContent = '—';
+      if (navDelta) navDelta.hidden = true;
+      if (navDate) navDate.textContent = '';
+      return;
+    }
+
+    if (errBody) errBody.hidden = true;
+    if (normalBody) normalBody.hidden = false;
+    if (staleBanner) staleBanner.hidden = !isError;
 
     if (!sorted.length) {
       if (navValue) navValue.textContent = '—';
@@ -321,9 +353,24 @@
     const list = document.getElementById('investor-list');
     if (!list) return;
 
+    const errEl   = document.getElementById('ia-investors-error');
+    const staleEl = document.getElementById('ia-investors-stale');
+
+    const isError    = state.fetchStatus.investors === 'error';
     const activeList = state.investors;
     const deletedList = state.showDeleted ? state.deletedInvestors : [];
-    const allVisible = [...activeList, ...deletedList];
+    const allVisible  = [...activeList, ...deletedList];
+    const hasPrevData = allVisible.length > 0;
+
+    if (isError && !hasPrevData) {
+      if (errEl) errEl.hidden = false;
+      if (staleEl) staleEl.hidden = true;
+      list.innerHTML = '';
+      return;
+    }
+
+    if (errEl) errEl.hidden = true;
+    if (staleEl) staleEl.hidden = !isError;
 
     if (!allVisible.length) {
       list.innerHTML = '<p class="helper">No investor accounts yet. Configure investor mode and create investor profiles to populate this dashboard.</p>';
@@ -458,17 +505,29 @@
 
     if (livePayload !== sentinel) {
       state.investors = Array.isArray(livePayload?.investors) ? livePayload.investors : [];
+      state.fetchStatus.investors = 'success';
+    } else {
+      state.fetchStatus.investors = 'error';
     }
+
     if (deletedPayload !== sentinel) {
       const allInvestors = Array.isArray(deletedPayload?.investors) ? deletedPayload.investors : [];
       state.deletedInvestors = allInvestors.filter(i => i.deletedAt != null);
     }
+
     if (performancePayload !== sentinel) {
       const performanceRows = Array.isArray(performancePayload?.investors) ? performancePayload.investors : [];
       state.perfById = new Map(performanceRows.map((row) => [row.investor_profile_id, row]));
+      state.fetchStatus.performance = 'success';
+    } else {
+      state.fetchStatus.performance = 'error';
     }
+
     if (valuationPayload !== sentinel) {
       state.valuations = Array.isArray(valuationPayload?.valuations) ? valuationPayload.valuations : [];
+      state.fetchStatus.valuations = 'success';
+    } else {
+      state.fetchStatus.valuations = 'error';
     }
 
     renderAll();
@@ -508,6 +567,10 @@
   });
 
   await loadInvestorData();
+
+  // ── Fetch-error retry buttons ─────────────────────────────
+  ['ia-nav-retry', 'ia-nav-stale-retry', 'ia-investors-retry', 'ia-investors-stale-retry', 'ia-summary-stale-retry']
+    .forEach(id => document.getElementById(id)?.addEventListener('click', () => loadInvestorData()));
 
   // ── Password generator buttons ────────────────────────────
 
@@ -772,9 +835,10 @@
   async function loadManageDrawer(investorId) {
     const body = document.getElementById('manage-drawer-body');
     try {
-      const [inv, perfData, cashflowsData] = await Promise.all([
+      const PERF_ERR = {};
+      const [inv, rawPerf, cashflowsData] = await Promise.all([
         api(`/api/master/investors/${investorId}`),
-        api(`/api/master/investors/${investorId}/performance`).catch(() => null),
+        api(`/api/master/investors/${investorId}/performance`).catch(() => PERF_ERR),
         api(`/api/master/investors/${investorId}/cashflows?limit=20`)
       ]);
 
@@ -785,7 +849,8 @@
 
       const investorSharePct = ((Number(inv.investor_share_bps) || 0) / 100).toFixed(2);
       const effectiveFrom = inv.effective_from || '';
-      const perf = perfData && !perfData.error ? perfData : null;
+      const perfFailed = rawPerf === PERF_ERR;
+      const perf = !perfFailed && rawPerf && !rawPerf.error ? rawPerf : null;
 
       body.innerHTML = `
         <section class="ia-drawer-section">
@@ -809,7 +874,16 @@
 
         <section class="ia-drawer-section">
           <h3 class="ia-drawer-section__title">Capital &amp; performance</h3>
-          ${perf ? `
+          ${perfFailed ? `
+            <div class="ia-fetch-error ia-fetch-error--inline">
+              <span class="ia-fetch-error__icon" aria-hidden="true">⚠</span>
+              <div class="ia-fetch-error__text">
+                <p class="ia-fetch-error__title">Couldn't load performance data</p>
+                <p class="ia-fetch-error__sub">Check your connection and try again.</p>
+              </div>
+              <button class="ghost small ia-drawer-perf-retry" type="button">Retry</button>
+            </div>
+          ` : perf ? `
             <div class="ia-perf-grid">
               <div class="ia-perf-item"><span>Capital invested</span><strong>${formatCurrency(perf.net_contributions)}</strong></div>
               <div class="ia-perf-item"><span>PnL</span><strong class="${Number(perf.investor_profit_share) >= 0 ? 'pos' : 'neg'}">${formatCurrency(perf.investor_profit_share)}</strong></div>
@@ -852,6 +926,7 @@
 
       document.getElementById('md-save-btn')?.addEventListener('click', () => handleManageSave(investorId));
       document.getElementById('md-cf-submit')?.addEventListener('click', () => handleCashflowSubmit(investorId));
+      document.querySelector('.ia-drawer-perf-retry')?.addEventListener('click', () => loadManageDrawer(investorId));
 
       document.getElementById('md-delete-btn')?.addEventListener('click', (e) => {
         closeDrawer();

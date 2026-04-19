@@ -13238,6 +13238,58 @@ body.ia-drawer-open {
   font-style: italic;
 }
 
+/* ── Fetch-error / stale states ──────────────────────────── */
+.ia-fetch-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 8px;
+  color: var(--text-muted);
+}
+.ia-fetch-error--section {
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 0;
+  text-align: center;
+  min-height: 80px;
+}
+.ia-fetch-error--inline {
+  padding: 10px 12px;
+  margin: 4px 0 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+.ia-fetch-error__icon {
+  font-size: 15px;
+  line-height: 1;
+  color: var(--warning);
+  flex-shrink: 0;
+}
+.ia-fetch-error__text { flex: 1; min-width: 0; }
+.ia-fetch-error__title {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ia-fetch-error__sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ia-stale-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--warning) 84%, var(--text) 16%);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.ia-stale-banner .ghost.small { font-size: 11px; padding: 2px 8px; min-height: unset; margin-left: auto; }
+
 /* ── Record NAV overwrite warning ─────────────────────────── */
 .ia-overwrite-warning {
   background: color-mix(in srgb, var(--warning, #f0a500) 12%, transparent);

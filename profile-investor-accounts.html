@@ -20,6 +20,10 @@
 
 <!-- ── Summary row (5 metrics) ─────────────────────────────── -->
 <section class="card profile-card" id="investor-summary-card">
+  <div id="ia-summary-stale" class="ia-stale-banner" hidden>
+    Some totals may be out of date — data couldn't be refreshed.
+    <button id="ia-summary-stale-retry" class="ghost small" type="button">Retry</button>
+  </div>
   <div class="ia-summary-row" id="investor-summary-metrics"></div>
 </section>
 
@@ -39,10 +43,24 @@
       <button id="ia-nav-history-btn" class="ghost small" type="button">History</button>
     </div>
   </div>
-  <div class="ia-sparkline-area" id="ia-sparkline-area">
-    <svg id="ia-sparkline" class="ia-sparkline" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"></svg>
+  <div id="ia-nav-stale-banner" class="ia-stale-banner" hidden>
+    Showing earlier data — last refresh failed.
+    <button id="ia-nav-stale-retry" class="ghost small" type="button">Retry</button>
   </div>
-  <p class="ia-sparkline-hint" id="ia-sparkline-hint"></p>
+  <div id="ia-nav-error-body" class="ia-fetch-error" hidden>
+    <span class="ia-fetch-error__icon" aria-hidden="true">⚠</span>
+    <div class="ia-fetch-error__text">
+      <p class="ia-fetch-error__title">Couldn't load valuations</p>
+      <p class="ia-fetch-error__sub">Check your connection and try again.</p>
+    </div>
+    <button id="ia-nav-retry" class="ghost small" type="button">Retry</button>
+  </div>
+  <div id="ia-nav-normal-body">
+    <div class="ia-sparkline-area" id="ia-sparkline-area">
+      <svg id="ia-sparkline" class="ia-sparkline" viewBox="0 0 300 60" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <p class="ia-sparkline-hint" id="ia-sparkline-hint"></p>
+  </div>
 </section>
 
 <!-- ── Investor accounts ────────────────────────────────────── -->
@@ -60,6 +78,18 @@
       <span class="toggle-slider"></span>
     </label>
     <label class="ia-toggle-label" for="show-deleted-toggle">Show deleted investors</label>
+  </div>
+  <div id="ia-investors-error" class="ia-fetch-error ia-fetch-error--section" hidden>
+    <span class="ia-fetch-error__icon" aria-hidden="true">⚠</span>
+    <div class="ia-fetch-error__text">
+      <p class="ia-fetch-error__title">Couldn't load investor accounts</p>
+      <p class="ia-fetch-error__sub">Check your connection and try again.</p>
+    </div>
+    <button id="ia-investors-retry" class="ghost small" type="button">Retry</button>
+  </div>
+  <div id="ia-investors-stale" class="ia-stale-banner" hidden>
+    Showing previous data — last refresh failed.
+    <button id="ia-investors-stale-retry" class="ghost small" type="button">Retry</button>
   </div>
   <div id="investor-list" class="investor-card-grid"></div>
 </section>
