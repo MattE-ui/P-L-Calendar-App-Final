@@ -15230,6 +15230,15 @@ body.ia-drawer-open {
 .db-substat--pnl.positive .db-substat__value { color: var(--success); }
 .db-substat--pnl.negative .db-substat__value { color: var(--danger); }
 
+/* ── Calendar: deferred history loading indicator ───────────────── */
+.cal-history-loading-note {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
 /* ── Active trades: card is now its own flex scroll context ─────── */
 .db-workspace #active-trades-card.db-card {
   min-height: 0;

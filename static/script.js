@@ -4344,7 +4344,25 @@ function renderYear() {
   }
 }
 
+function renderHistoryLoadingBanner() {
+  const existing = $('#cal-history-loading');
+  const grid = $('#grid');
+  if (!grid) return;
+  const needsBanner = state.deferredHistoryLoadInFlight && !state.deferredHistoryLoaded;
+  if (!needsBanner) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) return;
+  const banner = document.createElement('p');
+  banner.id = 'cal-history-loading';
+  banner.className = 'cal-history-loading-note';
+  banner.textContent = 'Loading history…';
+  grid.before(banner);
+}
+
 function renderView() {
+  renderHistoryLoadingBanner();
   const grid = $('#grid');
   if (!grid) return;
   if (state.view === 'day') {
@@ -4660,6 +4678,7 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
 async function loadDeferredFullDashboardHistory(reason = 'post-render') {
   if (state.deferredHistoryLoaded || state.deferredHistoryLoadInFlight) return;
   state.deferredHistoryLoadInFlight = true;
+  renderHistoryLoadingBanner();
   try {
     const fullHistory = await api(buildPlEndpoint({ historyScope: 'full', includeTrades: true }));
     state.data = normalizeDashboardHistoryPayload(fullHistory, { historyScope: 'full' });

@@ -11097,10 +11097,24 @@ function tradeMatchesTrading212HistoryFill(trade, fill, accountId = '') {
 }
 
 function applyTrading212ExecutionSummary(trade, rates = {}) {
+  const prevOpenQty = Number(trade.sizeUnits) || 0;
   const executionSummary = summarizeExecutionLegs(trade, rates);
   trade.executions = executionSummary.executions;
   trade.sizeUnits = Math.max(0, executionSummary.openQuantity);
   trade.status = executionSummary.status === 'closed' ? 'closed' : 'open';
+  if (prevOpenQty > 0 && trade.sizeUnits <= 0) {
+    console.warn('[t212-ingest][phantom-exit-candidate] trade transitioned to openQuantity=0 via T212 fill', {
+      tradeId: trade.id || null,
+      ticker: trade.symbol || trade.ticker || '',
+      prevOpenQty,
+      newOpenQty: trade.sizeUnits,
+      newStatus: trade.status,
+      totalEntered: executionSummary.totalEntered,
+      totalExited: executionSummary.totalExited,
+      executionCount: Array.isArray(executionSummary.executions) ? executionSummary.executions.length : 0,
+      exitCount: Array.isArray(executionSummary.exits) ? executionSummary.exits.length : 0
+    });
+  }
   if (Number.isFinite(executionSummary.avgExit) && executionSummary.avgExit > 0) {
     trade.closePrice = executionSummary.avgExit;
   }
@@ -15726,6 +15740,107 @@ app.delete('/api/admin/site-announcements/:id', auth, requireAuthenticatedUser, 
   db.siteAnnouncementStates = db.siteAnnouncementStates.filter(item => String(item.announcementId) !== req.params.id);
   saveDB(db);
   res.json({ ok: true });
+});
+
+// ── Trade reconciliation report (admin/dev visibility only) ──────────────────
+// Reports trades that appear open in the journal but are filtered out of
+// /api/trades/active, plus IBKR broker position mismatches. Read-only — no
+// data mutations. Intended to surface ingest bugs before fixing them.
+app.get('/api/admin/trade-reconciliation', auth, requireAuthenticatedUser, requireAdmin, async (req, res) => {
+  const db = loadDB();
+  const targetUsername = typeof req.query.username === 'string'
+    ? req.query.username.trim()
+    : req.username;
+  const user = db.users[targetUsername];
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  let rates = {};
+  try { rates = await fetchRates(); } catch (_) { /* best-effort */ }
+
+  const rawTrades = Array.isArray(user.trades) ? user.trades : [];
+  const mismatches = [];
+
+  for (const trade of rawTrades) {
+    if (!trade || typeof trade !== 'object') continue;
+    const positionState = deriveTradePositionState(trade, rates);
+    const canonicallyClosed = isCanonicallyClosedTrade(trade);
+    const wouldBeActive = !canonicallyClosed && positionState.isValid && positionState.openQuantity > 0;
+    const storedStatus = trade.status || 'unknown';
+    const isStoredOpen = storedStatus === 'open' || storedStatus === 'partial';
+
+    if (!wouldBeActive && (isStoredOpen || !canonicallyClosed)) {
+      let reason;
+      if (canonicallyClosed && isStoredOpen) {
+        reason = 'canonically_closed_flag_set_but_status_is_open';
+      } else if (!positionState.isValid) {
+        reason = 'invalid_execution_state_exits_exceed_entries';
+      } else if (positionState.openQuantity <= 0) {
+        reason = 'computed_open_qty_not_positive';
+      } else {
+        reason = 'canonically_closed';
+      }
+
+      mismatches.push({
+        tradeId: trade.id || null,
+        ticker: trade.symbol || trade.ticker || '',
+        source: trade.source || (trade.trading212Id ? 'trading212' : trade.ibkrPositionId ? 'ibkr' : 'manual'),
+        direction: trade.direction || null,
+        storedStatus,
+        computedOpenQty: positionState.openQuantity,
+        totalEntered: positionState.totalEntered,
+        totalExited: positionState.totalExited,
+        isValidExecState: positionState.isValid,
+        reason,
+        executionCount: Array.isArray(positionState.executions) ? positionState.executions.length : 0,
+        entryCount: Array.isArray(positionState.entries) ? positionState.entries.length : 0,
+        exitCount: Array.isArray(positionState.exits) ? positionState.exits.length : 0,
+        closedAt: trade.closedAt || null,
+        closeDate: trade.closeDate || null,
+        createdAt: trade.createdAt || null,
+        updatedAt: trade.updatedAt || null
+      });
+    }
+  }
+
+  // IBKR live positions not represented in the trade journal
+  const ibkrLivePositions = Array.isArray(user?.ibkr?.livePositions) ? user.ibkr.livePositions : [];
+  const journalIbkrTickers = new Set();
+  for (const trade of rawTrades) {
+    if (trade.source === 'ibkr' || trade.ibkrPositionId) {
+      const t = normalizeIbkrTicker(trade.ibkrTicker || trade.brokerTicker || trade.symbol || '');
+      if (t) journalIbkrTickers.add(t);
+    }
+  }
+  const ibkrUnmatched = ibkrLivePositions
+    .filter(pos => !journalIbkrTickers.has(normalizeIbkrTicker(pos.symbol || '')))
+    .map(pos => ({
+      symbol: pos.symbol,
+      quantity: pos.quantity,
+      avgPrice: pos.avgPrice,
+      currency: pos.currency,
+      unrealizedPnl: pos.unrealizedPnl,
+      updatedAt: pos.updatedAt || null,
+      reason: 'ibkr_live_position_not_in_journal'
+    }));
+
+  const report = {
+    username: targetUsername,
+    generatedAt: new Date().toISOString(),
+    totalTrades: rawTrades.length,
+    mismatchCount: mismatches.length,
+    mismatches,
+    ibkrUnmatchedPositionCount: ibkrUnmatched.length,
+    ibkrUnmatchedPositions: ibkrUnmatched
+  };
+
+  console.info('[trade-reconciliation] report_generated', {
+    username: targetUsername,
+    totalTrades: report.totalTrades,
+    mismatchCount: report.mismatchCount,
+    ibkrUnmatchedCount: report.ibkrUnmatchedPositionCount
+  });
+
+  return res.json(report);
 });
 
 app.get('/api/notifications/config', auth, (req, res) => {
