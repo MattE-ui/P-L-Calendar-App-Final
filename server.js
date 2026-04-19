@@ -5431,6 +5431,45 @@ function ensureInvestorTables(db) {
   db.investorUnitLedger ||= [];
 }
 
+async function runAutoNavJob(trigger = 'cron') {
+  console.info(`[AutoNAV] starting trigger=${trigger}`);
+  const today = currentDateKey();
+  let recorded = 0, skippedNoValue = 0, skippedExists = 0, skippedDisabled = 0;
+
+  const db = loadDB();
+  for (const username of Object.keys(db.users || {})) {
+    const user = db.users[username];
+    if (!user?.investorAccountsEnabled) continue;
+    if (user.autoNavEnabled === false) {
+      skippedDisabled++;
+      console.info(`[AutoNAV] skip username=${username} reason=auto_nav_disabled`);
+      continue;
+    }
+    ensureUserShape(user, username);
+    const snap = getCurrentPortfolioValue(user);
+    const nav = Number.isFinite(snap?.value) ? snap.value : 0;
+    if (nav <= 0) {
+      skippedNoValue++;
+      console.info(`[AutoNAV] skip username=${username} reason=no_portfolio_value`);
+      continue;
+    }
+    await withDbLock(async () => {
+      const freshDb = loadDB();
+      ensureInvestorTables(freshDb);
+      const exists = freshDb.masterValuations.find(v => v.masterUserId === username && v.valuationDate === today);
+      if (exists) { skippedExists++; return; }
+      freshDb.masterValuations.push({
+        id: crypto.randomUUID(), masterUserId: username, valuationDate: today,
+        nav, notes: null, source: 'auto', createdAt: new Date().toISOString(), updatedAt: null,
+      });
+      saveDB(freshDb);
+      recorded++;
+      console.info(`[AutoNAV] recorded username=${username} date=${today} nav=${nav}`);
+    });
+  }
+  console.info(`[AutoNAV] done trigger=${trigger} recorded=${recorded} skippedExists=${skippedExists} skippedNoValue=${skippedNoValue} skippedDisabled=${skippedDisabled}`);
+}
+
 function backfillInvestorUnitLedger(db) {
   let added = 0;
   for (const cashflow of db.investorCashflows) {
@@ -6736,6 +6775,10 @@ function ensureUserShape(user, identifier) {
   }
   if (user.investorPortalEnabledAt === undefined) {
     user.investorPortalEnabledAt = null;
+    mutated = true;
+  }
+  if (typeof user.autoNavEnabled !== 'boolean') {
+    user.autoNavEnabled = true;
     mutated = true;
   }
   if (!Number.isFinite(user.initialPortfolio)) {
@@ -20652,7 +20695,8 @@ app.get('/api/master/settings', auth, (req, res) => {
   res.json({
     investor_portal_enabled: !!user.investorAccountsEnabled,
     investor_portal_enabled_at: user.investorPortalEnabledAt || null,
-    invite_base_url: INVESTOR_INVITE_BASE_URL || null
+    invite_base_url: INVESTOR_INVITE_BASE_URL || null,
+    auto_nav_enabled: user.autoNavEnabled !== false,
   });
 });
 
@@ -20666,10 +20710,14 @@ app.get('/api/master/settings', auth, (req, res) => {
     user.investorAccountsEnabled = req.body.investor_portal_enabled;
     user.investorPortalEnabledAt = user.investorAccountsEnabled ? new Date().toISOString() : null;
   }
+  if (typeof req.body?.auto_nav_enabled === 'boolean') {
+    user.autoNavEnabled = req.body.auto_nav_enabled;
+  }
   saveDB(db);
   res.json({
     investor_portal_enabled: !!user.investorAccountsEnabled,
-    investor_portal_enabled_at: user.investorPortalEnabledAt || null
+    investor_portal_enabled_at: user.investorPortalEnabledAt || null,
+    auto_nav_enabled: user.autoNavEnabled !== false,
   });
 });
 
@@ -26851,6 +26899,10 @@ if (require.main === module) {
     const _bfAdded = backfillInvestorUnitLedger(_bfDb);
     if (_bfAdded > 0) { saveDB(_bfDb); console.log(`[ledger-backfill] backfilled ${_bfAdded} unit ledger entries on startup`); }
   } catch (_bfErr) { console.warn('[ledger-backfill] startup backfill failed:', _bfErr.message); }
+  runAutoNavJob('startup').catch(err => console.warn('[AutoNAV] startup run failed:', err?.message || err));
+  setInterval(() => {
+    runAutoNavJob('cron').catch(err => console.warn('[AutoNAV] cron run failed:', err?.message || err));
+  }, 24 * 60 * 60 * 1000);
   bootstrapTrading212Schedules();
   bootstrapIbkrSchedules();
   runGuestCleanup();

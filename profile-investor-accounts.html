@@ -61,6 +61,7 @@
     </div>
     <p class="ia-sparkline-hint" id="ia-sparkline-hint"></p>
   </div>
+  <p class="ia-sparkline-hint" id="ia-auto-nav-off-indicator" hidden>Automatic recording is off — <button class="ghost small" id="ia-auto-nav-settings-link" style="font-size:11px;padding:1px 7px;min-height:unset" type="button">Settings</button></p>
 </section>
 
 <!-- ── Investor accounts ────────────────────────────────────── -->
@@ -349,6 +350,16 @@
         </div>
         <label class="toggle-switch">
           <input type="checkbox" id="is-mode-toggle">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="ia-settings-row" style="margin-top:16px">
+        <div>
+          <strong>Automatic NAV recording</strong>
+          <p class="helper" style="margin:2px 0 0">Records a daily NAV automatically from your portfolio value. Turn off to record NAVs manually only.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="is-auto-nav-toggle" checked>
           <span class="toggle-slider"></span>
         </label>
       </div>

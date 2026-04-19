@@ -5,6 +5,7 @@
 
   const state = {
     investorModeEnabled: false,
+    autoNavEnabled: true,
     investors: [],
     deletedInvestors: [],
     showDeleted: false,
@@ -343,10 +344,16 @@
     buildSparkline(sorted, 'ia-sparkline');
   };
 
+  const renderAutoNavIndicator = () => {
+    const el = document.getElementById('ia-auto-nav-off-indicator');
+    if (el) el.hidden = state.autoNavEnabled !== false;
+  };
+
   const renderAll = () => {
     renderStatusStrip();
     renderSummary();
     renderNavCard();
+    renderAutoNavIndicator();
     renderInvestorCards();
   };
 
@@ -539,8 +546,12 @@
   // ── Init mode toggle ──────────────────────────────────────
 
   try {
-    const profile = await api('/api/profile');
+    const [profile, settings] = await Promise.all([
+      api('/api/profile'),
+      api('/api/master/settings').catch(() => null),
+    ]);
     state.investorModeEnabled = !!profile.investorAccountsEnabled;
+    if (settings) state.autoNavEnabled = settings.auto_nav_enabled !== false;
   } catch (error) {
     setText('investor-status', error.message);
   }
@@ -1538,23 +1549,48 @@
   //  INVESTOR SETTINGS MODAL
   // ══════════════════════════════════════════════════════════
 
-  document.getElementById('ia-settings-btn')?.addEventListener('click', async () => {
+  function openSettingsModal() {
     const modeToggle = document.getElementById('is-mode-toggle');
+    const autoNavToggle = document.getElementById('is-auto-nav-toggle');
     const urlEl = document.getElementById('is-invite-url');
     const statusEl = document.getElementById('is-status');
 
     if (modeToggle) modeToggle.checked = state.investorModeEnabled;
+    if (autoNavToggle) autoNavToggle.checked = state.autoNavEnabled !== false;
     if (urlEl) urlEl.textContent = '…';
     if (statusEl) statusEl.textContent = '';
 
     openModal('investor-settings-modal');
 
-    try {
-      const settings = await api('/api/master/settings');
+    api('/api/master/settings').then(settings => {
       if (urlEl) urlEl.textContent = settings.invite_base_url || '(not configured)';
       if (modeToggle) modeToggle.checked = !!settings.investor_portal_enabled;
-    } catch (_) {
+      if (autoNavToggle) autoNavToggle.checked = settings.auto_nav_enabled !== false;
+    }).catch(() => {
       if (urlEl) urlEl.textContent = '(unavailable)';
+    });
+  }
+
+  document.getElementById('ia-settings-btn')?.addEventListener('click', openSettingsModal);
+  document.getElementById('ia-auto-nav-settings-link')?.addEventListener('click', openSettingsModal);
+
+  document.getElementById('is-auto-nav-toggle')?.addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    const statusEl = document.getElementById('is-status');
+    if (statusEl) statusEl.textContent = '';
+    try {
+      await api('/api/master/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_nav_enabled: enabled }),
+      });
+      state.autoNavEnabled = enabled;
+      renderAutoNavIndicator();
+      if (statusEl) statusEl.textContent = enabled ? 'Automatic NAV recording enabled.' : 'Automatic NAV recording disabled.';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2500);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = err.message || 'Failed to update.';
+      e.target.checked = !enabled;
     }
   });
 
