@@ -20629,6 +20629,7 @@ app.post('/api/account/investor-accounts', auth, (req, res) => {
   user.investorAccountsEnabled = enabled;
   user.investorPortalEnabledAt = enabled ? new Date().toISOString() : null;
   saveDB(db);
+  sessionCache.delete(req.authToken);
   res.json({ ok: true, investorAccountsEnabled: !!user.investorAccountsEnabled, investorPortalEnabledAt: user.investorPortalEnabledAt });
 });
 

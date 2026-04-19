@@ -2127,17 +2127,20 @@ async function loadInvestors() {
   const investorManagedContent = document.getElementById('investor-managed-content');
   if (investorManagedContent) investorManagedContent.classList.toggle('is-hidden', !(investorPortalEnabled() && profileState.investorAccountsEnabled));
   if (!(investorPortalEnabled() && profileState.investorAccountsEnabled)) return;
+  const sentinel = Symbol('fail');
+  const safe = p => p.catch(err => { console.error('[profile] investor fetch failed:', err); return sentinel; });
+
   const [data, perf, valuations] = await Promise.all([
     api('/api/master/investors'),
-    api('/api/master/investors/performance').catch(() => ({ investors: [] })),
-    api('/api/master/valuations').catch(() => ({ valuations: [] }))
+    safe(api('/api/master/investors/performance')),
+    safe(api('/api/master/valuations'))
   ]);
   investorUiState.investors = Array.isArray(data.investors) ? data.investors : [];
-  investorUiState.perfById = new Map((perf.investors || []).map((item) => [item.investor_profile_id, item]));
-  investorUiState.valuations = Array.isArray(valuations.valuations) ? valuations.valuations : [];
+  if (perf !== sentinel) investorUiState.perfById = new Map((perf.investors || []).map((item) => [item.investor_profile_id, item]));
+  if (valuations !== sentinel) investorUiState.valuations = Array.isArray(valuations.valuations) ? valuations.valuations : [];
   const latestCashflows = await Promise.all(investorUiState.investors.map(async (inv) => {
-    const rows = await api(`/api/master/investors/${inv.id}/cashflows?limit=8`).catch(() => ({ cashflows: [] }));
-    return [inv.id, rows.cashflows || []];
+    const rows = await safe(api(`/api/master/investors/${inv.id}/cashflows?limit=8`));
+    return [inv.id, rows !== sentinel ? (rows.cashflows || []) : (investorUiState.cashflowsByInvestor?.get(inv.id) || [])];
   }));
   investorUiState.cashflowsByInvestor = new Map(latestCashflows);
   applyInvestorOptions();

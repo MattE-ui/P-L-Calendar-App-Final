@@ -435,28 +435,38 @@
   // ── Data loading ──────────────────────────────────────────
 
   async function loadInvestorData() {
-    try {
-      const [livePayload, deletedPayload, performancePayload, valuationPayload] = await Promise.all([
-        api('/api/master/investors').catch(() => ({ investors: [] })),
-        api('/api/master/investors?include_deleted=true').catch(() => ({ investors: [] })),
-        api('/api/master/investors/performance').catch(() => ({ investors: [] })),
-        api('/api/master/valuations').catch(() => ({ valuations: [] }))
-      ]);
+    const sentinel = Symbol('fail');
+    const safe = p => p.catch(err => { console.error('[investor-accounts] fetch failed:', err); return sentinel; });
 
+    const [livePayload, deletedPayload, performancePayload, valuationPayload] = await Promise.all([
+      safe(api('/api/master/investors')),
+      safe(api('/api/master/investors?include_deleted=true')),
+      safe(api('/api/master/investors/performance')),
+      safe(api('/api/master/valuations'))
+    ]);
+
+    let anyChange = false;
+
+    if (livePayload !== sentinel) {
       state.investors = Array.isArray(livePayload?.investors) ? livePayload.investors : [];
+      anyChange = true;
+    }
+    if (deletedPayload !== sentinel) {
       const allInvestors = Array.isArray(deletedPayload?.investors) ? deletedPayload.investors : [];
       state.deletedInvestors = allInvestors.filter(i => i.deletedAt != null);
+      anyChange = true;
+    }
+    if (performancePayload !== sentinel) {
       const performanceRows = Array.isArray(performancePayload?.investors) ? performancePayload.investors : [];
       state.perfById = new Map(performanceRows.map((row) => [row.investor_profile_id, row]));
-      state.valuations = Array.isArray(valuationPayload?.valuations) ? valuationPayload.valuations : [];
-      renderAll();
-    } catch (_error) {
-      state.investors = [];
-      state.deletedInvestors = [];
-      state.perfById = new Map();
-      state.valuations = [];
-      renderAll();
+      anyChange = true;
     }
+    if (valuationPayload !== sentinel) {
+      state.valuations = Array.isArray(valuationPayload?.valuations) ? valuationPayload.valuations : [];
+      anyChange = true;
+    }
+
+    if (anyChange) renderAll();
   }
 
   // ── Init mode toggle ──────────────────────────────────────
@@ -858,7 +868,13 @@
       });
 
     } catch (error) {
-      body.innerHTML = `<p class="error">${error.message || 'Failed to load investor details.'}</p>`;
+      console.error('[loadManageDrawer] failed:', error);
+      const msg = error.message || 'Failed to load investor details.';
+      body.innerHTML = `<div class="ia-drawer-error">
+        <p class="error">${msg}</p>
+        <button class="btn btn--sm" id="md-retry-btn">Retry</button>
+      </div>`;
+      document.getElementById('md-retry-btn')?.addEventListener('click', () => loadManageDrawer(investorId));
     }
   }
 
