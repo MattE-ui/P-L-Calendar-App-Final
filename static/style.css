@@ -14917,12 +14917,34 @@ body.ia-drawer-open {
   text-align: right;
 }
 
+/* ── Sparkline floating tooltip (tracks cursor) ────────────────── */
+.db-sparkline-tooltip {
+  position: absolute;
+  top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  background: var(--surface-2);
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  pointer-events: none;
+  color: var(--text);
+  transition: opacity 80ms, left 60ms;
+  z-index: 2;
+}
+
 .db-portfolio__sparkline {
   width: 100%;
-  height: 90px;
+  height: 140px;
   flex-shrink: 0;
+  position: relative;
 }
-.db-portfolio__sparkline svg { display: block; }
+.db-portfolio__sparkline svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
 .db-portfolio__divider {
   border: none;
   border-top: 0.5px solid var(--border);
@@ -15041,7 +15063,7 @@ body.ia-drawer-open {
 /* ── Main workspace ────────────────────────────────────────────── */
 .db-workspace {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 280px;
+  grid-template-columns: 320px minmax(0, 1fr) 320px;
   gap: 12px;
   align-items: start;
   margin-bottom: 16px;
@@ -15287,9 +15309,14 @@ body.ia-drawer-open {
 }
 
 /* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 1400px) {
+  .db-workspace {
+    grid-template-columns: 280px minmax(0, 1fr) 280px;
+  }
+}
 @media (max-width: 1200px) {
   .db-workspace {
-    grid-template-columns: 220px minmax(0, 1fr) 240px;
+    grid-template-columns: 240px minmax(0, 1fr) 240px;
   }
 }
 @media (max-width: 960px) {
@@ -18495,6 +18522,8 @@ body.ia-drawer-open {
 }
 .sg-modal-static-label { font-size: 11px; color: var(--text-dim); }
 .sg-modal-static-value { font-size: 13px; color: var(--text-muted); }
+.sg-modal-textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+.sg-modal-char-count { font-size: 11px; color: var(--text-dim); text-align: right; margin-top: 2px; }
 .sg-modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
 .sg-modal-feedback { font-size: 12px; min-height: 18px; }
 .sg-modal-feedback.is-error { color: var(--danger); }
@@ -18759,4 +18788,49 @@ body.ia-drawer-open {
   .wl-layout { grid-template-columns: 1fr; }
   .wl-sidebar { position: static; }
   .wl-header__stats { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+}
+
+
+/* ── Broker position merge — active trades panel ─────────────────── */
+.trade-compact-direction-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.trade-broker-tag {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.broker-journal-prompt-wrap {
+  padding: 10px 14px 12px;
+}
+.broker-journal-prompt-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.broker-journal-prompt-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.broker-journal-prompt-btn:hover {
+  background: var(--surface-3, var(--surface-2));
+}
+.active-trades-stale-note {
+  margin: 0 0 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  opacity: 0.75;
+  letter-spacing: 0.01em;
 }

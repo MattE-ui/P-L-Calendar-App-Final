@@ -1771,6 +1771,9 @@ function renderSgGroupHeader(group, members, positions, isLeader) {
   invBtn.addEventListener('click', () => showSgModal('invite'));
   actions.appendChild(invBtn);
   if (isLeader) {
+    const annBtn = document.createElement('button'); annBtn.type = 'button'; annBtn.className = 'ghost sg-header-btn'; annBtn.textContent = 'Post announcement';
+    annBtn.addEventListener('click', () => showSgModal('announce'));
+    actions.appendChild(annBtn);
     const setBtn = document.createElement('button'); setBtn.type = 'button'; setBtn.className = 'ghost sg-header-btn'; setBtn.textContent = 'Settings';
     setBtn.addEventListener('click', () => showSgModal('settings'));
     actions.appendChild(setBtn);
@@ -1994,6 +1997,7 @@ function buildSgModalContent(type) {
     case 'invite':      return buildSgInviteModal(selected, isLeader);
     case 'leave':       return buildSgLeaveModal(selected, isLeader);
     case 'settings':    return buildSgSettingsModal(selected, isLeader);
+    case 'announce':    return buildSgAnnouncementModal(selected);
     case 'share-watchlist': return buildSgShareWatchlistModal(selected, isLeader);
     default: return null;
   }
@@ -2181,6 +2185,42 @@ function buildSgSettingsModal(group, isLeader) {
     footer.appendChild(closeBtn);
     wrap.appendChild(title); wrap.appendChild(note); wrap.appendChild(footer);
   }
+  return wrap;
+}
+
+function buildSgAnnouncementModal(group) {
+  const { wrap, title, fbEl } = sgModalShell('Post announcement');
+  const field = document.createElement('div'); field.className = 'sg-modal-field';
+  const lbl = document.createElement('label'); lbl.className = 'sg-modal-label'; lbl.textContent = 'Message'; lbl.htmlFor = 'sg-modal-announce-text';
+  const textarea = document.createElement('textarea');
+  textarea.id = 'sg-modal-announce-text';
+  textarea.className = 'sg-modal-input sg-modal-textarea';
+  textarea.maxLength = 280;
+  textarea.rows = 4;
+  textarea.placeholder = 'Share a market update, trade plan, or reminder\u2026';
+  const charCount = document.createElement('div'); charCount.className = 'sg-modal-char-count'; charCount.textContent = '0 / 280';
+  textarea.addEventListener('input', () => { charCount.textContent = `${textarea.value.length} / 280`; });
+  field.appendChild(lbl); field.appendChild(textarea); field.appendChild(charCount);
+  const footer = document.createElement('div'); footer.className = 'sg-modal-footer';
+  const cancelBtn = createActionButton('Cancel', 'ghost'); cancelBtn.addEventListener('click', closeSgModal);
+  const postBtn = createActionButton('Post', 'primary');
+  postBtn.addEventListener('click', async () => {
+    const text = String(textarea.value || '').trim();
+    if (!text) { fbEl.textContent = 'Enter a message.'; fbEl.className = 'sg-modal-feedback is-error'; return; }
+    postBtn.disabled = true; postBtn.textContent = 'Posting\u2026';
+    try {
+      await socialApi(`/api/social/trade-groups/${encodeURIComponent(socialState.selectedTradeGroupId)}/announcements`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
+      });
+      closeSgModal();
+      await loadTradeGroupDetail(socialState.selectedTradeGroupId);
+    } catch (err) {
+      fbEl.textContent = err?.message || 'Unable to post.'; fbEl.className = 'sg-modal-feedback is-error';
+      postBtn.disabled = false; postBtn.textContent = 'Post';
+    }
+  });
+  footer.appendChild(cancelBtn); footer.appendChild(postBtn);
+  wrap.appendChild(title); wrap.appendChild(field); wrap.appendChild(fbEl); wrap.appendChild(footer);
   return wrap;
 }
 

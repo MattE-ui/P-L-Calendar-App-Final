@@ -8590,13 +8590,262 @@ function getTotpRuntimeDebug() {
   };
 }
 
+// ─── Trading212Client — Stage 0 central T212 API client ──────────────────────
+
+const T212_CLIENT_V2 = process.env.T212_CLIENT_V2 === 'true';
+
+class Trading212Client {
+  constructor({ apiKey, apiSecret, mode = 'live', baseUrl = null, accountId = null } = {}) {
+    if (!apiKey || !apiSecret) throw new Trading212AuthError('Trading212Client requires apiKey and apiSecret');
+    this._apiKey = apiKey;
+    this._apiSecret = apiSecret;
+    this._accountId = accountId || 'default';
+    this._baseUrl = baseUrl
+      ? String(baseUrl).replace(/\/+$/, '')
+      : mode === 'practice'
+        ? 'https://demo.trading212.com'
+        : 'https://live.trading212.com';
+    this._endpointState = new Map();
+  }
+
+  _authHeaders() {
+    const encoded = Buffer.from(`${this._apiKey}:${this._apiSecret}`, 'utf8').toString('base64');
+    return { 'Accept': 'application/json', 'User-Agent': 'VeracitySuite/1.0', 'Authorization': `Basic ${encoded}` };
+  }
+
+  _getState(path) {
+    if (!this._endpointState.has(path)) {
+      this._endpointState.set(path, { limit: null, period: null, remaining: null, reset: null, used: null });
+    }
+    return this._endpointState.get(path);
+  }
+
+  _syncState(path, rl) {
+    const s = this._getState(path);
+    if (rl.limit !== null) s.limit = rl.limit;
+    if (rl.period !== null) s.period = rl.period;
+    if (rl.remaining !== null) s.remaining = rl.remaining;
+    if (rl.reset !== null) s.reset = rl.reset;
+    if (rl.used !== null) s.used = rl.used;
+  }
+
+  async _waitForBudget(path) {
+    const s = this._getState(path);
+    if (s.remaining !== null && s.remaining <= 0 && s.reset !== null) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec < s.reset) {
+        const jitter = Math.floor(50 + Math.random() * 150);
+        const waitMs = (s.reset - nowSec) * 1000 + jitter;
+        console.info(`[T212Client] budget_wait account=${this._accountId} endpoint=${path} waitMs=${waitMs}`);
+        await sleep(waitMs);
+      }
+    }
+  }
+
+  async _request(path, options = {}) {
+    await this._waitForBudget(path);
+    const url = `${this._baseUrl}${path}`;
+    let res;
+    try {
+      res = await fetch(url, { method: 'GET', headers: this._authHeaders(), signal: options.signal });
+    } catch (networkErr) {
+      const code = networkErr?.code || networkErr?.cause?.code || networkErr?.name;
+      const isNetwork = ['ENOTFOUND', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'AbortError'].includes(code);
+      throw isNetwork
+        ? new Trading212NetworkError('Unable to reach Trading 212', { code: 'network_error' })
+        : new Trading212Error('Trading 212 request failed.', { code: 'trading212_error' });
+    }
+
+    const responseHeaders = {};
+    for (const [k, v] of res.headers.entries()) responseHeaders[k] = v;
+    const rl = parseTrading212RateLimitHeaders(responseHeaders);
+    const basePath = path.split('?')[0];
+    this._syncState(basePath, rl);
+
+    console.info(`[T212Client] account=${this._accountId} endpoint=${basePath} status=${res.status} limit=${rl.limit ?? 'n/a'} period=${rl.period ?? 'n/a'} remaining=${rl.remaining ?? 'n/a'} used=${rl.used ?? 'n/a'} reset=${rl.reset ?? 'n/a'}`);
+
+    if (res.status === 429) {
+      const resetEpoch = rl.reset;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const waitSec = resetEpoch !== null ? Math.max(1, resetEpoch - nowSec) : 5;
+      console.warn(`[T212Client] unexpected_429 account=${this._accountId} endpoint=${basePath} resync reset=${resetEpoch} waitSec=${waitSec}`);
+      throw new Trading212RateLimitError('Trading 212 rate limited.', { status: 429, retryAfter: waitSec });
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Trading212AuthError('Invalid T212 credentials or missing permission.', { status: res.status });
+    }
+
+    const bodyText = await res.text().catch(() => '');
+    if (!res.ok) throw new Trading212HttpError(bodyText || `T212 responded with ${res.status}`, { status: res.status });
+    if (!bodyText) return null;
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Trading212ParseError('T212 returned unexpected content type.', { status: res.status, code: 'invalid_payload' });
+    }
+    try {
+      return JSON.parse(bodyText);
+    } catch {
+      throw new Trading212ParseError('T212 returned unparseable JSON.', { status: res.status, code: 'invalid_payload' });
+    }
+  }
+
+  // Shape: { id, currency, totalValue, cash: { availableToTrade, reservedForOrders, inPies },
+  //          investments: { currentValue, totalCost, realizedProfitLoss, unrealizedProfitLoss } }
+  async getAccountSummary() {
+    const data = await this._request('/api/v0/equity/account/summary');
+    if (!data || typeof data !== 'object') throw new Trading212ParseError('account/summary returned unexpected shape');
+    return {
+      accountId: data.id ?? null,
+      currency: data.currency ?? null,
+      totalValue: typeof data.totalValue === 'number' ? data.totalValue : null,
+      cash: {
+        availableToTrade: data.cash?.availableToTrade ?? null,
+        reservedForOrders: data.cash?.reservedForOrders ?? null,
+        inPies: data.cash?.inPies ?? null
+      },
+      investments: {
+        currentValue: data.investments?.currentValue ?? null,
+        totalCost: data.investments?.totalCost ?? null,
+        realizedProfitLoss: data.investments?.realizedProfitLoss ?? null,
+        unrealizedProfitLoss: data.investments?.unrealizedProfitLoss ?? null
+      },
+      raw: data
+    };
+  }
+
+  // Returns flat array per probe confirmation (no envelope)
+  async getPositions() {
+    const data = await this._request('/api/v0/equity/positions');
+    return Array.isArray(data) ? data : (data?.items ?? []);
+  }
+
+  // Rate limit: 1 req/50s — use globalTickerRegistry.refresh() to call this
+  async getInstruments() {
+    const data = await this._request('/api/v0/equity/metadata/instruments');
+    return Array.isArray(data) ? data : (data?.items ?? []);
+  }
+
+  // Paginated: { items, nextPagePath }
+  async getHistoryOrders({ cursor = null, limit = 50 } = {}) {
+    let path = `/api/v0/equity/history/orders?limit=${Math.min(50, Math.max(1, Number(limit) || 50))}`;
+    if (cursor) path += `&cursor=${encodeURIComponent(String(cursor))}`;
+    const data = await this._request(path);
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      nextPagePath: data?.nextPagePath ?? null,
+      raw: data
+    };
+  }
+
+  getRateLimitState(path) {
+    return this._endpointState.get(path) ?? null;
+  }
+}
+
+// ─── TickerRegistry ────────────────────────────────────────────────────────────
+// Local cache of T212 ticker → market ticker (shortName) mapping.
+// Built from /equity/metadata/instruments. Refreshed daily.
+// All display code calls marketTickerFor(); all API calls use the raw t212 ticker.
+
+class TickerRegistry {
+  constructor() {
+    this._byT212 = new Map();
+    this._byMarket = new Map();
+    this._loadedAt = null;
+    this._ttlMs = 24 * 60 * 60 * 1000;
+  }
+
+  loadFromDb(db) {
+    const instruments = db.t212Instruments;
+    if (!instruments || typeof instruments !== 'object') return;
+    this._byT212.clear();
+    this._byMarket.clear();
+    for (const [t212Ticker, record] of Object.entries(instruments)) {
+      const key = String(t212Ticker).toUpperCase();
+      this._byT212.set(key, record);
+      if (record.marketTicker) {
+        this._byMarket.set(String(record.marketTicker).toUpperCase(), key);
+      }
+    }
+    this._loadedAt = Date.now();
+    console.info(`[TickerRegistry] loaded instruments=${this._byT212.size}`);
+  }
+
+  isStale() {
+    return !this._loadedAt || (Date.now() - this._loadedAt > this._ttlMs);
+  }
+
+  async refresh(client, db) {
+    try {
+      const instruments = await client.getInstruments();
+      if (!Array.isArray(instruments) || !instruments.length) return false;
+      if (!db.t212Instruments || typeof db.t212Instruments !== 'object') db.t212Instruments = {};
+      const now = new Date().toISOString();
+      for (const inst of instruments) {
+        const t212Ticker = inst.ticker;
+        if (!t212Ticker) continue;
+        db.t212Instruments[t212Ticker] = {
+          t212Ticker,
+          marketTicker: inst.shortName || null,
+          name: inst.name || null,
+          isin: inst.isin || null,
+          currencyCode: inst.currencyCode || null,
+          type: inst.type || null,
+          workingScheduleId: inst.workingScheduleId ?? null,
+          extendedHours: inst.extendedHours ?? null,
+          updatedAt: now
+        };
+      }
+      this.loadFromDb(db);
+      return true;
+    } catch (err) {
+      console.warn('[TickerRegistry] refresh failed — using stale cache', err?.message);
+      return false;
+    }
+  }
+
+  // Returns market ticker (shortName) for display. Falls back to instrument name.
+  // Never returns the raw T212 ticker — callers should handle null explicitly.
+  marketTickerFor(t212Ticker) {
+    if (!t212Ticker) return null;
+    const record = this._byT212.get(String(t212Ticker).toUpperCase());
+    return record?.marketTicker || record?.name || null;
+  }
+
+  t212TickerFor(marketTicker) {
+    if (!marketTicker) return null;
+    return this._byMarket.get(String(marketTicker).toUpperCase()) ?? null;
+  }
+
+  instrumentFor(t212Ticker) {
+    if (!t212Ticker) return null;
+    return this._byT212.get(String(t212Ticker).toUpperCase()) ?? null;
+  }
+
+  size() { return this._byT212.size; }
+}
+
+const globalTickerRegistry = new TickerRegistry();
+
+function createTrading212Client(accountConfig) {
+  const apiKey = decryptBrokerCredential(accountConfig?.encryptedApiKey) || String(accountConfig?.apiKey || '');
+  const apiSecret = decryptBrokerCredential(accountConfig?.encryptedApiSecret) || String(accountConfig?.apiSecret || '');
+  const mode = accountConfig?.mode || 'live';
+  const baseUrl = accountConfig?.baseUrl || process.env.T212_BASE_URL || null;
+  const accountId = accountConfig?.accountId || accountConfig?.id || null;
+  return new Trading212Client({ apiKey, apiSecret, mode, baseUrl, accountId });
+}
+
+// ─── End Stage 0 client ───────────────────────────────────────────────────────
+
 function normalizeTrading212Symbol(raw) {
   const base = String(raw || '').trim().toUpperCase();
   if (!base) return '';
+  // T212 format: TICKER_REGION_CLASS (e.g. AAPL_US_EQ, VOD_GB_EQ, VUSA_GB_EQ)
   const core = base.split('_')[0] || base;
   if (core === 'FB') return 'META';
-  const cleaned = core.replace(/\d+/g, '');
-  return cleaned || '';
+  return core;
 }
 
 function normalizeTrading212TickerValue(raw) {
@@ -8634,7 +8883,10 @@ const trading212OrdersCache = new Map();
 const TRADING212_ORDERS_CACHE_MS = 20000;
 const trading212HistoryOrdersCache = new Map();
 const TRADING212_HISTORY_ORDERS_CACHE_MS = 20000;
-const TRADING212_LIST_ENDPOINT_THROTTLE_MS = 350;
+// Per-endpoint throttles — aligned with T212 rate limits (1 req/sec for most, 1 req/5s for summary)
+const TRADING212_THROTTLE_SUMMARY_MS = 5100;
+const TRADING212_THROTTLE_ORDERS_MS = 1100;
+const TRADING212_THROTTLE_HISTORY_ORDERS_PAGE_MS = 1100;
 const TRADING212_ACCOUNT_LOCKS = new Map();
 const TRADING212_SYNC_MIN_INTERVALS_MS = {
   summary: 8000,
@@ -8844,8 +9096,10 @@ function parseTrading212RateLimitHeaders(headers) {
   };
   return {
     limit: toInt(headers?.['x-ratelimit-limit']),
+    period: toInt(headers?.['x-ratelimit-period']),
     remaining: toInt(headers?.['x-ratelimit-remaining']),
-    reset: toInt(headers?.['x-ratelimit-reset'])
+    reset: toInt(headers?.['x-ratelimit-reset']),
+    used: toInt(headers?.['x-ratelimit-used'])
   };
 }
 
@@ -10924,7 +11178,7 @@ async function fetchTrading212HistoryOrders(config, username, {
       break;
     }
     if (nextPagePath) {
-      await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+      await sleep(TRADING212_THROTTLE_HISTORY_ORDERS_PAGE_MS);
     }
   } while (nextPagePath);
   const payload = {
@@ -12193,8 +12447,10 @@ async function requestTrading212RawEndpoint(url, headers, options = {}) {
     console.info(`[T212] status=${status} content-type=${contentType}`);
     if (status === 429) {
       const retryAfter = parseRetryAfter(res.headers.get('retry-after'));
-      const headerResetSeconds = Number.isFinite(rateLimitHeaders.reset) ? rateLimitHeaders.reset : null;
-      const effectiveRetryAfter = headerResetSeconds !== null && headerResetSeconds > 0 ? headerResetSeconds : retryAfter;
+      // x-ratelimit-reset is a Unix epoch timestamp (seconds), not a duration
+      const resetEpoch = Number.isFinite(rateLimitHeaders.reset) ? rateLimitHeaders.reset : null;
+      const resetInSeconds = resetEpoch !== null ? Math.max(1, resetEpoch - Math.floor(Date.now() / 1000)) : null;
+      const effectiveRetryAfter = resetInSeconds !== null ? resetInSeconds : retryAfter;
       lastError = new Trading212RateLimitError('Trading 212 rate limited the request. Please try again later.', {
         status,
         retryAfter: effectiveRetryAfter
@@ -12683,10 +12939,41 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
       let snapshot = null;
       if (shouldFetchSummary && (!summaryGate.skip || snapshotStale)) {
         try {
-          snapshot = await fetchTrading212Snapshot(accountConfig, { accountId });
-          recordTrading212EndpointAttempt(accountState, 'summary', { status: 200, headers: {} }, now);
-          accountState.lastSnapshotAt = new Date().toISOString();
-          await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+          if (T212_CLIENT_V2) {
+            const v2Client = createTrading212Client({ ...accountConfig, accountId });
+            // Refresh instruments registry once per 24h using this account's client
+            if (globalTickerRegistry.isStale()) {
+              const freshDb = loadDB();
+              await globalTickerRegistry.refresh(v2Client, freshDb);
+              syncWriteQueue.enqueue(freshDb);
+            }
+            const summary = await v2Client.getAccountSummary();
+            const rl = v2Client.getRateLimitState('/api/v0/equity/account/summary');
+            recordTrading212EndpointAttempt(accountState, 'summary', {
+              status: 200,
+              headers: rl ? {
+                'x-ratelimit-limit': String(rl.limit ?? ''),
+                'x-ratelimit-period': String(rl.period ?? ''),
+                'x-ratelimit-remaining': String(rl.remaining ?? ''),
+                'x-ratelimit-reset': String(rl.reset ?? ''),
+                'x-ratelimit-used': String(rl.used ?? '')
+              } : {}
+            }, now);
+            accountState.lastSnapshotAt = new Date().toISOString();
+            const positions = await v2Client.getPositions();
+            snapshot = {
+              portfolioValue: summary.totalValue,
+              netDeposits: null,
+              positions,
+              transactions: [],
+              raw: { portfolio: summary.raw, positions }
+            };
+          } else {
+            snapshot = await fetchTrading212Snapshot(accountConfig, { accountId });
+            recordTrading212EndpointAttempt(accountState, 'summary', { status: 200, headers: {} }, now);
+            accountState.lastSnapshotAt = new Date().toISOString();
+            await sleep(TRADING212_THROTTLE_SUMMARY_MS);
+          }
         } catch (error) {
           recordTrading212EndpointAttempt(accountState, 'summary', {
             status: Number.isFinite(error?.status) ? Number(error.status) : 500,
@@ -12772,7 +13059,7 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
           }, now);
           accountState.lastOrdersAt = new Date().toISOString();
           console.info(`[T212][sync][orders] account=${accountId} status=${ordersPayload?.debug?.status ?? 200} parsed=true itemCount=${Array.isArray(ordersPayload?.orders) ? ordersPayload.orders.length : 0} persisted=${Boolean(ordersPayload)} cooldownAppliedAfterSuccess=${Boolean(accountState.endpoints?.orders?.cooldownUntil)} dataSource=fresh_upstream`);
-          await sleep(TRADING212_LIST_ENDPOINT_THROTTLE_MS);
+          await sleep(TRADING212_THROTTLE_ORDERS_MS);
         } catch (error) {
           recordTrading212EndpointAttempt(accountState, 'orders', {
             status: Number.isFinite(error?.status) ? Number(error.status) : 500,
@@ -13517,8 +13804,10 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
         console.info(`[T212][sync] open trade retained trade=${trade.id} account=${trade.trading212AccountId || 'default'} reason=no_positive_close_evidence`);
       }
     }
-    cfg.lastSyncAt = new Date().toISOString();
-    cfg.lastSuccessfulSyncAt = cfg.lastSyncAt;
+    const successTs = new Date().toISOString();
+    cfg.lastSyncAt = successTs;
+    cfg.lastSuccessfulSyncAt = successTs;
+    cfg.lastSyncAttemptAt = successTs;
     cfg.lastDataSource = 'fresh_upstream';
     cfg.lastSyncError = null;
     cfg.lastSyncSkip = null;
@@ -13572,7 +13861,8 @@ async function syncTrading212ForUser(username, runDate = new Date(), options = {
     ensureUserShape(user, username);
     const cfg = user.trading212 || {};
     const now = Date.now();
-    cfg.lastSyncAt = new Date().toISOString();
+    cfg.lastSyncAttemptAt = new Date(now).toISOString();
+    // lastSyncAt is NOT written here — only success writes it, so staleness checks remain accurate
     const retryAfter = e instanceof Trading212Error ? e.retryAfter : null;
     if (retryAfter !== null && retryAfter !== undefined) {
       cfg.cooldownUntil = new Date(now + retryAfter * 1000).toISOString();
@@ -15841,6 +16131,45 @@ app.get('/api/admin/trade-reconciliation', auth, requireAuthenticatedUser, requi
   });
 
   return res.json(report);
+});
+
+// ── T212 Client v2 smoke test (admin only) ────────────────────────────────────
+// Instantiates Trading212Client for the requesting user's first T212 account
+// and calls getAccountSummary() + getPositions(). Returns typed response shapes
+// and rate-limit state. Requires T212_CLIENT_V2=true in environment.
+app.get('/api/admin/t212-client-v2-test', auth, requireAuthenticatedUser, requireAdmin, async (req, res) => {
+  if (!T212_CLIENT_V2) {
+    return res.status(403).json({ error: 'T212_CLIENT_V2 feature flag is not enabled.' });
+  }
+  const db = loadDB();
+  const user = db.users[req.username];
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  const accounts = getTrading212Accounts(user.trading212 || {});
+  if (!accounts.length) return res.status(400).json({ error: 'No T212 accounts configured for this user.' });
+  const accountConfig = accounts[0];
+  let client;
+  try {
+    client = createTrading212Client({ ...accountConfig });
+  } catch (e) {
+    return res.status(400).json({ error: e.message, code: 'client_init_failed' });
+  }
+  const result = { accountId: accountConfig.accountId || accountConfig.id || null, summary: null, positionCount: null, rateLimitState: {}, error: null };
+  try {
+    result.summary = await client.getAccountSummary();
+    result.rateLimitState.summary = client.getRateLimitState('/api/v0/equity/account/summary');
+  } catch (e) {
+    result.error = { step: 'getAccountSummary', message: e.message, code: e.code };
+    return res.json(result);
+  }
+  try {
+    const positions = await client.getPositions();
+    result.positionCount = positions.length;
+    result.rateLimitState.positions = client.getRateLimitState('/api/v0/equity/positions');
+  } catch (e) {
+    result.error = { step: 'getPositions', message: e.message, code: e.code };
+  }
+  console.info(`[T212ClientV2][smoke_test] user=${req.username} account=${result.accountId} totalValue=${result.summary?.totalValue} positions=${result.positionCount}`);
+  return res.json(result);
 });
 
 app.get('/api/notifications/config', auth, (req, res) => {
@@ -24479,8 +24808,82 @@ function buildActiveTradesSnapshotPayload(snapshot, {
       snapshotAgeMs: Math.max(0, Date.now() - snapshot.generatedAtMs),
       refreshInProgress: Boolean(activeTradesRefreshLocks.get(snapshot.username)),
       cacheHit: snapshot.cacheHit === true,
-      snapshotUsed: true
+      snapshotUsed: true,
+      t212PositionsStale: snapshot.t212PositionsStale === true
     }
+  };
+}
+
+// ── T212 live position helpers for active trades merge ────────────────────────
+
+function resolveT212PositionDisplayTicker(t212Ticker, positionRaw) {
+  if (globalTickerRegistry.size() > 0) {
+    const reg = globalTickerRegistry.marketTickerFor(t212Ticker);
+    if (reg) return reg;
+  }
+  const shortName = String(positionRaw?.instrument?.shortName || positionRaw?.shortName || '').trim();
+  if (shortName) return shortName;
+  return normalizeTrading212Symbol(t212Ticker) || t212Ticker;
+}
+
+function parseT212PositionFields(positionRaw) {
+  const t212Ticker = String(positionRaw?.ticker || positionRaw?.symbol || '').trim();
+  const normalised = normalizeTrading212Symbol(t212Ticker);
+  const displayTicker = resolveT212PositionDisplayTicker(t212Ticker, positionRaw);
+  const quantity = parseTradingNumber(positionRaw?.quantity ?? positionRaw?.qty);
+  const avgPricePaid = parseTradingNumber(
+    positionRaw?.averagePricePaid ?? positionRaw?.averagePrice ?? positionRaw?.avgPrice ?? positionRaw?.openPrice
+  );
+  const currentPrice = parseTradingNumber(
+    positionRaw?.currentPrice ?? positionRaw?.lastPrice ?? positionRaw?.marketPrice
+  );
+  const walletImpact = positionRaw?.walletImpact || {};
+  const ppl = parseTradingNumber(
+    positionRaw?.ppl ?? positionRaw?.unrealizedPnl ??
+    walletImpact.unrealizedProfitLoss ?? walletImpact.unrealizedPnl ??
+    walletImpact.profitLoss ?? walletImpact.pnl
+  );
+  const currency = String(
+    positionRaw?.currency ?? walletImpact.currency ?? positionRaw?.instrument?.currency ?? 'USD'
+  ).trim().toUpperCase() || 'USD';
+  const createdAt = positionRaw?.createdAt
+    ? new Date(positionRaw.createdAt).toISOString()
+    : new Date().toISOString();
+  const direction = Number.isFinite(quantity) && quantity < 0 ? 'short' : 'long';
+  return { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, currency, createdAt, direction };
+}
+
+function buildT212SyntheticActiveTrade(positionRaw, rates) {
+  const fields = parseT212PositionFields(positionRaw);
+  const { t212Ticker, normalised, displayTicker, quantity, avgPricePaid, currentPrice, ppl, currency, createdAt, direction } = fields;
+  const unrealizedGBP = Number.isFinite(ppl) ? (convertToGBP(ppl, currency, rates) ?? null) : null;
+  return {
+    id: `t212:${normalised || t212Ticker}`,
+    source: 'broker',
+    symbol: normalised || t212Ticker,
+    displaySymbol: displayTicker,
+    displayTicker,
+    trading212Ticker: t212Ticker,
+    direction,
+    sizeUnits: Number.isFinite(quantity) ? Math.abs(quantity) : null,
+    entry: avgPricePaid,
+    entryPrice: avgPricePaid,
+    livePrice: currentPrice,
+    lastSyncPrice: currentPrice,
+    ppl,
+    unrealizedGBP,
+    currency,
+    openedAt: createdAt,
+    createdAt,
+    date: createdAt,
+    status: 'open',
+    stop: null,
+    target: null,
+    rMultiple: null,
+    riskPercent: null,
+    riskPct: null,
+    tags: [],
+    notes: null
   };
 }
 
@@ -24529,20 +24932,99 @@ async function computeActiveTradesSnapshot(username) {
       }
     }
   }
+
+  // Fetch T212 live positions to merge broker positions not yet in the journal.
+  // All saveDB calls are complete above — safe to mutate in-memory user.trades here.
+  let t212LivePositions = [];
+  let t212PositionsStale = false;
+  if (tradingCfg?.enabled && tradingAccounts.length) {
+    try {
+      for (const account of tradingAccounts) {
+        const accountConfig = {
+          ...tradingCfg,
+          apiKey: account.apiKey,
+          apiSecret: account.apiSecret,
+          mode: account.mode || tradingCfg.mode,
+          baseUrl: account.baseUrl || tradingCfg.baseUrl
+        };
+        const positionsPayload = await fetchTrading212Positions(accountConfig, { accountId: account.id || '' });
+        for (const p of positionsPayload.positions || []) {
+          t212LivePositions.push({ ...p, _accountId: account.id || '' });
+        }
+      }
+      console.info(`[active-trades][t212-merge] fetched positions=${t212LivePositions.length}`);
+    } catch (e) {
+      console.warn('[active-trades][t212-merge] positions fetch failed — falling back to DB-only', e?.message);
+      t212PositionsStale = true;
+    }
+  }
+
+  // Overlay fresh currentPrice + ppl on matched DB trades before buildActiveTrades.
+  // This lets the existing enrichment loop use lastSyncPrice for provider trades.
+  const matchedPositionKeys = new Set();
+  if (t212LivePositions.length && Array.isArray(user.trades)) {
+    for (const positionRaw of t212LivePositions) {
+      const { normalised, direction, currentPrice, ppl } = parseT212PositionFields(positionRaw);
+      if (!normalised) continue;
+      const matchKey = `${normalised}:${direction}`;
+      const matchedTrade = user.trades.find(trade => {
+        if (!(trade.source === 'trading212' || trade.trading212Id)) return false;
+        const rawTickerOptions = [
+          trade.trading212Ticker, trade.ticker, trade.brokerTicker,
+          trade.symbol, trade.displayTicker, trade.displaySymbol
+        ].filter(Boolean);
+        const matched = rawTickerOptions.some(t =>
+          normalizeTrading212Symbol(normalizeTrading212TickerValue(String(t))) === normalised
+        );
+        if (!matched) return false;
+        return (trade.direction === 'short' ? 'short' : 'long') === direction;
+      });
+      if (matchedTrade) {
+        if (Number.isFinite(currentPrice)) matchedTrade.lastSyncPrice = currentPrice;
+        if (Number.isFinite(ppl)) matchedTrade.ppl = ppl;
+        matchedPositionKeys.add(matchKey);
+      }
+    }
+  }
+
   const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
-  const mappedTrades = trades.map(trade => applyInstrumentMappingToTrade(trade, db, username));
-  const summarizedTrades = mappedTrades.map(serializeActiveTradeSummary);
+
+  // Build synthetic records for broker positions absent from the journal.
+  let syntheticLivePnlGBP = 0;
+  const syntheticTrades = [];
+  if (t212LivePositions.length && !t212PositionsStale) {
+    for (const positionRaw of t212LivePositions) {
+      const { normalised, direction } = parseT212PositionFields(positionRaw);
+      if (!normalised) continue;
+      if (matchedPositionKeys.has(`${normalised}:${direction}`)) continue;
+      const synth = buildT212SyntheticActiveTrade(positionRaw, rates);
+      syntheticTrades.push(synth);
+      if (Number.isFinite(synth.unrealizedGBP)) syntheticLivePnlGBP += synth.unrealizedGBP;
+    }
+    if (syntheticTrades.length) {
+      console.info(`[active-trades][t212-merge] synthetic_positions=${syntheticTrades.length} tickers=${syntheticTrades.map(t => t.displayTicker).join(',')}`);
+    }
+  }
+
+  const allTrades = [
+    ...trades.map(trade => applyInstrumentMappingToTrade(trade, db, username)),
+    ...syntheticTrades
+  ];
+  const summarizedTrades = allTrades.map(serializeActiveTradeSummary);
+  const finalLivePnlGBP = liveOpenPnlGBP + syntheticLivePnlGBP;
+
   return {
     username,
     fingerprint,
     generatedAtMs: Date.now(),
     generatedAt: new Date().toISOString(),
-    trades: mappedTrades,
+    trades: allTrades,
     tradesSummary: summarizedTrades,
-    liveOpenPnl: liveOpenPnlGBP,
+    liveOpenPnl: finalLivePnlGBP,
     openLossPotential: openLossPotentialGBP,
     liveOpenPnlMode,
-    liveOpenPnlCurrency
+    liveOpenPnlCurrency,
+    t212PositionsStale
   };
 }
 
@@ -27209,6 +27691,8 @@ if (require.main === module) {
   }, { timezone: 'Europe/London' });
   bootstrapTrading212Schedules();
   bootstrapIbkrSchedules();
+  // Pre-warm TickerRegistry from stored instruments (no API call on startup)
+  try { globalTickerRegistry.loadFromDb(loadDB()); } catch (_) {}
   runGuestCleanup();
   runWatchlistPreviousCloseReinforcement().catch((error) => {
     console.warn('[WATCHLIST_PREV_CLOSE_CALC] startup reinforcement failed', error?.message || error);

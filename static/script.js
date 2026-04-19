@@ -80,7 +80,7 @@ const state = {
     value: null
   },
   portfolioTrendSignature: '',
-  portfolioTimeframe: '1m',
+  portfolioTimeframe: '1w',
   historyLoadScope: 'window',
   deferredHistoryLoaded: false,
   deferredHistoryLoadInFlight: false
@@ -1432,30 +1432,28 @@ function getSparklineByTimeframe(tf) {
   const allEntries = getAllEntries();
   if (!allEntries.length) return [];
 
-  let cutoff = null;
-  if (tf === '1d') {
-    const todayEntry = getDailyEntry(now);
-    return todayEntry ? [{ pct: todayEntry.pct, label: 'Today' }] : [];
-  } else if (tf === '1w') {
-    cutoff = new Date(now);
-    cutoff.setDate(now.getDate() - 7);
-  } else if (tf === '1m') {
-    cutoff = new Date(now);
-    cutoff.setMonth(now.getMonth() - 1);
-  } else if (tf === 'ytd') {
-    cutoff = new Date(now.getFullYear(), 0, 1);
-  } else {
-    // all — use every entry chronologically by month
-    return getPortfolioTrendPeriods();
-  }
+  const toPoint = (entry) => ({
+    pct: entry.pct,
+    label: entry.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+    closing: Number.isFinite(entry.closing) ? entry.closing : null
+  });
 
-  return allEntries
-    .filter(entry => entry.date >= cutoff)
-    .map(entry => ({
-      pct: entry.pct,
-      label: entry.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-    }))
-    .filter(p => Number.isFinite(p.pct));
+  if (tf === '1w') {
+    const cutoff = new Date(now);
+    cutoff.setDate(now.getDate() - 7);
+    return allEntries.filter(e => e.date >= cutoff).map(toPoint).filter(p => Number.isFinite(p.pct));
+  }
+  if (tf === '1m') {
+    const cutoff = new Date(now);
+    cutoff.setMonth(now.getMonth() - 1);
+    return allEntries.filter(e => e.date >= cutoff).map(toPoint).filter(p => Number.isFinite(p.pct));
+  }
+  if (tf === 'ytd') {
+    const cutoff = new Date(now.getFullYear(), 0, 1);
+    return allEntries.filter(e => e.date >= cutoff).map(toPoint).filter(p => Number.isFinite(p.pct));
+  }
+  // 'all' — full daily history; requires deferredHistoryLoaded for pre-window months
+  return allEntries.map(toPoint).filter(p => Number.isFinite(p.pct));
 }
 
 function getPortfolioTrendPeriods() {
@@ -2076,6 +2074,20 @@ function renderActiveTrades() {
   if (empty) empty.classList.add('is-hidden');
   if (showAll) showAll.disabled = false;
 
+  // Stale source indicator — T212 positions call failed, panel shows DB-only data
+  const existingStaleNote = list.previousElementSibling?.classList?.contains('active-trades-stale-note')
+    ? list.previousElementSibling : null;
+  if (state.t212PositionsStale) {
+    if (!existingStaleNote) {
+      const note = document.createElement('p');
+      note.className = 'active-trades-stale-note';
+      note.textContent = 'T212 unreachable — showing last known';
+      list.before(note);
+    }
+  } else {
+    existingStaleNote?.remove();
+  }
+
   const tradesWithStopState = trades.map(trade => ({
     ...trade,
     stopMissing: isTradeMissingActiveStop(trade)
@@ -2356,8 +2368,38 @@ function renderSingleTradePill(trade, tradeId, isExpanded, noteDrafts) {
 
   const compactRow = renderCompactTradeRow(trade, tradeId, isExpanded);
   pill.appendChild(compactRow);
-  pill.appendChild(renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts));
+  if (trade.source === 'broker') {
+    pill.appendChild(renderBrokerJournalPromptPanel(trade, tradeId, isExpanded));
+  } else {
+    pill.appendChild(renderExpandedTradeContent(trade, tradeId, isExpanded, noteDrafts));
+  }
   return pill;
+}
+
+function renderBrokerJournalPromptPanel(trade, tradeId, isExpanded) {
+  const wrap = document.createElement('div');
+  wrap.className = `trade-expanded-content broker-journal-prompt-wrap ${isExpanded ? '' : 'is-collapsed'}`.trim();
+  if (tradeId) wrap.dataset.tradeId = tradeId;
+  const msg = document.createElement('p');
+  msg.className = 'broker-journal-prompt-text';
+  msg.textContent = 'This position is from your broker. Add it to your journal to track entry/exit, R-multiple, and notes.';
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-sm broker-journal-prompt-btn';
+  btn.type = 'button';
+  btn.textContent = 'Add to journal';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Pre-fill new trade modal with broker position data
+    const prefill = {
+      symbol: trade.displayTicker || trade.symbol || '',
+      entry: trade.entry || trade.entryPrice || '',
+      direction: trade.direction || 'long',
+      sizeUnits: trade.sizeUnits || ''
+    };
+    if (typeof openNewTradeModal === 'function') openNewTradeModal(prefill);
+  });
+  wrap.append(msg, btn);
+  return wrap;
 }
 
 function renderCompactTradeRow(trade, tradeId, isExpanded) {
@@ -2380,7 +2422,16 @@ function renderCompactTradeRow(trade, tradeId, isExpanded) {
   const compactDirection = document.createElement('span');
   compactDirection.className = `trade-compact-direction ${trade.direction === 'short' ? 'short' : 'long'}`;
   compactDirection.textContent = directionLabel;
-  compactLeft.append(compactTitle, compactDirection);
+  const directionRow = document.createElement('div');
+  directionRow.className = 'trade-compact-direction-row';
+  directionRow.appendChild(compactDirection);
+  if (trade.source === 'broker') {
+    const brokerTag = document.createElement('span');
+    brokerTag.className = 'trade-broker-tag';
+    brokerTag.textContent = 'broker';
+    directionRow.appendChild(brokerTag);
+  }
+  compactLeft.append(compactTitle, directionRow);
 
   const compactMetrics = createCompactMetricCluster(pnl, pctChange, riskMultipleLabel, riskPctValue);
   const compactChevron = createCompactChevron();
@@ -2979,7 +3030,7 @@ function renderPortfolioTrend() {
     return;
   }
 
-  // Plot pure performance trend using selected time-period percentage returns only.
+  // Build performance index from period pcts
   let performanceIndex = 100;
   const values = periods.map(item => {
     const safePct = Number.isFinite(item?.pct) ? item.pct : 0;
@@ -2990,140 +3041,189 @@ function renderPortfolioTrend() {
   const max = Math.max(...values);
   const min = Math.min(...values);
   const range = Math.max(max - min, 1);
-  const width = 100;
-  const height = 48;
-  const padding = 6;
-  const plotHeight = height - padding * 2;
+
+  // SVG coordinate system — preserveAspectRatio:none maps viewBox to CSS dimensions
+  // Use vector-effect:non-scaling-stroke on paths so stroke appears as screen pixels
+  const vW = 300, vH = 60;
+  const hPad = 12, vPad = 5;
+  const plotW = vW - hPad * 2;
+  const plotH = vH - vPad * 2;
   const pointCount = values.length;
+
   const points = values.map((val, index) => {
-    const x = pointCount === 1 ? width / 2 : (index / (pointCount - 1)) * width;
+    const x = pointCount === 1 ? vW / 2 : hPad + (index / (pointCount - 1)) * plotW;
     const normalized = (val - min) / range;
-    const y = height - padding - normalized * plotHeight;
-    return { x, y, value: val, label: periods[index]?.label || '—' };
+    const y = vH - vPad - normalized * plotH;
+    return {
+      x, y, value: val,
+      label: periods[index]?.label || '—',
+      closing: periods[index]?.closing ?? null
+    };
   });
-  const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
-  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('preserveAspectRatio', 'none');
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', String(height));
-  svg.style.touchAction = 'none';
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  const lineGradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
-  const gradientId = `trendGrad-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  lineGradient.setAttribute('id', gradientId);
-  lineGradient.setAttribute('x1', '0%');
-  lineGradient.setAttribute('y1', '0%');
-  lineGradient.setAttribute('x2', '100%');
-  lineGradient.setAttribute('y2', '0%');
+
+  const lastPoint = points[points.length - 1];
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ');
+  const areaPath = `${linePath} L ${lastPoint.x.toFixed(2)} ${vH - vPad} L ${points[0].x.toFixed(2)} ${vH - vPad} Z`;
 
   const emerald = '#10B981';
-  const amber = '#D4AF37';
+  const uid = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
-  const startStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-  startStop.setAttribute('offset', '0%');
-  startStop.setAttribute('stop-color', emerald);
+  const mkEl = (ns, tag) => document.createElementNS(ns, tag);
+  const svgNS = 'http://www.w3.org/2000/svg';
 
-  const holdStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-  holdStop.setAttribute('offset', '75%');
-  holdStop.setAttribute('stop-color', emerald);
+  const svg = mkEl(svgNS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${vW} ${vH}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(vH));
+  svg.style.touchAction = 'none';
+  svg.style.overflow = 'visible';
 
-  const transitionStartStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-  transitionStartStop.setAttribute('offset', '75%');
-  transitionStartStop.setAttribute('stop-color', emerald);
+  // defs: vertical area gradient
+  const defs = mkEl(svgNS, 'defs');
+  const areaGrad = mkEl(svgNS, 'linearGradient');
+  areaGrad.setAttribute('id', uid);
+  areaGrad.setAttribute('x1', '0%'); areaGrad.setAttribute('y1', '0%');
+  areaGrad.setAttribute('x2', '0%'); areaGrad.setAttribute('y2', '100%');
+  const g1 = mkEl(svgNS, 'stop');
+  g1.setAttribute('offset', '0%');
+  g1.setAttribute('stop-color', emerald);
+  g1.setAttribute('stop-opacity', '0.15');
+  const g2 = mkEl(svgNS, 'stop');
+  g2.setAttribute('offset', '100%');
+  g2.setAttribute('stop-color', emerald);
+  g2.setAttribute('stop-opacity', '0');
+  areaGrad.append(g1, g2);
+  defs.appendChild(areaGrad);
 
-  const endStop = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-  endStop.setAttribute('offset', '100%');
-  endStop.setAttribute('stop-color', amber);
-
-  lineGradient.append(startStop, holdStop, transitionStartStop, endStop);
-  defs.appendChild(lineGradient);
-
-  const area = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  // area fill
+  const area = mkEl(svgNS, 'path');
   area.setAttribute('d', areaPath);
-  area.setAttribute('class', 'line-area');
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  line.setAttribute('d', linePath);
-  line.setAttribute('class', 'line-path');
-  line.setAttribute('stroke-width', '2.04');
-  line.style.stroke = `url(#${gradientId})`;
+  area.setAttribute('fill', `url(#${uid})`);
+  area.setAttribute('stroke', 'none');
 
-  const hoverGuide = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  hoverGuide.setAttribute('y1', String(padding));
-  hoverGuide.setAttribute('y2', String(height - padding));
-  hoverGuide.setAttribute('stroke', 'rgba(212,175,55,0.45)');
-  hoverGuide.setAttribute('stroke-width', '0.7');
-  hoverGuide.setAttribute('stroke-dasharray', '1.5 1.5');
+  // line
+  const line = mkEl(svgNS, 'path');
+  line.setAttribute('d', linePath);
+  line.setAttribute('fill', 'none');
+  line.setAttribute('stroke', emerald);
+  line.setAttribute('stroke-width', '1.5');
+  line.setAttribute('stroke-linecap', 'round');
+  line.setAttribute('stroke-linejoin', 'round');
+  line.style.vectorEffect = 'non-scaling-stroke';
+
+  // hover guide — vertical dashed line
+  const hoverGuide = mkEl(svgNS, 'line');
+  hoverGuide.setAttribute('y1', String(vPad));
+  hoverGuide.setAttribute('y2', String(vH - vPad));
+  hoverGuide.setAttribute('stroke', 'rgba(255,255,255,0.25)');
+  hoverGuide.setAttribute('stroke-width', '1');
+  hoverGuide.setAttribute('stroke-dasharray', '2 2');
+  hoverGuide.style.vectorEffect = 'non-scaling-stroke';
   hoverGuide.style.opacity = '0';
 
-  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  const lastPoint = points[points.length - 1];
+  // dot — only at last point, small, no glow
+  const dot = mkEl(svgNS, 'circle');
   dot.setAttribute('cx', lastPoint.x);
   dot.setAttribute('cy', lastPoint.y);
-  dot.setAttribute('r', '2.5');
-  dot.setAttribute('class', 'line-dot line-dot-latest');
-  dot.style.fill = amber;
-  dot.style.filter = 'drop-shadow(0 0 6px rgba(212,175,55,0.55))';
+  dot.setAttribute('r', '3');
+  dot.setAttribute('fill', emerald);
+  dot.setAttribute('stroke', 'none');
+  dot.style.vectorEffect = 'non-scaling-stroke';
 
-  const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  overlay.setAttribute('x', '0');
+  // transparent overlay for pointer events
+  const overlay = mkEl(svgNS, 'rect');
+  overlay.setAttribute('x', String(hPad));
   overlay.setAttribute('y', '0');
-  overlay.setAttribute('width', String(width));
-  overlay.setAttribute('height', String(height));
+  overlay.setAttribute('width', String(plotW));
+  overlay.setAttribute('height', String(vH));
   overlay.setAttribute('fill', 'transparent');
   overlay.style.cursor = 'crosshair';
 
-  const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
-  const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+  const title = mkEl(svgNS, 'title');
   svg.append(title, defs, area, line, hoverGuide, dot, overlay);
+  el.appendChild(svg);
 
+  // floating DOM tooltip — avoids SVG text scaling distortion
+  const tooltip = document.createElement('div');
+  tooltip.className = 'db-sparkline-tooltip';
+  tooltip.setAttribute('aria-hidden', 'true');
+  tooltip.style.opacity = '0';
+  el.appendChild(tooltip);
+
+  const baseValue = Number.isFinite(values[0]) && values[0] !== 0 ? values[0] : 100;
   const formatPct = (pct) => `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+
+  const buildLabel = (point) => {
+    if (state.safeScreenshot) return SAFE_SCREENSHOT_LABEL;
+    const cumPct = ((point.value / baseValue) - 1) * 100;
+    const pctStr = formatPct(cumPct);
+    if (point.closing !== null) {
+      return `${point.label} · ${formatCurrency(point.closing)} · ${pctStr}`;
+    }
+    // estimate from current portfolio value
+    const currentGBP = Number.isFinite(state.currentPortfolioValueGBP) ? state.currentPortfolioValueGBP : 0;
+    const estimated = currentGBP > 0 ? currentGBP * (point.value / lastPoint.value) : null;
+    const valStr = estimated !== null ? `~${formatCurrency(estimated)}` : null;
+    return valStr ? `${point.label} · ${valStr} · ${pctStr}` : `${point.label} · ${pctStr}`;
+  };
+
+  const positionTooltip = (point) => {
+    const containerW = el.offsetWidth || 0;
+    const ratio = pointCount === 1 ? 0.5 : (point.x - hPad) / plotW;
+    const rawLeft = ratio * containerW;
+    const margin = 8;
+    const halfW = tooltip.offsetWidth / 2 || 60;
+    const left = Math.min(Math.max(rawLeft, margin + halfW), containerW - margin - halfW);
+    tooltip.style.left = `${left}px`;
+    tooltip.style.transform = 'translateX(-50%)';
+  };
+
   const updateSelection = (index) => {
     const safeIndex = Math.min(Math.max(index, 0), points.length - 1);
     const selectedPoint = points[safeIndex];
-    const selectedPct = ((selectedPoint.value / baseValue) - 1) * 100;
+    const cumPct = ((selectedPoint.value / baseValue) - 1) * 100;
+
     dot.setAttribute('cx', selectedPoint.x);
     dot.setAttribute('cy', selectedPoint.y);
     hoverGuide.setAttribute('x1', selectedPoint.x);
     hoverGuide.setAttribute('x2', selectedPoint.x);
     hoverGuide.style.opacity = '1';
 
-    const percentText = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(selectedPct);
-    const displayText = `${selectedPoint.label} • ${percentText}`;
-    title.textContent = displayText;
-    if (noteEl) noteEl.textContent = displayText;
+    const labelText = buildLabel(selectedPoint);
+    title.textContent = labelText;
+    if (noteEl) noteEl.textContent = `${selectedPoint.label} · ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(cumPct)}`;
+
+    tooltip.textContent = labelText;
+    tooltip.style.opacity = '1';
+    positionTooltip(selectedPoint);
   };
 
   const resetSelection = () => {
     const latestPct = ((lastPoint.value / baseValue) - 1) * 100;
-    title.textContent = `${lastPoint.label} • ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(latestPct)}`;
+    const resetLabel = `${lastPoint.label} · ${state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatPct(latestPct)}`;
+    title.textContent = resetLabel;
     if (noteEl) noteEl.textContent = defaultNote;
     dot.setAttribute('cx', lastPoint.x);
     dot.setAttribute('cy', lastPoint.y);
     hoverGuide.style.opacity = '0';
+    tooltip.style.opacity = '0';
   };
 
   const indexFromClientX = (clientX) => {
     const rect = svg.getBoundingClientRect();
     if (!rect.width) return points.length - 1;
-    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+    const clampedX = Math.min(Math.max(clientX - rect.left, 0), rect.width);
+    const ratio = clampedX / rect.width;
     if (points.length === 1) return 0;
     return Math.round(ratio * (points.length - 1));
   };
 
-  overlay.addEventListener('pointerenter', (event) => {
-    updateSelection(indexFromClientX(event.clientX));
-  });
-  overlay.addEventListener('pointermove', (event) => {
-    updateSelection(indexFromClientX(event.clientX));
-  });
-  overlay.addEventListener('pointerleave', () => {
-    resetSelection();
-  });
+  overlay.addEventListener('pointerenter', (e) => updateSelection(indexFromClientX(e.clientX)));
+  overlay.addEventListener('pointermove', (e) => updateSelection(indexFromClientX(e.clientX)));
+  overlay.addEventListener('pointerleave', resetSelection);
 
   resetSelection();
-  el.appendChild(svg);
 }
 
 
@@ -4666,6 +4766,7 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    state.t212PositionsStale = activeRes?.freshness?.t212PositionsStale === true;
     loadStatus.activeTrades = true;
   } catch (e) {
     console.warn('Failed to load active trades', e);
@@ -4737,6 +4838,7 @@ async function refreshActiveTrades() {
       : 0;
     state.liveOpenPnlMode = activeRes?.liveOpenPnlMode || 'computed';
     state.liveOpenPnlCurrency = activeRes?.liveOpenPnlCurrency || 'GBP';
+    state.t212PositionsStale = activeRes?.freshness?.t212PositionsStale === true;
     const nextStructure = buildActiveTradeStructureSignature(state.activeTrades);
     const nextRealtime = buildActiveTradeRealtimeSignature(state.activeTrades, state.safeScreenshot);
     const structureChanged = prevStructure !== nextStructure;
@@ -5231,13 +5333,11 @@ function bindControls() {
       const tf = btn.dataset.portfolioTf;
       if (!tf || state.portfolioTimeframe === tf) return;
       state.portfolioTimeframe = tf;
-      // update active state
       $$('.db-portfolio__tf button[data-portfolio-tf]').forEach(b => b.classList.toggle('is-active', b === btn));
-      // need full history for anything beyond current month
-      if (!state.deferredHistoryLoaded && tf !== '1d') {
+      if (!state.deferredHistoryLoaded) {
         loadDeferredFullDashboardHistory('portfolio-tf').catch(() => {});
       }
-      state.portfolioTrendSignature = ''; // bust cache
+      state.portfolioTrendSignature = '';
       renderPortfolioTrend();
     });
   });
