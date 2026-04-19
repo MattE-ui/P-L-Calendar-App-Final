@@ -26381,6 +26381,19 @@ app.get('/api/analytics/summary', auth, async (req, res) => {
   const cacheKey = `analytics:summary:${req.username}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
+    try {
+      const data = sqliteDb.computeAnalyticsSummaryFromSQLite(req.username, req.query);
+      if (data) {
+        console.log(`[Analytics:summary] SQLite took ${Date.now() - start}ms for ${req.username}`);
+        setCached(cacheKey, data, 60000);
+        return res.json(data);
+      }
+    } catch (err) {
+      console.error(`[Analytics:summary] SQLite error, falling to JSON:`, err.message);
+    }
+  }
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
@@ -26419,6 +26432,19 @@ app.get('/api/analytics/equity-curve', auth, async (req, res) => {
   const cacheKey = `analytics:equity-curve:${req.username}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
+    try {
+      const data = sqliteDb.computeEquityCurveFromSQLite(req.username, req.query);
+      if (data) {
+        console.log(`[Analytics:equity-curve] SQLite took ${Date.now() - start}ms for ${req.username}`);
+        setCached(cacheKey, data, 60000);
+        return res.json(data);
+      }
+    } catch (err) {
+      console.error(`[Analytics:equity-curve] SQLite error, falling to JSON:`, err.message);
+    }
+  }
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
@@ -26432,6 +26458,19 @@ app.get('/api/analytics/drawdown', auth, async (req, res) => {
   const cacheKey = `analytics:drawdown:${req.username}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
+    try {
+      const data = sqliteDb.computeDrawdownFromSQLite(req.username, req.query);
+      if (data) {
+        console.log(`[Analytics:drawdown] SQLite took ${Date.now() - start}ms for ${req.username}`);
+        setCached(cacheKey, data, 60000);
+        return res.json(data);
+      }
+    } catch (err) {
+      console.error(`[Analytics:drawdown] SQLite error, falling to JSON:`, err.message);
+    }
+  }
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
@@ -26446,6 +26485,19 @@ app.get('/api/analytics/distribution', auth, async (req, res) => {
   const cacheKey = `analytics:distribution:${req.username}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
+    try {
+      const data = sqliteDb.computeDistributionFromSQLite(req.username, req.query);
+      if (data) {
+        console.log(`[Analytics:distribution] SQLite took ${Date.now() - start}ms for ${req.username}`);
+        setCached(cacheKey, data, 60000);
+        return res.json(data);
+      }
+    } catch (err) {
+      console.error(`[Analytics:distribution] SQLite error, falling to JSON:`, err.message);
+    }
+  }
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
@@ -26459,6 +26511,19 @@ app.get('/api/analytics/streaks', auth, async (req, res) => {
   const cacheKey = `analytics:streaks:${req.username}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    const start = Date.now();
+    try {
+      const data = sqliteDb.computeStreaksFromSQLite(req.username, req.query);
+      if (data) {
+        console.log(`[Analytics:streaks] SQLite took ${Date.now() - start}ms for ${req.username}`);
+        setCached(cacheKey, data, 60000);
+        return res.json(data);
+      }
+    } catch (err) {
+      console.error(`[Analytics:streaks] SQLite error, falling to JSON:`, err.message);
+    }
+  }
   const { trades, user } = await loadFilteredTrades(req.username, req.query || {});
   if (!user) return res.status(404).json({ error: 'User not found' });
   const closed = trades.filter(t => t.status === 'closed');
