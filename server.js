@@ -5094,6 +5094,14 @@ function buildNewsOutboxStatusSnapshot(db) {
 
 // --- helpers ---
 function loadDB() {
+  if (sqliteDb.isSqliteReadsEnabled()) {
+    try {
+      return sqliteDb.loadFromSQLite();
+    } catch (err) {
+      console.error('[SQLite Read] Failed, falling back to JSON:', err?.message || err);
+      // fall through to JSON read
+    }
+  }
   try {
     const raw = fs.readFileSync(DB_PATH, 'utf-8');
     const db = JSON.parse(raw);
