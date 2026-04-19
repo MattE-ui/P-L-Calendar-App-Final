@@ -3,22 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Social Profile | P&L Calendar</title>
+  <title>Social Profile | Veracity</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main class="container social-page">
-    <nav class="social-tabs" aria-label="Social sections">
-      <a class="social-tab" href="/social">Overview</a>
-      <a class="social-tab" href="/social/groups">Groups</a>
-      <a class="social-tab" href="/social/network">Network</a>
-      <a class="social-tab is-active" href="/social/profile">Profile</a>
-      <a class="social-tab" href="/social/chat">Chat</a>
-    </nav>
+  <main class="container social-page sp-page">
 
+    <!-- Nickname gate -->
     <section id="social-nickname-gate" class="card social-card social-gate hidden" aria-live="polite">
       <p class="tool-overline">Nickname required</p>
       <h2>Set your nickname before using Social</h2>
@@ -26,162 +20,488 @@
       <a class="primary social-gate-link" href="/profile.html">Set nickname in Profile</a>
     </section>
 
-    <section class="card social-card" aria-labelledby="social-profile-title">
-      <header class="social-header">
-        <p class="tool-overline">Profile &amp; privacy</p>
-        <h1 id="social-profile-title">Profile and controls</h1>
-      </header>
-
-      <div id="social-profile-loading" class="helper">Loading your social profile...</div>
-      <div id="social-profile-error" class="error hidden" role="alert"></div>
-
-      <div id="social-profile-content" class="social-profile-content hidden">
-        <div class="social-identity-panel">
-          <div id="social-profile-avatar" class="social-avatar-slot"></div>
-          <div class="social-identity-copy">
-            <p class="helper">Nickname</p>
-            <p id="social-profile-nickname" class="social-profile-nickname">—</p>
-          </div>
-        </div>
-
-        <div class="social-friend-code-wrap">
-          <p class="helper">Friend code</p>
-          <div class="social-friend-code-row">
-            <code id="social-friend-code" class="social-friend-code">—</code>
-            <button id="social-copy-code-btn" class="ghost" type="button">Copy</button>
-          </div>
-          <p class="helper">Share this code with traders you trust. Regenerating it immediately invalidates your old code.</p>
-          <div class="social-inline-actions">
-            <button id="social-regenerate-btn" class="danger outline" type="button">Regenerate code</button>
-            <span id="social-regenerate-feedback" class="helper" aria-live="polite"></span>
-          </div>
-        </div>
-
-        <div class="social-verification-wrap">
-          <p class="helper">Verification status</p>
-          <div class="social-verification-row">
-            <span id="social-verification-badge" class="social-status-pill">Unverified</span>
-            <span id="social-verification-source" class="helper"></span>
-          </div>
-          <p id="social-verification-description" class="helper"></p>
-        </div>
+    <!-- Page header -->
+    <header class="sp-page-header">
+      <div class="sp-page-title-block">
+        <h1 class="sp-page-title">Social profile</h1>
+        <p class="sp-page-subtitle">Control what other traders see when they find you</p>
       </div>
+      <nav class="social-tabs" aria-label="Social sections">
+        <a class="social-tab" href="/social">Overview</a>
+        <a class="social-tab" href="/social/groups">Groups</a>
+        <a class="social-tab" href="/social/network">Friends</a>
+        <a class="social-tab" href="/social/leaderboard">Leaderboard</a>
+        <a class="social-tab" href="/social/chat">Chat</a>
+        <a class="social-tab is-active" href="/social/profile">Profile</a>
+      </nav>
+    </header>
 
-      <form id="social-settings-form" class="social-settings-form" novalidate>
-        <div id="social-settings-disabled" class="helper hidden"></div>
+    <!-- Three-column layout -->
+    <div class="sp-layout">
 
-        <section class="social-settings-group" aria-labelledby="social-discoverability-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-discoverability-title">Discoverability</h3>
-            <p class="helper">Control whether traders can find and connect with you using your friend code.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Allow friend requests</span>
-                <input type="checkbox" name="allow_friend_requests">
-              </span>
-              <span class="helper">Let other traders send you a friend request using your friend code.</span>
-            </label>
-          </div>
-        </section>
-
-        <section class="social-settings-group" aria-labelledby="social-leaderboard-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-leaderboard-title">Leaderboard</h3>
-            <p class="helper">Choose whether your verified ranking can appear and who can view it.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Leaderboard enabled</span>
-                <input type="checkbox" name="leaderboard_enabled">
-              </span>
-              <span class="helper">Allow your verified return percentage to appear on opt-in leaderboards.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="leaderboard">
-              <span class="social-setting-title">Leaderboard visibility</span>
-              <select name="leaderboard_visibility">
-                <option value="private">Private</option>
-                <option value="friends_only">Friends only</option>
-                <option value="public">Public</option>
-              </select>
-              <span class="helper">Control who can see your leaderboard presence.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="leaderboard">
-              <span class="social-setting-title">Leaderboard data source</span>
-              <select name="leaderboard_data_source">
-                <option value="auto">Auto</option>
-                <option value="trading212">Trading 212</option>
-                <option value="ibkr">IBKR</option>
-                <option value="manual">Manual/platform</option>
-              </select>
-              <span class="helper">Choose which source powers leaderboard participation. Unavailable sources are disabled.</span>
-            </label>
-          </div>
-        </section>
-
-        <section class="social-settings-group" aria-labelledby="social-sharing-title">
-          <header class="social-settings-group-header">
-            <h3 id="social-sharing-title">Trade sharing</h3>
-            <p class="helper">Configure if and how trades are shared once social sharing experiences are enabled.</p>
-          </header>
-          <div class="social-setting-list">
-            <label class="social-setting-row">
-              <span class="social-setting-main">
-                <span class="social-setting-title">Trade sharing enabled</span>
-                <input type="checkbox" name="trade_sharing_enabled">
-              </span>
-              <span class="helper">Allow eligible trades to be shared according to your trade visibility rules.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-title">Trade sharing scope</span>
-              <select name="trade_sharing_scope">
-                <option value="private">Private</option>
-                <option value="friends_only">Friends only</option>
-                <option value="public">Public</option>
-              </select>
-              <span class="helper">Control who can see your shared trades.</span>
-            </label>
-
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main"><span class="social-setting-title">Share open trades</span><input type="checkbox" name="share_open_trades"></span>
-              <span class="helper">Allow open positions to be visible where sharing is enabled.</span>
-            </label>
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main"><span class="social-setting-title">Share closed trades</span><input type="checkbox" name="share_closed_trades"></span>
-              <span class="helper">Allow closed trades to be visible where sharing is enabled.</span>
-            </label>
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main"><span class="social-setting-title">Show PnL %</span><input type="checkbox" name="show_pnl_percent"></span>
-              <span class="helper">Show percentage performance on shared trades.</span>
-            </label>
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main"><span class="social-setting-title">Show PnL currency</span><input type="checkbox" name="show_pnl_currency"></span>
-              <span class="helper">Show cash profit/loss amounts on shared trades.</span>
-            </label>
-            <label class="social-setting-row" data-social-dependent="trade-sharing">
-              <span class="social-setting-main"><span class="social-setting-title">Show position size</span><input type="checkbox" name="show_position_size"></span>
-              <span class="helper">Show share/contract size or capital exposure on shared trades.</span>
-            </label>
-          </div>
-        </section>
-
-        <div class="social-settings-actions">
-          <button id="social-save-btn" class="primary" type="submit">Save settings</button>
-          <span id="social-settings-feedback" class="helper" aria-live="polite"></span>
+      <!-- Left: Section nav (sticky) -->
+      <aside class="sp-sidebar sp-sidebar--left">
+        <nav class="sp-sidenav" aria-label="Profile sections">
+          <p class="sp-sidenav-label">SETTINGS</p>
+          <a class="sp-sidenav-item is-active" href="#sp-profile" data-section="sp-profile">
+            <svg class="sp-sidenav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <circle cx="8" cy="5.5" r="2.5"/>
+              <path d="M2.5 13c0-2.485 2.462-4.5 5.5-4.5s5.5 2.015 5.5 4.5" stroke-linecap="round"/>
+            </svg>
+            Profile
+          </a>
+          <a class="sp-sidenav-item" href="#sp-discoverability" data-section="sp-discoverability">
+            <svg class="sp-sidenav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <rect x="2" y="2" width="5" height="5" rx="1"/>
+              <rect x="9" y="2" width="5" height="5" rx="1"/>
+              <rect x="2" y="9" width="5" height="5" rx="1"/>
+              <rect x="9" y="9" width="5" height="5" rx="1"/>
+            </svg>
+            Discoverability
+          </a>
+          <a class="sp-sidenav-item" href="#sp-leaderboard" data-section="sp-leaderboard">
+            <svg class="sp-sidenav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <rect x="2" y="9" width="3" height="5" rx="0.5"/>
+              <rect x="6.5" y="5" width="3" height="9" rx="0.5"/>
+              <rect x="11" y="2" width="3" height="12" rx="0.5"/>
+            </svg>
+            Leaderboard
+          </a>
+          <a class="sp-sidenav-item" href="#sp-trade-sharing" data-section="sp-trade-sharing">
+            <svg class="sp-sidenav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <path d="M2 3h12v8H9.5l-3 3v-3H2V3z" stroke-linejoin="round"/>
+            </svg>
+            Trade sharing
+          </a>
+          <a class="sp-sidenav-item" href="#sp-account-data" data-section="sp-account-data">
+            <svg class="sp-sidenav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <rect x="3" y="7" width="10" height="8" rx="1.5"/>
+              <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke-linecap="round"/>
+            </svg>
+            Account &amp; data
+          </a>
+        </nav>
+        <div class="sp-sidenav-footer">
+          <p class="sp-sidenav-reassurance">All social features are opt-in. You can revoke access anytime.</p>
+          <a href="#" class="sp-privacy-link">View privacy docs →</a>
         </div>
-      </form>
-    </section>
+      </aside>
+
+      <!-- Centre: Settings column -->
+      <div class="sp-settings-col">
+        <div id="sp-settings-loading" class="helper sp-settings-loading-msg">Loading your social profile…</div>
+        <div id="sp-settings-error" class="error hidden" role="alert"></div>
+
+        <form id="social-settings-form" novalidate>
+        <div id="sp-settings-content" class="hidden">
+
+          <!-- Section 1: Profile -->
+          <section class="sp-section" id="sp-profile" aria-labelledby="sp-profile-heading">
+            <header class="sp-section-header">
+              <h2 class="sp-section-title" id="sp-profile-heading">Profile</h2>
+              <p class="sp-section-desc">How you appear across Veracity</p>
+            </header>
+
+            <!-- Avatar + identity row -->
+            <div class="sp-identity-row">
+              <div class="sp-avatar-wrap">
+                <div id="sp-profile-avatar" class="sp-avatar-slot"></div>
+                <button class="sp-avatar-edit-btn" type="button" aria-label="Edit avatar" title="Avatar editing coming soon" disabled>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                    <path d="M10 2l4 4-8 8H2v-4l8-8z"/>
+                    <path d="M8.5 3.5l4 4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="sp-identity-info">
+                <div class="sp-name-badge-row">
+                  <span class="sp-display-name-text" id="sp-display-name-preview">—</span>
+                  <span class="social-status-pill" id="sp-verification-pill">Unverified</span>
+                </div>
+                <p class="sp-identity-meta" id="sp-identity-meta">Member</p>
+              </div>
+            </div>
+
+            <!-- Form fields grid -->
+            <div class="sp-form-grid">
+              <div class="sp-form-field">
+                <label class="sp-field-label" for="sp-input-display-name">DISPLAY NAME</label>
+                <input class="sp-input" id="sp-input-display-name" name="display_name" type="text" maxlength="32" autocomplete="off" placeholder="Your display name">
+              </div>
+              <div class="sp-form-field">
+                <label class="sp-field-label" for="sp-input-timezone">TIMEZONE</label>
+                <select class="sp-select" id="sp-input-timezone" name="timezone">
+                  <option value="">Detecting…</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Bio -->
+            <div class="sp-form-field sp-form-field--bio">
+              <label class="sp-field-label" for="sp-input-bio">
+                BIO <span class="sp-field-sublabel">(visible to friends and group members only)</span>
+              </label>
+              <textarea class="sp-textarea" id="sp-input-bio" name="bio" maxlength="280" rows="3" placeholder="Day trader focused on semis and small-caps. 0.25% risk per trade."></textarea>
+              <div class="sp-char-counter" id="sp-bio-counter" aria-live="polite">0 / 280</div>
+            </div>
+
+            <!-- Friend code sub-panel -->
+            <div class="sp-friend-code-panel" id="sp-friend-code-panel">
+              <div class="sp-friend-code-header-row">
+                <span class="sp-mini-label">FRIEND CODE</span>
+                <span class="sp-mini-sublabel">Share with traders you want to connect with</span>
+              </div>
+              <div class="sp-friend-code-row">
+                <code class="sp-friend-code-display" id="sp-friend-code">—</code>
+                <button class="outline sp-fc-btn" id="sp-copy-code-btn" type="button">Copy</button>
+                <button class="sp-regen-btn" id="sp-regenerate-btn" type="button">Regenerate</button>
+              </div>
+              <p class="sp-friend-code-footer" id="sp-regen-feedback" aria-live="polite">
+                Regenerating invalidates the old code immediately and cancels any pending requests.
+              </p>
+            </div>
+          </section>
+
+          <!-- Section 2: Discoverability -->
+          <section class="sp-section" id="sp-discoverability" aria-labelledby="sp-discoverability-heading">
+            <header class="sp-section-header">
+              <h2 class="sp-section-title" id="sp-discoverability-heading">Discoverability</h2>
+              <p class="sp-section-desc">How other traders can find and reach you</p>
+            </header>
+            <div class="sp-toggle-list">
+              <label class="sp-toggle-row">
+                <div class="sp-toggle-label-block">
+                  <span class="sp-toggle-title">Accept friend requests</span>
+                  <span class="sp-toggle-desc">Let other traders send you a friend request using your friend code. When off, your code stops resolving.</span>
+                </div>
+                <span class="sp-toggle-wrap">
+                  <input type="checkbox" name="allow_friend_requests" class="sp-toggle-input" role="switch" id="sp-toggle-allow-friend-requests">
+                  <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                </span>
+              </label>
+              <label class="sp-toggle-row">
+                <div class="sp-toggle-label-block">
+                  <span class="sp-toggle-title">Accept group invitations</span>
+                  <span class="sp-toggle-desc">Let friends invite you into trading groups.</span>
+                </div>
+                <span class="sp-toggle-wrap">
+                  <input type="checkbox" name="accept_group_invitations" class="sp-toggle-input" role="switch" id="sp-toggle-accept-group-invitations">
+                  <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                </span>
+              </label>
+              <label class="sp-toggle-row">
+                <div class="sp-toggle-label-block">
+                  <span class="sp-toggle-title">Show online status</span>
+                  <span class="sp-toggle-desc">Display a green dot next to your name when you're active. Off appears as permanent offline.</span>
+                </div>
+                <span class="sp-toggle-wrap">
+                  <input type="checkbox" name="show_online_status" class="sp-toggle-input" role="switch" id="sp-toggle-show-online-status">
+                  <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <!-- Section 3: Leaderboard -->
+          <section class="sp-section" id="sp-leaderboard" aria-labelledby="sp-leaderboard-heading">
+            <header class="sp-section-header sp-section-header--master-toggle">
+              <div class="sp-section-header-text">
+                <h2 class="sp-section-title" id="sp-leaderboard-heading">Leaderboard</h2>
+                <p class="sp-section-desc">Choose whether your verified ranking appears</p>
+              </div>
+              <span class="sp-toggle-wrap">
+                <input type="checkbox" name="leaderboard_enabled" class="sp-toggle-input" role="switch" id="sp-toggle-leaderboard-enabled">
+                <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+              </span>
+            </header>
+            <div class="sp-nested-panel" id="sp-leaderboard-nested">
+              <div class="sp-nested-panel-inner">
+                <div class="sp-form-grid sp-form-grid--compact">
+                  <div class="sp-form-field">
+                    <label class="sp-field-label" for="sp-leaderboard-visibility">VISIBILITY</label>
+                    <select class="sp-select" id="sp-leaderboard-visibility" name="leaderboard_visibility">
+                      <option value="public">Public</option>
+                      <option value="friends_only">Friends only</option>
+                      <option value="groups_only">Groups only</option>
+                      <option value="private">Private</option>
+                    </select>
+                  </div>
+                  <div class="sp-form-field">
+                    <label class="sp-field-label" for="sp-leaderboard-data-source">DATA SOURCE</label>
+                    <select class="sp-select" id="sp-leaderboard-data-source" name="leaderboard_data_source">
+                      <option value="auto">Auto</option>
+                      <option value="trading212">Trading 212</option>
+                      <option value="ibkr">IBKR</option>
+                      <option value="manual">Manual / platform</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="sp-nested-footer">Rankings are calculated from broker-synced trades only. Rankings exclude users with fewer than 20 closed trades in the period.</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Section 4: Trade sharing -->
+          <section class="sp-section" id="sp-trade-sharing" aria-labelledby="sp-trade-sharing-heading">
+            <header class="sp-section-header sp-section-header--master-toggle">
+              <div class="sp-section-header-text">
+                <h2 class="sp-section-title" id="sp-trade-sharing-heading">Trade sharing</h2>
+                <p class="sp-section-desc">What other traders see about your trades</p>
+              </div>
+              <span class="sp-toggle-wrap">
+                <input type="checkbox" name="trade_sharing_enabled" class="sp-toggle-input" role="switch" id="sp-toggle-trade-sharing-enabled">
+                <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+              </span>
+            </header>
+            <div class="sp-nested-panel" id="sp-trade-sharing-nested">
+              <div class="sp-nested-panel-inner">
+
+                <!-- Both-off warning -->
+                <div class="sp-ts-warning hidden" id="sp-both-trades-off-warning" role="alert">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true" style="width:13px;height:13px;flex-shrink:0;margin-top:1px">
+                    <path d="M8 2L1.5 14h13L8 2z" stroke-linejoin="round"/>
+                    <path d="M8 6.5V10M8 12v.5" stroke-linecap="round"/>
+                  </svg>
+                  With both open and closed trades off, nothing will appear on the feed even though sharing is enabled.
+                </div>
+
+                <!-- Scope -->
+                <div class="sp-nested-sub">
+                  <p class="sp-mini-label">WHO CAN SEE YOUR TRADES</p>
+                  <select class="sp-select sp-select--full" name="trade_sharing_scope" id="sp-trade-sharing-scope">
+                    <option value="friends_only">Friends only</option>
+                    <option value="friends_and_groups">Friends and group members</option>
+                    <option value="groups_only">Groups only</option>
+                    <option value="public">Public</option>
+                    <option value="private">Private (nobody)</option>
+                  </select>
+                </div>
+
+                <!-- Included fields -->
+                <div class="sp-nested-sub" style="margin-top:14px">
+                  <p class="sp-mini-label" style="margin-bottom:10px">WHAT TO INCLUDE</p>
+                  <div class="sp-toggle-list sp-toggle-list--compact">
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Open trades</span>
+                        <span class="sp-toggle-desc">Show positions that are still running.</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="share_open_trades" class="sp-toggle-input" role="switch" id="sp-toggle-share-open-trades">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Closed trades</span>
+                        <span class="sp-toggle-desc">Show trades after they've been closed.</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="share_closed_trades" class="sp-toggle-input" role="switch" id="sp-toggle-share-closed-trades">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Percentage return</span>
+                        <span class="sp-toggle-desc">Show PnL as a percentage (e.g. +2.4%).</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="show_pnl_percent" class="sp-toggle-input" role="switch" id="sp-toggle-show-pnl-percent">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">R-multiple</span>
+                        <span class="sp-toggle-desc">Show the trade's R-multiple (e.g. +2.4R).</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="show_r_multiple" class="sp-toggle-input" role="switch" id="sp-toggle-show-r-multiple">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Cash amounts</span>
+                        <span class="sp-toggle-desc">Show PnL in currency (e.g. +£187.99).</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="show_pnl_currency" class="sp-toggle-input" role="switch" id="sp-toggle-show-pnl-currency">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Position size</span>
+                        <span class="sp-toggle-desc">Show share count or capital exposure.</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="show_position_size" class="sp-toggle-input" role="switch" id="sp-toggle-show-position-size">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                    <label class="sp-toggle-row">
+                      <div class="sp-toggle-label-block">
+                        <span class="sp-toggle-title">Entry and stop prices</span>
+                        <span class="sp-toggle-desc">Show the price levels where you entered and where your stop sat.</span>
+                      </div>
+                      <span class="sp-toggle-wrap">
+                        <input type="checkbox" name="show_entry_stop" class="sp-toggle-input" role="switch" id="sp-toggle-show-entry-stop">
+                        <span class="sp-toggle-track" aria-hidden="true"><span class="sp-toggle-thumb"></span></span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Section 5: Account & data -->
+          <section class="sp-section" id="sp-account-data" aria-labelledby="sp-account-data-heading">
+            <header class="sp-section-header">
+              <h2 class="sp-section-title" id="sp-account-data-heading">Account &amp; data</h2>
+              <p class="sp-section-desc">Manage your social data</p>
+            </header>
+            <div class="sp-action-list">
+              <div class="sp-action-row">
+                <div class="sp-action-label-block">
+                  <span class="sp-action-title">Download your social data</span>
+                  <span class="sp-action-desc">Export all your profile, friends, groups, and shared trade metadata as JSON.</span>
+                </div>
+                <button class="outline sp-action-btn" type="button" id="sp-export-btn">Request export</button>
+              </div>
+              <div class="sp-action-row">
+                <div class="sp-action-label-block">
+                  <span class="sp-action-title">Disconnect broker</span>
+                  <span class="sp-action-desc">Remove broker-verified status and stop syncing trade data.</span>
+                </div>
+                <button class="outline sp-action-btn" type="button" id="sp-manage-brokers-btn">Manage brokers</button>
+              </div>
+              <div class="sp-action-row">
+                <div class="sp-action-label-block">
+                  <span class="sp-action-title">Disable social features</span>
+                  <span class="sp-action-desc">Hide your profile from all other traders, keep your friends list but stop appearing anywhere else.</span>
+                </div>
+                <button class="sp-action-btn sp-action-btn--danger" type="button" id="sp-disable-social-btn">Disable</button>
+              </div>
+              <div class="sp-action-row">
+                <div class="sp-action-label-block">
+                  <span class="sp-action-title">Delete social profile</span>
+                  <span class="sp-action-desc">Permanently remove your social profile, friends, and group memberships. Your trade data stays.</span>
+                </div>
+                <button class="sp-action-btn sp-action-btn--danger" type="button" id="sp-delete-profile-btn">Delete profile</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Save bar (shown only when dirty) -->
+          <div class="sp-save-bar hidden" id="sp-save-bar" role="status" aria-live="polite">
+            <span class="sp-save-count" id="sp-save-count">Unsaved changes</span>
+            <div class="sp-save-bar-actions">
+              <button class="outline sp-save-bar-btn" type="button" id="sp-discard-btn">Discard</button>
+              <button class="primary sp-save-bar-btn sp-save-bar-btn--save" type="button" id="sp-save-btn">Save changes</button>
+            </div>
+          </div>
+
+        </div><!-- /sp-settings-content -->
+        </form>
+      </div><!-- /sp-settings-col -->
+
+      <!-- Right: Live preview (sticky) -->
+      <aside class="sp-sidebar sp-sidebar--right">
+        <div class="sp-preview-card" id="sp-preview-card">
+          <div class="sp-preview-header">
+            <svg class="sp-preview-eye" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+              <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/>
+              <circle cx="8" cy="8" r="2"/>
+            </svg>
+            <span class="sp-mini-label">LIVE PREVIEW</span>
+          </div>
+          <p class="sp-preview-title">How others see your trade</p>
+
+          <!-- Mock trade card -->
+          <div class="sp-mock-trade" id="sp-mock-trade">
+            <div class="sp-mock-trade-header">
+              <div class="sp-mock-identity">
+                <div class="sp-mock-avatar" id="sp-mock-avatar"></div>
+                <div class="sp-mock-identity-text">
+                  <span class="sp-mock-name" id="sp-mock-name">—</span>
+                  <span class="sp-mock-time">2h ago</span>
+                </div>
+              </div>
+              <span class="sp-mock-badge sp-mock-badge--closed">CLOSED</span>
+            </div>
+            <div class="sp-mock-trade-body">
+              <div class="sp-mock-ticker-row">
+                <span class="sp-mock-ticker">SNDK</span>
+                <span class="sp-mock-direction sp-mock-direction--long">LONG</span>
+              </div>
+              <div class="sp-mock-metrics" id="sp-mock-metrics">
+                <span class="sp-mock-metric sp-mock-metric--pos">+2.4%</span>
+                <span class="sp-mock-metric sp-mock-metric--r">+2.4R</span>
+              </div>
+            </div>
+            <p class="sp-mock-trade-footer" id="sp-mock-scope-label">Visible to friends only</p>
+          </div>
+
+          <!-- Field list -->
+          <div class="sp-preview-fields-wrap">
+            <p class="sp-preview-fields-label">Currently showing:</p>
+            <ul class="sp-preview-fields" id="sp-preview-fields" aria-label="Fields visible to others"></ul>
+          </div>
+        </div>
+      </aside>
+
+    </div><!-- /sp-layout -->
   </main>
+
+  <!-- Regenerate friend code modal -->
+  <div class="sp-modal-overlay hidden" id="sp-regen-modal" role="dialog" aria-modal="true" aria-labelledby="sp-regen-modal-title">
+    <div class="sp-modal">
+      <h2 class="sp-modal-title" id="sp-regen-modal-title">Regenerate friend code?</h2>
+      <p class="sp-modal-body">Your old code will stop working immediately. Any pending incoming requests sent to it will be cancelled.</p>
+      <div class="sp-modal-actions">
+        <button class="outline sp-modal-btn" type="button" id="sp-regen-cancel-btn">Cancel</button>
+        <button class="sp-modal-btn sp-modal-btn--danger" type="button" id="sp-regen-confirm-btn">Regenerate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disable social modal -->
+  <div class="sp-modal-overlay hidden" id="sp-disable-modal" role="dialog" aria-modal="true" aria-labelledby="sp-disable-modal-title">
+    <div class="sp-modal">
+      <h2 class="sp-modal-title" id="sp-disable-modal-title">Disable social features?</h2>
+      <p class="sp-modal-body">Your profile will be hidden from all other traders. Your friends list is preserved. You can re-enable anytime.</p>
+      <div class="sp-modal-actions">
+        <button class="outline sp-modal-btn" type="button" id="sp-disable-cancel-btn">Cancel</button>
+        <button class="sp-modal-btn sp-modal-btn--danger" type="button" id="sp-disable-confirm-btn">Disable</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete profile modal -->
+  <div class="sp-modal-overlay hidden" id="sp-delete-modal" role="dialog" aria-modal="true" aria-labelledby="sp-delete-modal-title">
+    <div class="sp-modal">
+      <h2 class="sp-modal-title" id="sp-delete-modal-title">Delete social profile?</h2>
+      <p class="sp-modal-body">This permanently removes your social profile, friends, and group memberships. Your trade data is kept. This cannot be undone.</p>
+      <div class="sp-modal-field" style="margin-top:14px">
+        <label class="sp-field-label" for="sp-delete-confirm-input">TYPE YOUR DISPLAY NAME TO CONFIRM</label>
+        <input class="sp-input" id="sp-delete-confirm-input" type="text" placeholder="Your display name" autocomplete="off">
+      </div>
+      <div class="sp-modal-actions">
+        <button class="outline sp-modal-btn" type="button" id="sp-delete-cancel-btn">Cancel</button>
+        <button class="sp-modal-btn sp-modal-btn--danger" type="button" id="sp-delete-confirm-btn" disabled>Delete profile</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="social-toast-container" class="social-toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <script src="/static/theme-utils.js"></script>
   <script src="/static/social-avatar.js"></script>
   <script src="/static/app-header.js"></script>
   <script src="/static/guest.js"></script>
-  <script src="/static/social.js?v=20260315"></script>
+  <script src="/static/social.js?v=20260419"></script>
 </body>
 </html>

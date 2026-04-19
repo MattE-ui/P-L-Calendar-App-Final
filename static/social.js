@@ -16,7 +16,15 @@ const SOCIAL_SETTING_KEYS = [
   'show_position_size',
   'leaderboard_visibility',
   'trade_sharing_scope',
-  'leaderboard_data_source'
+  'leaderboard_data_source',
+  // New fields (backend migration may be required for persistence)
+  'accept_group_invitations',
+  'show_online_status',
+  'show_r_multiple',
+  'show_entry_stop',
+  'bio',
+  'timezone',
+  'display_name'
 ];
 
 const LEADERBOARD_PERIODS = ['7D', '30D', 'YTD'];
@@ -26,18 +34,26 @@ const DEFAULT_LEADERBOARD_MODE = 'trade';
 
 const DEFAULT_SOCIAL_SETTINGS = {
   leaderboard_enabled: false,
-  trade_sharing_enabled: false,
-  allow_friend_requests: false,
+  trade_sharing_enabled: true,
+  allow_friend_requests: true,
   share_open_trades: false,
-  share_closed_trades: false,
+  share_closed_trades: true,
   show_pnl_percent: true,
   show_pnl_currency: false,
   show_position_size: false,
-  leaderboard_visibility: 'private',
-  trade_sharing_scope: 'private',
+  leaderboard_visibility: 'public',
+  trade_sharing_scope: 'friends_only',
   leaderboard_data_source: 'auto',
   verification_status: 'none',
-  verification_source: null
+  verification_source: null,
+  // New fields — defaults per spec
+  accept_group_invitations: true,
+  show_online_status: true,
+  show_r_multiple: true,
+  show_entry_stop: true,
+  bio: '',
+  timezone: '',
+  display_name: ''
 };
 
 const socialState = {
@@ -59,6 +75,11 @@ const socialState = {
   requestActionIds: new Set(),
   friendActionIds: new Set(),
   nicknameRequired: false,
+  friendsSearch: '',
+  friendsSortKey: 'recent',
+  friendsFilter: 'all',
+  pendingRemoveFriendId: null,
+  pendingRemoveFriendName: '',
   nickname: '',
   friendPollTimer: null,
   leaderboardLoading: false,
@@ -775,6 +796,304 @@ function canLoadTradeGroupHeavySections() {
   return SOCIAL_PAGE_KIND === 'groups';
 }
 
+// ── Toast system ────────────────────────────────────────────
+function showToast(message, variant = 'neutral') {
+  const container = getEl('social-toast-container');
+  if (!container || !message) return;
+  const toast = document.createElement('div');
+  toast.className = `social-toast social-toast--${variant}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('is-visible')));
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    toast.classList.remove('is-visible');
+    const cleanup = () => toast.remove();
+    toast.addEventListener('transitionend', cleanup, { once: true });
+    window.setTimeout(cleanup, 400);
+  };
+  const timer = window.setTimeout(dismiss, 3000);
+  toast.addEventListener('click', () => { window.clearTimeout(timer); dismiss(); });
+}
+
+// ── Friend code helpers ─────────────────────────────────────
+async function copyOwnFriendCode() {
+  const code = socialState.profile?.friend_code;
+  if (!code || code === 'Unavailable') { showToast('No friend code available.', 'error'); return; }
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('Code copied', 'success');
+  } catch (_err) {
+    showToast('Clipboard unavailable — copy manually.', 'error');
+  }
+}
+
+async function shareOwnFriendCode() {
+  const code = socialState.profile?.friend_code;
+  if (!code) return;
+  const shareData = { title: 'My Veracity Friend Code', text: `Add me on Veracity: ${code}` };
+  if (navigator.share && navigator.canShare?.(shareData)) {
+    try { await navigator.share(shareData); } catch (_err) {}
+  } else {
+    try { await navigator.clipboard.writeText(code); } catch (_err) {}
+    showToast('Link copied', 'success');
+  }
+}
+
+// ── Remove friend modal ─────────────────────────────────────
+function showRemoveFriendModal(friendUserId, friendName) {
+  socialState.pendingRemoveFriendId = friendUserId;
+  socialState.pendingRemoveFriendName = friendName || 'this friend';
+  const nameEl = getEl('friends-remove-modal-name');
+  if (nameEl) nameEl.textContent = socialState.pendingRemoveFriendName;
+  getEl('friends-remove-modal')?.classList.remove('hidden');
+  getEl('friends-remove-cancel-btn')?.focus();
+}
+
+function hideRemoveFriendModal() {
+  socialState.pendingRemoveFriendId = null;
+  socialState.pendingRemoveFriendName = '';
+  getEl('friends-remove-modal')?.classList.add('hidden');
+}
+
+// ── Friends page subtitle ───────────────────────────────────
+function renderFriendsPageSubtitle() {
+  const el = getEl('friends-page-subtitle');
+  if (!el) return;
+  const friendCount = Array.isArray(socialState.friends) ? socialState.friends.length : 0;
+  const pendingCount = (Array.isArray(socialState.incomingRequests) ? socialState.incomingRequests.length : 0)
+    + (Array.isArray(socialState.outgoingRequests) ? socialState.outgoingRequests.length : 0);
+  const parts = [`${friendCount} ${friendCount === 1 ? 'friend' : 'friends'}`];
+  if (pendingCount > 0) parts.push(`${pendingCount} pending`);
+  parts.push('share a friend code to connect');
+  el.textContent = parts.join(' · ');
+}
+
+// ── Apply sort/search/filter to friends list ────────────────
+function applyFriendsSortFilter(friends) {
+  let list = Array.isArray(friends) ? [...friends] : [];
+
+  // Search by nickname
+  const query = String(socialState.friendsSearch || '').trim().toLowerCase();
+  if (query) {
+    list = list.filter(f => String(f.nickname || '').toLowerCase().includes(query));
+  }
+
+  // Filter: online (no online data yet — pass-through), groups
+  if (socialState.friendsFilter === 'groups') {
+    const groupMemberIds = new Set(
+      (Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [])
+        .map(m => String(m?.user_id || ''))
+        .filter(Boolean)
+    );
+    list = list.filter(f => groupMemberIds.has(String(f.friend_user_id || '')));
+  }
+
+  // Sort
+  const key = socialState.friendsSortKey || 'recent';
+  if (key === 'name') {
+    list.sort((a, b) => String(a.nickname || '').localeCompare(String(b.nickname || '')));
+  } else if (key === 'since_newest') {
+    list.sort((a, b) => (b.created_at ? new Date(b.created_at).getTime() : 0) - (a.created_at ? new Date(a.created_at).getTime() : 0));
+  } else if (key === 'since_oldest') {
+    list.sort((a, b) => (a.created_at ? new Date(a.created_at).getTime() : 0) - (b.created_at ? new Date(b.created_at).getTime() : 0));
+  }
+  // 'recent' — keep server order (already sorted by activity)
+  return list;
+}
+
+// ── Build a friend row (grid layout) ───────────────────────
+function buildFriendRow(friend) {
+  const groupMemberIds = new Set(
+    (Array.isArray(socialState.selectedTradeGroupMembers) ? socialState.selectedTradeGroupMembers : [])
+      .map(m => String(m?.user_id || ''))
+      .filter(Boolean)
+  );
+  const isInGroup = groupMemberIds.has(String(friend.friend_user_id || ''));
+  const isNew = (() => {
+    if (!friend.created_at) return false;
+    const ms = Date.now() - new Date(friend.created_at).getTime();
+    return ms < 7 * 24 * 60 * 60 * 1000;
+  })();
+  const statsPrivate = !!friend.stats_private;
+
+  const row = document.createElement('article');
+  row.className = 'friends-friend-row';
+  row.setAttribute('role', 'row');
+  row.tabIndex = 0;
+
+  // 1) Avatar
+  const avatarWrap = document.createElement('div');
+  avatarWrap.className = 'friends-avatar-wrap';
+  const avatar = window.VeracitySocialAvatar?.createAvatar({
+    nickname: friend.nickname,
+    avatar_url: friend.avatar_url,
+    avatar_initials: friend.avatar_initials
+  }, 'sm');
+  if (avatar) avatarWrap.appendChild(avatar);
+  row.appendChild(avatarWrap);
+
+  // 2) Identity
+  const identity = document.createElement('div');
+  identity.className = 'friends-friend-identity';
+
+  const nameRow = document.createElement('div');
+  nameRow.className = 'friends-friend-name-row';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'friends-friend-name';
+  nameEl.textContent = friend.nickname || 'Unknown trader';
+  nameRow.appendChild(nameEl);
+  if (isInGroup) {
+    const b = document.createElement('span');
+    b.className = 'friends-friend-badge friends-friend-badge--group';
+    b.textContent = 'IN YOUR GROUP';
+    nameRow.appendChild(b);
+  }
+  if (statsPrivate) {
+    const b = document.createElement('span');
+    b.className = 'friends-friend-badge friends-friend-badge--private';
+    b.textContent = 'STATS PRIVATE';
+    nameRow.appendChild(b);
+  }
+  if (isNew) {
+    const b = document.createElement('span');
+    b.className = 'friends-friend-badge friends-friend-badge--new';
+    b.textContent = 'NEW';
+    nameRow.appendChild(b);
+  }
+  identity.appendChild(nameRow);
+
+  const metaEl = document.createElement('div');
+  metaEl.className = 'friends-friend-meta';
+  const sinceParts = [];
+  if (friend.created_at) {
+    const d = new Date(friend.created_at);
+    if (!Number.isNaN(d.getTime())) {
+      sinceParts.push(`friends since ${d.toLocaleString('default', { month: 'short', year: 'numeric' })}`);
+    }
+  }
+  metaEl.textContent = sinceParts.join(' · ') || 'friends';
+  identity.appendChild(metaEl);
+  row.appendChild(identity);
+
+  // 3) 7d R stat
+  const rCol = document.createElement('div');
+  rCol.className = 'friends-stat-col';
+  const rLabel = document.createElement('span');
+  rLabel.className = 'friends-stat-label';
+  rLabel.textContent = '7D R';
+  const rVal = document.createElement('span');
+  const rRaw = statsPrivate ? null : (Number.isFinite(Number(friend.return_7d)) ? Number(friend.return_7d) : null);
+  rVal.className = `friends-stat-value ${rRaw === null ? 'friends-stat-value--na' : rRaw >= 0 ? 'friends-stat-value--pos' : 'friends-stat-value--neg'}`;
+  rVal.textContent = rRaw === null ? '—' : `${rRaw >= 0 ? '+' : ''}${rRaw.toFixed(2)}%`;
+  rCol.appendChild(rLabel);
+  rCol.appendChild(rVal);
+  row.appendChild(rCol);
+
+  // 4) Win rate
+  const wrCol = document.createElement('div');
+  wrCol.className = 'friends-stat-col';
+  const wrLabel = document.createElement('span');
+  wrLabel.className = 'friends-stat-label';
+  wrLabel.textContent = 'WIN RATE';
+  const wrVal = document.createElement('span');
+  const wrRaw = statsPrivate ? null : (Number.isFinite(Number(friend.win_rate_7d)) ? Number(friend.win_rate_7d) : null);
+  wrVal.className = `friends-stat-value ${wrRaw === null ? 'friends-stat-value--na' : ''}`;
+  if (wrRaw !== null) {
+    const pct = wrRaw <= 1 ? wrRaw * 100 : wrRaw;
+    wrVal.textContent = `${pct.toFixed(1)}%`;
+  } else {
+    wrVal.textContent = '—';
+  }
+  wrCol.appendChild(wrLabel);
+  wrCol.appendChild(wrVal);
+  row.appendChild(wrCol);
+
+  // 5) 7d trades
+  const tradesCol = document.createElement('div');
+  tradesCol.className = 'friends-stat-col';
+  const tradesLabel = document.createElement('span');
+  tradesLabel.className = 'friends-stat-label';
+  tradesLabel.textContent = '7D TRADES';
+  const tradesVal = document.createElement('span');
+  const tradesRaw = statsPrivate ? null : (Number.isFinite(Number(friend.trades_7d)) ? Number(friend.trades_7d) : null);
+  tradesVal.className = `friends-stat-value ${tradesRaw === null ? 'friends-stat-value--na' : ''}`;
+  tradesVal.textContent = tradesRaw === null ? '—' : String(tradesRaw);
+  tradesCol.appendChild(tradesLabel);
+  tradesCol.appendChild(tradesVal);
+  row.appendChild(tradesCol);
+
+  // 6) Actions: message + more
+  const actionsCol = document.createElement('div');
+  actionsCol.className = 'friends-actions-col';
+
+  const msgBtn = document.createElement('button');
+  msgBtn.type = 'button';
+  msgBtn.className = 'friends-icon-btn';
+  msgBtn.title = 'Message';
+  msgBtn.setAttribute('aria-label', `Message ${friend.nickname || 'friend'}`);
+  msgBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 3h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4l-3 2V4a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  msgBtn.addEventListener('click', (e) => { e.stopPropagation(); });
+  actionsCol.appendChild(msgBtn);
+
+  // More menu
+  const moreWrap = document.createElement('div');
+  moreWrap.className = 'friends-more-menu-wrap';
+
+  const moreBtn = document.createElement('button');
+  moreBtn.type = 'button';
+  moreBtn.className = 'friends-icon-btn';
+  moreBtn.title = 'More options';
+  moreBtn.setAttribute('aria-label', `More options for ${friend.nickname || 'friend'}`);
+  moreBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="3" r="1.25" fill="currentColor"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/><circle cx="8" cy="13" r="1.25" fill="currentColor"/></svg>`;
+
+  const moreMenu = document.createElement('div');
+  moreMenu.className = 'friends-more-dropdown hidden';
+
+  const viewProfileOpt = document.createElement('button');
+  viewProfileOpt.type = 'button';
+  viewProfileOpt.className = 'friends-more-option';
+  viewProfileOpt.textContent = 'View profile';
+  viewProfileOpt.addEventListener('click', (e) => { e.stopPropagation(); moreMenu.classList.add('hidden'); });
+  moreMenu.appendChild(viewProfileOpt);
+
+  const removeOpt = document.createElement('button');
+  removeOpt.type = 'button';
+  removeOpt.className = 'friends-more-option friends-more-option--danger';
+  removeOpt.textContent = 'Remove friend';
+  removeOpt.disabled = socialState.friendActionIds.has(friend.friend_user_id) || socialState.isGuest || socialState.nicknameRequired;
+  removeOpt.addEventListener('click', (e) => {
+    e.stopPropagation();
+    moreMenu.classList.add('hidden');
+    showRemoveFriendModal(friend.friend_user_id, friend.nickname || 'this friend');
+  });
+  moreMenu.appendChild(removeOpt);
+
+  moreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = moreMenu.classList.toggle('hidden');
+    moreBtn.setAttribute('aria-expanded', String(!isHidden));
+    if (!isHidden) {
+      const closeOnOutside = (ev) => {
+        if (!moreWrap.contains(ev.target)) {
+          moreMenu.classList.add('hidden');
+          document.removeEventListener('click', closeOnOutside);
+        }
+      };
+      document.addEventListener('click', closeOnOutside);
+    }
+  });
+
+  moreWrap.appendChild(moreBtn);
+  moreWrap.appendChild(moreMenu);
+  actionsCol.appendChild(moreWrap);
+  row.appendChild(actionsCol);
+
+  return row;
+}
+
 function setFriendsDisabled(disabled) {
   const areaMessage = getEl('social-friends-disabled');
   if (disabled) {
@@ -799,93 +1118,152 @@ function renderFriendSection() {
   const incomingEl = getEl('social-incoming-requests');
   const outgoingEl = getEl('social-outgoing-requests');
   const friendsEl = getEl('social-friends-list');
+  const incomingWrap = getEl('friends-incoming-wrap');
+  const outgoingWrap = getEl('friends-outgoing-wrap');
+  const howItWorksWrap = getEl('friends-howitworks-wrap');
+  const incomingPill = getEl('friends-incoming-pill');
+  const outgoingPill = getEl('friends-outgoing-pill');
+  const countPill = getEl('friends-list-count-pill');
 
   clearNode(incomingEl);
   clearNode(outgoingEl);
   clearNode(friendsEl);
 
+  renderFriendsPageSubtitle();
+
   if (socialState.friendsError) {
-    const err = createEmptyState('Friend data unavailable', socialState.friendsError);
-    err.classList.add('is-error');
-    incomingEl?.appendChild(err.cloneNode(true));
-    outgoingEl?.appendChild(err.cloneNode(true));
-    friendsEl?.appendChild(err);
+    const makeErr = () => {
+      const d = document.createElement('div');
+      d.className = 'friends-empty-state';
+      const t = document.createElement('p'); t.className = 'friends-empty-state-title'; t.textContent = 'Friend data unavailable';
+      const s = document.createElement('p'); s.className = 'friends-empty-state-detail'; s.textContent = socialState.friendsError;
+      d.appendChild(t); d.appendChild(s);
+      return d;
+    };
+    if (friendsEl) friendsEl.appendChild(makeErr());
+    if (incomingWrap) incomingWrap.classList.add('hidden');
+    if (outgoingWrap) outgoingWrap.classList.add('hidden');
+    renderSocialOverview();
     return;
   }
 
+  // ── Incoming requests ─────────────────────────────────────
   const incoming = socialState.incomingRequests;
-  if (!incoming.length) {
-    incomingEl?.appendChild(createEmptyState('No incoming requests', 'New requests will appear here.'));
-  } else {
-    incoming.forEach(request => {
-      const row = document.createElement('article');
-      row.className = 'social-list-row social-list-row--request';
-      const display = getRequestUserDisplay(request);
-      row.appendChild(createIdentityRow(display.name, display.secondary, '', { avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }));
+  if (incomingWrap) incomingWrap.classList.toggle('hidden', incoming.length === 0);
+  if (incomingPill) incomingPill.textContent = String(incoming.length);
 
-      const actionWrap = document.createElement('div');
-      actionWrap.className = 'social-row-actions';
-      const busy = socialState.requestActionIds.has(request.id);
+  incoming.forEach(request => {
+    const display = getRequestUserDisplay(request);
+    const busy = socialState.requestActionIds.has(request.id);
+    const disabled = busy || socialState.isGuest || socialState.nicknameRequired;
 
-      const acceptBtn = createActionButton('Accept', 'primary');
-      acceptBtn.disabled = busy || socialState.isGuest || socialState.nicknameRequired;
-      acceptBtn.addEventListener('click', () => respondToRequest(request.id, 'accept'));
+    const requestRow = document.createElement('div');
+    requestRow.className = 'friends-request-row';
 
-      const declineBtn = createActionButton('Decline', 'ghost');
-      declineBtn.disabled = busy || socialState.isGuest || socialState.nicknameRequired;
-      declineBtn.addEventListener('click', () => respondToRequest(request.id, 'decline'));
+    const identity = document.createElement('div');
+    identity.className = 'friends-request-identity';
+    const av = window.VeracitySocialAvatar?.createAvatar({ nickname: display.name, avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }, 'sm');
+    if (av) identity.appendChild(av);
+    const textWrap = document.createElement('div');
+    textWrap.className = 'friends-request-identity-text';
+    const nameEl = document.createElement('span'); nameEl.className = 'friends-request-name'; nameEl.textContent = display.name;
+    const metaEl = document.createElement('span'); metaEl.className = 'friends-request-meta';
+    metaEl.textContent = request.created_at ? formatRelativeTime(request.created_at) + ' ago' : 'Recently';
+    textWrap.appendChild(nameEl); textWrap.appendChild(metaEl);
+    identity.appendChild(textWrap);
+    requestRow.appendChild(identity);
 
-      actionWrap.append(acceptBtn, declineBtn);
-      row.appendChild(actionWrap);
-      incomingEl?.appendChild(row);
-    });
-  }
+    const actions = document.createElement('div');
+    actions.className = 'friends-request-actions';
+    const acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button'; acceptBtn.className = 'friends-request-accept-btn';
+    acceptBtn.textContent = 'Accept'; acceptBtn.disabled = disabled;
+    acceptBtn.addEventListener('click', () => respondToRequest(request.id, 'accept'));
+    const declineBtn = document.createElement('button');
+    declineBtn.type = 'button'; declineBtn.className = 'friends-request-decline-btn';
+    declineBtn.textContent = 'Decline'; declineBtn.disabled = disabled;
+    declineBtn.addEventListener('click', () => respondToRequest(request.id, 'decline'));
+    actions.appendChild(acceptBtn); actions.appendChild(declineBtn);
+    requestRow.appendChild(actions);
 
+    incomingEl?.appendChild(requestRow);
+  });
+
+  // ── Outgoing requests ─────────────────────────────────────
   const outgoing = socialState.outgoingRequests;
-  if (!outgoing.length) {
-    outgoingEl?.appendChild(createEmptyState('No outgoing requests', 'Sent requests stay here until accepted or cancelled.'));
+  if (outgoingWrap) outgoingWrap.classList.toggle('hidden', outgoing.length === 0);
+  if (outgoingPill) outgoingPill.textContent = String(outgoing.length);
+
+  outgoing.forEach(request => {
+    const display = getRequestUserDisplay(request);
+    const disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest || socialState.nicknameRequired;
+
+    const requestRow = document.createElement('div');
+    requestRow.className = 'friends-request-row';
+
+    const identity = document.createElement('div');
+    identity.className = 'friends-request-identity';
+    const av = window.VeracitySocialAvatar?.createAvatar({ nickname: display.name, avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }, 'sm');
+    if (av) identity.appendChild(av);
+    const textWrap = document.createElement('div');
+    textWrap.className = 'friends-request-identity-text';
+    const nameEl = document.createElement('span'); nameEl.className = 'friends-request-name'; nameEl.textContent = display.name;
+    const metaEl = document.createElement('span'); metaEl.className = 'friends-request-meta';
+    metaEl.textContent = request.created_at ? 'Sent ' + formatRelativeTime(request.created_at) + ' ago' : 'Sent recently';
+    textWrap.appendChild(nameEl); textWrap.appendChild(metaEl);
+    identity.appendChild(textWrap);
+    requestRow.appendChild(identity);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button'; cancelBtn.className = 'friends-request-cancel-btn';
+    cancelBtn.textContent = 'Cancel request'; cancelBtn.disabled = disabled;
+    cancelBtn.addEventListener('click', () => respondToRequest(request.id, 'cancel'));
+    requestRow.appendChild(cancelBtn);
+
+    outgoingEl?.appendChild(requestRow);
+  });
+
+  // ── How it works card ─────────────────────────────────────
+  const friendCount = Array.isArray(socialState.friends) ? socialState.friends.length : 0;
+  if (howItWorksWrap) howItWorksWrap.classList.toggle('hidden', friendCount > 3);
+
+  // ── Friends list ──────────────────────────────────────────
+  if (countPill) countPill.textContent = String(friendCount);
+
+  const filtered = applyFriendsSortFilter(socialState.friends);
+
+  if (!filtered.length) {
+    const empty = document.createElement('div');
+    empty.className = 'friends-empty-state';
+    const title = document.createElement('p'); title.className = 'friends-empty-state-title';
+    const detail = document.createElement('p'); detail.className = 'friends-empty-state-detail';
+    if (friendCount === 0) {
+      title.textContent = 'No friends yet';
+      detail.textContent = 'Enter a friend code above to send your first request.';
+    } else {
+      title.textContent = 'No friends match your search';
+      detail.textContent = 'Try a different name or clear the filter.';
+    }
+    empty.appendChild(title); empty.appendChild(detail);
+    friendsEl?.appendChild(empty);
   } else {
-    outgoing.forEach(request => {
-      const row = document.createElement('article');
-      row.className = 'social-list-row social-list-row--request';
-      const display = getRequestUserDisplay(request);
-      row.appendChild(createIdentityRow(display.name, display.secondary, '', { avatar_url: request.counterparty_avatar_url, avatar_initials: request.counterparty_avatar_initials }));
-
-      const cancelBtn = createActionButton('Cancel', 'ghost');
-      cancelBtn.disabled = socialState.requestActionIds.has(request.id) || socialState.isGuest || socialState.nicknameRequired;
-      cancelBtn.addEventListener('click', () => respondToRequest(request.id, 'cancel'));
-      const actionWrap = document.createElement('div');
-      actionWrap.className = 'social-row-actions';
-      actionWrap.appendChild(cancelBtn);
-
-      row.appendChild(actionWrap);
-      outgoingEl?.appendChild(row);
+    filtered.forEach(friend => {
+      friendsEl?.appendChild(buildFriendRow(friend));
     });
   }
 
-  const friends = socialState.friends;
-  if (!friends.length) {
-    friendsEl?.appendChild(createEmptyState('No friends added yet', 'Send a friend-code request to build your network.'));
-  } else {
-    friends.forEach(friend => {
-      const row = document.createElement('article');
-      row.className = 'social-list-row social-list-row--friend';
-      const badge = friend.verification_status === 'broker_verified' ? 'Broker verified'
-        : friend.verification_status === 'platform_verified' ? 'Platform verified'
-        : '';
-      row.appendChild(createIdentityRow(friend.nickname || 'Unknown trader', friend.friend_code || '', badge, { avatar_url: friend.avatar_url, avatar_initials: friend.avatar_initials }));
-
-      const removeBtn = createActionButton('Remove', 'danger outline');
-      removeBtn.disabled = socialState.friendActionIds.has(friend.friend_user_id) || socialState.isGuest || socialState.nicknameRequired;
-      removeBtn.addEventListener('click', () => removeFriend(friend.friend_user_id));
-      const actionWrap = document.createElement('div');
-      actionWrap.className = 'social-row-actions';
-      actionWrap.appendChild(removeBtn);
-      row.appendChild(actionWrap);
-      friendsEl?.appendChild(row);
-    });
-  }
   renderSocialOverview();
+}
+
+// Relative time helper for request cards (e.g. "2h")
+function formatRelativeTime(value) {
+  if (!value) return '';
+  const ms = Date.now() - new Date(value).getTime();
+  if (ms < 0) return '';
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
+  return `${Math.floor(ms / 86_400_000)}d`;
 }
 
 
@@ -1700,14 +2078,17 @@ async function createTradeGroup(event) {
   }
 }
 
+const FRIEND_CODE_PATTERN = /^[A-Z0-9]{4}-[A-Z0-9]{4,9}$/;
+
 function updateAddFriendState() {
   const input = getEl('social-add-friend-code');
   const button = getEl('social-add-friend-btn');
-  const value = normalizeFriendCode(input?.value || '');
-  const canSubmit = !!value && !socialState.addFriendBusy && !socialState.friendsLoading && !socialState.isGuest && !socialState.nicknameRequired;
+  const rawVal = String(input?.value || '');
+  const isValidFormat = FRIEND_CODE_PATTERN.test(rawVal);
+  const canSubmit = isValidFormat && !socialState.addFriendBusy && !socialState.friendsLoading && !socialState.isGuest && !socialState.nicknameRequired;
   if (button) {
     button.disabled = !canSubmit;
-    button.textContent = socialState.addFriendBusy ? 'Sending…' : 'Send';
+    button.textContent = socialState.addFriendBusy ? 'Sending…' : 'Send request';
   }
 }
 
@@ -1803,10 +2184,12 @@ async function sendFriendRequest(event) {
     });
 
     input.value = '';
+    setFeedback(feedback, '');
     if (response?.autoAccepted) {
-      setFeedback(feedback, 'Request auto-accepted. You are now friends.', 'success');
+      showToast(`Connected with ${response?.nickname || 'trader'}.`, 'success');
     } else {
-      setFeedback(feedback, 'Friend request sent.', 'success');
+      const name = response?.nickname;
+      showToast(name ? `Request sent to ${name}` : 'Request sent', 'success');
     }
     await triggerSocialRefresh('request-sent');
   } catch (error) {
@@ -1863,15 +2246,20 @@ async function removeFriend(friendUserId) {
   socialState.friendActionIds.add(friendUserId);
   renderFriendSection();
 
+  const removedName = (Array.isArray(socialState.friends) ? socialState.friends : [])
+    .find(f => String(f?.friend_user_id || '') === String(friendUserId))?.nickname || '';
+
   try {
     await socialApi(`/api/social/friends/${encodeURIComponent(friendUserId)}`, { method: 'DELETE' });
     socialState.friends = socialState.friends.filter((friend) => String(friend?.friend_user_id || '') !== String(friendUserId));
     renderFriendSection();
+    if (removedName) showToast(`Removed ${removedName}`, 'neutral');
     logSocialPerf('social-action-patch-applied', { action: 'friend-remove' });
     await triggerSocialRefresh('friend-removed');
   } catch (error) {
     socialState.friendsError = error.message || 'Unable to remove friend.';
     renderFriendSection();
+    showToast('Could not remove friend. Try again.', 'error');
   } finally {
     socialState.friendActionIds.delete(friendUserId);
     renderFriendSection();
@@ -1921,10 +2309,86 @@ function bindFriendActions() {
   const input = getEl('social-add-friend-code');
   form?.addEventListener('submit', sendFriendRequest);
   input?.addEventListener('input', () => {
-    const normalized = normalizeFriendCode(input.value).replace(/[^A-Z0-9-]/g, '');
-    if (input.value !== normalized) input.value = normalized;
+    // Auto-uppercase and auto-insert hyphen after position 4
+    const raw = String(input.value || '').replace(/[^A-Z0-9a-z]/gi, '').toUpperCase().slice(0, 8);
+    const formatted = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+    if (input.value !== formatted) input.value = formatted;
     setFeedback(getEl('social-add-friend-feedback'), '');
     updateAddFriendState();
+  });
+  // Handle paste: strip dashes and spaces then re-format
+  input?.addEventListener('paste', (e) => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    e.preventDefault();
+    const raw = text.replace(/[^A-Z0-9a-z]/gi, '').toUpperCase().slice(0, 8);
+    input.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+    setFeedback(getEl('social-add-friend-feedback'), '');
+    updateAddFriendState();
+  });
+}
+
+function bindFriendsPageActions() {
+  // Own code copy/share
+  getEl('friends-copy-code-btn')?.addEventListener('click', copyOwnFriendCode);
+  getEl('friends-share-code-btn')?.addEventListener('click', shareOwnFriendCode);
+
+  // Remove modal
+  getEl('friends-remove-cancel-btn')?.addEventListener('click', hideRemoveFriendModal);
+  getEl('friends-remove-modal-backdrop')?.addEventListener('click', hideRemoveFriendModal);
+  getEl('friends-remove-confirm-btn')?.addEventListener('click', () => {
+    const id = socialState.pendingRemoveFriendId;
+    hideRemoveFriendModal();
+    if (id) removeFriend(id);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideRemoveFriendModal();
+  });
+
+  // Search
+  getEl('friends-search-input')?.addEventListener('input', (e) => {
+    socialState.friendsSearch = String(e.target.value || '').toLowerCase();
+    renderFriendSection();
+  });
+
+  // Sort dropdown
+  const sortBtn = getEl('friends-sort-btn');
+  const sortDropdown = getEl('friends-sort-dropdown');
+  sortBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const hidden = sortDropdown?.classList.toggle('hidden');
+    sortBtn.setAttribute('aria-expanded', String(!hidden));
+  });
+  sortDropdown?.addEventListener('click', (e) => {
+    const opt = e.target.closest('[data-sort]');
+    if (!opt) return;
+    socialState.friendsSortKey = opt.dataset.sort;
+    const labelEl = getEl('friends-sort-label');
+    if (labelEl) labelEl.textContent = opt.textContent;
+    sortDropdown.querySelectorAll('.friends-sort-option').forEach(o => {
+      o.classList.toggle('is-selected', o.dataset.sort === socialState.friendsSortKey);
+      o.setAttribute('aria-selected', o.dataset.sort === socialState.friendsSortKey ? 'true' : 'false');
+    });
+    sortDropdown.classList.add('hidden');
+    sortBtn?.setAttribute('aria-expanded', 'false');
+    renderFriendSection();
+  });
+  document.addEventListener('click', (e) => {
+    const sortControl = getEl('friends-sort-control');
+    if (sortControl && !sortControl.contains(e.target)) {
+      sortDropdown?.classList.add('hidden');
+      sortBtn?.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  // Segment filter
+  document.querySelectorAll('.friends-segment-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      socialState.friendsFilter = btn.dataset.filter || 'all';
+      document.querySelectorAll('.friends-segment-btn').forEach(b =>
+        b.classList.toggle('is-active', b.dataset.filter === socialState.friendsFilter)
+      );
+      renderFriendSection();
+    });
   });
 }
 
@@ -1966,6 +2430,13 @@ function applyVerification(profile, settings) {
   }
   if (sourceEl) sourceEl.textContent = view.sourceLabel;
   if (descriptionEl) descriptionEl.textContent = view.description;
+
+  // New profile page pill
+  const spPill = getEl('sp-verification-pill');
+  if (spPill) {
+    spPill.textContent = view.label;
+    spPill.className = `social-status-pill ${view.badgeClass}`;
+  }
 }
 
 function renderSocialOverview() {
@@ -2209,7 +2680,7 @@ function renderSocialOverview() {
     clearNode(friendsPreviewEl);
     const previewFriends = Array.isArray(socialState.friends) ? socialState.friends.slice(0, 3) : [];
     if (!previewFriends.length) {
-      friendsPreviewEl.appendChild(createEmptyState('No friends yet', 'Add traders in Network to build your list.'));
+      friendsPreviewEl.appendChild(createEmptyState('No friends yet', 'Add traders in Friends to build your list.'));
     } else {
       previewFriends.forEach(friend => {
         const row = document.createElement('article');
@@ -2230,6 +2701,10 @@ function applyProfile(profile) {
   if (friendCodeEl) {
     friendCodeEl.textContent = profile?.friend_code || 'Unavailable';
   }
+  const ownCodeBox = getEl('friends-own-code-box');
+  if (ownCodeBox) {
+    ownCodeBox.textContent = profile?.friend_code || '—';
+  }
   const nicknameEl = getEl('social-profile-nickname');
   if (nicknameEl) {
     nicknameEl.textContent = socialState.nickname || 'Nickname required';
@@ -2243,6 +2718,57 @@ function applyProfile(profile) {
       avatar_initials: profile?.avatar_initials
     }, 'md') || document.createTextNode(''));
   }
+
+  // New profile page elements
+  const spFriendCode = getEl('sp-friend-code');
+  if (spFriendCode) spFriendCode.textContent = profile?.friend_code || 'Unavailable';
+
+  const spAvatarSlot = getEl('sp-profile-avatar');
+  if (spAvatarSlot) {
+    clearNode(spAvatarSlot);
+    const av = window.VeracitySocialAvatar?.createAvatar({
+      nickname: socialState.nickname,
+      avatar_url: profile?.avatar_url,
+      avatar_initials: profile?.avatar_initials
+    }, 'lg');
+    if (av) spAvatarSlot.appendChild(av);
+  }
+
+  const spMockAvatar = getEl('sp-mock-avatar');
+  if (spMockAvatar) {
+    clearNode(spMockAvatar);
+    const av = window.VeracitySocialAvatar?.createAvatar({
+      nickname: socialState.nickname,
+      avatar_url: profile?.avatar_url,
+      avatar_initials: profile?.avatar_initials
+    }, 'xs');
+    if (av) spMockAvatar.appendChild(av);
+  }
+
+  const displayName = socialState.nickname || profile?.nickname || '';
+  const spPreviewName = getEl('sp-display-name-preview');
+  if (spPreviewName) spPreviewName.textContent = displayName || '—';
+  const spMockName = getEl('sp-mock-name');
+  if (spMockName) spMockName.textContent = displayName || '—';
+
+  const spMeta = getEl('sp-identity-meta');
+  if (spMeta) {
+    const src = profile?.verification_source || socialState.settings?.verification_source;
+    const created = profile?.created_at
+      ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      : null;
+    const parts = [];
+    if (src && src !== 'none') parts.push(`Verified via ${formatVerificationSource(src)}`);
+    if (created) parts.push(`member since ${created}`);
+    spMeta.textContent = parts.join(' · ') || 'Member';
+  }
+
+  // Populate display name input if empty
+  const displayNameInput = getEl('sp-input-display-name');
+  if (displayNameInput && !displayNameInput.value && displayName) {
+    displayNameInput.value = displayName;
+  }
+
   applyVerification(profile, socialState.settings);
   renderSocialOverview();
 }
@@ -2293,9 +2819,15 @@ function applyFormSettings(settings) {
     if (control.type === 'checkbox') {
       control.checked = !!value;
     } else if (typeof value === 'string') {
-      const hasOption = Array.from(control.options || []).some(opt => opt.value === value);
-      const fallbackValue = key === 'leaderboard_data_source' ? 'auto' : 'private';
-      control.value = hasOption ? value : fallbackValue;
+      if (control.options) {
+        // select element — fall back to a safe default if value not in options
+        const hasOption = Array.from(control.options).some(opt => opt.value === value);
+        const fallbackValue = key === 'leaderboard_data_source' ? 'auto' : (control.options[0]?.value ?? '');
+        control.value = hasOption ? value : fallbackValue;
+      } else {
+        // text input or textarea
+        control.value = value;
+      }
     }
   }
   updateDependentControls();
@@ -2333,8 +2865,15 @@ function updateDependentControls() {
   const leaderboardEnabled = !!form.elements.namedItem('leaderboard_enabled')?.checked;
   const sharingEnabled = !!form.elements.namedItem('trade_sharing_enabled')?.checked;
 
+  // Legacy data-social-dependent rows (other social pages)
   setDependentGroupState('leaderboard', !leaderboardEnabled);
   setDependentGroupState('trade-sharing', !sharingEnabled);
+
+  // New nested panels on profile page
+  const leaderboardPanel = getEl('sp-leaderboard-nested');
+  if (leaderboardPanel) leaderboardPanel.classList.toggle('is-visible', leaderboardEnabled);
+  const tradeSharingPanel = getEl('sp-trade-sharing-nested');
+  if (tradeSharingPanel) tradeSharingPanel.classList.toggle('is-visible', sharingEnabled);
 }
 
 function updateActionState() {
@@ -2357,6 +2896,13 @@ function updateActionState() {
     copyBtn.disabled = socialState.loading;
   }
 
+  // New profile page elements
+  const spRegenBtn = getEl('sp-regenerate-btn');
+  if (spRegenBtn) spRegenBtn.disabled = socialState.loading || socialState.isRegenerating || socialState.isGuest || socialState.nicknameRequired;
+  const spCopyBtn = getEl('sp-copy-code-btn');
+  if (spCopyBtn) spCopyBtn.disabled = socialState.loading;
+
+  updateSaveBar();
   updateDependentControls();
 }
 
@@ -2373,9 +2919,9 @@ async function loadSocialData() {
   socialState.loading = true;
   updateActionState();
 
-  const loadingEl = getEl('social-profile-loading');
-  const errorEl = getEl('social-profile-error');
-  const contentEl = getEl('social-profile-content');
+  const loadingEl = getEl('social-profile-loading') || getEl('sp-settings-loading');
+  const errorEl = getEl('social-profile-error') || getEl('sp-settings-error');
+  const contentEl = getEl('social-profile-content') || getEl('sp-settings-content');
 
   if (loadingEl) loadingEl.classList.remove('hidden');
   if (errorEl) {
@@ -2418,6 +2964,11 @@ async function loadSocialData() {
         acc[key] = socialState.settings[key];
         return acc;
       }, {});
+      // Seed display_name from nickname so it starts clean (not dirty) on the profile page
+      if (!socialState.initialSettings.display_name && socialState.nickname) {
+        socialState.initialSettings.display_name = socialState.nickname;
+        socialState.settings.display_name = socialState.nickname;
+      }
 
       applyProfile(socialState.profile);
       applyFormSettings(socialState.settings);
@@ -2437,6 +2988,12 @@ async function loadSocialData() {
         : '';
     }
     if (contentEl) contentEl.classList.remove('hidden');
+
+    // New profile page: initial preview render
+    if (SOCIAL_PAGE_KIND === 'profile') {
+      updatePreview();
+      validateTradeSharingWarning();
+    }
   } catch (error) {
     if (errorEl) {
       errorEl.classList.remove('hidden');
@@ -2450,7 +3007,7 @@ async function loadSocialData() {
 }
 
 async function saveSettings(event) {
-  event.preventDefault();
+  if (event?.preventDefault) event.preventDefault();
   if (socialState.isSaving || socialState.isGuest || socialState.nicknameRequired || !isDirty()) return;
 
   socialState.isSaving = true;
@@ -2470,8 +3027,10 @@ async function saveSettings(event) {
     socialState.initialSettings = { ...payload };
     applyVerification(socialState.profile, socialState.settings);
     setFeedback(feedbackEl, 'Settings saved.', 'success');
+    if (SOCIAL_PAGE_KIND === 'profile') showToast('Settings saved.', 'success');
   } catch (error) {
     setFeedback(feedbackEl, error.message || 'Unable to save settings.', 'error');
+    if (SOCIAL_PAGE_KIND === 'profile') showToast(error.message || 'Unable to save settings.', 'error');
   } finally {
     socialState.isSaving = false;
     updateActionState();
@@ -2481,20 +3040,26 @@ async function saveSettings(event) {
 async function regenerateFriendCode() {
   if (socialState.isRegenerating || socialState.isGuest || socialState.nicknameRequired) return;
 
-  const confirmed = window.confirm(
-    'Regenerate your friend code? Your previous code will stop working immediately.'
-  );
-  if (!confirmed) return;
+  // New profile page uses a modal — skip window.confirm there
+  if (SOCIAL_PAGE_KIND !== 'profile') {
+    const confirmed = window.confirm(
+      'Regenerate your friend code? Your previous code will stop working immediately.'
+    );
+    if (!confirmed) return;
+  }
 
   socialState.isRegenerating = true;
   updateActionState();
-  const feedbackEl = getEl('social-regenerate-feedback');
-  setFeedback(feedbackEl, 'Regenerating code...');
+  const feedbackEl = getEl('social-regenerate-feedback') || getEl('sp-regen-feedback');
 
   try {
     await socialApi('/api/social/friend-code/regenerate', { method: 'POST' });
     await loadSocialData();
-    setFeedback(feedbackEl, 'Friend code regenerated successfully.', 'success');
+    if (SOCIAL_PAGE_KIND === 'profile') {
+      showToast('New friend code generated — your old code no longer works.', 'success');
+    } else {
+      setFeedback(feedbackEl, 'Friend code regenerated successfully.', 'success');
+    }
   } catch (error) {
     setFeedback(feedbackEl, error.message || 'Unable to regenerate friend code.', 'error');
   } finally {
@@ -2505,20 +3070,340 @@ async function regenerateFriendCode() {
 
 async function copyFriendCode() {
   const code = socialState.profile?.friend_code;
-  const feedbackEl = getEl('social-regenerate-feedback');
   if (!code || code === 'Unavailable') {
-    setFeedback(feedbackEl, 'No friend code available to copy.', 'error');
+    if (SOCIAL_PAGE_KIND === 'profile') showToast('No friend code available.', 'error');
+    else setFeedback(getEl('social-regenerate-feedback'), 'No friend code available to copy.', 'error');
     return;
   }
-
   try {
     await navigator.clipboard.writeText(code);
-    setFeedback(feedbackEl, 'Friend code copied.', 'success');
-  } catch (error) {
-    setFeedback(feedbackEl, 'Clipboard unavailable. Copy manually.', 'error');
+    if (SOCIAL_PAGE_KIND === 'profile') showToast('Code copied.', 'success');
+    else setFeedback(getEl('social-regenerate-feedback'), 'Friend code copied.', 'success');
+  } catch (_err) {
+    if (SOCIAL_PAGE_KIND === 'profile') showToast('Clipboard unavailable — copy manually.', 'error');
+    else setFeedback(getEl('social-regenerate-feedback'), 'Clipboard unavailable. Copy manually.', 'error');
   }
 }
 
+
+// ── Profile page redesign functions ────────────────────────
+
+function populateTimezones() {
+  const select = document.querySelector('[name="timezone"]');
+  if (!select) return;
+  const detected = (typeof Intl !== 'undefined')
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : '';
+  const tzList = [
+    ['America/New_York', 'Eastern Time (ET)'],
+    ['America/Chicago', 'Central Time (CT)'],
+    ['America/Denver', 'Mountain Time (MT)'],
+    ['America/Los_Angeles', 'Pacific Time (PT)'],
+    ['America/Anchorage', 'Alaska (AKT)'],
+    ['Pacific/Honolulu', 'Hawaii (HT)'],
+    ['America/Toronto', 'Toronto (ET)'],
+    ['America/Vancouver', 'Vancouver (PT)'],
+    ['Europe/London', 'London (GMT/BST)'],
+    ['Europe/Dublin', 'Dublin (GMT/IST)'],
+    ['Europe/Paris', 'Paris (CET/CEST)'],
+    ['Europe/Berlin', 'Berlin (CET/CEST)'],
+    ['Europe/Amsterdam', 'Amsterdam (CET/CEST)'],
+    ['Europe/Zurich', 'Zurich (CET/CEST)'],
+    ['Europe/Stockholm', 'Stockholm (CET/CEST)'],
+    ['Europe/Oslo', 'Oslo (CET/CEST)'],
+    ['Europe/Helsinki', 'Helsinki (EET/EEST)'],
+    ['Europe/Warsaw', 'Warsaw (CET/CEST)'],
+    ['Europe/Bucharest', 'Bucharest (EET/EEST)'],
+    ['Europe/Athens', 'Athens (EET/EEST)'],
+    ['Europe/Istanbul', 'Istanbul (TRT)'],
+    ['Europe/Moscow', 'Moscow (MSK)'],
+    ['Africa/Cairo', 'Cairo (EET)'],
+    ['Africa/Johannesburg', 'Johannesburg (SAST)'],
+    ['Asia/Dubai', 'Dubai (GST)'],
+    ['Asia/Karachi', 'Karachi (PKT)'],
+    ['Asia/Kolkata', 'Mumbai / Kolkata (IST)'],
+    ['Asia/Bangkok', 'Bangkok (ICT)'],
+    ['Asia/Singapore', 'Singapore (SGT)'],
+    ['Asia/Hong_Kong', 'Hong Kong (HKT)'],
+    ['Asia/Shanghai', 'Shanghai (CST)'],
+    ['Asia/Tokyo', 'Tokyo (JST)'],
+    ['Asia/Seoul', 'Seoul (KST)'],
+    ['Australia/Sydney', 'Sydney (AEST/AEDT)'],
+    ['Australia/Melbourne', 'Melbourne (AEST/AEDT)'],
+    ['Australia/Perth', 'Perth (AWST)'],
+    ['Pacific/Auckland', 'Auckland (NZST/NZDT)'],
+  ];
+  const allVals = tzList.map(([v]) => v);
+  const list = detected && !allVals.includes(detected) ? [[detected, detected], ...tzList] : tzList;
+  select.innerHTML = '';
+  list.forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    if (value === detected) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function initScrollSpy() {
+  const sections = document.querySelectorAll('.sp-section[id]');
+  const navItems = document.querySelectorAll('.sp-sidenav-item[data-section]');
+  if (!sections.length || !navItems.length) return;
+
+  const ratios = new Map();
+  sections.forEach(s => ratios.set(s.id, 0));
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => ratios.set(e.target.id, e.intersectionRatio));
+    let maxId = null, maxRatio = -1;
+    ratios.forEach((ratio, id) => { if (ratio > maxRatio) { maxRatio = ratio; maxId = id; } });
+    if (maxId) navItems.forEach(item => item.classList.toggle('is-active', item.dataset.section === maxId));
+  }, { threshold: [0, 0.1, 0.25, 0.5], rootMargin: '-10% 0px -60% 0px' });
+
+  sections.forEach(s => observer.observe(s));
+
+  navItems.forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = document.getElementById(item.dataset.section);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+function updateSaveBar() {
+  const bar = getEl('sp-save-bar');
+  if (!bar) return;
+  const dirty = isDirty();
+  const blocked = socialState.loading || socialState.isGuest || socialState.nicknameRequired;
+  bar.classList.toggle('hidden', !dirty || blocked);
+
+  const countEl = getEl('sp-save-count');
+  if (countEl && socialState.initialSettings) {
+    const current = readFormSettings();
+    const changed = SOCIAL_SETTING_KEYS.filter(k => current[k] !== undefined && current[k] !== socialState.initialSettings[k]).length;
+    countEl.textContent = changed === 1 ? '1 unsaved change' : `${changed} unsaved changes`;
+  }
+
+  const spSaveBtn = getEl('sp-save-btn');
+  if (spSaveBtn) {
+    spSaveBtn.disabled = socialState.isSaving;
+    spSaveBtn.textContent = socialState.isSaving ? 'Saving…' : 'Save changes';
+  }
+}
+
+function updatePreview() {
+  if (SOCIAL_PAGE_KIND !== 'profile') return;
+  const form = getEl('social-settings-form');
+  if (!form) return;
+
+  const sharingEnabled = !!form.elements.namedItem('trade_sharing_enabled')?.checked;
+  const showPct = !!form.elements.namedItem('show_pnl_percent')?.checked;
+  const showR = !!form.elements.namedItem('show_r_multiple')?.checked;
+  const showCash = !!form.elements.namedItem('show_pnl_currency')?.checked;
+  const showSize = !!form.elements.namedItem('show_position_size')?.checked;
+  const showEntryStop = !!form.elements.namedItem('show_entry_stop')?.checked;
+  const showClosed = !!form.elements.namedItem('share_closed_trades')?.checked;
+  const showOpen = !!form.elements.namedItem('share_open_trades')?.checked;
+  const scope = form.elements.namedItem('trade_sharing_scope')?.value || 'friends_only';
+
+  const scopeText = {
+    friends_only: 'friends only',
+    friends_and_groups: 'friends and group members',
+    groups_only: 'group members only',
+    public: 'everyone',
+    private: 'nobody (private)'
+  };
+  const spScopeLabel = getEl('sp-mock-scope-label');
+  if (spScopeLabel) {
+    spScopeLabel.textContent = !sharingEnabled
+      ? 'Trade sharing is off'
+      : `Visible to ${scopeText[scope] || scope}`;
+  }
+
+  const metricsEl = getEl('sp-mock-metrics');
+  if (metricsEl) {
+    metricsEl.innerHTML = '';
+    if (!sharingEnabled) {
+      const msg = document.createElement('p');
+      msg.className = 'sp-mock-off-msg';
+      msg.textContent = 'Trade sharing is off — nothing shown.';
+      metricsEl.appendChild(msg);
+    } else {
+      const add = (text, cls) => {
+        const s = document.createElement('span');
+        s.className = `sp-mock-metric ${cls}`;
+        s.textContent = text;
+        metricsEl.appendChild(s);
+      };
+      if (showPct) add('+2.4%', 'sp-mock-metric--pos');
+      if (showR) add('+2.4R', 'sp-mock-metric--r');
+      if (showCash) add('+£187.99', 'sp-mock-metric--cash');
+      if (showSize) add('100 shares', 'sp-mock-metric--size');
+      if (showEntryStop) add('Entry $45.20 · Stop $43.80', 'sp-mock-metric--entry');
+      if (!showPct && !showR && !showCash && !showSize && !showEntryStop) {
+        const msg = document.createElement('p');
+        msg.className = 'sp-mock-off-msg';
+        msg.textContent = 'No fields selected.';
+        metricsEl.appendChild(msg);
+      }
+    }
+  }
+
+  const fieldsList = getEl('sp-preview-fields');
+  if (!fieldsList) return;
+  fieldsList.innerHTML = '';
+  const fields = [
+    { label: 'Ticker', on: sharingEnabled },
+    { label: 'R-multiple', on: sharingEnabled && showR },
+    { label: 'Percentage return', on: sharingEnabled && showPct },
+    { label: 'Duration held', on: sharingEnabled && showClosed },
+    { label: 'Entry / stop prices', on: sharingEnabled && showEntryStop },
+    { label: 'Cash amounts', on: sharingEnabled && showCash },
+    { label: 'Position size', on: sharingEnabled && showSize },
+    { label: 'Open positions', on: sharingEnabled && showOpen },
+  ];
+  fields.forEach(f => {
+    const li = document.createElement('li');
+    li.className = `sp-preview-field ${f.on ? 'sp-preview-field--on' : 'sp-preview-field--off'}`;
+    const icon = f.on
+      ? '<svg class="sp-pf-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 6l3 3 5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : '<svg class="sp-pf-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke-linecap="round"/></svg>';
+    li.innerHTML = icon + f.label;
+    fieldsList.appendChild(li);
+  });
+}
+
+function validateTradeSharingWarning() {
+  const form = getEl('social-settings-form');
+  if (!form) return;
+  const sharingOn = !!form.elements.namedItem('trade_sharing_enabled')?.checked;
+  const openOff = !form.elements.namedItem('share_open_trades')?.checked;
+  const closedOff = !form.elements.namedItem('share_closed_trades')?.checked;
+  const warning = getEl('sp-both-trades-off-warning');
+  if (warning) warning.classList.toggle('hidden', !(sharingOn && openOff && closedOff));
+}
+
+function initProfilePage() {
+  if (SOCIAL_PAGE_KIND !== 'profile') return;
+
+  populateTimezones();
+  initScrollSpy();
+
+  // Bio character counter
+  const bioInput = getEl('sp-input-bio');
+  const bioCounter = getEl('sp-bio-counter');
+  if (bioInput && bioCounter) {
+    const updateCounter = () => {
+      const len = bioInput.value.length;
+      bioCounter.textContent = `${len} / 280`;
+      bioCounter.classList.toggle('sp-char-counter--warn', len > 250);
+    };
+    bioInput.addEventListener('input', updateCounter);
+  }
+
+  // Display name live preview
+  const displayNameInput = getEl('sp-input-display-name');
+  if (displayNameInput) {
+    displayNameInput.addEventListener('input', () => {
+      const v = displayNameInput.value || '—';
+      const p = getEl('sp-display-name-preview');
+      if (p) p.textContent = v;
+      const m = getEl('sp-mock-name');
+      if (m) m.textContent = v;
+    });
+  }
+
+  // Nested panel visibility via master toggles
+  const form = getEl('social-settings-form');
+  if (form) {
+    form.addEventListener('change', updateDependentControls);
+    form.addEventListener('input', () => { updateSaveBar(); updatePreview(); setFeedback(getEl('social-settings-feedback'), ''); });
+    form.addEventListener('change', () => {
+      updateSaveBar();
+      updatePreview();
+      validateTradeSharingWarning();
+    });
+  }
+
+  // Regenerate modal
+  getEl('sp-regenerate-btn')?.addEventListener('click', () => {
+    getEl('sp-regen-modal')?.classList.remove('hidden');
+    getEl('sp-regen-modal')?.querySelector('button')?.focus();
+  });
+  getEl('sp-regen-cancel-btn')?.addEventListener('click', () => getEl('sp-regen-modal')?.classList.add('hidden'));
+  getEl('sp-regen-confirm-btn')?.addEventListener('click', async () => {
+    getEl('sp-regen-modal')?.classList.add('hidden');
+    await regenerateFriendCode();
+  });
+
+  // Copy code
+  getEl('sp-copy-code-btn')?.addEventListener('click', copyFriendCode);
+
+  // Disable social modal
+  getEl('sp-disable-social-btn')?.addEventListener('click', () => getEl('sp-disable-modal')?.classList.remove('hidden'));
+  getEl('sp-disable-cancel-btn')?.addEventListener('click', () => getEl('sp-disable-modal')?.classList.add('hidden'));
+  getEl('sp-disable-confirm-btn')?.addEventListener('click', () => {
+    getEl('sp-disable-modal')?.classList.add('hidden');
+    // TODO: implement disable social endpoint
+    showToast('Disable social (endpoint not yet implemented).', 'neutral');
+  });
+
+  // Delete profile modal
+  getEl('sp-delete-profile-btn')?.addEventListener('click', () => {
+    getEl('sp-delete-modal')?.classList.remove('hidden');
+    getEl('sp-delete-confirm-input')?.focus();
+  });
+  getEl('sp-delete-cancel-btn')?.addEventListener('click', () => {
+    getEl('sp-delete-modal')?.classList.add('hidden');
+    const inp = getEl('sp-delete-confirm-input');
+    if (inp) inp.value = '';
+    const btn = getEl('sp-delete-confirm-btn');
+    if (btn) btn.disabled = true;
+  });
+  const deleteInput = getEl('sp-delete-confirm-input');
+  const deleteConfirmBtn = getEl('sp-delete-confirm-btn');
+  if (deleteInput && deleteConfirmBtn) {
+    deleteInput.addEventListener('input', () => {
+      const name = (socialState.profile?.nickname || socialState.nickname || '').trim();
+      deleteConfirmBtn.disabled = !name || deleteInput.value.trim() !== name;
+    });
+  }
+  getEl('sp-delete-confirm-btn')?.addEventListener('click', () => {
+    getEl('sp-delete-modal')?.classList.add('hidden');
+    // TODO: implement delete profile endpoint
+    showToast('Delete profile (endpoint not yet implemented).', 'neutral');
+  });
+
+  // Export & brokers
+  getEl('sp-export-btn')?.addEventListener('click', () => showToast('Export requested (not yet implemented).', 'neutral'));
+  getEl('sp-manage-brokers-btn')?.addEventListener('click', () => { window.location.href = '/profile.html'; });
+
+  // Save bar
+  getEl('sp-save-btn')?.addEventListener('click', () => saveSettings({ preventDefault() {} }));
+  getEl('sp-discard-btn')?.addEventListener('click', () => {
+    if (socialState.initialSettings) {
+      applyFormSettings({ ...socialState.initialSettings });
+      updateSaveBar();
+      updatePreview();
+    }
+  });
+
+  // Dismiss modals on overlay click / Escape
+  document.querySelectorAll('.sp-modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.sp-modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'));
+    }
+  });
+
+  // Warn before leaving with unsaved changes
+  window.addEventListener('beforeunload', e => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+  });
+}
 
 function startFriendPolling() {
   stopFriendPolling();
@@ -2559,6 +3444,7 @@ function bindActions() {
   getEl('social-copy-code-btn')?.addEventListener('click', copyFriendCode);
   bindSettingsChangeTracking();
   bindFriendActions();
+  bindFriendsPageActions();
   getEl('social-create-group-form')?.addEventListener('submit', createTradeGroup);
   getEl('social-group-add-member-form')?.addEventListener('submit', addTradeGroupMember);
   getEl('social-group-announcement-form')?.addEventListener('submit', postGroupAnnouncement);
@@ -2574,6 +3460,7 @@ function bindActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   bindActions();
+  if (SOCIAL_PAGE_KIND === 'profile') initProfilePage();
   const initialLoads = [loadSocialData()];
   if (SOCIAL_PAGE_KIND === 'overview') {
     initialLoads.push(loadFriendData(), loadTradeGroups());

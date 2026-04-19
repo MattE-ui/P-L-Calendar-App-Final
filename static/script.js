@@ -522,14 +522,16 @@ function updateWeeklyRecapPreviewCard(recap) {
   const pnlEl = $('#weekly-recap-preview-pnl');
   if (!rangeEl || !pnlEl) return;
   if (!recap || !recap.metrics) {
-    rangeEl.textContent = 'Week range: —';
-    pnlEl.textContent = 'Realised PnL: —';
+    rangeEl.textContent = '—';
+    pnlEl.textContent = '—';
     return;
   }
   const metrics = recap.metrics || {};
   const weekLabel = metrics.weekLabel || `${metrics.weekStart || '—'} → ${metrics.weekEnd || '—'}`;
-  rangeEl.textContent = `Week range: ${weekLabel}`;
-  pnlEl.textContent = `Realised PnL: ${fmtMoney(metrics.weeklyRealisedPnlGBP ?? metrics.netPnlGBP)}`;
+  rangeEl.textContent = weekLabel;
+  const weekPnl = metrics.weeklyRealisedPnlGBP ?? metrics.netPnlGBP;
+  pnlEl.textContent = fmtMoney(weekPnl);
+  window.ThemeUtils?.applyPnlColorClass(pnlEl, weekPnl);
 }
 
 async function loadWeeklyRecapPreviewCard() {
@@ -1977,6 +1979,21 @@ function renderActiveTrades() {
   } else if (openLossCard) {
     openLossCard.classList.remove('negative');
   }
+
+  // Portfolio substat mirrors
+  const portfolioLivePnlEl = $('#db-portfolio-live-pnl');
+  if (portfolioLivePnlEl) {
+    portfolioLivePnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
+    if (!state.safeScreenshot) window.ThemeUtils?.applyPnlColorClass(portfolioLivePnlEl, livePnl);
+  }
+  const portfolioOpenRiskEl = $('#db-portfolio-open-risk');
+  if (portfolioOpenRiskEl) {
+    portfolioOpenRiskEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(openLossPotential);
+  }
+
+  // Open count badge
+  const openBadge = $('#db-open-count-badge');
+  if (openBadge) openBadge.textContent = `${trades.length} open`;
   if (list.querySelector('.trade-note-input:focus')) {
     updateActiveTradeDisplay(trades);
     state.activeTradesLastRealtimeSignature = realtimeSignature;
@@ -5110,6 +5127,20 @@ function bindControls() {
       render();
     });
   }
+
+  // Month nav prev/next buttons drive the period select
+  $('#cal-month-prev')?.addEventListener('click', () => {
+    const sel = $('#period-select');
+    if (!sel || sel.selectedIndex <= 0) return;
+    sel.selectedIndex = sel.selectedIndex - 1;
+    sel.dispatchEvent(new Event('change'));
+  });
+  $('#cal-month-next')?.addEventListener('click', () => {
+    const sel = $('#period-select');
+    if (!sel || sel.selectedIndex >= sel.options.length - 1) return;
+    sel.selectedIndex = sel.selectedIndex + 1;
+    sel.dispatchEvent(new Event('change'));
+  });
 
   $$('#view-controls button[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {

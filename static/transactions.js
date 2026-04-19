@@ -55,7 +55,13 @@ const state = {
     to: '',
     type: '',
     search: ''
-  }
+  },
+  // new UI state
+  page: 1,
+  pageSize: 25,
+  sort: 'date-desc',
+  datePreset: 'all',
+  uiFilters: { type: '', from: '', to: '' }
 };
 
 async function loadTransactionPrefs() {
@@ -326,7 +332,7 @@ async function saveNote() {
     if (target) {
       target.note = nextNote;
     }
-    renderTransactions(applyFilters(state.transactions));
+    renderList();
     if (status) {
       status.textContent = 'Saved.';
       status.classList.remove('is-error');
@@ -939,11 +945,14 @@ async function loadTransactions() {
     if (Array.isArray(serverProfiles) && !serverProfiles.length && state.profiles.length) {
       saveTransactionProfiles();
     }
+    await loadRates().catch(() => {});
     const data = await api('/api/pl');
     state.data = data || {};
     state.transactions = buildTransactions(state.data);
     pruneSplitSettings();
-    renderTransactions(state.transactions);
+    renderHeroCard();
+    renderChart();
+    renderList();
   } catch (e) {
     console.error('Failed to load transactions', e);
   }
@@ -968,7 +977,659 @@ function buildNoteKey(date, type, amount) {
   return `${date}-${type}-${amount}`;
 }
 
+// ── Hero card ────────────────────────────────────────────────
+
+function computeAllMetrics() {
+  const all = state.transactions;
+  const now = new Date();
+  const ym = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  const thisMonth = ym(now);
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonth = ym(prevDate);
+
+  let totalDeposited = 0, totalWithdrawn = 0, depositCount = 0, withdrawalCount = 0;
+  const monthNets = new Map();
+
+  all.forEach(tx => {
+    const txYm = tx.date.slice(0,7);
+    const net = monthNets.get(txYm) || 0;
+    monthNets.set(txYm, net + tx.amount);
+    if (tx.type === 'Deposit') { totalDeposited += tx.amount; depositCount++; }
+    else { totalWithdrawn += Math.abs(tx.amount); withdrawalCount++; }
+  });
+
+  const activeMonths = monthNets.size;
+  const lifetimeNet = totalDeposited - totalWithdrawn;
+  const avgMonth = activeMonths > 0 ? lifetimeNet / activeMonths : 0;
+
+  return {
+    lifetimeNet, totalDeposited, totalWithdrawn,
+    depositCount, withdrawalCount,
+    thisMonthNet: monthNets.get(thisMonth) || 0,
+    lastMonthNet: monthNets.get(lastMonth) || 0,
+    avgMonth
+  };
+}
+
+function renderHeroCard() {
+  const m = computeAllMetrics();
+  const sym = currencySymbols[state.currency] || '£';
+  const fmt = v => `${sym}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtSigned = v => v === 0 ? `${sym}0.00` : `${v > 0 ? '+' : '\u2212'}${fmt(v)}`;
+
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  const setColor = (id, v) => { const el = document.getElementById(id); if (el) el.style.color = v > 0 ? 'var(--success)' : v < 0 ? 'var(--danger)' : 'var(--text-muted)'; };
+
+  set('tx-net-cashflow', fmtSigned(m.lifetimeNet));
+  setColor('tx-net-cashflow', m.lifetimeNet);
+  set('tx-total-deposited', `+${fmt(m.totalDeposited)}`);
+  set('tx-total-withdrawn', `\u2212${fmt(m.totalWithdrawn)}`);
+  set('tx-deposit-count', `${m.depositCount} transaction${m.depositCount !== 1 ? 's' : ''}`);
+  set('tx-withdrawal-count', `${m.withdrawalCount} transaction${m.withdrawalCount !== 1 ? 's' : ''}`);
+
+  const setCmp = (id, v) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = fmtSigned(v);
+    el.style.color = v > 0 ? 'var(--success)' : v < 0 ? 'var(--danger)' : 'var(--text-muted)';
+  };
+  setCmp('tx-this-month', m.thisMonthNet);
+  setCmp('tx-last-month', m.lastMonthNet);
+  setCmp('tx-avg-month', m.avgMonth);
+}
+
+// ── Chart ─────────────────────────────────────────────────────
+
+function computeChartData() {
+  const now = new Date();
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const txs = state.transactions.filter(tx => tx.date.slice(0,7) === ym);
+    const deposited = txs.filter(tx => tx.type === 'Deposit').reduce((s, tx) => s + tx.amount, 0);
+    const withdrawn = txs.filter(tx => tx.type === 'Withdrawal').reduce((s, tx) => s + Math.abs(tx.amount), 0);
+    return { ym, label: d.toLocaleString('default', { month: 'short' }), deposited, withdrawn };
+  });
+}
+
+function renderChart() {
+  const svg = document.getElementById('tx-chart-svg');
+  const monthsEl = document.getElementById('tx-chart-months');
+  if (!svg || !monthsEl) return;
+
+  const data = computeChartData();
+  const maxVal = Math.max(...data.map(m => Math.max(m.deposited, m.withdrawn)), 1);
+  const W = 700, H = 160, ZERO_Y = H / 2, BAR_AREA = H / 2 - 14;
+  const N = 12, SLOT_W = W / N, BAR_W = Math.max(4, SLOT_W * 0.32), GAP = 2;
+
+  let html = `<line x1="0" y1="${ZERO_Y}" x2="${W}" y2="${ZERO_Y}" stroke="var(--border)" stroke-width="0.8" stroke-dasharray="4 3"/>`;
+
+  data.forEach((m, i) => {
+    const cx = SLOT_W * i + SLOT_W / 2;
+    const dh = (m.deposited / maxVal) * BAR_AREA;
+    const wh = (m.withdrawn / maxVal) * BAR_AREA;
+    const dx = (cx - BAR_W - GAP / 2).toFixed(1);
+    const wx = (cx + GAP / 2).toFixed(1);
+    if (m.deposited > 0)
+      html += `<rect class="tx-bar" x="${dx}" y="${(ZERO_Y - dh).toFixed(1)}" width="${BAR_W.toFixed(1)}" height="${dh.toFixed(1)}" rx="2" fill="var(--success)" opacity="0.8" data-i="${i}"/>`;
+    if (m.withdrawn > 0)
+      html += `<rect class="tx-bar" x="${wx}" y="${ZERO_Y.toFixed(1)}" width="${BAR_W.toFixed(1)}" height="${wh.toFixed(1)}" rx="2" fill="var(--danger)" opacity="0.8" data-i="${i}"/>`;
+  });
+  svg.innerHTML = html;
+
+  monthsEl.innerHTML = '';
+  data.forEach(m => {
+    const s = document.createElement('span');
+    s.className = 'tx-chart-month-label';
+    s.textContent = m.label;
+    monthsEl.appendChild(s);
+  });
+
+  const tooltip = document.getElementById('tx-chart-tooltip');
+  svg.querySelectorAll('.tx-bar').forEach(bar => {
+    const idx = parseInt(bar.dataset.i, 10);
+    const m = data[idx];
+    bar.addEventListener('mouseenter', () => {
+      if (!tooltip || !m) return;
+      const sym = currencySymbols[state.currency] || '£';
+      const fmt = v => `${sym}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const net = m.deposited - m.withdrawn;
+      tooltip.innerHTML = `<strong>${m.ym}</strong> &nbsp;In: +${fmt(m.deposited)} &nbsp;Out: \u2212${fmt(m.withdrawn)} &nbsp;Net: ${net >= 0 ? '+' : '\u2212'}${fmt(net)}`;
+      tooltip.classList.add('is-visible');
+    });
+    bar.addEventListener('mouseleave', () => tooltip?.classList.remove('is-visible'));
+  });
+}
+
+// ── Filtering & sorting ───────────────────────────────────────
+
+function applyUIFilters(transactions) {
+  const { type, from, to } = state.uiFilters;
+  const q = (document.getElementById('tx-search')?.value || '').trim().toLowerCase();
+  const fromTime = from ? Date.parse(from) : null;
+  const toTime   = to   ? Date.parse(to)   : null;
+  const sym = currencySymbols[state.currency] || '£';
+
+  return transactions.filter(tx => {
+    const txTime = Date.parse(tx.date);
+    if (fromTime && txTime < fromTime) return false;
+    if (toTime   && txTime > toTime)   return false;
+    if (type && tx.type !== type) return false;
+    if (q) {
+      const matchNote = tx.note.toLowerCase().includes(q);
+      const matchAmt  = `${sym}${Math.abs(tx.amount).toFixed(2)}`.toLowerCase().includes(q)
+                     || String(Math.abs(tx.amount)).includes(q);
+      if (!matchNote && !matchAmt) return false;
+    }
+    return true;
+  });
+}
+
+function sortTransactions(txs) {
+  const s = state.sort;
+  return [...txs].sort((a, b) => {
+    if (s === 'date-asc')    return new Date(a.date) - new Date(b.date);
+    if (s === 'amount-desc') return Math.abs(b.amount) - Math.abs(a.amount);
+    if (s === 'amount-asc')  return Math.abs(a.amount) - Math.abs(b.amount);
+    return new Date(b.date) - new Date(a.date); // date-desc default
+  });
+}
+
+function getFilteredSorted() {
+  return sortTransactions(applyUIFilters(state.transactions));
+}
+
+// ── Date presets ──────────────────────────────────────────────
+
+function computeDateRange(preset) {
+  const now = new Date();
+  const fmt = d => d.toISOString().slice(0, 10);
+  const today = fmt(now);
+  if (preset === 'this-month') return { from: fmt(new Date(now.getFullYear(), now.getMonth(), 1)), to: today, label: 'This month' };
+  if (preset === 'last-3')     return { from: fmt(new Date(now.getFullYear(), now.getMonth() - 3, now.getDate())), to: today, label: 'Last 3 months' };
+  if (preset === 'last-12')    return { from: fmt(new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())), to: today, label: 'Last 12 months' };
+  if (preset === 'ytd')        return { from: `${now.getFullYear()}-01-01`, to: today, label: 'Year to date' };
+  return { from: '', to: '', label: 'All time' };
+}
+
+function applyDatePreset(preset) {
+  state.datePreset = preset;
+  const range = computeDateRange(preset);
+  state.uiFilters.from = range.from;
+  state.uiFilters.to   = range.to;
+  const lbl = document.getElementById('tx-date-pill-label');
+  if (lbl) lbl.textContent = `Date: ${range.label}`;
+  const fromEl = document.getElementById('tx-filter-from');
+  const toEl   = document.getElementById('tx-filter-to');
+  if (fromEl) fromEl.value = range.from;
+  if (toEl)   toEl.value   = range.to;
+  document.querySelectorAll('.tx-date-preset').forEach(b => b.classList.toggle('active', b.dataset.preset === preset));
+}
+
+// ── List rendering ────────────────────────────────────────────
+
+function renderList() {
+  const groups   = document.getElementById('tx-groups');
+  const empty    = document.getElementById('tx-empty');
+  const countPill = document.getElementById('tx-count-pill');
+  if (!groups) return;
+
+  const filtered = getFilteredSorted();
+  const total = filtered.length;
+
+  if (countPill) countPill.textContent = `${total} total`;
+
+  if (!total) {
+    groups.innerHTML = '';
+    empty?.classList.remove('is-hidden');
+    renderPagination(0);
+    return;
+  }
+  empty?.classList.add('is-hidden');
+
+  const start = (state.page - 1) * state.pageSize;
+  const pageSlice = filtered.slice(start, start + state.pageSize);
+
+  // Month stats from full filtered list
+  const allByMonth = new Map();
+  filtered.forEach(tx => {
+    const ym = tx.date.slice(0,7);
+    if (!allByMonth.has(ym)) allByMonth.set(ym, []);
+    allByMonth.get(ym).push(tx);
+  });
+
+  // Group page slice by month
+  const pageByMonth = new Map();
+  pageSlice.forEach(tx => {
+    const ym = tx.date.slice(0,7);
+    if (!pageByMonth.has(ym)) pageByMonth.set(ym, []);
+    pageByMonth.get(ym).push(tx);
+  });
+
+  groups.innerHTML = '';
+  pageByMonth.forEach((txs, ym) => {
+    groups.appendChild(renderMonthGroup(ym, txs, allByMonth.get(ym) || txs));
+  });
+
+  renderPagination(total);
+}
+
+function renderMonthGroup(ym, txs, allForMonth) {
+  const [year, month] = ym.split('-');
+  const dt = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
+  const label = dt.toLocaleString('default', { month: 'long', year: 'numeric' }).toUpperCase();
+
+  const sym = currencySymbols[state.currency] || '£';
+  const fmt = v => `${sym}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const totalIn  = allForMonth.filter(tx => tx.type === 'Deposit').reduce((s, tx) => s + tx.amount, 0);
+  const totalOut = allForMonth.filter(tx => tx.type === 'Withdrawal').reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const net = totalIn - totalOut;
+
+  const el = document.createElement('div');
+  el.className = 'tx-month-group';
+
+  const hd = document.createElement('div');
+  hd.className = 'tx-month-hd';
+  hd.innerHTML = `
+    <div class="tx-month-hd-left">
+      <span class="tx-month-label">${label}</span>
+      <span class="tx-month-count">${allForMonth.length} transaction${allForMonth.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div class="tx-month-stats">
+      <span class="tx-mstat"><span class="tx-mstat-label">In:</span> <span class="tx-mstat-val" style="color:var(--success)">+${fmt(totalIn)}</span></span>
+      <span class="tx-mstat"><span class="tx-mstat-label">Out:</span> <span class="tx-mstat-val" style="color:var(--danger)">\u2212${fmt(totalOut)}</span></span>
+      <span class="tx-mstat"><span class="tx-mstat-label">Net:</span> <span class="tx-mstat-val" style="color:${net >= 0 ? 'var(--success)' : 'var(--danger)'}">${net >= 0 ? '+' : '\u2212'}${fmt(net)}</span></span>
+    </div>`;
+  el.appendChild(hd);
+  txs.forEach(tx => el.appendChild(renderTxRow(tx)));
+  return el;
+}
+
+function renderTxRow(tx) {
+  const row = document.createElement('div');
+  row.className = 'tx-row';
+  row.dataset.id = tx.id;
+
+  const isDeposit = tx.type === 'Deposit';
+  const sym = currencySymbols[state.currency] || '£';
+  const fmtAmt = v => `${sym}${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const signedAmt = `${isDeposit ? '+' : '\u2212'}${fmtAmt(tx.amount)}`;
+
+  const d = new Date(tx.date + 'T00:00:00');
+  const dayStr  = d.toLocaleString('default', { day: 'numeric', month: 'short' });
+  const weekday = d.toLocaleString('default', { weekday: 'short' });
+
+  const arrowUp   = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 11V3M3 7l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const arrowDown = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 3v8M3 7l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const noteHtml  = tx.note
+    ? `<span class="tx-row-note">${tx.note.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`
+    : `<span class="tx-row-note-empty" tabindex="0">Add a note</span>`;
+
+  row.innerHTML = `
+    <div class="tx-row-icon ${isDeposit ? 'tx-icon-dep' : 'tx-icon-wit'}">${isDeposit ? arrowUp : arrowDown}</div>
+    <div class="tx-row-date">
+      <span class="tx-date-main">${dayStr}</span>
+      <span class="tx-date-week">${weekday}</span>
+    </div>
+    <div class="tx-row-info">
+      <span class="tx-row-type">${tx.type}</span>
+      ${noteHtml}
+    </div>
+    <div class="tx-row-amount ${isDeposit ? 'tx-amt-dep' : 'tx-amt-wit'}">${signedAmt}</div>
+    <div class="tx-row-actions">
+      <button class="tx-more-btn" type="button" data-id="${tx.id}" aria-label="More options" aria-haspopup="menu">
+        <svg width="3" height="13" viewBox="0 0 3 13" fill="none" aria-hidden="true">
+          <circle cx="1.5" cy="1.5" r="1.5" fill="currentColor"/>
+          <circle cx="1.5" cy="6.5" r="1.5" fill="currentColor"/>
+          <circle cx="1.5" cy="11.5" r="1.5" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>`;
+
+  // Inline note edit
+  const emptyNote = row.querySelector('.tx-row-note-empty');
+  if (emptyNote) {
+    const activate = () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'tx-row-note-input';
+      input.value = tx.note || '';
+      input.placeholder = 'Add a note';
+      emptyNote.replaceWith(input);
+      input.focus();
+      const persist = () => {
+        tx.note = input.value.trim();
+        state.notes[tx.noteKey] = tx.note;
+        try { localStorage.setItem('plc-transactions-notes', JSON.stringify(state.notes)); } catch(e) {}
+        renderList();
+      };
+      input.addEventListener('blur', persist);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } if (e.key === 'Escape') { input.removeEventListener('blur', persist); renderList(); } });
+    };
+    emptyNote.addEventListener('click', e => { e.stopPropagation(); activate(); });
+    emptyNote.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+  }
+
+  row.addEventListener('click', e => {
+    if (e.target.closest('.tx-row-actions') || e.target.closest('.tx-row-note-empty') || e.target.closest('.tx-row-note-input')) return;
+    openNoteModal(tx);
+  });
+
+  row.querySelector('.tx-more-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    openRowMenu(tx, e.currentTarget);
+  });
+
+  return row;
+}
+
+function openRowMenu(tx, anchor) {
+  document.querySelectorAll('.tx-row-menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'tx-row-menu';
+  menu.innerHTML = `
+    <button type="button" class="tx-menu-opt" data-action="edit">Edit note</button>
+    <button type="button" class="tx-menu-opt tx-menu-opt--danger" data-action="delete">Delete</button>`;
+  document.body.appendChild(menu);
+
+  const rect = anchor.getBoundingClientRect();
+  const menuW = 160;
+  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${Math.max(8, rect.right - menuW)}px;width:${menuW}px;`;
+
+  menu.querySelector('[data-action="edit"]')?.addEventListener('click', () => { menu.remove(); openNoteModal(tx); });
+  menu.querySelector('[data-action="delete"]')?.addEventListener('click', () => {
+    menu.remove();
+    alert('Transactions are linked to calendar entries. To delete, edit the calendar day and clear the deposit or withdrawal amount.');
+  });
+
+  setTimeout(() => {
+    const close = e => { if (!menu.contains(e.target) && e.target !== anchor) { menu.remove(); document.removeEventListener('click', close, true); } };
+    document.addEventListener('click', close, true);
+  }, 0);
+}
+
+// ── Pagination ────────────────────────────────────────────────
+
+function renderPagination(total) {
+  const bar = document.getElementById('tx-pagination');
+  if (!bar) return;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  if (!total) { bar.innerHTML = ''; return; }
+
+  const start = (state.page - 1) * state.pageSize + 1;
+  const end   = Math.min(state.page * state.pageSize, total);
+
+  let pages = '';
+  for (let i = 1; i <= totalPages; i++) {
+    if (totalPages > 7 && i > 2 && i < totalPages - 1 && Math.abs(i - state.page) > 1) {
+      if (i === 3 || i === totalPages - 2) pages += `<span class="tx-pg-ellipsis">&hellip;</span>`;
+      continue;
+    }
+    pages += `<button type="button" class="tx-pg-btn${i === state.page ? ' active' : ''}" data-page="${i}">${i}</button>`;
+  }
+
+  bar.innerHTML = `
+    <span class="tx-pg-info">Showing ${start}&ndash;${end} of ${total} transactions</span>
+    <div class="tx-pg-controls">
+      <button type="button" class="tx-pg-btn tx-pg-prev"${state.page <= 1 ? ' disabled' : ''}>&larr; Prev</button>
+      ${pages}
+      <button type="button" class="tx-pg-btn tx-pg-next"${state.page >= totalPages ? ' disabled' : ''}>Next &rarr;</button>
+    </div>
+    <select id="tx-pg-size" class="tx-pg-size">
+      <option value="25"${state.pageSize===25?' selected':''}>25 / page</option>
+      <option value="50"${state.pageSize===50?' selected':''}>50 / page</option>
+      <option value="100"${state.pageSize===100?' selected':''}>100 / page</option>
+    </select>`;
+
+  bar.querySelectorAll('.tx-pg-btn[data-page]').forEach(btn =>
+    btn.addEventListener('click', () => { state.page = parseInt(btn.dataset.page, 10); renderList(); window.scrollTo(0, 0); }));
+  bar.querySelector('.tx-pg-prev')?.addEventListener('click', () => { if (state.page > 1) { state.page--; renderList(); window.scrollTo(0, 0); } });
+  bar.querySelector('.tx-pg-next')?.addEventListener('click', () => { if (state.page < totalPages) { state.page++; renderList(); window.scrollTo(0, 0); } });
+  bar.querySelector('#tx-pg-size')?.addEventListener('change', e => { state.pageSize = parseInt(e.target.value, 10); state.page = 1; renderList(); });
+}
+
+// ── URL state ─────────────────────────────────────────────────
+
+function readURLFilters() {
+  const p = new URLSearchParams(window.location.search);
+  return {
+    type:   p.get('type')   || '',
+    from:   p.get('from')   || '',
+    to:     p.get('to')     || '',
+    search: p.get('search') || '',
+    sort:   p.get('sort')   || 'date-desc',
+    preset: p.get('preset') || 'all',
+    page:   parseInt(p.get('page') || '1', 10)
+  };
+}
+
+function pushURLFilters() {
+  const p = new URLSearchParams();
+  if (state.uiFilters.type) p.set('type', state.uiFilters.type);
+  if (state.uiFilters.from) p.set('from', state.uiFilters.from);
+  if (state.uiFilters.to)   p.set('to',   state.uiFilters.to);
+  const q = document.getElementById('tx-search')?.value || '';
+  if (q) p.set('search', q);
+  if (state.sort !== 'date-desc') p.set('sort', state.sort);
+  if (state.datePreset !== 'all') p.set('preset', state.datePreset);
+  if (state.page > 1) p.set('page', state.page);
+  const s = p.toString();
+  history.replaceState(null, '', s ? `?${s}` : location.pathname);
+}
+
+function applyAndRender() {
+  state.page = 1;
+  pushURLFilters();
+  renderList();
+}
+
+function restoreURLState() {
+  const p = readURLFilters();
+  state.uiFilters.type = p.type;
+  state.sort  = p.sort;
+  state.page  = isNaN(p.page) ? 1 : p.page;
+  const sortLabels = { 'date-desc': 'Date, newest', 'date-asc': 'Date, oldest', 'amount-desc': 'Amount, highest', 'amount-asc': 'Amount, lowest' };
+  document.querySelectorAll('#tx-type-toggle button').forEach(b => b.classList.toggle('active', b.dataset.val === p.type));
+  document.querySelectorAll('.tx-sort-opt').forEach(b => b.classList.toggle('active', b.dataset.sort === state.sort));
+  const lbl = document.getElementById('tx-sort-label');
+  if (lbl) lbl.textContent = `Sort: ${sortLabels[state.sort] || state.sort}`;
+  const searchEl = document.getElementById('tx-search');
+  if (searchEl && p.search) searchEl.value = p.search;
+  if (p.preset && p.preset !== 'custom') {
+    applyDatePreset(p.preset);
+  } else if (p.from || p.to) {
+    state.uiFilters.from = p.from;
+    state.uiFilters.to   = p.to;
+    const fromEl = document.getElementById('tx-filter-from');
+    const toEl   = document.getElementById('tx-filter-to');
+    if (fromEl) fromEl.value = p.from;
+    if (toEl)   toEl.value   = p.to;
+    const pillLbl = document.getElementById('tx-date-pill-label');
+    if (pillLbl) pillLbl.textContent = `Date: ${p.from || '\u2026'} \u2192 ${p.to || '\u2026'}`;
+    document.querySelectorAll('.tx-date-preset').forEach(b => b.classList.remove('active'));
+  }
+}
+
+// ── Add transaction modal ─────────────────────────────────────
+
+function openAddModal() {
+  const modal = document.getElementById('tx-add-modal');
+  if (!modal) return;
+  const dateEl   = document.getElementById('tx-add-date');
+  const amountEl = document.getElementById('tx-add-amount');
+  const notesEl  = document.getElementById('tx-add-notes');
+  const status   = document.getElementById('tx-add-status');
+  if (dateEl)   dateEl.value   = new Date().toISOString().slice(0, 10);
+  if (amountEl) amountEl.value = '';
+  if (notesEl)  notesEl.value  = '';
+  if (status)   status.textContent = '';
+  document.querySelectorAll('#tx-add-type-toggle button').forEach(b => b.classList.toggle('active', b.dataset.val === 'Deposit'));
+  modal.classList.remove('hidden');
+  amountEl?.focus();
+}
+
+function closeAddModal() {
+  document.getElementById('tx-add-modal')?.classList.add('hidden');
+}
+
+async function saveAddTransaction() {
+  const status   = document.getElementById('tx-add-status');
+  const activeType = document.querySelector('#tx-add-type-toggle button.active')?.dataset.val || 'Deposit';
+  const amount   = parseFloat(document.getElementById('tx-add-amount')?.value || '0');
+  const date     = document.getElementById('tx-add-date')?.value || '';
+  const notes    = document.getElementById('tx-add-notes')?.value?.trim() || '';
+
+  if (!date)          { if (status) status.textContent = 'Please enter a date.'; return; }
+  if (!(amount > 0))  { if (status) status.textContent = 'Please enter a valid amount greater than zero.'; return; }
+
+  if (status) { status.textContent = 'Saving\u2026'; status.classList.remove('is-error'); }
+
+  try {
+    await api('/api/pl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date,
+        cashIn:  activeType === 'Deposit'    ? amount : 0,
+        cashOut: activeType === 'Withdrawal' ? amount : 0,
+        note: notes || undefined
+      })
+    });
+    closeAddModal();
+    const data = await api('/api/pl');
+    state.data = data || {};
+    state.transactions = buildTransactions(state.data);
+    renderHeroCard();
+    renderChart();
+    renderList();
+  } catch (e) {
+    if (status) { status.textContent = e?.message || 'Failed to save.'; status.classList.add('is-error'); }
+  }
+}
+
+// ── Export ────────────────────────────────────────────────────
+
+function exportTransactions() {
+  const sym = currencySymbols[state.currency] || '£';
+  const lines = ['Date,Type,Amount,Notes'];
+  getFilteredSorted().forEach(tx => {
+    const sign = tx.type === 'Deposit' ? '+' : '-';
+    lines.push(`${tx.date},${tx.type},${sign}${sym}${Math.abs(tx.amount).toFixed(2)},"${(tx.note || '').replace(/"/g, '""')}"`);
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `transactions-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// ── New UI bindings ───────────────────────────────────────────
+
+function bindNewUI() {
+  // Header actions
+  document.getElementById('tx-log-btn')?.addEventListener('click', openAddModal);
+  document.getElementById('tx-export-btn')?.addEventListener('click', exportTransactions);
+
+  // Add modal
+  document.getElementById('tx-add-modal-close')?.addEventListener('click', closeAddModal);
+  document.getElementById('tx-add-cancel-btn')?.addEventListener('click', closeAddModal);
+  document.getElementById('tx-add-save-btn')?.addEventListener('click', saveAddTransaction);
+  document.getElementById('tx-add-modal')?.addEventListener('click', e => { if (e.target === document.getElementById('tx-add-modal')) closeAddModal(); });
+  document.getElementById('tx-add-type-toggle')?.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-val]');
+    if (!btn) return;
+    document.querySelectorAll('#tx-add-type-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+
+  // Search
+  let searchTimer;
+  document.getElementById('tx-search')?.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applyAndRender, 220);
+  });
+
+  // Type segmented
+  document.getElementById('tx-type-toggle')?.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-val]');
+    if (!btn) return;
+    document.querySelectorAll('#tx-type-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.uiFilters.type = btn.dataset.val;
+    applyAndRender();
+  });
+
+  // Date pill + popover
+  document.getElementById('tx-date-pill')?.addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('tx-date-popover')?.classList.toggle('is-open');
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.tx-date-pill-wrap'))
+      document.getElementById('tx-date-popover')?.classList.remove('is-open');
+  });
+  document.querySelectorAll('.tx-date-preset').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    applyDatePreset(btn.dataset.preset);
+    document.getElementById('tx-date-popover')?.classList.remove('is-open');
+    applyAndRender();
+  }));
+  document.getElementById('tx-apply-custom-range')?.addEventListener('click', e => {
+    e.stopPropagation();
+    state.uiFilters.from = document.getElementById('tx-filter-from')?.value || '';
+    state.uiFilters.to   = document.getElementById('tx-filter-to')?.value   || '';
+    state.datePreset = 'custom';
+    const lbl = document.getElementById('tx-date-pill-label');
+    const { from, to } = state.uiFilters;
+    if (lbl) lbl.textContent = from || to ? `Date: ${from || '\u2026'} \u2192 ${to || '\u2026'}` : 'Date: All time';
+    document.querySelectorAll('.tx-date-preset').forEach(b => b.classList.remove('active'));
+    document.getElementById('tx-date-popover')?.classList.remove('is-open');
+    applyAndRender();
+  });
+
+  // Reset
+  document.getElementById('tx-reset-btn')?.addEventListener('click', () => {
+    state.uiFilters = { type: '', from: '', to: '' };
+    state.datePreset = 'all';
+    state.sort = 'date-desc';
+    state.page = 1;
+    const searchEl = document.getElementById('tx-search');
+    if (searchEl) searchEl.value = '';
+    document.querySelectorAll('#tx-type-toggle button').forEach(b => b.classList.toggle('active', b.dataset.val === ''));
+    applyDatePreset('all');
+    document.querySelectorAll('.tx-sort-opt').forEach(b => b.classList.toggle('active', b.dataset.sort === 'date-desc'));
+    const lbl = document.getElementById('tx-sort-label');
+    if (lbl) lbl.textContent = 'Sort: Date, newest';
+    pushURLFilters();
+    renderList();
+  });
+
+  // Sort
+  const sortLabels = { 'date-desc': 'Date, newest', 'date-asc': 'Date, oldest', 'amount-desc': 'Amount, highest', 'amount-asc': 'Amount, lowest' };
+  document.getElementById('tx-sort-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('tx-sort-menu')?.classList.toggle('is-open');
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.tx-sort-wrap'))
+      document.getElementById('tx-sort-menu')?.classList.remove('is-open');
+  });
+  document.querySelectorAll('.tx-sort-opt').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    state.sort = btn.dataset.sort;
+    document.querySelectorAll('.tx-sort-opt').forEach(b => b.classList.toggle('active', b.dataset.sort === state.sort));
+    const lbl = document.getElementById('tx-sort-label');
+    if (lbl) lbl.textContent = `Sort: ${sortLabels[state.sort] || state.sort}`;
+    document.getElementById('tx-sort-menu')?.classList.remove('is-open');
+    state.page = 1;
+    pushURLFilters();
+    renderList();
+  }));
+}
+
+// ── Init ──────────────────────────────────────────────────────
+
 bindPageActions();
-loadHeroMetrics();
+bindNewUI();
+restoreURLState();
 loadTransactions();
-bindFilters();

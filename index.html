@@ -25,49 +25,94 @@
   </div>
 
   <main class="container">
-    <section class="dashboard-top-content" aria-label="Dashboard portfolio overview">
-      <section class="hero-metrics" aria-label="Portfolio summary">
-        <article class="metric-card" id="hero-net-deposits">
-          <h3>Net deposits</h3>
-          <div class="metric-value" id="hero-net-deposits-value">£0.00</div>
-          <div class="metric-sub" id="hero-net-deposits-sub"></div>
-        </article>
-        <article class="metric-card" id="hero-portfolio">
-          <h3>Portfolio value</h3>
-          <div class="metric-value" id="header-portfolio-value">£0.00</div>
-          <div class="metric-sub" id="header-portfolio-sub"></div>
-        </article>
-        <article class="metric-card" id="hero-net-performance">
-          <h3>Net performance</h3>
-          <div class="metric-value" id="hero-net-performance-value">£0.00</div>
-          <div class="metric-sub" id="hero-net-performance-sub"></div>
-        </article>
-      </section>
-      <section class="weekly-recap-entry" aria-label="Weekly recap">
-        <p class="tool-overline">Weekly recap</p>
-        <h3 class="weekly-recap-entry__title">Latest recap</h3>
-        <div class="weekly-recap-entry__stats">
-          <p id="weekly-recap-preview-range" class="weekly-recap-entry__stat">—</p>
-          <p id="weekly-recap-preview-pnl" class="weekly-recap-entry__pnl">—</p>
+
+    <!-- ── Hero row ─────────────────────────────────────────────── -->
+    <section class="db-hero" aria-label="Dashboard overview">
+
+      <!-- Portfolio summary card -->
+      <article class="db-card db-portfolio" id="hero-net-performance" aria-label="Portfolio summary">
+        <div class="db-portfolio__head">
+          <div class="db-portfolio__head-left">
+            <p class="db-overline">Portfolio value</p>
+            <div class="db-portfolio__value" id="header-portfolio-value">£0.00</div>
+            <div class="db-portfolio__change" id="header-portfolio-sub"></div>
+            <div class="db-portfolio__perf">
+              <span id="hero-net-performance-value" class="db-portfolio__perf-val"></span>
+              <span id="hero-net-performance-sub" class="db-portfolio__perf-sub"></span>
+            </div>
+          </div>
+          <div class="db-seg db-portfolio__tf" role="group" aria-label="Portfolio timeframe">
+            <button type="button" data-portfolio-tf="1d">1D</button>
+            <button type="button" data-portfolio-tf="1w">1W</button>
+            <button type="button" data-portfolio-tf="1m" class="is-active">1M</button>
+            <button type="button" data-portfolio-tf="ytd">YTD</button>
+            <button type="button" data-portfolio-tf="all">All</button>
+          </div>
         </div>
-        <button id="weekly-recap-view-last-btn" class="primary outline weekly-recap-entry__btn" type="button">Open Review</button>
-      </section>
+        <div id="portfolio-trend" class="mini-line db-portfolio__sparkline"></div>
+        <hr class="db-portfolio__divider">
+        <div class="db-portfolio__substats">
+          <div class="db-substat">
+            <p class="db-substat__label">Net deposits</p>
+            <strong class="db-substat__value" id="hero-net-deposits-value">£0.00</strong>
+            <span class="db-substat__alt" id="hero-net-deposits-sub"></span>
+          </div>
+          <div class="db-substat db-substat--pnl">
+            <p class="db-substat__label">Live open PnL</p>
+            <strong class="db-substat__value" id="db-portfolio-live-pnl">£0.00</strong>
+          </div>
+          <div class="db-substat db-substat--risk">
+            <p class="db-substat__label">Open risk</p>
+            <strong class="db-substat__value" id="db-portfolio-open-risk">£0.00</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- Weekly recap card -->
+      <article class="db-card db-weekly" aria-label="Weekly recap">
+        <div class="db-weekly__head">
+          <p class="db-overline">Weekly recap</p>
+          <span class="db-weekly__range" id="weekly-recap-preview-range">—</span>
+        </div>
+        <p class="db-weekly__pnl-label">Realised PnL</p>
+        <div class="db-weekly__pnl" id="weekly-recap-preview-pnl">—</div>
+        <div class="db-weekly__chips">
+          <div class="db-chip">
+            <p class="db-chip__label">Win rate</p>
+            <strong class="db-chip__value" id="metric-win-rate">—</strong>
+          </div>
+          <div class="db-chip">
+            <p class="db-chip__label">Trades</p>
+            <strong class="db-chip__value" id="metric-trade-count">—</strong>
+          </div>
+          <div class="db-chip">
+            <p class="db-chip__label">Avg R</p>
+            <strong class="db-chip__value" id="metric-risk-value">—</strong>
+          </div>
+        </div>
+        <button id="weekly-recap-view-last-btn" class="primary outline db-weekly__btn" type="button">Open review</button>
+      </article>
+
     </section>
+
+    <!-- Safe screenshot alert -->
     <div id="safe-screenshot-alert" class="safe-screenshot-banner hidden" role="status">
       <div class="safe-screenshot-card">
         <span>Portfolio values are hidden for safe screenshots.</span>
         <button id="safe-screenshot-open-qs" class="link-button" type="button">Turn them back on (Quick settings)</button>
       </div>
     </div>
-    <div class="dashboard-grid dashboard-theme-shell">
-      <div class="side-column">
-        <div class="column-panel">
-          <section id="risk-card" class="tool-card panel interactive">
+
+    <!-- ── Main workspace: 3-col ─────────────────────────────────── -->
+    <div class="db-workspace dashboard-theme-shell">
+
+      <!-- Left rail: Risk calculator -->
+      <div class="db-rail">
+        <section id="risk-card" class="db-card tool-card interactive">
           <div class="tool-header">
             <div>
               <p class="tool-overline">Risk calculator</p>
               <h3 class="text-gold-grad text-gold-glow">Size your next trade</h3>
-              <p class="tool-sub">Use your balance, entry, stop, and risk to find a position size.</p>
               <div id="risk-prefill-banner" class="risk-prefill-banner hidden" role="status" aria-live="polite">
                 <span class="risk-prefill-badge">Prefilled from trade alert</span>
                 <span id="risk-alert-risk-badge" class="risk-prefill-badge risk-prefill-badge-secondary hidden">Risk % imported from trade alert</span>
@@ -79,6 +124,13 @@
             <div class="tool-field">
               <label for="risk-symbol-input">Ticker / symbol</label>
               <input id="risk-symbol-input" type="text" placeholder="e.g. AAPL">
+            </div>
+            <div class="tool-field">
+              <label>Direction</label>
+              <div class="chip-toggle inline" id="risk-direction-toggle" role="group" aria-label="Trade direction">
+                <button data-direction="long" class="active" type="button">Long</button>
+                <button data-direction="short" type="button">Short</button>
+              </div>
             </div>
             <div class="field-row two-col">
               <div class="tool-field grouped-toggle">
@@ -92,7 +144,9 @@
               </div>
             </div>
             <div class="tool-field">
-              <label for="risk-percent-input">Risk per trade (% of portfolio)</label>
+              <div class="db-risk-pct-head">
+                <label for="risk-percent-input">Risk per trade</label>
+              </div>
               <div class="chip-toggle inline" id="risk-percent-toggle" role="group" aria-label="Risk per trade">
                 <button type="button" data-risk-pct="0.25">0.25%</button>
                 <button type="button" data-risk-pct="0.5">0.5%</button>
@@ -103,157 +157,143 @@
                 <input id="risk-amount-input" type="number" step="0.01" min="0.01" value="0" placeholder="Risk £">
               </div>
             </div>
-            <div class="field-row two-col">
-              <div class="tool-field grouped-toggle">
-                <label>Direction</label>
-                <div class="chip-toggle inline" id="risk-direction-toggle" role="group" aria-label="Trade direction">
-                  <button data-direction="long" class="active" type="button">Long</button>
-                  <button data-direction="short" type="button">Short</button>
-                </div>
-              </div>
-              <div class="tool-field grouped-toggle">
-                <label>Currency</label>
-                <div class="chip-toggle inline" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
-                  <button data-risk-currency="GBP" class="active" type="button">GBP</button>
-                  <button data-risk-currency="USD" type="button">USD</button>
-                  <button data-risk-currency="EUR" type="button">EUR</button>
-                </div>
+            <div class="tool-field">
+              <label>Currency</label>
+              <div class="chip-toggle inline" id="risk-currency-toggle" role="group" aria-label="Risk calculator currency">
+                <button data-risk-currency="GBP" class="active" type="button">GBP</button>
+                <button data-risk-currency="USD" type="button">USD</button>
+                <button data-risk-currency="EUR" type="button">EUR</button>
               </div>
             </div>
-            <div class="tool-field full-span">
+            <div class="tool-field">
               <div id="risk-error" class="error" aria-live="polite"></div>
             </div>
           </div>
           <div class="tool-results panelRaised" id="risk-results">
             <div class="tool-result">
-              <p>Risk amount</p>
-              <strong id="risk-amount-display" class="valueGold">£0.00</strong>
-              <span id="risk-amount-note" class="tool-note"></span>
-            </div>
-            <div class="tool-result">
               <p>Position size</p>
-              <strong id="risk-position-display" class="valueGold">£0.00</strong>
+              <strong id="risk-position-display" class="valueGold">—</strong>
               <span id="risk-position-note" class="tool-note"></span>
             </div>
             <div class="tool-result">
               <p>Shares / units</p>
-              <strong id="risk-shares-display">0</strong>
+              <strong id="risk-shares-display">—</strong>
               <span id="risk-share-note" class="tool-note"></span>
             </div>
             <div class="tool-result">
+              <p>Risk amount</p>
+              <strong id="risk-amount-display" class="valueGold">—</strong>
+              <span id="risk-amount-note" class="tool-note"></span>
+            </div>
+            <div class="tool-result">
               <p>Risk per share</p>
-              <strong id="risk-per-share-display" class="valueGold">£0.00</strong>
+              <strong id="risk-per-share-display" class="valueGold">—</strong>
               <span id="risk-per-share-note" class="tool-note"></span>
             </div>
           </div>
-            <div class="tool-grid">
-              <div class="tool-field">
-                <label for="risk-date-input">Log trade to calendar</label>
-                <input id="risk-date-input" type="date">
-                <p class="tool-note">Defaults to today; pick another day if you’re backfilling.</p>
-              </div>
-              <div class="tool-actions log-actions">
-                <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
-                <div id="risk-log-status" class="error" aria-live="polite"></div>
-              </div>
+          <div class="tool-grid">
+            <div class="tool-field">
+              <label for="risk-date-input">Log trade to calendar</label>
+              <input id="risk-date-input" type="date">
+              <p class="tool-note">Defaults to today; pick another day if you’re backfilling.</p>
             </div>
+            <div class="tool-actions log-actions">
+              <button id="risk-log-btn" class="primary outline">Save trade to calendar</button>
+              <div id="risk-log-status" class="error" aria-live="polite"></div>
+            </div>
+          </div>
         </section>
       </div>
 
-      </div>
-
-      <div class="center-column" id="calendar">
-        <div class="column-panel center-panel panelRaised interactive">
-          <div id="view-controls">
-            <div class="control-group">
-              <button data-view="day">Day</button>
-              <button data-view="week">Week</button>
-              <button data-view="month" class="active">Month</button>
-              <button data-view="year">Year</button>
+      <!-- Center: Calendar -->
+      <div class="db-center" id="calendar">
+        <div class="db-card db-calendar interactive">
+          <div class="db-calendar__head">
+            <div class="db-calendar__head-left">
+              <div class="db-month-nav">
+                <button type="button" id="cal-month-prev" class="db-month-nav__btn" aria-label="Previous period">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9 11L5 7l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <select id="period-select" class="db-month-nav__select" aria-label="Period selector"></select>
+                <button type="button" id="cal-month-next" class="db-month-nav__btn" aria-label="Next period">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div id="avg" class="db-calendar__avg avg"></div>
             </div>
-            <div class="control-group end">
-              <select id="period-select" aria-label="Period selector"></select>
-              <select id="currency-select" aria-label="Currency selector">
-                <option value="GBP">GBP (£)</option>
-                <option value="USD">USD ($)</option>
-                <option value="EUR">EUR (€)</option>
+            <div class="db-calendar__head-right">
+              <select id="currency-select" class="db-currency-sel" aria-label="Currency selector">
+                <option value="GBP">GBP £</option>
+                <option value="USD">USD $</option>
+                <option value="EUR">EUR €</option>
               </select>
+              <div id="view-controls" class="db-seg" role="group" aria-label="Calendar view">
+                <button data-view="day">Day</button>
+                <button data-view="week">Week</button>
+                <button data-view="month" class="active">Month</button>
+                <button data-view="year">Year</button>
+              </div>
             </div>
           </div>
 
           <section class="title-wrap">
             <h2 id="title"></h2>
-            <div id="avg" class="avg"></div>
           </section>
           <section id="mobile-month-summary" class="mobile-month-summary hidden" aria-live="polite"></section>
-
           <section id="grid" class="grid"></section>
+
+          <div class="db-calendar__legend">
+            <div class="db-legend__items">
+              <span class="db-legend__swatch db-legend__swatch--gain"></span><span>Gain</span>
+              <span class="db-legend__swatch db-legend__swatch--loss"></span><span>Loss</span>
+              <span class="db-legend__swatch db-legend__swatch--empty"></span><span>No trades</span>
+            </div>
+            <span class="db-legend__hint">Click a day to review</span>
+          </div>
         </div>
       </div>
 
-      <div class="side-column">
-        <div class="column-panel">
-          <section id="active-trades-card" class="tool-card panel interactive">
-            <div class="active-trades-layout">
-              <div class="active-trades-top">
-                <div class="tool-header">
-                  <div>
-                    <p class="tool-overline">Active trades</p>
-                    <h3 class="text-gold-grad text-gold-glow">Live positions & PnL</h3>
-                    <p class="tool-sub">Live prices adjust your portfolio total; close trades with a fill.</p>
-                  </div>
-                  <div class="trade-sort">
-                    <label for="active-trade-sort">Sort</label>
-                    <select id="active-trade-sort">
-                      <option value="newest" selected>Newest trade</option>
-                      <option value="oldest">Oldest trade</option>
-                      <option value="best-percent">Best % return</option>
-                      <option value="worst-percent">Worst % return</option>
-                      <option value="best-amount">Best monetary return</option>
-                      <option value="worst-amount">Lowest monetary return</option>
-                    </select>
-                  </div>
-                  <div class="tool-portfolio-row">
-                    <div class="tool-portfolio">
-                      <span>Live open PnL</span>
-                      <strong id="live-pnl-display">£0.00</strong>
-                    </div>
-                    <div class="tool-portfolio" id="open-loss-potential-card">
-                      <span>Open loss potential</span>
-                      <strong id="open-loss-potential-display">£0.00</strong>
-                    </div>
-                  </div>
-                </div>
-                <div class="mini-chart" id="portfolio-trend-card">
-                  <div class="mini-chart-head">
-                    <p class="tool-overline">Portfolio trend</p>
-                    <span class="mini-chart-note">Last updates</span>
-                  </div>
-                  <div id="portfolio-trend" class="mini-line"></div>
-                </div>
-                <div class="trade-sort" aria-label="Active trade sorting">
-                  <label for="active-trade-sort">Sort</label>
-                  <select id="active-trade-sort">
-                    <option value="newest" selected>Newest trade</option>
-                    <option value="oldest">Oldest trade</option>
-                    <option value="best-percent">Best % return</option>
-                    <option value="worst-percent">Worst % return</option>
-                    <option value="best-amount">Best monetary return</option>
-                    <option value="worst-amount">Lowest monetary return</option>
-                  </select>
-                </div>
-              </div>
-              <div class="active-trades-list-wrap activeTradesList">
-                <div id="active-trade-list" class="trade-list"></div>
-                <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
-              </div>
-              <div class="active-trades-footer">
-                <button id="active-trade-show-all" class="primary outline show-all-btn" type="button">Show all trades</button>
-              </div>
+      <!-- Right rail: Active trades -->
+      <div class="db-rail">
+        <section id="active-trades-card" class="db-card tool-card interactive">
+          <div class="db-trades__head">
+            <div>
+              <p class="tool-overline">Active trades</p>
+              <h3 class="text-gold-grad text-gold-glow">Live positions</h3>
             </div>
-          </section>
-        </div>
+            <span class="db-open-badge" id="db-open-count-badge">0 open</span>
+          </div>
+          <div class="db-trades__metrics">
+            <div class="db-chip db-chip--pnl tool-portfolio">
+              <p class="db-chip__label">Open PnL</p>
+              <strong id="live-pnl-display" class="db-chip__value">£0.00</strong>
+            </div>
+            <div class="db-chip db-chip--risk tool-portfolio" id="open-loss-potential-card">
+              <p class="db-chip__label">At risk</p>
+              <strong id="open-loss-potential-display" class="db-chip__value">£0.00</strong>
+            </div>
+          </div>
+          <div class="trade-sort" aria-label="Active trade sorting">
+            <label for="active-trade-sort">Sort</label>
+            <select id="active-trade-sort">
+              <option value="newest" selected>Newest trade</option>
+              <option value="oldest">Oldest trade</option>
+              <option value="best-percent">Best % return</option>
+              <option value="worst-percent">Worst % return</option>
+              <option value="best-amount">Best monetary return</option>
+              <option value="worst-amount">Lowest monetary return</option>
+            </select>
+          </div>
+          <div class="active-trades-list-wrap activeTradesList">
+            <div id="active-trade-list" class="trade-list"></div>
+            <p class="tool-note" id="active-trade-empty">No active trades yet — log one from the risk calculator.</p>
+          </div>
+          <div class="active-trades-footer">
+            <button id="active-trade-show-all" class="primary outline show-all-btn" type="button">View all positions</button>
+          </div>
+        </section>
       </div>
+
     </div>
   </main>
 

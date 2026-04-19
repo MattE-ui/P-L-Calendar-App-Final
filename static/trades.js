@@ -10,7 +10,9 @@ const state = {
     offset: 0,
     total: 0,
     hasMore: false,
-    loadingMore: false
+    loadingMore: false,
+    clientPage: 1,
+    pageSize: 25
   },
   filters: {
     from: '',
@@ -22,6 +24,9 @@ const state = {
     tags: '',
     winLoss: ''
   },
+  sort: { key: 'date-desc' },
+  searchText: '',
+  selectedIds: new Set(),
   editingId: null,
   editingTrade: null,
   defaults: {
@@ -40,7 +45,8 @@ const state = {
     batches: [],
     showAll: false,
     showRemoved: false,
-    collapsedLimit: 4
+    collapsedLimit: 4,
+    panelExpanded: false
   }
 };
 
@@ -442,6 +448,24 @@ function readFilters() {
 }
 
 
+function pushFiltersToUrl() {
+  if (!window.history?.replaceState) return;
+  const params = new URLSearchParams();
+  Object.entries(state.filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+  const search = params.toString();
+  history.replaceState(null, '', location.pathname + (search ? '?' + search : ''));
+}
+
+function readFiltersFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const keys = ['from', 'to', 'symbol', 'tradeType', 'assetClass', 'strategyTag', 'tags', 'winLoss'];
+  keys.forEach(k => {
+    const v = params.get(k) || '';
+    const input = document.querySelector(`#filter-${k === 'tradeType' ? 'trade-type' : k === 'assetClass' ? 'asset-class' : k === 'strategyTag' ? 'strategy' : k === 'winLoss' ? 'winloss' : k}`);
+    if (input && v) input.value = v;
+  });
+}
+
 function optionSummary(trade) {
   const type = trade.optionType ? String(trade.optionType).toUpperCase() : '';
   const strike = Number(trade.optionStrike);
@@ -476,6 +500,7 @@ function toggleOptionsFields() {
 
 async function loadTrades() {
   readFilters();
+  state.pagination.clientPage = 1;
   const query = toQuery({
     ...state.filters,
     limit: state.pagination.limit,
@@ -492,8 +517,13 @@ async function loadTrades() {
   if (changed) {
     renderTrades();
   } else {
+    renderSummaryStrip();
+    renderPaginationFooter();
     window.PerfDiagnostics?.log('trades-list-reused', { count: state.trades.length });
   }
+  renderFilterPills();
+  updateSubtitle();
+  pushFiltersToUrl();
   window.PerfDiagnostics?.log('trades-summary-page-loaded', {
     summaryModeUsed: Boolean(res?.summaryMode),
     initialWindowSize: state.trades.length,
@@ -550,18 +580,496 @@ async function withTradeDetail(trade, callback) {
 }
 
 function updateLoadMoreUi() {
-  const button = document.querySelector('#trades-load-more-btn');
-  const status = document.querySelector('#trades-pagination-status');
-  if (button) {
-    button.classList.toggle('is-hidden', !state.pagination.hasMore);
-    button.disabled = state.pagination.loadingMore;
-    button.textContent = state.pagination.loadingMore ? 'Loading…' : 'Load older trades';
+  renderPaginationFooter();
+}
+
+/* ── Summary strip ─────────────────────────────────────── */
+function computeTradesSummary(trades) {
+  const closed = trades.filter(t => t.status === 'closed' || (t.closeDate && !t.status));
+  const open = trades.filter(t => t.status === 'open' || (!t.closeDate && !t.status));
+  const wins = closed.filter(t => Number(t.realizedPnlGBP) > 0);
+  const totalPnl = closed.reduce((sum, t) => sum + (Number(t.realizedPnlGBP) || 0), 0);
+  const winRate = closed.length ? (wins.length / closed.length) * 100 : null;
+  const rValues = closed.map(t => t.rMultiple).filter(r => r !== null && r !== undefined && Number.isFinite(Number(r)));
+  const avgR = rValues.length ? rValues.reduce((s, r) => s + Number(r), 0) / rValues.length : null;
+  return {
+    totalTrades: trades.length,
+    winRate,
+    avgR,
+    realisedPnl: totalPnl,
+    openPositions: open.length
+  };
+}
+
+function renderSummaryStrip() {
+  const metrics = computeTradesSummary(state.trades);
+  const totalEl = document.querySelector('#tj-metric-total');
+  const winRateEl = document.querySelector('#tj-metric-winrate');
+  const avgREl = document.querySelector('#tj-metric-avgr');
+  const pnlEl = document.querySelector('#tj-metric-pnl');
+  const openEl = document.querySelector('#tj-metric-open');
+  if (totalEl) totalEl.textContent = metrics.totalTrades;
+  if (winRateEl) {
+    winRateEl.textContent = metrics.winRate !== null ? `${metrics.winRate.toFixed(1)}%` : '—';
+    winRateEl.className = 'tj-metric-value';
   }
-  if (status) {
-    const loaded = state.trades.length;
-    const total = state.pagination.total || loaded;
-    status.textContent = `Showing ${loaded} of ${total} trades`;
+  if (avgREl) {
+    if (metrics.avgR !== null) {
+      const sign = metrics.avgR >= 0 ? '+' : '';
+      avgREl.textContent = `${sign}${metrics.avgR.toFixed(1)}R`;
+      avgREl.className = `tj-metric-value ${metrics.avgR > 0 ? 'positive' : metrics.avgR < 0 ? 'negative' : ''}`;
+    } else {
+      avgREl.textContent = '—';
+      avgREl.className = 'tj-metric-value';
+    }
   }
+  if (pnlEl) {
+    const pnl = metrics.realisedPnl;
+    pnlEl.textContent = pnl !== 0 ? formatSignedCurrency(pnl) : `${currencySymbols[state.currency] || '£'}0.00`;
+    pnlEl.className = `tj-metric-value ${pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : ''}`;
+  }
+  if (openEl) openEl.textContent = metrics.openPositions;
+}
+
+/* ── Page subtitle ─────────────────────────────────────── */
+function updateSubtitle() {
+  const el = document.querySelector('#tj-subtitle');
+  if (!el) return;
+  const total = state.pagination.total || state.trades.length;
+  const symbols = new Set(state.trades.map(t => getTradeDisplaySymbol(t)).filter(s => s && s !== '—'));
+  const lastBatch = state.ibkrHistory.batches.find(b => (b.status || 'completed') !== 'rolled_back');
+  const parts = [`${total} trade${total !== 1 ? 's' : ''} across ${symbols.size} symbol${symbols.size !== 1 ? 's' : ''}`];
+  if (lastBatch?.importedAt) {
+    const d = new Date(lastBatch.importedAt);
+    if (!Number.isNaN(d.getTime())) {
+      parts.push(`last imported ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`);
+    }
+  }
+  el.textContent = parts.join(' · ');
+}
+
+/* ── Filter bar pills ──────────────────────────────────── */
+const SORT_LABELS = {
+  'date-desc': 'Date, newest',
+  'date-asc': 'Date, oldest',
+  'pnl-desc': 'Result, highest',
+  'pnl-asc': 'Result, lowest',
+  'symbol-asc': 'Symbol, A–Z'
+};
+
+const TYPE_LABELS = { '': 'Any', scalp: 'Scalp', day: 'Day', swing: 'Swing', position: 'Position' };
+const ASSET_LABELS = { '': 'Any', stocks: 'Stocks', options: 'Options', forex: 'Forex', crypto: 'Crypto', futures: 'Futures', other: 'Other' };
+const RESULT_LABELS = { '': 'Any', win: 'Win', loss: 'Loss' };
+
+function makePillSvgChevron() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.5');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('tj-pill-chevron');
+  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  poly.setAttribute('points', '4,6 8,10 12,6');
+  svg.appendChild(poly);
+  return svg;
+}
+
+function closeAllPopovers(except = null) {
+  document.querySelectorAll('.tj-pill-popover, .tj-add-filter-menu, #tj-sort-dropdown').forEach(el => {
+    if (el !== except) el.classList.add('is-hidden');
+  });
+}
+
+function renderFilterPills() {
+  const container = document.querySelector('#tj-filter-pills');
+  if (!container) return;
+  container.innerHTML = '';
+
+  // Date pill
+  const datePill = document.createElement('button');
+  datePill.type = 'button';
+  const from = state.filters.from;
+  const to = state.filters.to;
+  let dateLabel = 'Date: All';
+  if (from && to) dateLabel = `${from} – ${to}`;
+  else if (from) dateLabel = `From ${from}`;
+  else if (to) dateLabel = `To ${to}`;
+  datePill.className = `tj-filter-pill${(from || to) ? ' is-applied' : ''}`;
+  datePill.textContent = dateLabel;
+  datePill.appendChild(makePillSvgChevron());
+  container.appendChild(datePill);
+
+  const datePop = document.createElement('div');
+  datePop.className = 'tj-pill-popover is-hidden';
+  datePop.innerHTML = `
+    <div class="tj-popover-date-row">
+      <input type="date" id="tjp-from" value="${from}" placeholder="From">
+      <input type="date" id="tjp-to" value="${to}" placeholder="To">
+    </div>
+    <button class="tj-popover-apply">Apply</button>
+  `;
+  datePop.querySelector('.tj-popover-apply').addEventListener('click', () => {
+    document.querySelector('#filter-from').value = datePop.querySelector('#tjp-from').value;
+    document.querySelector('#filter-to').value = datePop.querySelector('#tjp-to').value;
+    closeAllPopovers();
+    applyFilters();
+  });
+  datePill.style.position = 'relative';
+  datePill.appendChild(datePop);
+  datePill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = datePop.classList.contains('is-hidden');
+    closeAllPopovers();
+    datePop.classList.toggle('is-hidden', !isHidden);
+  });
+
+  // Type pill
+  const typePill = document.createElement('button');
+  typePill.type = 'button';
+  const typeVal = state.filters.tradeType;
+  typePill.className = `tj-filter-pill${typeVal ? ' is-applied' : ''}`;
+  typePill.textContent = `Type: ${TYPE_LABELS[typeVal] || typeVal || 'Any'}`;
+  typePill.appendChild(makePillSvgChevron());
+  container.appendChild(typePill);
+
+  const typePop = document.createElement('div');
+  typePop.className = 'tj-pill-popover is-hidden';
+  Object.entries(TYPE_LABELS).forEach(([val, label]) => {
+    const btn = document.createElement('button');
+    btn.className = `tj-popover-option${typeVal === val ? ' is-selected' : ''}`;
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      document.querySelector('#filter-trade-type').value = val;
+      closeAllPopovers();
+      applyFilters();
+    });
+    typePop.appendChild(btn);
+  });
+  typePill.style.position = 'relative';
+  typePill.appendChild(typePop);
+  typePill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = typePop.classList.contains('is-hidden');
+    closeAllPopovers();
+    typePop.classList.toggle('is-hidden', !isHidden);
+  });
+
+  // Asset pill
+  const assetPill = document.createElement('button');
+  assetPill.type = 'button';
+  const assetVal = state.filters.assetClass;
+  assetPill.className = `tj-filter-pill${assetVal ? ' is-applied' : ''}`;
+  assetPill.textContent = `Asset: ${ASSET_LABELS[assetVal] || assetVal || 'Any'}`;
+  assetPill.appendChild(makePillSvgChevron());
+  container.appendChild(assetPill);
+
+  const assetPop = document.createElement('div');
+  assetPop.className = 'tj-pill-popover is-hidden';
+  Object.entries(ASSET_LABELS).forEach(([val, label]) => {
+    const btn = document.createElement('button');
+    btn.className = `tj-popover-option${assetVal === val ? ' is-selected' : ''}`;
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      document.querySelector('#filter-asset-class').value = val;
+      closeAllPopovers();
+      applyFilters();
+    });
+    assetPop.appendChild(btn);
+  });
+  assetPill.style.position = 'relative';
+  assetPill.appendChild(assetPop);
+  assetPill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = assetPop.classList.contains('is-hidden');
+    closeAllPopovers();
+    assetPop.classList.toggle('is-hidden', !isHidden);
+  });
+
+  // Applied optional filters as removable pills
+  if (state.filters.strategyTag) {
+    const p = buildRemovablePill(`Strategy: ${state.filters.strategyTag}`, () => {
+      document.querySelector('#filter-strategy').value = '';
+      applyFilters();
+    });
+    container.appendChild(p);
+  }
+  if (state.filters.tags) {
+    const p = buildRemovablePill(`Tags: ${state.filters.tags}`, () => {
+      document.querySelector('#filter-tags').value = '';
+      applyFilters();
+    });
+    container.appendChild(p);
+  }
+  if (state.filters.winLoss) {
+    const p = buildRemovablePill(`Result: ${RESULT_LABELS[state.filters.winLoss] || state.filters.winLoss}`, () => {
+      document.querySelector('#filter-winloss').value = '';
+      applyFilters();
+    });
+    container.appendChild(p);
+  }
+
+  // + Add filter pill
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'tj-add-filter-pill';
+  addBtn.innerHTML = '+ Add filter';
+  container.appendChild(addBtn);
+
+  const addMenu = document.createElement('div');
+  addMenu.className = 'tj-add-filter-menu is-hidden';
+  addMenu.style.position = 'absolute';
+
+  const addMenuItems = [
+    { label: 'Strategy tag', action: () => { const v = window.prompt('Strategy tag'); if (v !== null) { document.querySelector('#filter-strategy').value = v; applyFilters(); } } },
+    { label: 'Tags', action: () => { const v = window.prompt('Tags (comma separated)'); if (v !== null) { document.querySelector('#filter-tags').value = v; applyFilters(); } } },
+    { label: 'Result', action: () => {
+      const v = window.prompt('Result (win/loss)');
+      if (v !== null) { document.querySelector('#filter-winloss').value = v.toLowerCase().trim() === 'win' ? 'win' : v.toLowerCase().trim() === 'loss' ? 'loss' : ''; applyFilters(); }
+    }}
+  ];
+  addMenuItems.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'tj-popover-option';
+    btn.textContent = item.label;
+    btn.addEventListener('click', () => { closeAllPopovers(); item.action(); });
+    addMenu.appendChild(btn);
+  });
+  addBtn.style.position = 'relative';
+  addBtn.appendChild(addMenu);
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = addMenu.classList.contains('is-hidden');
+    closeAllPopovers();
+    addMenu.classList.toggle('is-hidden', !isHidden);
+  });
+}
+
+function buildRemovablePill(label, onRemove) {
+  const pill = document.createElement('span');
+  pill.className = 'tj-filter-pill is-applied';
+  pill.textContent = label;
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'tj-pill-remove';
+  removeBtn.type = 'button';
+  removeBtn.setAttribute('aria-label', `Remove ${label} filter`);
+  removeBtn.textContent = '×';
+  removeBtn.addEventListener('click', (e) => { e.stopPropagation(); onRemove(); });
+  pill.appendChild(removeBtn);
+  return pill;
+}
+
+/* ── Sort helpers ──────────────────────────────────────── */
+function applySort(trades, key) {
+  const arr = [...trades];
+  if (key === 'date-asc') return arr.sort((a, b) => (a.openDate || '') > (b.openDate || '') ? 1 : -1);
+  if (key === 'pnl-desc') return arr.sort((a, b) => (Number(b.realizedPnlGBP) || 0) - (Number(a.realizedPnlGBP) || 0));
+  if (key === 'pnl-asc') return arr.sort((a, b) => (Number(a.realizedPnlGBP) || 0) - (Number(b.realizedPnlGBP) || 0));
+  if (key === 'symbol-asc') return arr.sort((a, b) => getTradeDisplaySymbol(a).localeCompare(getTradeDisplaySymbol(b)));
+  return arr.sort((a, b) => (b.openDate || '') > (a.openDate || '') ? 1 : -1); // date-desc default
+}
+
+function updateSortPillLabel() {
+  const label = document.querySelector('#tj-sort-label');
+  if (label) label.textContent = `Sort: ${SORT_LABELS[state.sort.key] || state.sort.key}`;
+  document.querySelectorAll('.tj-sort-option').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.sort === state.sort.key);
+  });
+}
+
+/* ── Client-side filtered + paged view ────────────────── */
+function getVisibleTrades() {
+  const sorted = applySort(state.sortedTrades, state.sort.key);
+  const search = state.searchText.toLowerCase().trim();
+  const filtered = search ? sorted.filter(t => {
+    const sym = getTradeDisplaySymbol(t).toLowerCase();
+    const tags = [
+      ...(t.setupTags || []),
+      ...(t.emotionTags || []),
+      t.strategyTag || '',
+      t.strategyTag || ''
+    ].join(' ').toLowerCase();
+    const note = (t.note || '').toLowerCase();
+    return sym.includes(search) || tags.includes(search) || note.includes(search);
+  }) : sorted;
+  const { clientPage, pageSize } = state.pagination;
+  const start = (clientPage - 1) * pageSize;
+  return {
+    visible: filtered.slice(start, start + pageSize),
+    filtered,
+    total: filtered.length
+  };
+}
+
+/* ── Pagination footer ─────────────────────────────────── */
+function renderPaginationFooter() {
+  const infoEl = document.querySelector('#tj-pagination-info');
+  const ctrlEl = document.querySelector('#tj-pagination-controls');
+  if (!infoEl || !ctrlEl) return;
+
+  const { visible, filtered, total } = getVisibleTrades();
+  const { clientPage, pageSize } = state.pagination;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = total === 0 ? 0 : (clientPage - 1) * pageSize + 1;
+  const end = Math.min(clientPage * pageSize, total);
+  const serverTotal = state.pagination.total;
+
+  infoEl.textContent = total === 0 ? 'No trades' : `Showing ${start}–${end} of ${serverTotal} trades`;
+
+  ctrlEl.innerHTML = '';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'tj-page-btn';
+  prevBtn.innerHTML = '&#8249;';
+  prevBtn.disabled = clientPage <= 1;
+  prevBtn.addEventListener('click', () => {
+    if (clientPage > 1) { state.pagination.clientPage--; renderTrades(); }
+  });
+  ctrlEl.appendChild(prevBtn);
+
+  const makePageBtn = (page, label = page) => {
+    const btn = document.createElement('button');
+    btn.className = `tj-page-btn${page === clientPage ? ' is-active' : ''}`;
+    btn.textContent = label;
+    btn.disabled = page === clientPage;
+    btn.addEventListener('click', () => {
+      if (page !== clientPage) { state.pagination.clientPage = page; renderTrades(); }
+    });
+    return btn;
+  };
+
+  const makeEllipsis = () => {
+    const span = document.createElement('span');
+    span.className = 'tj-page-ellipsis';
+    span.textContent = '…';
+    return span;
+  };
+
+  if (totalPages <= 7) {
+    for (let p = 1; p <= totalPages; p++) ctrlEl.appendChild(makePageBtn(p));
+  } else {
+    ctrlEl.appendChild(makePageBtn(1));
+    if (clientPage > 3) ctrlEl.appendChild(makeEllipsis());
+    const lo = Math.max(2, clientPage - 1);
+    const hi = Math.min(totalPages - 1, clientPage + 1);
+    for (let p = lo; p <= hi; p++) ctrlEl.appendChild(makePageBtn(p));
+    if (clientPage < totalPages - 2) ctrlEl.appendChild(makeEllipsis());
+    ctrlEl.appendChild(makePageBtn(totalPages));
+  }
+
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'tj-page-btn';
+  nextBtn.innerHTML = '&#8250;';
+  const atLastClientPage = clientPage >= totalPages;
+  nextBtn.disabled = atLastClientPage && !state.pagination.hasMore;
+  nextBtn.addEventListener('click', async () => {
+    if (!atLastClientPage) {
+      state.pagination.clientPage++;
+      renderTrades();
+    } else if (state.pagination.hasMore) {
+      await loadMoreTrades();
+      state.pagination.clientPage++;
+      renderTrades();
+    }
+  });
+  ctrlEl.appendChild(nextBtn);
+}
+
+/* ── Bulk action bar ───────────────────────────────────── */
+function renderBulkBar() {
+  const bar = document.querySelector('#tj-bulk-bar');
+  const countEl = document.querySelector('#tj-bulk-count');
+  if (!bar || !countEl) return;
+  const count = state.selectedIds.size;
+  bar.classList.toggle('is-hidden', count === 0);
+  countEl.textContent = `${count} selected`;
+  const selectAll = document.querySelector('#tj-select-all');
+  if (selectAll) {
+    const { visible } = getVisibleTrades();
+    const allSelected = visible.length > 0 && visible.every(t => state.selectedIds.has(t.id));
+    const someSelected = visible.some(t => state.selectedIds.has(t.id));
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = someSelected && !allSelected;
+  }
+}
+
+/* ── Import status panel ───────────────────────────────── */
+function renderImportPanel() {
+  const panel = document.querySelector('#tj-import-panel');
+  if (!panel) return;
+  const activeBatch = state.ibkrHistory.batches.find(b => (b.status || 'completed') !== 'rolled_back');
+  if (!activeBatch) {
+    panel.classList.add('is-hidden');
+    return;
+  }
+  panel.classList.remove('is-hidden');
+  const imported = Number(activeBatch.importedCount) || 0;
+  const openings = Number(activeBatch?.metadata?.importedOpenings) || 0;
+  const exits = Number(activeBatch?.metadata?.importedExits) || 0;
+  const duplicates = Number(activeBatch.duplicateCount) || 0;
+  const unmatched = Number(activeBatch?.metadata?.unmatchedClosingRows) || 0;
+  const filename = activeBatch.originalFilename || 'upload.csv';
+  const when = formatIsoDateTime(activeBatch.importedAt);
+  const source = (activeBatch.source || '').replace(/_/g, ' ') || '';
+
+  const filenameEl = document.querySelector('#tj-import-filename');
+  const metaEl = document.querySelector('#tj-import-meta');
+  const countPillEl = document.querySelector('#tj-import-count-pill');
+  const detailRowEl = document.querySelector('#tj-import-detail-row');
+  const removedBtnCollapsed = document.querySelector('#tj-import-show-removed-btn');
+  const removedBtnExpanded = document.querySelector('#tj-import-detail-removed-btn');
+
+  if (filenameEl) filenameEl.textContent = filename;
+  if (metaEl) metaEl.textContent = `${source ? source + ' · ' : ''}${when}`;
+  if (countPillEl) countPillEl.textContent = `${imported} imported`;
+
+  if (detailRowEl) {
+    const successSpan = `<span class="success">${imported} imported</span>`;
+    const openText = `${openings} openings, ${exits} exits`;
+    const unmatchedText = unmatched > 0 ? ` · <span class="warning">${unmatched} unmatched close${unmatched !== 1 ? 's' : ''}</span>` : '';
+    const dupText = duplicates > 0 ? ` · ${duplicates} duplicate${duplicates !== 1 ? 's' : ''} skipped` : '';
+    detailRowEl.innerHTML = `${successSpan} · ${openText}${unmatchedText}${dupText}`;
+  }
+
+  const removedBatches = state.ibkrHistory.batches.filter(b => (b.status || 'completed') === 'rolled_back');
+  const removedLabel = state.ibkrHistory.showRemoved
+    ? `Hide removed (${removedBatches.length})`
+    : `Show removed (${removedBatches.length})`;
+  if (removedBtnCollapsed) {
+    removedBtnCollapsed.textContent = removedLabel;
+    removedBtnCollapsed.classList.toggle('is-hidden', removedBatches.length === 0);
+  }
+  if (removedBtnExpanded) {
+    removedBtnExpanded.textContent = removedLabel;
+    removedBtnExpanded.classList.toggle('is-hidden', removedBatches.length === 0);
+  }
+
+  const removeBtn = document.querySelector('#tj-import-remove-btn');
+  const removeDetailBtn = document.querySelector('#tj-import-detail-remove-btn');
+  const bindRemove = (btn) => {
+    if (btn) btn.onclick = () => removeIbkrImportBatch(activeBatch);
+  };
+  bindRemove(removeBtn);
+  bindRemove(removeDetailBtn);
+
+  const removedHandler = () => {
+    state.ibkrHistory.showRemoved = !state.ibkrHistory.showRemoved;
+    renderIbkrImportHistory(state.ibkrHistory.batches);
+    renderImportPanel();
+  };
+  if (removedBtnCollapsed) removedBtnCollapsed.onclick = removedHandler;
+  if (removedBtnExpanded) removedBtnExpanded.onclick = removedHandler;
+
+  // Expand/collapse panel
+  const collapsed = document.querySelector('#tj-import-collapsed');
+  const expanded = document.querySelector('#tj-import-expanded');
+  if (collapsed) collapsed.classList.toggle('is-hidden', state.ibkrHistory.panelExpanded);
+  if (expanded) expanded.classList.toggle('is-hidden', !state.ibkrHistory.panelExpanded);
+
+  const expandBtn = document.querySelector('#tj-import-expand-btn');
+  const collapseBtn = document.querySelector('#tj-import-collapse-btn');
+  if (expandBtn) expandBtn.onclick = () => { state.ibkrHistory.panelExpanded = true; renderImportPanel(); };
+  if (collapseBtn) collapseBtn.onclick = () => { state.ibkrHistory.panelExpanded = false; renderImportPanel(); };
 }
 
 async function shareTradeToGroupChat(trade) {
@@ -577,160 +1085,323 @@ async function shareTradeToGroupChat(trade) {
   }
 }
 
+function formatDateTwoLine(dateStr) {
+  if (!dateStr) return { primary: '—', year: '' };
+  const d = new Date(dateStr + (dateStr.length === 10 ? 'T00:00:00' : ''));
+  if (Number.isNaN(d.getTime())) return { primary: dateStr, year: '' };
+  const primary = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const year = String(d.getFullYear());
+  return { primary, year };
+}
+
+function formatSignedPnl(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const sym = currencySymbols[state.currency] || '£';
+  const abs = Math.abs(n);
+  const rate = state.currency === 'GBP' ? 1 : (state.rates[state.currency] || 1);
+  const converted = abs * rate;
+  const sign = n > 0 ? '+' : n < 0 ? '−' : '';
+  return `${sign}${sym}${converted.toFixed(2)}`;
+}
+
+function getSourceLabel(trade) {
+  if (trade.source === 'trading212') return 'Trading 212';
+  if (trade.source === 'ibkr') return 'IBKR';
+  return 'Manual';
+}
+
+function buildTradeRow(trade) {
+  const signature = buildTradeSignature(trade);
+  const row = document.createElement('div');
+  row.className = 'tj-row';
+  row.role = 'listitem';
+  row.dataset.tradeId = trade.id;
+
+  // Checkbox cell
+  const checkCell = document.createElement('div');
+  checkCell.className = 'tj-row-check';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = state.selectedIds.has(trade.id);
+  checkbox.setAttribute('aria-label', `Select trade ${getTradeDisplaySymbol(trade)}`);
+  checkbox.addEventListener('change', (e) => {
+    e.stopPropagation();
+    if (checkbox.checked) state.selectedIds.add(trade.id);
+    else state.selectedIds.delete(trade.id);
+    renderBulkBar();
+  });
+  checkCell.appendChild(checkbox);
+  row.appendChild(checkCell);
+
+  // Date cell — two lines
+  const dateCell = document.createElement('div');
+  dateCell.className = 'tj-row-date';
+  const { primary, year } = formatDateTwoLine(trade.openDate);
+  const datePrimary = document.createElement('span');
+  datePrimary.className = 'tj-date-primary';
+  datePrimary.textContent = primary;
+  const dateYear = document.createElement('span');
+  dateYear.className = 'tj-date-year';
+  dateYear.textContent = year;
+  dateCell.appendChild(datePrimary);
+  dateCell.appendChild(dateYear);
+  row.appendChild(dateCell);
+
+  // Symbol cell
+  const symCell = document.createElement('div');
+  symCell.className = 'tj-row-symbol';
+  const symRow = document.createElement('div');
+  symRow.className = 'tj-sym-row';
+  const ticker = document.createElement('span');
+  ticker.className = 'tj-sym-ticker';
+  ticker.textContent = getTradeDisplaySymbol(trade);
+  symRow.appendChild(ticker);
+  if (shouldShowMappingBadge(trade)) {
+    const badge = document.createElement('span');
+    badge.className = 'tj-badge tj-badge-mapped';
+    badge.textContent = 'MAPPED';
+    symRow.appendChild(badge);
+  }
+  const isOpen = trade.status !== 'closed';
+  if (isOpen) {
+    const openBadge = document.createElement('span');
+    openBadge.className = 'tj-badge tj-badge-open';
+    openBadge.textContent = 'OPEN';
+    symRow.appendChild(openBadge);
+  }
+  symCell.appendChild(symRow);
+  if ((trade.assetClass || '').toLowerCase() === 'options') {
+    const summary = optionSummary(trade);
+    if (summary) {
+      const meta = document.createElement('div');
+      meta.className = 'tj-sym-meta';
+      meta.textContent = summary;
+      symCell.appendChild(meta);
+    }
+  }
+  row.appendChild(symCell);
+
+  // Type cell
+  const typeCell = document.createElement('div');
+  typeCell.className = 'tj-row-type';
+  const typeText = trade.tradeType || '—';
+  typeCell.textContent = typeText.charAt(0).toUpperCase() + typeText.slice(1);
+  row.appendChild(typeCell);
+
+  // Asset cell
+  const assetCell = document.createElement('div');
+  assetCell.className = 'tj-row-asset';
+  const assetText = trade.assetClass || '—';
+  assetCell.textContent = assetText.charAt(0).toUpperCase() + assetText.slice(1);
+  row.appendChild(assetCell);
+
+  // Guaranteed PnL cell
+  const guarCell = document.createElement('div');
+  guarCell.className = 'tj-row-guaranteed';
+  const guarVal = Number(trade.guaranteedPnlGBP);
+  if (isOpen || !Number.isFinite(guarVal) || guarVal === 0) {
+    guarCell.innerHTML = '<span class="tj-dash">—</span>';
+  } else {
+    guarCell.textContent = formatSignedPnl(guarVal);
+    guarCell.classList.add(guarVal > 0 ? 'positive' : 'negative');
+  }
+  row.appendChild(guarCell);
+
+  // Result cell — two lines (PnL + R-multiple)
+  const resultCell = document.createElement('div');
+  resultCell.className = 'tj-row-result';
+  const pnlVal = Number(trade.realizedPnlGBP);
+  const pnlLine = document.createElement('div');
+  pnlLine.className = 'tj-pnl';
+  if (isOpen || !Number.isFinite(pnlVal)) {
+    pnlLine.innerHTML = '<span class="tj-dash">—</span>';
+  } else {
+    pnlLine.textContent = formatSignedPnl(pnlVal);
+    pnlLine.classList.add(pnlVal > 0 ? 'positive' : pnlVal < 0 ? 'negative' : '');
+  }
+  resultCell.appendChild(pnlLine);
+  const rVal = Number(trade.rMultiple);
+  if (Number.isFinite(rVal)) {
+    const rLine = document.createElement('div');
+    rLine.className = 'tj-r-multiple';
+    const rSign = rVal >= 0 ? '+' : '';
+    rLine.textContent = `${rSign}${rVal.toFixed(1)}R`;
+    rLine.classList.add(rVal > 0 ? 'positive' : rVal < 0 ? 'negative' : '');
+    resultCell.appendChild(rLine);
+  }
+  row.appendChild(resultCell);
+
+  // Source / tags cell
+  const sourceCell = document.createElement('div');
+  sourceCell.className = 'tj-row-source';
+  const sourceName = document.createElement('span');
+  sourceName.className = 'tj-source-name';
+  sourceName.textContent = getSourceLabel(trade);
+  sourceCell.appendChild(sourceName);
+  const allTags = [
+    ...(trade.strategyTag ? [trade.strategyTag] : []),
+    ...(trade.setupTags || []),
+    ...(trade.emotionTags || [])
+  ];
+  if (allTags.length) {
+    const chipsWrap = document.createElement('div');
+    chipsWrap.className = 'tj-tag-chips';
+    const visible = allTags.slice(0, 2);
+    const overflow = allTags.length - 2;
+    visible.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'tj-tag-chip';
+      chip.textContent = tag;
+      chipsWrap.appendChild(chip);
+    });
+    if (overflow > 0) {
+      const more = document.createElement('span');
+      more.className = 'tj-tag-more';
+      more.textContent = `+${overflow}`;
+      chipsWrap.appendChild(more);
+    }
+    sourceCell.appendChild(chipsWrap);
+  }
+  row.appendChild(sourceCell);
+
+  // Actions cell
+  const actionsCell = document.createElement('div');
+  actionsCell.className = 'tj-row-actions';
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'tj-action-btn';
+  editBtn.title = 'Edit trade';
+  editBtn.setAttribute('aria-label', 'Edit trade');
+  editBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M11 2l3 3L5 14H2v-3L11 2z"/></svg>`;
+  editBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try { await withTradeDetail(trade, populateForm); }
+    catch (err) { alert(err?.message || 'Unable to load trade details'); }
+  });
+  actionsCell.appendChild(editBtn);
+
+  const moreBtn = document.createElement('button');
+  moreBtn.className = 'tj-action-btn';
+  moreBtn.title = 'More actions';
+  moreBtn.setAttribute('aria-label', 'More actions');
+  moreBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="3" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="13" cy="8" r="1.3" fill="currentColor"/></svg>`;
+
+  const moreMenu = document.createElement('div');
+  moreMenu.className = 'tj-more-menu is-hidden';
+
+  const menuItems = [
+    { label: 'View details', action: async () => {
+      try { await withTradeDetail(trade, populateForm); }
+      catch (err) { alert(err?.message || 'Unable to load trade details'); }
+    }},
+    { label: 'Share to chat', action: () => shareTradeToGroupChat(trade) },
+    ...(isOpen ? [{ label: 'Close position', action: async () => {
+      try { await withTradeDetail(trade, closeTradePrompt); }
+      catch (err) { alert(err?.message || 'Unable to load trade details'); }
+    }}] : []),
+    { label: 'Delete', className: 'danger', action: async () => {
+      if (!window.confirm('Delete this trade? This cannot be undone.')) return;
+      try {
+        await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
+        removeTradeFromState(trade.id, { source: 'delete' });
+        state.selectedIds.delete(trade.id);
+        renderTrades();
+      } catch (err) { alert(err?.message || 'Unable to delete trade'); }
+    }}
+  ];
+
+  menuItems.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = `tj-more-option${item.className ? ' ' + item.className : ''}`;
+    btn.textContent = item.label;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moreMenu.classList.add('is-hidden');
+      item.action();
+    });
+    moreMenu.appendChild(btn);
+  });
+
+  moreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = moreMenu.classList.contains('is-hidden');
+    document.querySelectorAll('.tj-more-menu').forEach(m => m.classList.add('is-hidden'));
+    moreMenu.classList.toggle('is-hidden', !isHidden);
+  });
+  actionsCell.appendChild(moreBtn);
+  actionsCell.appendChild(moreMenu);
+  row.appendChild(actionsCell);
+
+  // Row click → open edit form
+  row.addEventListener('click', async (e) => {
+    if (e.target.closest('.tj-row-check') || e.target.closest('.tj-row-actions')) return;
+    try { await withTradeDetail(trade, populateForm); }
+    catch (err) { alert(err?.message || 'Unable to load trade details'); }
+  });
+
+  return { row, signature };
+}
+
 function renderTrades() {
-  const tbody = document.querySelector('#trade-table tbody');
+  const container = document.querySelector('#tj-rows');
   const empty = document.querySelector('#trade-empty');
-  const pill = document.querySelector('#trade-count-pill');
-  if (!tbody) return;
+  const countPill = document.querySelector('#tj-table-count-pill');
+  if (!container) return;
   const renderStart = window.PerfDiagnostics?.mark('trades-full-render');
+
+  const { visible, filtered, total } = getVisibleTrades();
+  const serverTotal = state.pagination.total || state.sortedTrades.length;
+
   if (!state.sortedTrades.length) {
-    tbody.innerHTML = '';
+    container.innerHTML = '';
     state.rowCache.clear();
     state.rowSignatures.clear();
     if (empty) empty.classList.remove('is-hidden');
-    if (pill) pill.textContent = '0 trades';
-    updateLoadMoreUi();
+    if (countPill) countPill.textContent = '';
+    renderPaginationFooter();
+    renderBulkBar();
+    renderSummaryStrip();
     return;
   }
   if (empty) empty.classList.add('is-hidden');
-  if (pill) pill.textContent = `${state.sortedTrades.length} / ${state.pagination.total || state.sortedTrades.length} trades`;
+  if (countPill) {
+    const showing = visible.length;
+    countPill.textContent = total < serverTotal
+      ? `${showing} of ${total} filtered (${serverTotal} total)`
+      : `Showing ${showing} of ${serverTotal}`;
+  }
+
   const fragment = document.createDocumentFragment();
   const nextCache = new Map();
   const nextSignatures = new Map();
-  state.sortedTrades.forEach(trade => {
+
+  visible.forEach(trade => {
     const signature = buildTradeSignature(trade);
     const existingRow = state.rowCache.get(trade.id);
     if (existingRow && state.rowSignatures.get(trade.id) === signature) {
+      // Sync checkbox state (may have changed via select-all)
+      const cb = existingRow.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = state.selectedIds.has(trade.id);
       fragment.appendChild(existingRow);
       nextCache.set(trade.id, existingRow);
       nextSignatures.set(trade.id, signature);
       return;
     }
-    const tr = document.createElement('tr');
-    const dateCell = document.createElement('td');
-    dateCell.textContent = trade.openDate || '—';
-    tr.appendChild(dateCell);
-
-    const symCell = document.createElement('td');
-    const symLabel = document.createElement('span');
-    symLabel.textContent = getTradeDisplaySymbol(trade);
-    symCell.appendChild(symLabel);
-    if (shouldShowMappingBadge(trade)) {
-      symCell.appendChild(createMappingBadge());
-    }
-    if ((trade.assetClass || '').toLowerCase() === 'options') {
-      const summary = optionSummary(trade);
-      if (summary) {
-        const meta = document.createElement('div');
-        meta.className = 'metric-sub';
-        meta.textContent = summary;
-        symCell.appendChild(meta);
-      }
-    }
-    tr.appendChild(symCell);
-
-    const typeCell = document.createElement('td');
-    typeCell.textContent = trade.tradeType || '—';
-    tr.appendChild(typeCell);
-
-    const assetCell = document.createElement('td');
-    assetCell.textContent = trade.assetClass || '—';
-    tr.appendChild(assetCell);
-
-    const guaranteedCell = document.createElement('td');
-    guaranteedCell.textContent = formatCurrency(trade.guaranteedPnlGBP);
-    guaranteedCell.className = trade.guaranteedPnlGBP > 0 ? 'positive' : trade.guaranteedPnlGBP < 0 ? 'negative' : '';
-    tr.appendChild(guaranteedCell);
-
-    const pnlCell = document.createElement('td');
-    pnlCell.textContent = formatCurrency(trade.realizedPnlGBP);
-    pnlCell.className = trade.realizedPnlGBP > 0 ? 'positive' : trade.realizedPnlGBP < 0 ? 'negative' : '';
-    tr.appendChild(pnlCell);
-
-    const sourceCell = document.createElement('td');
-    sourceCell.textContent = trade.source === 'trading212'
-      ? 'Trading 212'
-      : (trade.source === 'ibkr' ? 'IBKR' : 'Manual');
-    tr.appendChild(sourceCell);
-
-    const tagsCell = document.createElement('td');
-    const chips = document.createElement('div');
-    chips.className = 'tag-chips';
-    const addChip = (label) => {
-      const span = document.createElement('span');
-      span.className = 'tag-chip';
-      span.textContent = label;
-      chips.appendChild(span);
-    };
-    if (trade.strategyTag) addChip(trade.strategyTag);
-    (trade.setupTags || []).forEach(addChip);
-    (trade.emotionTags || []).forEach(addChip);
-    tagsCell.appendChild(chips);
-    tr.appendChild(tagsCell);
-
-    const actionsCell = document.createElement('td');
-    const wrap = document.createElement('div');
-    wrap.className = 'table-actions';
-    const editBtn = document.createElement('button');
-    editBtn.className = 'ghost';
-    editBtn.textContent = 'Edit';
-    editBtn.addEventListener('click', async () => {
-      try {
-        await withTradeDetail(trade, populateForm);
-      } catch (error) {
-        alert(error?.message || 'Unable to load trade details');
-      }
-    });
-    wrap.appendChild(editBtn);
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'danger outline';
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.addEventListener('click', async () => {
-      if (!window.confirm('Delete this trade? This cannot be undone.')) {
-        return;
-      }
-      try {
-        await api(`/api/trades/${trade.id}`, { method: 'DELETE' });
-        removeTradeFromState(trade.id, { source: 'delete' });
-        renderTrades();
-      } catch (e) {
-        alert(e?.message || 'Unable to delete trade');
-      }
-    });
-    wrap.appendChild(deleteBtn);
-
-    const shareBtn = document.createElement('button');
-    shareBtn.className = 'ghost';
-    shareBtn.textContent = 'Share to chat';
-    shareBtn.addEventListener('click', () => shareTradeToGroupChat(trade));
-    wrap.appendChild(shareBtn);
-
-    if (trade.status !== 'closed') {
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'primary';
-      closeBtn.textContent = 'Close';
-      closeBtn.addEventListener('click', async () => {
-        try {
-          await withTradeDetail(trade, closeTradePrompt);
-        } catch (error) {
-          alert(error?.message || 'Unable to load trade details');
-        }
-      });
-      wrap.appendChild(closeBtn);
-    }
-    actionsCell.appendChild(wrap);
-    tr.appendChild(actionsCell);
-
-    fragment.appendChild(tr);
-    nextCache.set(trade.id, tr);
+    const { row } = buildTradeRow(trade);
+    fragment.appendChild(row);
+    nextCache.set(trade.id, row);
     nextSignatures.set(trade.id, signature);
   });
-  tbody.replaceChildren(fragment);
+
+  container.replaceChildren(fragment);
   state.rowCache = nextCache;
   state.rowSignatures = nextSignatures;
-  updateLoadMoreUi();
-  if (renderStart) window.PerfDiagnostics?.measure('trades-full-render:end', renderStart, { count: state.sortedTrades.length });
+
+  renderPaginationFooter();
+  renderBulkBar();
+  renderSummaryStrip();
+  if (renderStart) window.PerfDiagnostics?.measure('trades-full-render:end', renderStart, { count: visible.length });
 }
 
 function populateForm(trade) {
@@ -1007,6 +1678,9 @@ function resetFilters() {
   state.filters = {
     from: '', to: '', symbol: '', tradeType: '', assetClass: '', strategyTag: '', tags: '', winLoss: ''
   };
+  state.searchText = '';
+  const searchInput = document.querySelector('#tj-search');
+  if (searchInput) searchInput.value = '';
   if (window?.history?.replaceState) {
     history.replaceState(null, '', location.pathname);
   }
@@ -1194,9 +1868,12 @@ async function loadIbkrImportHistory() {
     const result = await api('/api/trades/import/ibkr/history');
     state.ibkrHistory.batches = Array.isArray(result?.batches) ? result.batches : [];
     renderIbkrImportHistory(state.ibkrHistory.batches);
+    renderImportPanel();
+    updateSubtitle();
   } catch (_error) {
     state.ibkrHistory.batches = [];
     renderIbkrImportHistory([]);
+    renderImportPanel();
   }
 }
 
@@ -1227,11 +1904,6 @@ function bindForm() {
   document.querySelector('#apply-filters-btn')?.addEventListener('click', applyFilters);
   document.querySelector('#reset-filters-btn')?.addEventListener('click', resetFilters);
   document.querySelector('#export-csv-btn')?.addEventListener('click', exportCsv);
-  document.querySelector('#trades-load-more-btn')?.addEventListener('click', () => {
-    loadMoreTrades().catch((error) => {
-      alert(error?.message || 'Unable to load older trades');
-    });
-  });
   document.querySelector('#import-ibkr-btn')?.addEventListener('click', () => {
     document.querySelector('#import-ibkr-file')?.click();
   });
@@ -1308,6 +1980,89 @@ function bindForm() {
       }
     }
   });
+
+  // Search input — client-side filter, debounced
+  let searchTimer;
+  document.querySelector('#tj-search')?.addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      state.searchText = e.target.value || '';
+      state.pagination.clientPage = 1;
+      renderTrades();
+    }, 150);
+  });
+
+  // Reset button (new filter bar)
+  document.querySelector('#tj-reset-btn')?.addEventListener('click', resetFilters);
+
+  // Sort pill
+  document.querySelector('#tj-sort-pill-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dropdown = document.querySelector('#tj-sort-dropdown');
+    if (!dropdown) return;
+    const isHidden = dropdown.classList.contains('is-hidden');
+    closeAllPopovers();
+    dropdown.classList.toggle('is-hidden', !isHidden);
+  });
+  document.querySelectorAll('.tj-sort-option').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.sort.key = btn.dataset.sort || 'date-desc';
+      try { localStorage.setItem('tj-sort-key', state.sort.key); } catch (_) {}
+      closeAllPopovers();
+      updateSortPillLabel();
+      state.pagination.clientPage = 1;
+      renderTrades();
+    });
+  });
+
+  // Select-all checkbox
+  document.querySelector('#tj-select-all')?.addEventListener('change', (e) => {
+    const { visible } = getVisibleTrades();
+    visible.forEach(t => {
+      if (e.target.checked) state.selectedIds.add(t.id);
+      else state.selectedIds.delete(t.id);
+    });
+    renderTrades();
+  });
+
+  // Bulk actions
+  document.querySelector('#tj-bulk-clear-btn')?.addEventListener('click', () => {
+    state.selectedIds.clear();
+    renderTrades();
+  });
+  document.querySelector('#tj-bulk-delete-btn')?.addEventListener('click', async () => {
+    const ids = [...state.selectedIds];
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} trade${ids.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    try {
+      await Promise.all(ids.map(id => api(`/api/trades/${id}`, { method: 'DELETE' })));
+      ids.forEach(id => removeTradeFromState(id, { source: 'bulk-delete' }));
+      state.selectedIds.clear();
+      renderTrades();
+    } catch (e) {
+      alert(e?.message || 'Some deletes failed');
+    }
+  });
+  document.querySelector('#tj-bulk-export-btn')?.addEventListener('click', () => {
+    exportCsv();
+  });
+  document.querySelector('#tj-bulk-close-btn')?.addEventListener('click', () => {
+    alert('Bulk close: select trades individually using the row More menu to close each position.');
+  });
+
+  // Page size selector
+  document.querySelector('#tj-page-size-sel')?.addEventListener('change', (e) => {
+    state.pagination.pageSize = Number(e.target.value) || 25;
+    state.pagination.clientPage = 1;
+    renderTrades();
+  });
+
+  // Close popovers / menus on outside click
+  document.addEventListener('click', () => {
+    closeAllPopovers();
+    document.querySelectorAll('.tj-more-menu').forEach(m => m.classList.add('is-hidden'));
+  });
 }
 
 async function init() {
@@ -1341,6 +2096,14 @@ async function init() {
   const openInput = document.querySelector('#form-open-date');
   if (openInput && !openInput.value) openInput.value = today;
   resetForm();
+  // Restore sort state from localStorage
+  try {
+    const savedSort = localStorage.getItem('tj-sort-key');
+    if (savedSort && SORT_LABELS[savedSort]) state.sort.key = savedSort;
+  } catch (_) {}
+  updateSortPillLabel();
+  // Read any URL filter params before loading
+  readFiltersFromUrl();
   await loadTrades();
   window.PerfDiagnostics?.mark('trades-first-meaningful-data');
   await loadIbkrImportHistory();
@@ -1353,6 +2116,8 @@ window.addEventListener('DOMContentLoaded', () => {
     if (event.key === 'Escape') {
       document.querySelector('#trade-form-modal')?.classList.add('hidden');
       document.querySelector('#trade-settings-modal')?.classList.add('hidden');
+      closeAllPopovers();
+      document.querySelectorAll('.tj-more-menu').forEach(m => m.classList.add('is-hidden'));
     }
   });
 });

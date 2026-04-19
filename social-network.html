@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Social Network | P&L Calendar</title>
+  <title>Friends | Veracity</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/Veracity-notification-logo.png?v=20260318">
   <link rel="icon" type="image/png" href="/static/Veracity-notification-logo.png?v=20260318">
@@ -11,55 +11,191 @@
 </head>
 <body>
   <main class="container social-page">
-    <nav class="social-tabs" aria-label="Social sections">
-      <a class="social-tab" href="/social">Overview</a>
-      <a class="social-tab" href="/social/groups">Groups</a>
-      <a class="social-tab is-active" href="/social/network">Network</a>
-      <a class="social-tab" href="/social/profile">Profile</a>
-      <a class="social-tab" href="/social/chat">Chat</a>
-    </nav>
 
-    <section class="card social-card" aria-labelledby="social-friends-title">
-      <header class="social-header">
-        <p class="tool-overline">Network</p>
-        <h1 id="social-friends-title">Friends &amp; requests</h1>
-      </header>
-      <div id="social-friends-disabled" class="helper hidden"></div>
-      <div class="social-friends-grid">
-        <section class="social-friends-block" aria-labelledby="social-add-friend-title">
-          <header class="social-friends-block-header"><h3 id="social-add-friend-title">Add friend</h3></header>
-          <form id="social-add-friend-form" class="social-add-friend-form" novalidate>
-            <div class="social-add-friend-shell">
-              <label for="social-add-friend-code" class="helper">Enter a trader's friend code</label>
-              <div class="social-add-friend-row">
-                <input id="social-add-friend-code" name="friendCode" type="text" maxlength="32" autocomplete="off" placeholder="ABCD-1234" aria-describedby="social-add-friend-helper">
-                <button id="social-add-friend-btn" class="primary" type="submit">Send</button>
-              </div>
-              <p id="social-add-friend-helper" class="helper">Use a verified friend code to send a direct request.</p>
-              <p id="social-add-friend-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
-            </div>
-          </form>
-        </section>
-
-        <section class="social-friends-block" aria-labelledby="social-requests-title">
-          <header class="social-friends-block-header"><h3 id="social-requests-title">Requests</h3></header>
-          <div class="social-request-group" aria-labelledby="social-incoming-title">
-            <div class="social-subpanel-head"><h4 id="social-incoming-title">Incoming</h4><span class="social-subpanel-caption">Needs your decision</span></div>
-            <div id="social-incoming-requests" class="social-list"></div>
-          </div>
-          <div class="social-request-group" aria-labelledby="social-outgoing-title">
-            <div class="social-subpanel-head"><h4 id="social-outgoing-title">Outgoing</h4><span class="social-subpanel-caption">Waiting on response</span></div>
-            <div id="social-outgoing-requests" class="social-list"></div>
-          </div>
-        </section>
-
-        <section class="social-friends-block" aria-labelledby="social-friends-list-title">
-          <header class="social-friends-block-header"><h3 id="social-friends-list-title">Current friends</h3></header>
-          <div id="social-friends-list" class="social-list"></div>
-        </section>
+    <!-- Page header: title/subtitle left, sub-nav right -->
+    <div class="friends-page-header">
+      <div class="friends-page-title-block">
+        <h1 class="friends-page-title">Friends</h1>
+        <p id="friends-page-subtitle" class="friends-page-subtitle">Loading…</p>
       </div>
-    </section>
+      <nav class="social-tabs" aria-label="Social sections">
+        <a class="social-tab" href="/social">Overview</a>
+        <a class="social-tab" href="/social/groups">Groups</a>
+        <a class="social-tab is-active" href="/social/network">Friends</a>
+        <a class="social-tab" href="/social/profile">Profile</a>
+        <a class="social-tab" href="/social/chat">Chat</a>
+      </nav>
+    </div>
+
+    <!-- Guest / nickname-required message -->
+    <div id="social-friends-disabled" class="helper hidden"></div>
+
+    <!-- Friend code bar -->
+    <div class="friends-codebar card">
+      <div class="friends-codebar-grid">
+
+        <!-- Left: your own code -->
+        <div class="friends-owncode">
+          <p class="friends-field-label">YOUR FRIEND CODE</p>
+          <div class="friends-owncode-row">
+            <span id="friends-own-code-box" class="friends-code-box" aria-label="Your friend code">—</span>
+            <button id="friends-copy-code-btn" class="ghost friends-action-btn" type="button" title="Copy friend code">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2H3.5A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+              Copy
+            </button>
+            <button id="friends-share-code-btn" class="ghost friends-action-btn friends-action-btn--icon" type="button" title="Share friend code">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="12" cy="3" r="1.5" stroke="currentColor" stroke-width="1.5"/>
+                <circle cx="12" cy="13" r="1.5" stroke="currentColor" stroke-width="1.5"/>
+                <circle cx="4" cy="8" r="1.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M10.5 3.5L5.5 7.5M10.5 12.5L5.5 8.5" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Right: add a friend -->
+        <div class="friends-addfriend">
+          <p class="friends-field-label">ADD A FRIEND</p>
+          <form id="social-add-friend-form" class="friends-add-form" novalidate>
+            <div class="friends-add-row">
+              <input id="social-add-friend-code" name="friendCode" type="text" maxlength="9"
+                autocomplete="off" spellcheck="false"
+                placeholder="Enter friend code (e.g. ABCD-1234)"
+                class="friends-code-input"
+                aria-describedby="social-add-friend-feedback">
+              <button id="social-add-friend-btn" class="friends-send-btn" type="submit" disabled>Send request</button>
+            </div>
+            <p id="social-add-friend-feedback" class="helper social-inline-feedback" aria-live="polite"></p>
+          </form>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Two-column layout: sidebar (requests) + main (friends list) -->
+    <div class="friends-layout-grid">
+
+      <!-- Left sidebar: requests + how-it-works -->
+      <aside class="friends-sidebar">
+
+        <!-- Incoming requests card — hidden when empty -->
+        <div id="friends-incoming-wrap" class="hidden">
+          <div class="friends-requests-card friends-requests-card--incoming">
+            <div class="friends-requests-header">
+              <div class="friends-requests-header-left">
+                <span class="friends-requests-label friends-requests-label--warning">INCOMING</span>
+                <span id="friends-incoming-pill" class="friends-count-pill friends-count-pill--warning">0</span>
+              </div>
+              <span class="friends-requests-caption">Needs your decision</span>
+            </div>
+            <div id="social-incoming-requests" class="friends-requests-list"></div>
+            <div class="friends-requests-footer">New requests will appear here automatically.</div>
+          </div>
+        </div>
+
+        <!-- Outgoing requests card — hidden when empty -->
+        <div id="friends-outgoing-wrap" class="hidden">
+          <div class="friends-requests-card">
+            <div class="friends-requests-header">
+              <div class="friends-requests-header-left">
+                <span class="friends-requests-label">OUTGOING</span>
+                <span id="friends-outgoing-pill" class="friends-count-pill">0</span>
+              </div>
+              <span class="friends-requests-caption">Waiting on response</span>
+            </div>
+            <div id="social-outgoing-requests" class="friends-requests-list"></div>
+          </div>
+        </div>
+
+        <!-- How it works — shown when friend count ≤ 3 -->
+        <div id="friends-howitworks-wrap">
+          <div class="friends-howitworks-card">
+            <div class="friends-howitworks-header">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="color:var(--info);flex-shrink:0">
+                <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M8 7v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="8" cy="5.5" r="0.75" fill="currentColor"/>
+              </svg>
+              <span class="friends-howitworks-title">How it works</span>
+            </div>
+            <p class="friends-howitworks-body">Share your friend code with traders you trust. When you connect, they appear on your Social overview feed and in trading groups you invite them to.</p>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- Right: friends list card -->
+      <section class="friends-list-section">
+        <div class="friends-list-card card">
+
+          <!-- Card header: title + sort + search + filter -->
+          <div class="friends-list-card-header">
+            <div class="friends-list-title-row">
+              <div class="friends-list-title-left">
+                <span class="friends-list-title-text">Your friends</span>
+                <span id="friends-list-count-pill" class="friends-count-pill">0</span>
+              </div>
+              <div class="friends-list-title-right">
+                <div class="friends-sort-control" id="friends-sort-control">
+                  <button type="button" class="ghost friends-sort-btn" id="friends-sort-btn" aria-haspopup="listbox" aria-expanded="false">
+                    Sort: <span id="friends-sort-label">Recent</span>
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
+                      <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                  <div class="friends-sort-dropdown hidden" id="friends-sort-dropdown" role="listbox">
+                    <button class="friends-sort-option is-selected" data-sort="recent" role="option" aria-selected="true">Recent activity</button>
+                    <button class="friends-sort-option" data-sort="name" role="option" aria-selected="false">Name (A–Z)</button>
+                    <button class="friends-sort-option" data-sort="since_newest" role="option" aria-selected="false">Friends since (newest)</button>
+                    <button class="friends-sort-option" data-sort="since_oldest" role="option" aria-selected="false">Friends since (oldest)</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="friends-filter-row">
+              <div class="friends-search-wrap">
+                <svg class="friends-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M10 10l3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                <input type="search" id="friends-search-input" placeholder="Search friends" class="friends-search-input" aria-label="Search friends">
+              </div>
+              <div class="friends-segment" role="group" aria-label="Filter friends">
+                <button class="friends-segment-btn is-active" data-filter="all" type="button">All</button>
+                <button class="friends-segment-btn" data-filter="online" type="button">Online</button>
+                <button class="friends-segment-btn" data-filter="groups" type="button">In groups</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Friend rows rendered here -->
+          <div id="social-friends-list" class="friends-list-body"></div>
+
+        </div>
+      </section>
+
+    </div>
   </main>
+
+  <!-- Remove friend confirmation modal -->
+  <div id="friends-remove-modal" class="friends-modal hidden" aria-modal="true" role="dialog" aria-labelledby="friends-remove-modal-title">
+    <div class="friends-modal-backdrop" id="friends-remove-modal-backdrop"></div>
+    <div class="friends-modal-panel">
+      <p class="friends-modal-title" id="friends-remove-modal-title">Remove <span id="friends-remove-modal-name">friend</span> from friends?</p>
+      <p class="friends-modal-body">They won't be notified.</p>
+      <div class="friends-modal-actions">
+        <button type="button" class="ghost" id="friends-remove-cancel-btn">Cancel</button>
+        <button type="button" class="danger" id="friends-remove-confirm-btn">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="social-toast-container" class="social-toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <script src="/static/theme-utils.js"></script>
   <script src="/static/social-avatar.js"></script>
