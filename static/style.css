@@ -14887,6 +14887,36 @@ body.ia-drawer-open {
   flex-shrink: 0;
   align-self: flex-start;
 }
+
+/* ── Net performance prominence block ──────────────────────────── */
+.db-portfolio__perf-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.db-portfolio__perf-amount {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.db-portfolio__perf-amount.positive { color: var(--success); }
+.db-portfolio__perf-amount.negative { color: var(--danger); }
+.db-portfolio__perf-pct {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Sparkline hover label ─────────────────────────────────────── */
+.db-sparkline-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-height: 14px;
+  text-align: right;
+}
+
 .db-portfolio__sparkline {
   width: 100%;
   height: 90px;
@@ -14986,6 +15016,8 @@ body.ia-drawer-open {
 .db-weekly__btn {
   margin-top: auto;
   width: 100%;
+  border-width: 0.5px;
+  border-radius: 8px;
 }
 
 /* ── Chip ──────────────────────────────────────────────────────── */
@@ -15009,7 +15041,7 @@ body.ia-drawer-open {
 /* ── Main workspace ────────────────────────────────────────────── */
 .db-workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 260px;
+  grid-template-columns: 280px minmax(0, 1fr) 280px;
   gap: 12px;
   align-items: start;
   margin-bottom: 16px;
@@ -15233,6 +15265,16 @@ body.ia-drawer-open {
 .db-calendar .db-calendar__head #view-controls button:hover {
   background: rgba(255,255,255,0.06);
   border-color: transparent;
+}
+
+/* ── Active trades rail: stack metrics vertically to prevent collision */
+.db-workspace #active-trades-card .trade-metrics-cluster {
+  grid-template-columns: 1fr;
+  justify-items: end;
+  gap: 2px;
+}
+.db-workspace #active-trades-card .trade-row-grid {
+  grid-template-columns: 72px minmax(0, 1fr) 22px;
 }
 
 /* ── Responsive ────────────────────────────────────────────────── */

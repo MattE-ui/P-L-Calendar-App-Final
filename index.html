@@ -36,10 +36,6 @@
             <p class="db-overline">Portfolio value</p>
             <div class="db-portfolio__value" id="header-portfolio-value">£0.00</div>
             <div class="db-portfolio__change" id="header-portfolio-sub"></div>
-            <div class="db-portfolio__perf">
-              <span id="hero-net-performance-value" class="db-portfolio__perf-val"></span>
-              <span id="hero-net-performance-sub" class="db-portfolio__perf-sub"></span>
-            </div>
           </div>
           <div class="db-seg db-portfolio__tf" role="group" aria-label="Portfolio timeframe">
             <button type="button" data-portfolio-tf="1d">1D</button>
@@ -49,21 +45,28 @@
             <button type="button" data-portfolio-tf="all">All</button>
           </div>
         </div>
+        <!-- Net performance: prominent signed display -->
+        <div class="db-portfolio__perf-block">
+          <span class="db-portfolio__perf-amount" id="hero-net-performance-value"></span>
+          <span class="db-portfolio__perf-pct" id="hero-net-performance-sub"></span>
+        </div>
         <div id="portfolio-trend" class="mini-line db-portfolio__sparkline"></div>
+        <div class="db-sparkline-label" id="portfolio-sparkline-label" aria-live="polite"></div>
         <hr class="db-portfolio__divider">
         <div class="db-portfolio__substats">
+          <div class="db-substat db-substat--perf">
+            <p class="db-substat__label">Net performance</p>
+            <strong class="db-substat__value" id="db-substat-net-perf">—</strong>
+            <span class="db-substat__alt" id="db-substat-net-perf-pct"></span>
+          </div>
           <div class="db-substat">
             <p class="db-substat__label">Net deposits</p>
             <strong class="db-substat__value" id="hero-net-deposits-value">£0.00</strong>
             <span class="db-substat__alt" id="hero-net-deposits-sub"></span>
           </div>
-          <div class="db-substat db-substat--pnl">
-            <p class="db-substat__label">Live open PnL</p>
-            <strong class="db-substat__value" id="db-portfolio-live-pnl">£0.00</strong>
-          </div>
-          <div class="db-substat db-substat--risk">
-            <p class="db-substat__label">Open risk</p>
-            <strong class="db-substat__value" id="db-portfolio-open-risk">£0.00</strong>
+          <div class="db-substat db-substat--month">
+            <p class="db-substat__label">Realised this month</p>
+            <strong class="db-substat__value" id="db-realised-month">—</strong>
           </div>
         </div>
       </article>
@@ -228,10 +231,10 @@
                 <option value="EUR">EUR €</option>
               </select>
               <div id="view-controls" class="db-seg" role="group" aria-label="Calendar view">
-                <button data-view="day">Day</button>
+                <button data-view="day">Month</button>
                 <button data-view="week">Week</button>
-                <button data-view="month" class="active">Month</button>
-                <button data-view="year">Year</button>
+                <button data-view="month" class="active">Year</button>
+                <button data-view="year">History</button>
               </div>
             </div>
           </div>

@@ -80,6 +80,7 @@ const state = {
     value: null
   },
   portfolioTrendSignature: '',
+  portfolioTimeframe: '1m',
   historyLoadScope: 'window',
   deferredHistoryLoaded: false,
   deferredHistoryLoadInFlight: false
@@ -1426,6 +1427,37 @@ function getYearMonths(date) {
   return months;
 }
 
+function getSparklineByTimeframe(tf) {
+  const now = new Date();
+  const allEntries = getAllEntries();
+  if (!allEntries.length) return [];
+
+  let cutoff = null;
+  if (tf === '1d') {
+    const todayEntry = getDailyEntry(now);
+    return todayEntry ? [{ pct: todayEntry.pct, label: 'Today' }] : [];
+  } else if (tf === '1w') {
+    cutoff = new Date(now);
+    cutoff.setDate(now.getDate() - 7);
+  } else if (tf === '1m') {
+    cutoff = new Date(now);
+    cutoff.setMonth(now.getMonth() - 1);
+  } else if (tf === 'ytd') {
+    cutoff = new Date(now.getFullYear(), 0, 1);
+  } else {
+    // all — use every entry chronologically by month
+    return getPortfolioTrendPeriods();
+  }
+
+  return allEntries
+    .filter(entry => entry.date >= cutoff)
+    .map(entry => ({
+      pct: entry.pct,
+      label: entry.date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    }))
+    .filter(p => Number.isFinite(p.pct));
+}
+
 function getPortfolioTrendPeriods() {
   if (state.view === 'month') {
     return getYearMonths(state.selected).map(item => ({
@@ -1978,17 +2010,6 @@ function renderActiveTrades() {
     openLossCard.classList.toggle('negative', openLossPotential < 0);
   } else if (openLossCard) {
     openLossCard.classList.remove('negative');
-  }
-
-  // Portfolio substat mirrors
-  const portfolioLivePnlEl = $('#db-portfolio-live-pnl');
-  if (portfolioLivePnlEl) {
-    portfolioLivePnlEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(livePnl);
-    if (!state.safeScreenshot) window.ThemeUtils?.applyPnlColorClass(portfolioLivePnlEl, livePnl);
-  }
-  const portfolioOpenRiskEl = $('#db-portfolio-open-risk');
-  if (portfolioOpenRiskEl) {
-    portfolioOpenRiskEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatLiveOpenPnl(openLossPotential);
   }
 
   // Open count badge
@@ -2938,8 +2959,10 @@ function renderPortfolioTrend() {
   const el = $('#portfolio-trend');
   if (!el) return;
 
-  const periods = getPortfolioTrendPeriods();
-  const trendSignature = `${state.safeScreenshot ? 1 : 0}|${periods.map(item => `${item?.label || ''}:${Number(item?.pct || 0).toFixed(4)}`).join('|')}`;
+  const periods = state.portfolioTimeframe
+    ? getSparklineByTimeframe(state.portfolioTimeframe)
+    : getPortfolioTrendPeriods();
+  const trendSignature = `${state.safeScreenshot ? 1 : 0}|${state.portfolioTimeframe || ''}|${periods.map(item => `${item?.label || ''}:${Number(item?.pct || 0).toFixed(4)}`).join('|')}`;
   if (state.portfolioTrendSignature === trendSignature) {
     window.PerfDiagnostics?.log('dashboard-portfolio-trend-skip', { reason: 'signature-match' });
     return;
@@ -2947,7 +2970,7 @@ function renderPortfolioTrend() {
   state.portfolioTrendSignature = trendSignature;
   el.innerHTML = '';
   const hasPerformanceData = periods.some(item => Number.isFinite(item?.pct));
-  const noteEl = document.querySelector('#portfolio-trend-card .mini-chart-note');
+  const noteEl = document.querySelector('#portfolio-sparkline-label') || document.querySelector('#portfolio-trend-card .mini-chart-note');
   const defaultNote = 'Drag to inspect';
   if (noteEl) noteEl.textContent = defaultNote;
 
@@ -3607,6 +3630,23 @@ function setupPortfolioValueMutationObserver() {
   });
 }
 
+function computeRealisedThisMonth() {
+  const now = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthData = state.data?.[monthKey];
+  if (!monthData) return null;
+  let total = 0;
+  let hasAny = false;
+  Object.values(monthData).forEach(entry => {
+    const change = Number(entry?.change);
+    if (Number.isFinite(change)) {
+      total += change;
+      hasAny = true;
+    }
+  });
+  return hasAny ? total : null;
+}
+
 function renderMetrics() {
   const metrics = state.metrics || {};
   const historyGBP = Number.isFinite(state.historyPortfolioValueGBP)
@@ -3673,6 +3713,7 @@ function renderMetrics() {
     netPerfEl.textContent = state.safeScreenshot
       ? formatPercent(netPerformancePct)
       : formatSignedCurrency(netPerformanceGBP);
+    if (!state.safeScreenshot) window.ThemeUtils?.applyPnlColorClass(netPerfEl, netPerformanceGBP);
   }
   const netPerfSub = $('#hero-net-performance-sub');
   if (netPerfSub) {
@@ -3691,6 +3732,24 @@ function renderMetrics() {
     }
   }
   setMetricTrend($('#hero-net-performance'), netPerformanceGBP);
+
+  // Portfolio card substats
+  const dbNetPerfEl = $('#db-substat-net-perf');
+  if (dbNetPerfEl) {
+    dbNetPerfEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : formatSignedCurrency(netPerformanceGBP);
+    if (!state.safeScreenshot) window.ThemeUtils?.applyPnlColorClass(dbNetPerfEl, netPerformanceGBP);
+  }
+  const dbNetPerfPctEl = $('#db-substat-net-perf-pct');
+  if (dbNetPerfPctEl) {
+    dbNetPerfPctEl.textContent = state.safeScreenshot ? '' : (netPerformancePct !== null ? formatPercent(netPerformancePct) : '');
+    if (!state.safeScreenshot) window.ThemeUtils?.applyPnlColorClass(dbNetPerfPctEl, netPerformanceGBP);
+  }
+  const dbRealisedMonthEl = $('#db-realised-month');
+  if (dbRealisedMonthEl) {
+    const realisedMonth = computeRealisedThisMonth();
+    dbRealisedMonthEl.textContent = state.safeScreenshot ? SAFE_SCREENSHOT_LABEL : (Number.isFinite(realisedMonth) ? formatSignedCurrency(realisedMonth) : '—');
+    if (!state.safeScreenshot && Number.isFinite(realisedMonth)) window.ThemeUtils?.applyPnlColorClass(dbRealisedMonthEl, realisedMonth);
+  }
 
   const returnEl = $('#metric-return-value');
   if (returnEl) returnEl.textContent = formatPercent(netPerformancePct);
@@ -4105,19 +4164,18 @@ function renderMonthGrid(targetDate, grid) {
       `;
       cell.addEventListener('click', () => openMobileDayDetail(key, entry));
     } else {
+      const hasData = change !== null;
       const changeText = state.safeScreenshot
         ? ''
-        : (change === null
-          ? 'Δ —'
-          : `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}`);
+        : (hasData ? `Δ ${formatSignedCurrency(change)}${pct === null ? '' : ` (${formatPercent(pct)})`}` : '');
       const pctDisplay = pct === null ? '—' : formatPercent(pct);
-      const tradeHtml = `<div class="trade-count">Trades: ${tradeCount}</div>`;
-      cell.innerHTML = `
-        <div class="date">${day}</div>
-        <div class="val">${state.safeScreenshot ? pctDisplay : (closing === null ? '—' : formatCurrency(closing))}</div>
+      const tradeHtml = hasData ? `<div class="trade-count">Trades: ${tradeCount}</div>` : '';
+      cell.innerHTML = hasData
+        ? `<div class="date">${day}</div>
+        <div class="val">${state.safeScreenshot ? pctDisplay : formatCurrency(closing)}</div>
         <div class="pct">${changeText}</div>
-        ${tradeHtml}
-      `;
+        ${tradeHtml}`
+        : `<div class="date">${day}</div><div class="val">—</div>`;
       cell.addEventListener('click', () => openEntryModal(key, entry));
     }
     cell.setAttribute('aria-label', `${new Date(key).toLocaleDateString('en-GB')} ${change === null ? 'No PnL' : formatSignedCurrency(change)} ${tradeCount ? `${tradeCount} trades` : 'No trades'}`);
@@ -4611,6 +4669,8 @@ async function loadDeferredFullDashboardHistory(reason = 'post-render') {
     renderMetrics();
     renderPortfolioTrend();
     renderSummary();
+    renderView();
+    renderMobileMonthSummary();
     window.PerfDiagnostics?.log('dashboard-history-detail-deferred', {
       reason,
       mergedScope: 'full',
@@ -5116,6 +5176,9 @@ function bindControls() {
         state.selected = startOfMonth(new Date(periodSelect.value));
       }
       render();
+      if (!state.deferredHistoryLoaded) {
+        loadDeferredFullDashboardHistory('period-select').catch(() => {});
+      }
     });
   }
 
@@ -5129,17 +5192,35 @@ function bindControls() {
   }
 
   // Month nav prev/next buttons drive the period select
+  // period-select is newest-first (index 0 = current month), so "prev" = older = higher index
   $('#cal-month-prev')?.addEventListener('click', () => {
+    const sel = $('#period-select');
+    if (!sel || sel.selectedIndex >= sel.options.length - 1) return;
+    sel.selectedIndex = sel.selectedIndex + 1;
+    sel.dispatchEvent(new Event('change'));
+  });
+  $('#cal-month-next')?.addEventListener('click', () => {
     const sel = $('#period-select');
     if (!sel || sel.selectedIndex <= 0) return;
     sel.selectedIndex = sel.selectedIndex - 1;
     sel.dispatchEvent(new Event('change'));
   });
-  $('#cal-month-next')?.addEventListener('click', () => {
-    const sel = $('#period-select');
-    if (!sel || sel.selectedIndex >= sel.options.length - 1) return;
-    sel.selectedIndex = sel.selectedIndex + 1;
-    sel.dispatchEvent(new Event('change'));
+
+  // Portfolio timeframe selector
+  $$('.db-portfolio__tf button[data-portfolio-tf]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tf = btn.dataset.portfolioTf;
+      if (!tf || state.portfolioTimeframe === tf) return;
+      state.portfolioTimeframe = tf;
+      // update active state
+      $$('.db-portfolio__tf button[data-portfolio-tf]').forEach(b => b.classList.toggle('is-active', b === btn));
+      // need full history for anything beyond current month
+      if (!state.deferredHistoryLoaded && tf !== '1d') {
+        loadDeferredFullDashboardHistory('portfolio-tf').catch(() => {});
+      }
+      state.portfolioTrendSignature = ''; // bust cache
+      renderPortfolioTrend();
+    });
   });
 
   $$('#view-controls button[data-view]').forEach(btn => {
