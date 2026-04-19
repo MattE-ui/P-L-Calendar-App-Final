@@ -815,7 +815,10 @@
     const overlay = document.getElementById('manage-overlay');
     const drawer = document.getElementById('manage-drawer');
     if (overlay) { overlay.hidden = true; overlay.setAttribute('aria-hidden', 'true'); }
-    if (drawer) { drawer.classList.remove('ia-drawer-open'); drawer.hidden = true; }
+    if (drawer) {
+      drawer.classList.remove('ia-drawer-open');
+      drawer.addEventListener('transitionend', () => { drawer.hidden = true; }, { once: true });
+    }
     document.body.classList.remove('ia-drawer-open');
     drawerInvestorId = null;
   }
