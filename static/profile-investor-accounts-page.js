@@ -816,8 +816,17 @@
     const drawer = document.getElementById('manage-drawer');
     if (overlay) { overlay.hidden = true; overlay.setAttribute('aria-hidden', 'true'); }
     if (drawer) {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        drawer.removeEventListener('transitionend', onEnd);
+        drawer.hidden = true;
+      };
+      const onEnd = (e) => { if (e.propertyName === 'transform') finish(); };
+      drawer.addEventListener('transitionend', onEnd);
       drawer.classList.remove('ia-drawer-open');
-      drawer.addEventListener('transitionend', () => { drawer.hidden = true; }, { once: true });
+      setTimeout(finish, 350);
     }
     document.body.classList.remove('ia-drawer-open');
     drawerInvestorId = null;
