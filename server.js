@@ -13,6 +13,7 @@ const { z } = require('zod');
 const { getEnvString, getEnvUrl, getEnvNumber, getEnvBoolean } = require('./lib/env-utils');
 const { ensureArrayProperty } = require('./lib/data-utils');
 const sqliteDb = require('./lib/sqlite-db');
+const nodeCron = require('node-cron');
 let nodemailer = null;
 try {
   nodemailer = require('nodemailer');
@@ -26900,9 +26901,9 @@ if (require.main === module) {
     if (_bfAdded > 0) { saveDB(_bfDb); console.log(`[ledger-backfill] backfilled ${_bfAdded} unit ledger entries on startup`); }
   } catch (_bfErr) { console.warn('[ledger-backfill] startup backfill failed:', _bfErr.message); }
   runAutoNavJob('startup').catch(err => console.warn('[AutoNAV] startup run failed:', err?.message || err));
-  setInterval(() => {
-    runAutoNavJob('cron').catch(err => console.warn('[AutoNAV] cron run failed:', err?.message || err));
-  }, 24 * 60 * 60 * 1000);
+  nodeCron.schedule('30 21 * * *', () => {
+    runAutoNavJob('scheduled').catch(err => console.warn('[AutoNAV] scheduled run failed:', err?.message || err));
+  }, { timezone: 'Europe/London' });
   bootstrapTrading212Schedules();
   bootstrapIbkrSchedules();
   runGuestCleanup();
@@ -27065,7 +27066,9 @@ module.exports = {
   runHeadlineIngestionJob,
   scheduleHeadlineIngestionJob,
   runNewsNotificationOutboxProcessorJob,
-  scheduleNewsNotificationOutboxProcessorJob
+  scheduleNewsNotificationOutboxProcessorJob,
+  ensureInvestorTables,
+  currentDateKey,
 };
 
 process.on('SIGTERM', () => {

@@ -3540,9 +3540,11 @@ td .mapping-badge {
 .toggle-switch {
   position: relative;
   width: 54px;
+  min-width: 54px;
   height: 30px;
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
 }
 .toggle-switch input {
   opacity: 0;
