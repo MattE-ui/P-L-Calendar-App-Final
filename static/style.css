@@ -13057,7 +13057,7 @@ body.ia-drawer-open {
 .ia-cf-withdrawal { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .ia-cf-fee      { background: color-mix(in srgb, var(--text-muted) 12%, transparent); color: var(--text-muted); }
 .ia-cf-ref      { font-size: 12px; color: var(--text-dim); }
-.ia-cf-del {
+.ia-cf-del, .ia-cf-edit-btn {
   background: none;
   border: none;
   color: var(--text-dim);
@@ -13072,6 +13072,30 @@ body.ia-drawer-open {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
+.ia-cf-edit-btn:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Inline edit row */
+.ia-cf-edit-input {
+  width: 100%;
+  height: 30px;
+  font-size: 12px;
+  padding: 0 6px;
+  margin: 0;
+  box-sizing: border-box;
+}
+.ia-cf-edit-actions td {
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ia-cf-edit-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ia-cf-edit-actions .ia-stale-banner { margin-bottom: 6px; }
 .ia-cf-empty {
   text-align: center;
   color: var(--text-dim);
@@ -13289,7 +13313,9 @@ body.ia-drawer-open {
   border-radius: 4px;
   margin-bottom: 8px;
 }
-.ia-stale-banner .ghost.small { font-size: 11px; padding: 2px 8px; min-height: unset; margin-left: auto; }
+.ia-stale-banner .ghost.small { font-size: 11px; padding: 2px 8px; min-height: unset; margin-left: auto; flex-shrink: 0; }
+/* When a stale banner appears inside the cashflow create form (a CSS grid), make it span all columns */
+.ia-cashflow-form .ia-stale-banner { grid-column: 1 / -1; margin-bottom: 0; }
 
 /* ── Record NAV overwrite warning ─────────────────────────── */
 .ia-overwrite-warning {

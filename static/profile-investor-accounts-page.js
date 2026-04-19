@@ -945,9 +945,10 @@
       document.querySelector('.ia-drawer-perf-retry')?.addEventListener('click', () => loadManageDrawer(investorId));
 
       const cfDateEl = document.getElementById('md-cf-date');
+      const cfNavWarnEl = document.getElementById('md-cf-nav-warn');
       if (cfDateEl) {
-        cfDateEl.addEventListener('change', () => updateNavWarning(cfDateEl.value));
-        updateNavWarning(cfDateEl.value);
+        cfDateEl.addEventListener('change', () => updateNavWarning(cfDateEl.value, cfNavWarnEl));
+        updateNavWarning(cfDateEl.value, cfNavWarnEl);
       }
 
       document.getElementById('md-delete-btn')?.addEventListener('click', (e) => {
@@ -972,20 +973,39 @@
     return `<table class="ia-cf-table">
       <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Ref</th><th></th></tr></thead>
       <tbody>${cashflows.map(row => `
-        <tr>
+        <tr data-cashflow-id="${row.id}" data-cashflow='${JSON.stringify({ id: row.id, type: row.type, amount: row.amount, effectiveDate: row.effectiveDate, reference: row.reference || '' })}'>
           <td>${row.effectiveDate}</td>
           <td><span class="ia-cf-badge ${typeColor[row.type] || ''}">${row.type}</span></td>
           <td>${formatCurrency(row.amount)}</td>
           <td class="ia-cf-ref">${row.reference || '—'}</td>
-          <td><button class="ghost small ia-cf-del" data-id="${row.id}" data-investor="${investorId}" title="Delete cashflow" aria-label="Delete cashflow">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M5 4v9h6V4H5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button></td>
+          <td style="white-space:nowrap">
+            <button class="ia-cf-edit-btn" data-id="${row.id}" data-investor="${investorId}" title="Edit cashflow" aria-label="Edit cashflow">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11 2l3 3L5 14H2v-3L11 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="ia-cf-del" data-id="${row.id}" data-investor="${investorId}" title="Delete cashflow" aria-label="Delete cashflow">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M5 4v9h6V4H5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </td>
         </tr>`).join('')}
       </tbody>
     </table>`;
   }
 
   document.getElementById('manage-drawer-body')?.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.ia-cf-edit-btn');
+    if (editBtn) {
+      const { id: cashflowId, investor: investorId } = editBtn.dataset;
+      if (!cashflowId || !investorId) return;
+      const tr = editBtn.closest('tr[data-cashflow-id]');
+      if (!tr) return;
+      // Prevent opening a second edit row if already editing
+      if (tr.nextElementSibling?.classList.contains('ia-cf-edit-actions')) return;
+      let cashflow;
+      try { cashflow = JSON.parse(tr.dataset.cashflow); } catch { return; }
+      activateCfEditMode(tr, cashflow, investorId);
+      return;
+    }
+
     const delBtn = e.target.closest('.ia-cf-del');
     if (!delBtn) return;
     const { id: cashflowId, investor: investorId } = delBtn.dataset;
@@ -1039,29 +1059,92 @@
     }
   }
 
-  function updateNavWarning(effectiveDate) {
-    const warn = document.getElementById('md-cf-nav-warn');
-    if (!warn) return;
-    if (!effectiveDate) { warn.hidden = true; return; }
-    if (navWarnDismissed.has(effectiveDate)) { warn.hidden = true; return; }
+  function activateCfEditMode(tr, cashflow, investorId) {
+    const originalHtml = tr.innerHTML;
+    const typeOpts = ['deposit', 'withdrawal', 'fee']
+      .map(t => `<option value="${t}"${t === cashflow.type ? ' selected' : ''}>${t}</option>`).join('');
+
+    tr.innerHTML = `
+      <td><input class="ia-cf-edit-input" id="cfe-date-${cashflow.id}" type="date" value="${cashflow.effectiveDate}"></td>
+      <td><select class="ia-cf-edit-input" id="cfe-type-${cashflow.id}">${typeOpts}</select></td>
+      <td><input class="ia-cf-edit-input" id="cfe-amount-${cashflow.id}" type="number" min="0.01" step="0.01" value="${cashflow.amount}"></td>
+      <td><input class="ia-cf-edit-input ia-cf-ref" id="cfe-ref-${cashflow.id}" type="text" placeholder="Reference" value="${cashflow.reference || ''}"></td>
+      <td></td>`;
+
+    const actionsRow = document.createElement('tr');
+    actionsRow.className = 'ia-cf-edit-actions';
+    actionsRow.innerHTML = `<td colspan="5">
+      <div id="cfe-warn-${cashflow.id}" class="ia-stale-banner" hidden></div>
+      <div class="ia-cf-edit-btns">
+        <span id="cfe-error-${cashflow.id}" class="error" style="font-size:12px;flex:1"></span>
+        <button class="primary small ia-cf-save" type="button">Save</button>
+        <button class="ghost small ia-cf-cancel" type="button">Cancel</button>
+      </div>
+    </td>`;
+    tr.after(actionsRow);
+
+    const dateInput = document.getElementById(`cfe-date-${cashflow.id}`);
+    const warnEl = document.getElementById(`cfe-warn-${cashflow.id}`);
+    if (dateInput) {
+      dateInput.addEventListener('change', () => updateNavWarning(dateInput.value, warnEl));
+      updateNavWarning(dateInput.value, warnEl);
+    }
+
+    actionsRow.querySelector('.ia-cf-cancel').addEventListener('click', () => {
+      tr.innerHTML = originalHtml;
+      actionsRow.remove();
+    });
+
+    actionsRow.querySelector('.ia-cf-save').addEventListener('click', async () => {
+      const type = document.getElementById(`cfe-type-${cashflow.id}`)?.value;
+      const amount = parseFloat(document.getElementById(`cfe-amount-${cashflow.id}`)?.value);
+      const effectiveDate = document.getElementById(`cfe-date-${cashflow.id}`)?.value;
+      const reference = document.getElementById(`cfe-ref-${cashflow.id}`)?.value?.trim();
+      const errorEl = document.getElementById(`cfe-error-${cashflow.id}`);
+
+      if (!Number.isFinite(amount) || amount <= 0) { errorEl.textContent = 'Amount must be > 0.'; return; }
+      if (!effectiveDate) { errorEl.textContent = 'Date is required.'; return; }
+
+      const saveBtn = actionsRow.querySelector('.ia-cf-save');
+      saveBtn.disabled = true;
+      errorEl.textContent = '';
+      try {
+        await api(`/api/master/investors/${investorId}/cashflows/${cashflow.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference: reference || '' }),
+        });
+        await loadManageDrawer(investorId);
+        await loadInvestorData();
+      } catch (err) {
+        errorEl.textContent = err.message || 'Failed to save.';
+        saveBtn.disabled = false;
+      }
+    });
+  }
+
+  function updateNavWarning(effectiveDate, warnEl) {
+    if (!warnEl) return;
+    if (!effectiveDate) { warnEl.hidden = true; return; }
+    if (navWarnDismissed.has(effectiveDate)) { warnEl.hidden = true; return; }
 
     const valuations = state.valuations || [];
     const onOrBefore = valuations.filter(v => v.valuationDate <= effectiveDate).sort((a, b) => b.valuationDate.localeCompare(a.valuationDate));
 
     let html = '';
     if (!onOrBefore.length) {
-      html = `<span aria-hidden="true">⚠</span><span style="flex:1">No NAV recorded on or before this date — the cashflow cannot be saved until one exists.</span><button class="ghost small" id="md-cf-warn-dismiss" type="button" style="margin-left:auto">Dismiss</button>`;
+      html = `<span aria-hidden="true">⚠</span><span style="flex:1">No NAV recorded on or before this date — the cashflow cannot be saved until one exists.</span><button class="ghost small ia-nav-warn-dismiss" type="button">Dismiss</button>`;
     } else {
       const days = Math.round((new Date(effectiveDate) - new Date(onOrBefore[0].valuationDate)) / 86400000);
-      if (days <= 3) { warn.hidden = true; return; }
-      html = `<span aria-hidden="true">⚠</span><span style="flex:1">Last NAV was recorded ${days} day${days === 1 ? '' : 's'} before this cashflow date. Consider recording a more recent NAV first.</span><button class="ghost small" id="md-cf-warn-dismiss" type="button" style="margin-left:auto">Dismiss</button>`;
+      if (days <= 3) { warnEl.hidden = true; return; }
+      html = `<span aria-hidden="true">⚠</span><span style="flex:1">Last NAV was recorded ${days} day${days === 1 ? '' : 's'} before this cashflow date. Consider recording a more recent NAV first.</span><button class="ghost small ia-nav-warn-dismiss" type="button">Dismiss</button>`;
     }
 
-    warn.hidden = false;
-    warn.innerHTML = html;
-    document.getElementById('md-cf-warn-dismiss')?.addEventListener('click', () => {
+    warnEl.hidden = false;
+    warnEl.innerHTML = html;
+    warnEl.querySelector('.ia-nav-warn-dismiss')?.addEventListener('click', () => {
       navWarnDismissed.add(effectiveDate);
-      warn.hidden = true;
+      warnEl.hidden = true;
     });
   }
 
