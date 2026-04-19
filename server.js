@@ -25003,12 +25003,10 @@ async function computeActiveTradesSnapshot(username) {
 
   // Overlay fresh currentPrice + ppl on matched DB trades before buildActiveTrades.
   // This lets the existing enrichment loop use lastSyncPrice for provider trades.
-  const matchedPositionKeys = new Set();
   if (t212LivePositions.length && Array.isArray(user.trades)) {
     for (const positionRaw of t212LivePositions) {
       const { normalised, direction, currentPrice, ppl } = parseT212PositionFields(positionRaw);
       if (!normalised) continue;
-      const matchKey = `${normalised}:${direction}`;
       const matchedTrade = user.trades.find(trade => {
         if (!(trade.source === 'trading212' || trade.trading212Id)) return false;
         const rawTickerOptions = [
@@ -25024,22 +25022,88 @@ async function computeActiveTradesSnapshot(username) {
       if (matchedTrade) {
         if (Number.isFinite(currentPrice)) matchedTrade.lastSyncPrice = currentPrice;
         if (Number.isFinite(ppl)) matchedTrade.ppl = ppl;
-        matchedPositionKeys.add(matchKey);
       }
     }
   }
 
   const { trades, liveOpenPnlGBP, openLossPotentialGBP, liveOpenPnlMode, liveOpenPnlCurrency } = await buildActiveTrades(user, rates);
 
-  // Build synthetic records for broker positions absent from the journal.
+  // Build set of tickers that survived buildActiveTrades leg-math filter.
+  // Any T212 position whose ticker is absent from this set gets a synthetic record —
+  // even when a DB trade exists but was filtered out by openQuantity <= 0.
+  const activeDbTickerSet = new Set();
+  for (const t of trades) {
+    const rawOptions = [t.trading212Ticker, t.ticker, t.symbol, t.displayTicker, t.displaySymbol].filter(Boolean);
+    for (const raw of rawOptions) {
+      const norm = normalizeTrading212Symbol(normalizeTrading212TickerValue(String(raw)));
+      if (norm) activeDbTickerSet.add(norm);
+    }
+  }
+
+  // Find the DB trade record for a normalised ticker (may exist but have failed the filter).
+  const findDbTradeForTicker = (normalised, direction) => {
+    if (!Array.isArray(user.trades)) return null;
+    return user.trades.find(trade => {
+      const rawOptions = [
+        trade.trading212Ticker, trade.ticker, trade.brokerTicker,
+        trade.symbol, trade.displayTicker, trade.displaySymbol
+      ].filter(Boolean);
+      const matched = rawOptions.some(t =>
+        normalizeTrading212Symbol(normalizeTrading212TickerValue(String(t))) === normalised
+      );
+      if (!matched) return false;
+      return (trade.direction === 'short' ? 'short' : 'long') === direction;
+    }) || null;
+  };
+
+  // Add synthetic records for T212 positions not present in buildActiveTrades output.
+  // If a filtered-out DB trade exists, merge its metadata so journal data is preserved.
   let syntheticLivePnlGBP = 0;
   const syntheticTrades = [];
   if (t212LivePositions.length && !t212PositionsStale) {
     for (const positionRaw of t212LivePositions) {
       const { normalised, direction } = parseT212PositionFields(positionRaw);
       if (!normalised) continue;
-      if (matchedPositionKeys.has(`${normalised}:${direction}`)) continue;
+      if (activeDbTickerSet.has(normalised)) continue;
+
+      const dbTrade = findDbTradeForTicker(normalised, direction);
+      let dbFilterReason = null;
+      if (dbTrade) {
+        const canonicalTrade = { ...dbTrade, openDate: extractTradeOpenDate(dbTrade) };
+        if (isCanonicallyClosedTrade(canonicalTrade)) {
+          dbFilterReason = 'canonicallyClosed';
+        } else {
+          const ps = deriveTradePositionState(canonicalTrade, rates);
+          dbFilterReason = !ps.isValid ? 'invalidExecutionState' : 'openQuantityNotPositive';
+        }
+      }
+
+      console.info('[active-trades][synthetic-add]', {
+        ticker: positionRaw.ticker,
+        normalised,
+        displayTicker: resolveT212PositionDisplayTicker(positionRaw.ticker || '', positionRaw),
+        hasDbMatch: Boolean(dbTrade),
+        dbStatus: dbTrade ? String(dbTrade.status || 'open').toLowerCase() : null,
+        dbFilterReason
+      });
+
       const synth = buildT212SyntheticActiveTrade(positionRaw, rates);
+
+      // When a DB record exists, use its id and source so the edit modal opens on click.
+      // Overlay journal metadata (stop, target, R-multiple, tags, notes) from the DB record.
+      if (dbTrade) {
+        synth.id = dbTrade.id || synth.id;
+        synth.source = dbTrade.source || 'trading212';
+        if (dbTrade.stop != null) synth.stop = dbTrade.stop;
+        if (dbTrade.target != null) synth.target = dbTrade.target;
+        if (Number.isFinite(Number(dbTrade.rMultiple))) synth.rMultiple = Number(dbTrade.rMultiple);
+        if (dbTrade.riskPercent != null) synth.riskPercent = dbTrade.riskPercent;
+        if (dbTrade.riskPct != null) synth.riskPct = dbTrade.riskPct;
+        if (Array.isArray(dbTrade.tags)) synth.tags = dbTrade.tags;
+        if (dbTrade.notes != null) synth.notes = dbTrade.notes;
+        if (dbTrade.note != null) synth.note = dbTrade.note;
+      }
+
       syntheticTrades.push(synth);
       if (Number.isFinite(synth.unrealizedGBP)) syntheticLivePnlGBP += synth.unrealizedGBP;
     }
