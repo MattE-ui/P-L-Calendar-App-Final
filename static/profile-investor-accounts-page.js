@@ -868,6 +868,7 @@
       const perf = !perfFailed && rawPerf && !rawPerf.error ? rawPerf : null;
 
       body.innerHTML = `
+        <div id="md-cf-mismatch-banner" class="ia-fetch-error ia-fetch-error--inline" style="margin-bottom:12px" hidden></div>
         <section class="ia-drawer-section">
           <h3 class="ia-drawer-section__title">Account details</h3>
           <label for="md-name">Display name</label>
@@ -1015,6 +1016,7 @@
       await api(`/api/master/investors/${investorId}/cashflows/${cashflowId}`, { method: 'DELETE' });
       await loadManageDrawer(investorId);
       await loadInvestorData();
+      verifyCashflowPersist(investorId, { op: 'delete', id: cashflowId });
     } catch (error) {
       setText('investor-status', error.message || 'Unable to delete cashflow.');
     }
@@ -1057,6 +1059,79 @@
     } finally {
       saveBtn.disabled = false;
     }
+  }
+
+  function verifyCashflowPersist(investorId, intent) {
+    const banner = document.getElementById('md-cf-mismatch-banner');
+    if (!banner) return;
+
+    const rows = [...document.querySelectorAll('#md-cashflows-list tr[data-cashflow-id]')];
+
+    let mismatch = null;
+
+    if (intent.op === 'delete') {
+      const stillThere = rows.find(r => r.dataset.cashflowId === intent.id);
+      if (stillThere) mismatch = { type: 'delete-lingered', id: intent.id };
+
+    } else {
+      // Both create and edit: look up by ID returned from the server
+      const row = rows.find(r => r.dataset.cashflowId === intent.id);
+      if (!row) {
+        mismatch = { type: 'not-found', id: intent.id, op: intent.op };
+      } else {
+        let actual;
+        try { actual = JSON.parse(row.dataset.cashflow); } catch { return; }
+        const s = intent.submitted;
+        const amountOk = Math.abs(Number(actual.amount) - Number(s.amount)) < 0.001;
+        const typeOk = actual.type === s.type;
+        const dateOk = actual.effectiveDate === s.effectiveDate;
+        const refOk = (actual.reference || '') === (s.reference || '');
+        if (!amountOk || !typeOk || !dateOk || !refOk) {
+          mismatch = { type: 'field-mismatch', submitted: s, actual, fields: { amountOk, typeOk, dateOk, refOk } };
+        }
+      }
+    }
+
+    if (!mismatch) { banner.hidden = true; return; }
+
+    console.warn('[cashflow-verify] mismatch detected', {
+      op: intent.op,
+      cashflowId: intent.id,
+      timestamp: new Date().toISOString(),
+      submitted: intent.submitted,
+      actual: mismatch.actual,
+      mismatchedFields: mismatch.fields,
+      detail: mismatch.type,
+    });
+
+    let detailMsg;
+    if (mismatch.type === 'delete-lingered') {
+      detailMsg = 'The cashflow was expected to be deleted but is still visible.';
+    } else if (mismatch.type === 'not-found') {
+      detailMsg = `Cashflow ID ${intent.id} was not found in the refreshed list.`;
+    } else {
+      const s = mismatch.submitted, a = mismatch.actual;
+      const amountDiffers = !mismatch.fields.amountOk;
+      detailMsg = amountDiffers
+        ? `You entered ${formatCurrency(s.amount)} but the server shows ${formatCurrency(a.amount)}.`
+        : `One or more fields (${Object.entries(mismatch.fields).filter(([, ok]) => !ok).map(([k]) => k.replace('Ok', '')).join(', ')}) did not persist correctly.`;
+    }
+
+    banner.hidden = false;
+    banner.innerHTML = `
+      <span class="ia-fetch-error__icon" aria-hidden="true">⚠</span>
+      <div class="ia-fetch-error__text">
+        <p class="ia-fetch-error__title">Cashflow save may not have persisted correctly.</p>
+        <p class="ia-fetch-error__sub">${detailMsg} Please verify and try again.</p>
+      </div>
+      <button class="ghost small ia-cf-mm-refresh" type="button">Refresh</button>
+      <button class="ghost small ia-cf-mm-dismiss" type="button">Dismiss</button>`;
+
+    banner.querySelector('.ia-cf-mm-refresh').addEventListener('click', async () => {
+      await loadManageDrawer(investorId);
+      verifyCashflowPersist(investorId, intent);
+    });
+    banner.querySelector('.ia-cf-mm-dismiss').addEventListener('click', () => { banner.hidden = true; });
   }
 
   function activateCfEditMode(tr, cashflow, investorId) {
@@ -1114,8 +1189,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference: reference || '' }),
         });
+        const submitted = { type, amount, effectiveDate, reference: reference || '' };
         await loadManageDrawer(investorId);
         await loadInvestorData();
+        verifyCashflowPersist(investorId, { op: 'edit', id: cashflow.id, submitted });
       } catch (err) {
         errorEl.textContent = err.message || 'Failed to save.';
         saveBtn.disabled = false;
@@ -1162,13 +1239,15 @@
     const submitBtn = document.getElementById('md-cf-submit');
     submitBtn.disabled = true;
     try {
-      await api(`/api/master/investors/${investorId}/cashflows`, {
+      const result = await api(`/api/master/investors/${investorId}/cashflows`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, amount, effective_date: effectiveDate, reference: reference || '' })
       });
+      const submitted = { type, amount, effectiveDate, reference: reference || '' };
       await loadManageDrawer(investorId);
       await loadInvestorData();
+      verifyCashflowPersist(investorId, { op: 'create', id: result?.cashflow?.id, submitted });
     } catch (error) {
       errorEl.textContent = error.message || 'Failed to record cashflow.';
     } finally {
