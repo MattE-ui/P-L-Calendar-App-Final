@@ -4754,7 +4754,6 @@ async function loadData({ includeActiveInPortfolio = false, historyScope = 'wind
   try {
     const activeRes = await api('/api/trades/active');
     state.activeTrades = Array.isArray(activeRes?.trades) ? activeRes.trades : [];
-    { const _p = state.activeTrades; const _a = _p.find(t => [t.ticker,t.displayTicker,t.symbol].includes('APLD')); const _s = _p.find(t => [t.ticker,t.displayTicker,t.symbol].includes('SNDK')); console.log('[active-trades-response]', { apld: _a ? {ticker:_a.ticker??_a.displayTicker,status:_a.status,guaranteed:_a.guaranteedPnlGBP,stop:_a.stop,currentStop:_a.currentStop,entry:_a.entry} : 'not found', sndk: _s ? {ticker:_s.ticker??_s.displayTicker,status:_s.status,guaranteed:_s.guaranteedPnlGBP,stop:_s.stop,currentStop:_s.currentStop,entry:_s.entry} : 'not found' }); }
     state.activeTrades.forEach((trade) => {
       const originalStop = Number(trade?.originalStopPrice ?? trade?.stop);
       const currentStop = Number(trade?.currentStop);

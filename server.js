@@ -25133,6 +25133,9 @@ async function computeActiveTradesSnapshot(username) {
         if (dbTrade.note != null) synth.note = dbTrade.note;
       }
 
+      const synthGuaranteedGBP = computeGuaranteedPnl(synth, rates);
+      if (synthGuaranteedGBP !== null) synth.guaranteedPnlGBP = synthGuaranteedGBP;
+
       syntheticTrades.push(synth);
       if (Number.isFinite(synth.unrealizedGBP)) syntheticLivePnlGBP += synth.unrealizedGBP;
     }
