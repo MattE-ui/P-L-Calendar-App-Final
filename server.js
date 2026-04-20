@@ -25248,6 +25248,25 @@ app.get('/api/trades', auth, async (req, res) => {
     summaryMode,
     paginated: true
   };
+  if (!app._t212StatusProbed) {
+    app._t212StatusProbed = true;
+    const t212Resp = responseTrades.filter(t => t.source === 'trading212');
+    const statusCounts = t212Resp.reduce((acc, t) => {
+      acc[t.status || 'null'] = (acc[t.status || 'null'] || 0) + 1;
+      return acc;
+    }, {});
+    console.log('[trades-api-probe] t212 status distribution in response:', statusCounts);
+    const dbClosedSample = (user.trades || []).find(t => t.source === 'trading212' && t.status === 'closed');
+    console.log('[trades-api-probe] sample closed t212 raw DB fields:', dbClosedSample
+      ? { id: dbClosedSample.id, status: dbClosedSample.status, ticker: dbClosedSample.ticker, entry: dbClosedSample.entry, entryPrice: dbClosedSample.entryPrice, sizeUnits: dbClosedSample.sizeUnits, quantity: dbClosedSample.quantity, closePrice: dbClosedSample.closePrice, closeDate: dbClosedSample.closeDate }
+      : null);
+    if (dbClosedSample) {
+      const inResp = t212Resp.find(t => t.id === dbClosedSample.id);
+      console.log('[trades-api-probe] same trade in response:', inResp
+        ? { id: inResp.id, status: inResp.status, ticker: inResp.ticker, entry: inResp.entry, sizeUnits: inResp.sizeUnits }
+        : '(not in this page)');
+    }
+  }
   setCached(cacheKey, tradesResponseData, 15000);
   res.json(tradesResponseData);
 });

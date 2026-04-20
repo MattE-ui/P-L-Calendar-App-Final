@@ -386,3 +386,41 @@ These are settled and not open for re-evaluation without a new planning round:
 | Write operations out of scope entirely | Veracity is a journal; mutation risk is too high |
 | Demo probe before live | Standard practice; docs are beta and may differ from implementation |
 | Auto-reconciliation mutations must be user-visible | Trust in a journal depends on it |
+
+---
+
+## 15. UX Invariants
+
+Design behaviours that must be preserved through the Stage 2 rebuild. These are not optional polish — they represent established user mental models. Breaking them silently is worse than not having the feature.
+
+### Active Trades — dynamic tile grouping
+
+**Behaviour**: Positions are grouped by `ticker + direction` in the Active Trades panel. One tile per open position, not one tile per trade record.
+
+**When a position has multiple open legs** (original entry + one or more add-ons):
+
+- **Parent row** (always visible): aggregated across all legs
+  - Ticker + direction badge
+  - Combined unrealised P&L (sum of all legs)
+  - Combined P&L % (weighted by position size)
+  - Combined R-multiple (weighted)
+  - Combined risk % of portfolio
+- **Child rows** (indented, visually muted): one per individual trade record
+  - Per-leg unrealised P&L
+  - Per-leg P&L %
+  - Per-leg R-multiple
+  - Per-leg risk contribution
+  - Visual treatment: left-indented, reduced opacity relative to parent, preceded by an arrow-down (↳) indicator showing attachment to parent
+
+**Current state (post-Stage-0)**: The rerouted Active Trades panel shows one tile per trade record, so add-ons appear as separate equal-weight tiles. This is a regression from the previous UX.
+
+**Why deferred to Stage 2**: The grouping logic depends on knowing which trade records belong to the same open position. That source-of-truth comes from `/equity/positions` reconciliation, which is the core of Stage 2. Implementing grouping before Stage 2 would require replicating fragile fill-math logic that Stage 2 replaces.
+
+**Stage 2 implementation notes**:
+- Group by `(normalizedTicker, direction)` — not by raw T212 ticker format
+- A position with a single leg renders as parent only (no children, no expand affordance)
+- A position with N ≥ 2 legs renders as collapsed parent by default; click/tap expands children
+- Parent metrics must recompute when any child leg changes (live poll refresh)
+- Child sort order: chronological by `entryDate` ascending (oldest leg first)
+
+**Screenshot**: [attach screenshot showing parent + child tile layout — user provided reference 2026-04-20]
