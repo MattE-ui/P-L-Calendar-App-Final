@@ -1350,6 +1350,22 @@ function renderTrades() {
   const empty = document.querySelector('#trade-empty');
   const countPill = document.querySelector('#tj-table-count-pill');
   if (!container) return;
+  if (state.trades.length > 0 && !renderTrades._probed) {
+    renderTrades._probed = true;
+    const allTrades = state.trades;
+    console.log('[trade-status-probe]',
+      allTrades.map(t => t.status).slice(0, 20),
+      'unique:', [...new Set(allTrades.map(t => t.status))]);
+    const sampleClosedTrade = allTrades.find(t => t.status === 'closed');
+    console.log('[result-column-probe]', {
+      ticker: sampleClosedTrade?.ticker,
+      status: sampleClosedTrade?.status,
+      realizedPnlGbp: sampleClosedTrade?.realizedPnlGbp,
+      realizedPnlGBP: sampleClosedTrade?.realizedPnlGBP,
+      pnl: sampleClosedTrade?.pnl,
+      positionGBP: sampleClosedTrade?.positionGBP,
+    });
+  }
   const renderStart = window.PerfDiagnostics?.mark('trades-full-render');
 
   const { visible, filtered, total } = getVisibleTrades();
