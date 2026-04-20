@@ -1377,22 +1377,26 @@ function renderTrades() {
   const nextSignatures = new Map();
 
   visible.forEach(trade => {
-    const signature = buildTradeSignature(trade);
-    const existingRow = state.rowCache.get(trade.id);
-    if (existingRow && state.rowSignatures.get(trade.id) === signature) {
-      // Sync checkbox state (may have changed via select-all)
-      const cb = existingRow.querySelector('input[type="checkbox"]');
-      if (cb) cb.checked = state.selectedIds.has(trade.id);
-      fragment.appendChild(existingRow);
-      nextCache.set(trade.id, existingRow);
+    try {
+      const signature = buildTradeSignature(trade);
+      const existingRow = state.rowCache.get(trade.id);
+      if (existingRow && state.rowSignatures.get(trade.id) === signature) {
+        const cb = existingRow.querySelector('input[type="checkbox"]');
+        if (cb) cb.checked = state.selectedIds.has(trade.id);
+        fragment.appendChild(existingRow);
+        nextCache.set(trade.id, existingRow);
+        nextSignatures.set(trade.id, signature);
+        return;
+      }
+      const { row } = buildTradeRow(trade);
+      fragment.appendChild(row);
+      nextCache.set(trade.id, row);
       nextSignatures.set(trade.id, signature);
-      return;
+    } catch (err) {
+      console.error('[tj-render] buildTradeRow threw for trade', trade?.id, err);
     }
-    const { row } = buildTradeRow(trade);
-    fragment.appendChild(row);
-    nextCache.set(trade.id, row);
-    nextSignatures.set(trade.id, signature);
   });
+  console.log('[tj-render] fragment children after forEach:', fragment.childNodes.length, 'of', visible.length, 'visible');
 
   container.replaceChildren(fragment);
   state.rowCache = nextCache;
