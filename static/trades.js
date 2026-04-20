@@ -1218,7 +1218,8 @@ function buildTradeRow(trade) {
     pnlLine.innerHTML = '<span class="tj-dash">—</span>';
   } else {
     pnlLine.textContent = formatSignedPnl(pnlVal);
-    pnlLine.classList.add(pnlVal > 0 ? 'positive' : pnlVal < 0 ? 'negative' : '');
+    if (pnlVal > 0) pnlLine.classList.add('positive');
+    else if (pnlVal < 0) pnlLine.classList.add('negative');
   }
   resultCell.appendChild(pnlLine);
   const rVal = Number(trade.rMultiple);
@@ -1227,7 +1228,8 @@ function buildTradeRow(trade) {
     rLine.className = 'tj-r-multiple';
     const rSign = rVal >= 0 ? '+' : '';
     rLine.textContent = `${rSign}${rVal.toFixed(1)}R`;
-    rLine.classList.add(rVal > 0 ? 'positive' : rVal < 0 ? 'negative' : '');
+    if (rVal > 0) rLine.classList.add('positive');
+    else if (rVal < 0) rLine.classList.add('negative');
     resultCell.appendChild(rLine);
   }
   row.appendChild(resultCell);

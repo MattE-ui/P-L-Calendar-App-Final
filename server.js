@@ -22624,7 +22624,7 @@ app.get('/api/pl', auth, (req,res)=>{
   const selectedMonthKey = year && month ? `${year}-${String(month).padStart(2,'0')}` : '';
   const includeTrades = req.query?.includeTrades !== '0';
   const visibleWindowOnly = ['1', 'true', 'yes'].includes(String(req.query?.visibleWindowOnly || '').toLowerCase());
-  const cacheKey = `pl:${req.username}:${year}`;
+  const cacheKey = `pl:${req.username}:${selectedMonthKey || year}:${includeTrades ? '1' : '0'}`;
   const cached = getCached(cacheKey);
   if (cached) return res.json(cached);
   if (sqliteDb.isSqliteReadsEnabled()) {
@@ -22651,6 +22651,10 @@ app.get('/api/pl', auth, (req,res)=>{
   const history = req.perfDiag?.timeSync('portfolio_history_load', () => ensurePortfolioHistory(user)) || ensurePortfolioHistory(user);
   let mutated = normalizePortfolioHistory(user);
   const journal = req.perfDiag?.timeSync('trade_journal_load', () => buildJournalViewFromTrades(user)) || buildJournalViewFromTrades(user);
+  if (selectedMonthKey) {
+    const aprTrades = Object.entries(journal).filter(([k]) => k.startsWith(selectedMonthKey));
+    console.log(`[PL-debug] journal for ${selectedMonthKey}: ${aprTrades.length} days, total trades: ${aprTrades.reduce((s,[,t])=>s+t.length,0)}`);
+  }
   const { baseline, mutated: anchorMutated } = req.perfDiag?.timeSync('refresh_anchors', () => refreshAnchors(user, history)) || refreshAnchors(user, history);
   if (anchorMutated) mutated = true;
   const mapper = createTradeInstrumentMapper(db, req.username);
