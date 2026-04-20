@@ -1138,22 +1138,25 @@ function normalizeTradeRecords(trades) {
   if (!Array.isArray(trades)) return [];
   return trades.map(trade => {
     if (!trade || typeof trade !== 'object') return null;
-    const entry = Number(trade.entry);
+    const entry = Number(trade.entry ?? trade.entryPrice);
     const stop = Number(trade.stop);
     const riskPct = Number(trade.riskPct);
     const currency = trade.currency === 'USD' ? 'USD' : 'GBP';
     const perUnitRisk = Number(trade.perUnitRisk);
-    const sizeUnitsRaw = Number(trade.sizeUnits);
+    const sizeUnitsRaw = Number(trade.sizeUnits ?? trade.quantity);
     const optionContracts = Number(trade.optionContracts);
     const sizeUnits = Number.isFinite(sizeUnitsRaw) && sizeUnitsRaw > 0
       ? sizeUnitsRaw
-      : ((Number.isFinite(optionContracts) && optionContracts > 0) ? optionContracts * 100 : NaN);
+      : ((Number.isFinite(optionContracts) && optionContracts > 0) ? optionContracts * 100 : 0);
     const status = trade.status === 'closed' ? 'closed' : 'open';
-    const symbol = typeof trade.symbol === 'string' ? trade.symbol : '';
+    const symbol = (typeof trade.symbol === 'string' && trade.symbol)
+      ? trade.symbol
+      : (typeof trade.ticker === 'string' ? trade.ticker : '');
     const displaySymbol = typeof trade.displaySymbol === 'string' ? trade.displaySymbol : '';
-    const displayTicker = typeof trade.displayTicker === 'string' ? trade.displayTicker : '';
-    if (!Number.isFinite(entry) || entry <= 0) return null;
-    if (!Number.isFinite(sizeUnits) || sizeUnits <= 0) return null;
+    const displayTicker = (typeof trade.displayTicker === 'string' && trade.displayTicker)
+      ? trade.displayTicker
+      : (typeof trade.ticker === 'string' ? trade.ticker : '');
+    if (!symbol) return null;
     const riskAmountGBP = Number(trade.riskAmountGBP);
     const positionGBP = Number(trade.positionGBP);
     const riskAmountCurrency = Number(trade.riskAmountCurrency);
@@ -1244,22 +1247,24 @@ function createMappingBadge() {
 
 function getDailyEntry(date) {
   const key = formatDate(date);
+  const todayKey = getCurrentDateKey();
   const month = getMonthData(date);
   if (!(key in month)) {
-    if (key.startsWith('2026-04')) console.log('[calendar-count] day:', key, 'NOT in month. April keys present:', Object.keys(month).filter(k => k.startsWith('2026-04')));
+    if (key <= todayKey) console.warn('[calendar-count]', key, 'NOT in month — data gap for past day');
     return null;
   }
   const record = month[key] || {};
   const opening = Number(record.start);
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
+  const closedOnDay = Object.values(month)
+    .flatMap(r => r.trades || [])
+    .filter(t => t && t.closeDate === key && t.entryDate !== key && (t.symbol || t.ticker));
+  const closeEventCount = new Set(closedOnDay.map(t => t.id).filter(Boolean)).size;
+  const tradeEvents = trades.length + closeEventCount;
   if (key.startsWith('2026-04')) {
     const raw = record.trades;
-    console.log('[calendar-count] day:', key, 'raw-trades:', Array.isArray(raw) ? raw.length : typeof raw, 'normalized:', trades.length, 'sample[0].entry:', raw?.[0]?.entry, 'sample[0].sizeUnits:', raw?.[0]?.sizeUnits);
-    if (key === '2026-04-09' && Array.isArray(raw) && raw.length > 0) {
-      console.log('[calendar-count][field-probe] keys on first trade:', Object.keys(raw[0]));
-      console.log('[calendar-count][field-probe] first trade:', raw[0]);
-    }
+    console.log('[calendar-count] day:', key, 'raw-trades:', Array.isArray(raw) ? raw.length : typeof raw, 'normalized:', trades.length, 'close-events:', closeEventCount, 'total:', tradeEvents);
   }
   const hasClosing = Number.isFinite(closing);
   const hasOpening = Number.isFinite(opening);
@@ -1270,7 +1275,7 @@ function getDailyEntry(date) {
   const noteRaw = typeof record.note === 'string' ? record.note : '';
   const note = noteRaw.trim();
   const accounts = record.accounts && typeof record.accounts === 'object' ? record.accounts : null;
-  if (!hasClosing && !trades.length && cashIn === 0 && cashOut === 0 && !note) return null;
+  if (!hasClosing && !tradeEvents && cashIn === 0 && cashOut === 0 && !note) return null;
   const netCash = cashIn - cashOut;
   let change = null;
   let pct = null;
@@ -1297,7 +1302,7 @@ function getDailyEntry(date) {
     note,
     accounts,
     trades,
-    tradesCount: trades.length
+    tradesCount: tradeEvents
   };
 }
 
