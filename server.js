@@ -16182,15 +16182,18 @@ app.get('/api/admin/db-trades-count', auth, requireAuthenticatedUser, requireAdm
   if (!user) return res.status(404).json({ error: `User '${targetUsername}' not found.` });
   const rawTrades = Array.isArray(user.trades) ? user.trades : [];
   const bySource = {};
+  const bySourceAndStatus = {};
   let openTrades = 0;
   let closedTrades = 0;
   let mostRecentTs = null;
   let oldestTs = null;
   for (const trade of rawTrades) {
     const source = trade?.source || (trade?.trading212Id ? 'trading212' : (trade?.ibkrPositionId ? 'ibkr' : 'manual'));
+    const status = String(trade?.status || 'unknown').toLowerCase();
     bySource[source] = (bySource[source] || 0) + 1;
-    const isClosed = String(trade?.status || '').toLowerCase() === 'closed'
-      || trade?.closedAt || trade?.closeDate;
+    const key = `${source}:${status}`;
+    bySourceAndStatus[key] = (bySourceAndStatus[key] || 0) + 1;
+    const isClosed = status === 'closed' || trade?.closedAt || trade?.closeDate;
     if (isClosed) closedTrades += 1; else openTrades += 1;
     const ts = trade?.createdAt || trade?.openDate || trade?.date || null;
     if (ts) {
@@ -16208,6 +16211,7 @@ app.get('/api/admin/db-trades-count', auth, requireAuthenticatedUser, requireAdm
     openTrades,
     closedTrades,
     bySource,
+    bySourceAndStatus,
     mostRecentTradeCreatedAt: mostRecentTs ? new Date(mostRecentTs).toISOString() : null,
     oldestTradeCreatedAt: oldestTs ? new Date(oldestTs).toISOString() : null
   });
