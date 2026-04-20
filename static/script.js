@@ -1245,11 +1245,18 @@ function createMappingBadge() {
 function getDailyEntry(date) {
   const key = formatDate(date);
   const month = getMonthData(date);
-  if (!(key in month)) return null;
+  if (!(key in month)) {
+    if (key.startsWith('2026-04')) console.log('[calendar-count] day:', key, 'NOT in month. April keys present:', Object.keys(month).filter(k => k.startsWith('2026-04')));
+    return null;
+  }
   const record = month[key] || {};
   const opening = Number(record.start);
   const closing = Number(record.end);
   const trades = normalizeTradeRecords(record.trades);
+  if (key.startsWith('2026-04')) {
+    const raw = record.trades;
+    console.log('[calendar-count] day:', key, 'raw-trades:', Array.isArray(raw) ? raw.length : typeof raw, 'normalized:', trades.length, 'sample[0].entry:', raw?.[0]?.entry, 'sample[0].sizeUnits:', raw?.[0]?.sizeUnits);
+  }
   const hasClosing = Number.isFinite(closing);
   const hasOpening = Number.isFinite(opening);
   const cashInRaw = Number(record.cashIn ?? 0);
