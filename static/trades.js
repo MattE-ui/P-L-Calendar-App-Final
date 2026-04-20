@@ -1364,6 +1364,24 @@ function renderTrades() {
   const empty = document.querySelector('#trade-empty');
   const countPill = document.querySelector('#tj-table-count-pill');
   if (!container) return;
+  if (state.trades.length > 0 && !window._guaranteedProbed) {
+    window._guaranteedProbed = true;
+    const allTrades = state.trades;
+    const samplePartial = allTrades.find(t => t.ticker === 'SNDK' && t.status === 'partial');
+    const sampleOpenMissing = allTrades.find(t => t.ticker === 'APLD' && t.status === 'open');
+    const sampleOpenT212 = allTrades.find(t => t.status === 'open' && t.source === 'trading212');
+    const pick = t => !t ? null : {
+      ticker: t.ticker, status: t.status,
+      entry: t.entry, entryPrice: t.entryPrice,
+      stop: t.stop, stopLoss: t.stopLoss,
+      currentStop: t.currentStop, originalStopPrice: t.originalStopPrice,
+      sizeUnits: t.sizeUnits, quantity: t.quantity,
+      direction: t.direction, guaranteedPnlGBP: t.guaranteedPnlGBP,
+    };
+    console.log('[guaranteed-probe] partial SNDK (works):', pick(samplePartial));
+    console.log('[guaranteed-probe] open APLD (missing):', pick(sampleOpenMissing));
+    console.log('[guaranteed-probe] any open T212 (missing):', pick(sampleOpenT212));
+  }
   const renderStart = window.PerfDiagnostics?.mark('trades-full-render');
 
   const { visible, filtered, total } = getVisibleTrades();
