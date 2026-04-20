@@ -1262,10 +1262,6 @@ function getDailyEntry(date) {
     .filter(t => t && t.closeDate === key && t.entryDate !== key && (t.symbol || t.ticker));
   const closeEventCount = new Set(closedOnDay.map(t => t.id).filter(Boolean)).size;
   const tradeEvents = trades.length + closeEventCount;
-  if (key.startsWith('2026-04')) {
-    const raw = record.trades;
-    console.log('[calendar-count] day:', key, 'raw-trades:', Array.isArray(raw) ? raw.length : typeof raw, 'normalized:', trades.length, 'close-events:', closeEventCount, 'total:', tradeEvents);
-  }
   const hasClosing = Number.isFinite(closing);
   const hasOpening = Number.isFinite(opening);
   const cashInRaw = Number(record.cashIn ?? 0);
@@ -4231,6 +4227,7 @@ function renderMonthGrid(targetDate, grid) {
     grid.appendChild(placeholder);
   }
 
+  let totalTradeEvents = 0;
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(first.getFullYear(), first.getMonth(), day);
     const key = formatDate(date);
@@ -4244,6 +4241,7 @@ function renderMonthGrid(targetDate, grid) {
     const change = entry?.change ?? null;
     const pct = entry?.pct ?? null;
     const tradeCount = entry?.tradesCount ?? 0;
+    totalTradeEvents += tradeCount;
     const cell = document.createElement('div');
     cell.className = mobileLayout ? 'cell mobile-day' : 'cell';
     const isFirstEntry = firstEntryKey && key === firstEntryKey;
@@ -4297,6 +4295,7 @@ function renderMonthGrid(targetDate, grid) {
     cell.setAttribute('aria-label', `${new Date(key).toLocaleDateString('en-GB')} ${change === null ? 'No PnL' : formatSignedCurrency(change)} ${tradeCount ? `${tradeCount} trades` : 'No trades'}`);
     grid.appendChild(cell);
   }
+  console.info('[calendar-count] month rendered:', ym(targetDate), 'total trade events:', totalTradeEvents);
 }
 
 function openMobileDayDetail(dateStr, existingEntry = null) {
