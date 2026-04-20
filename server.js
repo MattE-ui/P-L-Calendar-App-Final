@@ -25135,6 +25135,13 @@ async function computeActiveTradesSnapshot(username) {
 
       syntheticTrades.push(synth);
       if (Number.isFinite(synth.unrealizedGBP)) syntheticLivePnlGBP += synth.unrealizedGBP;
+
+      try {
+        const synthGuaranteedGBP = computeGuaranteedPnl(synth, rates);
+        if (synthGuaranteedGBP !== null) synth.guaranteedPnlGBP = synthGuaranteedGBP;
+      } catch (e) {
+        console.warn('[guaranteed-compute-failed]', { ticker: synth.displayTicker || synth.symbol, error: e?.message });
+      }
     }
     if (syntheticTrades.length) {
       console.info(`[active-trades][t212-merge] synthetic_positions=${syntheticTrades.length} tickers=${syntheticTrades.map(t => t.displayTicker).join(',')}`);
