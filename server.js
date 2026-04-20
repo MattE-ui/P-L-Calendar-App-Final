@@ -7546,11 +7546,18 @@ function flattenTrades(user, rates = {}, options = {}) {
     base.openQuantity = executionSummary.openQuantity;
     base.avgEntryPrice = executionSummary.avgEntry;
     base.avgExitPrice = executionSummary.avgExit;
-    base.status = executionSummary.status;
+    // Only trust execution-derived status/sizeUnits when execution legs were actually built.
+    // Provider trades (T212, IBKR) without an executions array fall through the
+    // normalizeExecutionLegs fallback which can't build exit legs (wrong field names),
+    // returning status:'open' and openQuantity:0 regardless of DB truth.
+    const hasRealExecutions = Array.isArray(base.executions) && base.executions.length > 0;
+    if (hasRealExecutions) {
+      base.status = executionSummary.status;
+    }
     if (Number.isFinite(executionSummary.avgEntry) && executionSummary.avgEntry > 0) {
       base.entry = executionSummary.avgEntry;
     }
-    if (Number.isFinite(executionSummary.openQuantity) && executionSummary.openQuantity >= 0) {
+    if (hasRealExecutions && Number.isFinite(executionSummary.openQuantity) && executionSummary.openQuantity >= 0) {
       base.sizeUnits = executionSummary.openQuantity;
     }
     if (executionSummary.status !== 'open' && Number.isFinite(executionSummary.avgExit)) {
@@ -25248,24 +25255,11 @@ app.get('/api/trades', auth, async (req, res) => {
     summaryMode,
     paginated: true
   };
-  if (!app._t212StatusProbed) {
-    app._t212StatusProbed = true;
-    const t212Resp = responseTrades.filter(t => t.source === 'trading212');
-    const statusCounts = t212Resp.reduce((acc, t) => {
-      acc[t.status || 'null'] = (acc[t.status || 'null'] || 0) + 1;
-      return acc;
-    }, {});
-    console.log('[trades-api-probe] t212 status distribution in response:', statusCounts);
-    const dbClosedSample = (user.trades || []).find(t => t.source === 'trading212' && t.status === 'closed');
-    console.log('[trades-api-probe] sample closed t212 raw DB fields:', dbClosedSample
-      ? { id: dbClosedSample.id, status: dbClosedSample.status, ticker: dbClosedSample.ticker, entry: dbClosedSample.entry, entryPrice: dbClosedSample.entryPrice, sizeUnits: dbClosedSample.sizeUnits, quantity: dbClosedSample.quantity, closePrice: dbClosedSample.closePrice, closeDate: dbClosedSample.closeDate }
-      : null);
-    if (dbClosedSample) {
-      const inResp = t212Resp.find(t => t.id === dbClosedSample.id);
-      console.log('[trades-api-probe] same trade in response:', inResp
-        ? { id: inResp.id, status: inResp.status, ticker: inResp.ticker, entry: inResp.entry, sizeUnits: inResp.sizeUnits }
-        : '(not in this page)');
-    }
+  if (!app._t212StatusLogged) {
+    app._t212StatusLogged = true;
+    const t212All = trades.filter(t => t.source === 'trading212');
+    const dist = t212All.reduce((acc, t) => { acc[t.status || 'null'] = (acc[t.status || 'null'] || 0) + 1; return acc; }, {});
+    console.info('[trades-api] t212 status distribution:', dist);
   }
   setCached(cacheKey, tradesResponseData, 15000);
   res.json(tradesResponseData);
