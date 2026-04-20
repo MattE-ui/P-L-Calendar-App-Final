@@ -14587,6 +14587,21 @@ body.ia-drawer-open {
   color: var(--success);
   border: 0.5px solid color-mix(in srgb, var(--success) 35%, var(--border) 65%);
 }
+.tj-badge-closed {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 0.5px solid var(--border);
+}
+.tj-badge-partial {
+  background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+  color: var(--warning, #f59e0b);
+  border: 0.5px solid color-mix(in srgb, var(--warning, #f59e0b) 35%, var(--border) 65%);
+}
+.tj-pnl-partial {
+  font-size: 10px;
+  opacity: 0.65;
+  font-weight: 400;
+}
 .tj-sym-meta {
   font-size: 11px;
   color: var(--text-dim);

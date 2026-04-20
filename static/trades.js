@@ -1163,13 +1163,19 @@ function buildTradeRow(trade) {
     badge.textContent = 'MAPPED';
     symRow.appendChild(badge);
   }
-  const isOpen = trade.status !== 'closed';
-  if (isOpen) {
-    const openBadge = document.createElement('span');
-    openBadge.className = 'tj-badge tj-badge-open';
-    openBadge.textContent = 'OPEN';
-    symRow.appendChild(openBadge);
-  }
+  const tradeStatus = String(trade.status || '').toLowerCase();
+  const isClosed = tradeStatus === 'closed';
+  const isPartial = tradeStatus === 'partial';
+  const isOpen = !isClosed && !isPartial;
+  const statusBadgeInfo = isClosed
+    ? { label: 'CLOSED', cls: 'tj-badge-closed' }
+    : isPartial
+      ? { label: 'PARTIAL', cls: 'tj-badge-partial' }
+      : { label: 'OPEN', cls: 'tj-badge-open' };
+  const statusBadge = document.createElement('span');
+  statusBadge.className = `tj-badge ${statusBadgeInfo.cls}`;
+  statusBadge.textContent = statusBadgeInfo.label;
+  symRow.appendChild(statusBadge);
   symCell.appendChild(symRow);
   if ((trade.assetClass || '').toLowerCase() === 'options') {
     const summary = optionSummary(trade);
@@ -1211,13 +1217,21 @@ function buildTradeRow(trade) {
   // Result cell — two lines (PnL + R-multiple)
   const resultCell = document.createElement('div');
   resultCell.className = 'tj-row-result';
-  const pnlVal = Number(trade.realizedPnlGBP);
+  // TODO: realizedPnlGbp vs realizedPnlGBP exist with different values (~5p delta).
+  // Using realizedPnlGbp here as it matches pnl. Rationalise in Stage 2 rebuild.
+  const pnlVal = Number(trade.realizedPnlGbp);
   const pnlLine = document.createElement('div');
   pnlLine.className = 'tj-pnl';
   if (isOpen || !Number.isFinite(pnlVal)) {
     pnlLine.innerHTML = '<span class="tj-dash">—</span>';
   } else {
     pnlLine.textContent = formatSignedPnl(pnlVal);
+    if (isPartial) {
+      const partialMark = document.createElement('span');
+      partialMark.className = 'tj-pnl-partial';
+      partialMark.textContent = ' (partial)';
+      pnlLine.appendChild(partialMark);
+    }
     if (pnlVal > 0) pnlLine.classList.add('positive');
     else if (pnlVal < 0) pnlLine.classList.add('negative');
   }
@@ -1350,22 +1364,6 @@ function renderTrades() {
   const empty = document.querySelector('#trade-empty');
   const countPill = document.querySelector('#tj-table-count-pill');
   if (!container) return;
-  if (state.trades.length > 0 && !renderTrades._probed) {
-    renderTrades._probed = true;
-    const allTrades = state.trades;
-    console.log('[trade-status-probe]',
-      allTrades.map(t => t.status).slice(0, 20),
-      'unique:', [...new Set(allTrades.map(t => t.status))]);
-    const sampleClosedTrade = allTrades.find(t => t.status === 'closed');
-    console.log('[result-column-probe]', {
-      ticker: sampleClosedTrade?.ticker,
-      status: sampleClosedTrade?.status,
-      realizedPnlGbp: sampleClosedTrade?.realizedPnlGbp,
-      realizedPnlGBP: sampleClosedTrade?.realizedPnlGBP,
-      pnl: sampleClosedTrade?.pnl,
-      positionGBP: sampleClosedTrade?.positionGBP,
-    });
-  }
   const renderStart = window.PerfDiagnostics?.mark('trades-full-render');
 
   const { visible, filtered, total } = getVisibleTrades();
