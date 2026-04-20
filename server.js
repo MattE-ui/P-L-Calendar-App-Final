@@ -7492,25 +7492,29 @@ function computeRealizedPnl(trade, rates = {}) {
 
 function computeGuaranteedPnl(trade, rates = {}) {
   if (!trade) return null;
-  const currentStop = Number(trade.currentStop);
-  const entry = Number(trade.entry);
-  const sizeUnits = Number(trade.sizeUnits);
-  if (!Number.isFinite(currentStop) || currentStop <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
+  // trade.stop holds the CURRENT dynamic stop (synced from T212 or manually overridden).
+  // This is the right value for guaranteed P&L: what we'd realise if the current stop hit.
+  // Do NOT use trade.stopLoss or trade.originalStopPrice — those are the initial stop at
+  // trade open, used for R-multiple baseline, not current-stop-hit simulation.
+  const stopValue = Number(trade.stop);
+  const entry = Number(trade.entry ?? trade.entryPrice);
+  const sizeUnits = Number(trade.sizeUnits ?? trade.quantity);
+  if (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
     return null;
   }
   const direction = trade.direction === 'short' ? 'short' : 'long';
   const pnlCurrency = direction === 'long'
-    ? (currentStop - entry) * sizeUnits
-    : (entry - currentStop) * sizeUnits;
+    ? (stopValue - entry) * sizeUnits
+    : (entry - stopValue) * sizeUnits;
   let pnlGBP = convertToGBP(pnlCurrency, trade.currency || 'GBP', rates);
   const fxFeeEligible = trade.fxFeeEligible === true;
   const fxFeeRate = Number(trade.fxFeeRate);
   if (fxFeeEligible && Number.isFinite(fxFeeRate) && fxFeeRate > 0) {
     const entryValueGBP = convertToGBP(entry * sizeUnits, trade.currency || 'GBP', rates);
-    const stopValueGBP = convertToGBP(currentStop * sizeUnits, trade.currency || 'GBP', rates);
+    const stopGBP = convertToGBP(stopValue * sizeUnits, trade.currency || 'GBP', rates);
     if (Number.isFinite(entryValueGBP)) {
       const entryFeeGBP = Math.abs(entryValueGBP) * fxFeeRate;
-      const exitBasisGBP = Number.isFinite(stopValueGBP) ? Math.abs(stopValueGBP) : Math.abs(entryValueGBP);
+      const exitBasisGBP = Number.isFinite(stopGBP) ? Math.abs(stopGBP) : Math.abs(entryValueGBP);
       const exitFeeGBP = exitBasisGBP * fxFeeRate;
       const fxFeeGBP = entryFeeGBP + exitFeeGBP;
       if (Number.isFinite(pnlGBP)) {
