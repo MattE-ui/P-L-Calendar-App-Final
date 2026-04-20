@@ -7492,13 +7492,26 @@ function computeRealizedPnl(trade, rates = {}) {
 
 function computeGuaranteedPnl(trade, rates = {}) {
   if (!trade) return null;
-  // trade.stop holds the CURRENT dynamic stop (synced from T212 or manually overridden).
-  // This is the right value for guaranteed P&L: what we'd realise if the current stop hit.
-  // Do NOT use trade.stopLoss or trade.originalStopPrice — those are the initial stop at
-  // trade open, used for R-multiple baseline, not current-stop-hit simulation.
-  const stopValue = Number(trade.stop);
   const entry = Number(trade.entry ?? trade.entryPrice);
   const sizeUnits = Number(trade.sizeUnits ?? trade.quantity);
+  const stopValue = Number(trade.stop);
+  const shouldProbe = (trade.ticker === 'SNDK' && trade.status === 'partial') ||
+    (trade.ticker === 'APLD' && trade.status === 'open') ||
+    (trade.ticker === 'HYMC' && trade.status === 'closed');
+  if (shouldProbe) {
+    if (!computeGuaranteedPnl._probed) computeGuaranteedPnl._probed = new Set();
+    if (!computeGuaranteedPnl._probed.has(trade.id)) {
+      computeGuaranteedPnl._probed.add(trade.id);
+      const result = (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) ? null : 'will compute';
+      console.log('[gpnl-probe]', {
+        ticker: trade.ticker, status: trade.status,
+        entry: trade.entry, entryPrice: trade.entryPrice, entryUsed: entry,
+        stop: trade.stop, stopLoss: trade.stopLoss, currentStop: trade.currentStop, stopUsed: stopValue,
+        sizeUnits: trade.sizeUnits, quantity: trade.quantity, quantityUsed: sizeUnits,
+        direction: trade.direction, result,
+      });
+    }
+  }
   if (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
     return null;
   }
