@@ -1256,6 +1256,10 @@ function getDailyEntry(date) {
   if (key.startsWith('2026-04')) {
     const raw = record.trades;
     console.log('[calendar-count] day:', key, 'raw-trades:', Array.isArray(raw) ? raw.length : typeof raw, 'normalized:', trades.length, 'sample[0].entry:', raw?.[0]?.entry, 'sample[0].sizeUnits:', raw?.[0]?.sizeUnits);
+    if (key === '2026-04-09' && Array.isArray(raw) && raw.length > 0) {
+      console.log('[calendar-count][field-probe] keys on first trade:', Object.keys(raw[0]));
+      console.log('[calendar-count][field-probe] first trade:', raw[0]);
+    }
   }
   const hasClosing = Number.isFinite(closing);
   const hasOpening = Number.isFinite(opening);
