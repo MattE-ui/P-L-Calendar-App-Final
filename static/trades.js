@@ -1206,7 +1206,7 @@ function buildTradeRow(trade) {
   const guarCell = document.createElement('div');
   guarCell.className = 'tj-row-guaranteed';
   const guarVal = Number(trade.guaranteedPnlGBP);
-  if (isOpen || !Number.isFinite(guarVal) || guarVal === 0) {
+  if (isClosed || !Number.isFinite(guarVal) || guarVal === 0) {
     guarCell.innerHTML = '<span class="tj-dash">—</span>';
   } else {
     guarCell.textContent = formatSignedPnl(guarVal);

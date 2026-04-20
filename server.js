@@ -7495,18 +7495,10 @@ function computeGuaranteedPnl(trade, rates = {}) {
   // currentStop is the live-synced stop for manual-entry trades; T212-imported open trades
   // store stop instead. Do NOT use stopLoss or originalStopPrice — those are the initial
   // stop at trade open (R-multiple baseline), not the current-stop-hit simulation value.
+  if (trade.status === 'closed') return null;
   const stopValue = Number(trade.currentStop ?? trade.stop);
   const entry = Number(trade.entry ?? trade.entryPrice);
   const sizeUnits = Number(trade.sizeUnits ?? trade.quantity);
-  if (trade.ticker === 'HYMC' || trade.ticker === 'APLD') {
-    console.log('[gpnl-trace]', {
-      ticker: trade.ticker, status: trade.status, direction: trade.direction,
-      entry: trade.entry, entryPrice: trade.entryPrice, entryUsed: entry,
-      stop: trade.stop, currentStop: trade.currentStop, stopLoss: trade.stopLoss, stopUsed: stopValue,
-      sizeUnits: trade.sizeUnits, quantity: trade.quantity, sizeUsed: sizeUnits,
-      passesGuard: Number.isFinite(stopValue) && stopValue > 0 && Number.isFinite(entry) && Number.isFinite(sizeUnits),
-    });
-  }
   if (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
     return null;
   }
