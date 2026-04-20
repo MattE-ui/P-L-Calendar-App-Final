@@ -7492,26 +7492,12 @@ function computeRealizedPnl(trade, rates = {}) {
 
 function computeGuaranteedPnl(trade, rates = {}) {
   if (!trade) return null;
+  // currentStop is the live-synced stop for manual-entry trades; T212-imported open trades
+  // store stop instead. Do NOT use stopLoss or originalStopPrice — those are the initial
+  // stop at trade open (R-multiple baseline), not the current-stop-hit simulation value.
+  const stopValue = Number(trade.currentStop ?? trade.stop);
   const entry = Number(trade.entry ?? trade.entryPrice);
   const sizeUnits = Number(trade.sizeUnits ?? trade.quantity);
-  const stopValue = Number(trade.stop);
-  const shouldProbe = (trade.ticker === 'SNDK' && trade.status === 'partial') ||
-    (trade.ticker === 'APLD' && trade.status === 'open') ||
-    (trade.ticker === 'HYMC' && trade.status === 'closed');
-  if (shouldProbe) {
-    if (!computeGuaranteedPnl._probed) computeGuaranteedPnl._probed = new Set();
-    if (!computeGuaranteedPnl._probed.has(trade.id)) {
-      computeGuaranteedPnl._probed.add(trade.id);
-      const result = (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) ? null : 'will compute';
-      console.log('[gpnl-probe]', {
-        ticker: trade.ticker, status: trade.status,
-        entry: trade.entry, entryPrice: trade.entryPrice, entryUsed: entry,
-        stop: trade.stop, stopLoss: trade.stopLoss, currentStop: trade.currentStop, stopUsed: stopValue,
-        sizeUnits: trade.sizeUnits, quantity: trade.quantity, quantityUsed: sizeUnits,
-        direction: trade.direction, result,
-      });
-    }
-  }
   if (!Number.isFinite(stopValue) || stopValue <= 0 || !Number.isFinite(entry) || !Number.isFinite(sizeUnits)) {
     return null;
   }
@@ -25081,7 +25067,7 @@ async function computeActiveTradesSnapshot(username) {
   // Find the DB trade record for a normalised ticker (may exist but have failed the filter).
   const findDbTradeForTicker = (normalised, direction) => {
     if (!Array.isArray(user.trades)) return null;
-    return user.trades.find(trade => {
+    const matches = user.trades.filter(trade => {
       const rawOptions = [
         trade.trading212Ticker, trade.ticker, trade.brokerTicker,
         trade.symbol, trade.displayTicker, trade.displaySymbol
@@ -25091,7 +25077,11 @@ async function computeActiveTradesSnapshot(username) {
       );
       if (!matched) return false;
       return (trade.direction === 'short' ? 'short' : 'long') === direction;
-    }) || null;
+    });
+    // Prefer open/partial trades over closed ones — find() historically returned the first
+    // record for a ticker which was often a closed historical trade, causing live positions
+    // to be flagged canonicallyClosed and dropped from Active Trades.
+    return matches.find(t => t.status === 'open' || t.status === 'partial') || matches[0] || null;
   };
 
   // Add synthetic records for T212 positions not present in buildActiveTrades output.
